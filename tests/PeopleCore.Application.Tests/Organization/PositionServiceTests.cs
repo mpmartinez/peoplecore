@@ -21,7 +21,7 @@ public class PositionServiceTests
     [Fact]
     public async Task GetByIdAsync_WhenNotFound_ThrowsKeyNotFoundException()
     {
-        _repo.Setup(r => r.GetByIdAsync(It.IsAny<Guid>(), default))
+        _repo.Setup(r => r.GetByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
              .ReturnsAsync((Position?)null);
 
         var act = () => _sut.GetByIdAsync(Guid.NewGuid());
@@ -38,7 +38,7 @@ public class PositionServiceTests
         var dept = new Department { Id = deptId, Name = "Engineering", CompanyId = Guid.NewGuid() };
         var created = new Position { Id = Guid.NewGuid(), DepartmentId = deptId, Department = dept, Title = dto.Title, Level = dto.Level };
 
-        _repo.Setup(r => r.AddAsync(It.IsAny<Position>(), default))
+        _repo.Setup(r => r.AddAsync(It.IsAny<Position>(), It.IsAny<CancellationToken>()))
              .ReturnsAsync(created);
 
         var result = await _sut.CreateAsync(dto);
@@ -46,5 +46,29 @@ public class PositionServiceTests
         result.Should().NotBeNull();
         result.Title.Should().Be("Software Engineer");
         result.Level.Should().Be("L3");
+    }
+
+    [Fact]
+    public async Task UpdateAsync_WhenPositionNotFound_ThrowsKeyNotFoundException()
+    {
+        _repo.Setup(r => r.GetByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+             .ReturnsAsync((Position?)null);
+
+        var act = () => _sut.UpdateAsync(Guid.NewGuid(), new UpdatePositionDto("Title", null));
+
+        await act.Should().ThrowAsync<KeyNotFoundException>()
+                 .WithMessage("*not found*");
+    }
+
+    [Fact]
+    public async Task DeleteAsync_WhenPositionNotFound_ThrowsKeyNotFoundException()
+    {
+        _repo.Setup(r => r.GetByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+             .ReturnsAsync((Position?)null);
+
+        var act = () => _sut.DeleteAsync(Guid.NewGuid());
+
+        await act.Should().ThrowAsync<KeyNotFoundException>()
+                 .WithMessage("*not found*");
     }
 }

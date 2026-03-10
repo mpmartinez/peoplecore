@@ -13,6 +13,8 @@ public class TeamService : ITeamService
 
     public async Task<PagedResult<TeamDto>> GetAllAsync(int page, int pageSize, Guid? departmentId = null, CancellationToken ct = default)
     {
+        if (page < 1) throw new ArgumentOutOfRangeException(nameof(page), "Page must be >= 1.");
+        if (pageSize < 1) throw new ArgumentOutOfRangeException(nameof(pageSize), "PageSize must be >= 1.");
         var (items, total) = await _repo.GetPagedAsync(page, pageSize, departmentId, ct);
         return PagedResult<TeamDto>.Create(items.Select(ToDto).ToList(), total, page, pageSize);
     }
@@ -49,6 +51,7 @@ public class TeamService : ITeamService
     {
         var team = await _repo.GetByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Team {id} not found.");
+        // TODO Phase 3: Add guard to prevent deleting teams with active members
         await _repo.DeleteAsync(team, ct);
     }
 

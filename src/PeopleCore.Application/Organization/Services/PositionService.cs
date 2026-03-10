@@ -13,6 +13,8 @@ public class PositionService : IPositionService
 
     public async Task<PagedResult<PositionDto>> GetAllAsync(int page, int pageSize, Guid? departmentId = null, CancellationToken ct = default)
     {
+        if (page < 1) throw new ArgumentOutOfRangeException(nameof(page), "Page must be >= 1.");
+        if (pageSize < 1) throw new ArgumentOutOfRangeException(nameof(pageSize), "PageSize must be >= 1.");
         var (items, total) = await _repo.GetPagedAsync(page, pageSize, departmentId, ct);
         return PagedResult<PositionDto>.Create(items.Select(ToDto).ToList(), total, page, pageSize);
     }
@@ -51,6 +53,7 @@ public class PositionService : IPositionService
     {
         var pos = await _repo.GetByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Position {id} not found.");
+        // TODO Phase 3: Add guard to prevent deleting positions assigned to active employees
         await _repo.DeleteAsync(pos, ct);
     }
 

@@ -14,6 +14,8 @@ public class DepartmentService : IDepartmentService
 
     public async Task<PagedResult<DepartmentDto>> GetAllAsync(int page, int pageSize, CancellationToken ct = default)
     {
+        if (page < 1) throw new ArgumentOutOfRangeException(nameof(page), "Page must be >= 1.");
+        if (pageSize < 1) throw new ArgumentOutOfRangeException(nameof(pageSize), "PageSize must be >= 1.");
         var (items, total) = await _repo.GetPagedAsync(page, pageSize, ct);
         return PagedResult<DepartmentDto>.Create(items.Select(ToDto).ToList(), total, page, pageSize);
     }
@@ -56,6 +58,7 @@ public class DepartmentService : IDepartmentService
             ?? throw new KeyNotFoundException($"Department {id} not found.");
         if (dept.SubDepartments.Count > 0)
             throw new DomainException("Cannot delete a department that has sub-departments.");
+        // TODO Phase 3: Also check for active employees in this department before deleting
         await _repo.DeleteAsync(dept, ct);
     }
 

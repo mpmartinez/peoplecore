@@ -22,7 +22,7 @@ public class DepartmentServiceTests
     [Fact]
     public async Task GetByIdAsync_WhenDepartmentNotFound_ThrowsKeyNotFoundException()
     {
-        _repo.Setup(r => r.GetByIdAsync(It.IsAny<Guid>(), default))
+        _repo.Setup(r => r.GetByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
              .ReturnsAsync((Department?)null);
 
         var act = () => _sut.GetByIdAsync(Guid.NewGuid());
@@ -37,7 +37,7 @@ public class DepartmentServiceTests
         var dto = new CreateDepartmentDto(Guid.NewGuid(), null, "Engineering", "ENG");
         var created = new Department { Id = Guid.NewGuid(), CompanyId = dto.CompanyId, Name = dto.Name, Code = dto.Code };
 
-        _repo.Setup(r => r.AddAsync(It.IsAny<Department>(), default))
+        _repo.Setup(r => r.AddAsync(It.IsAny<Department>(), It.IsAny<CancellationToken>()))
              .ReturnsAsync(created);
 
         var result = await _sut.CreateAsync(dto);
@@ -57,7 +57,7 @@ public class DepartmentServiceTests
             CompanyId = Guid.NewGuid(),
             SubDepartments = [new Department { Name = "Child", CompanyId = Guid.NewGuid() }]
         };
-        _repo.Setup(r => r.GetByIdAsync(dept.Id, default)).ReturnsAsync(dept);
+        _repo.Setup(r => r.GetByIdAsync(dept.Id, It.IsAny<CancellationToken>())).ReturnsAsync(dept);
 
         var act = () => _sut.DeleteAsync(dept.Id);
 
@@ -69,17 +69,17 @@ public class DepartmentServiceTests
     public async Task DeleteAsync_WhenDepartmentHasNoSubDepartments_CallsRepositoryDelete()
     {
         var dept = new Department { Id = Guid.NewGuid(), Name = "Leaf", CompanyId = Guid.NewGuid(), SubDepartments = [] };
-        _repo.Setup(r => r.GetByIdAsync(dept.Id, default)).ReturnsAsync(dept);
+        _repo.Setup(r => r.GetByIdAsync(dept.Id, It.IsAny<CancellationToken>())).ReturnsAsync(dept);
 
         await _sut.DeleteAsync(dept.Id);
 
-        _repo.Verify(r => r.DeleteAsync(dept, default), Times.Once);
+        _repo.Verify(r => r.DeleteAsync(dept, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task DeleteAsync_WhenDepartmentNotFound_ThrowsKeyNotFoundException()
     {
-        _repo.Setup(r => r.GetByIdAsync(It.IsAny<Guid>(), default))
+        _repo.Setup(r => r.GetByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
              .ReturnsAsync((Department?)null);
 
         var act = () => _sut.DeleteAsync(Guid.NewGuid());
