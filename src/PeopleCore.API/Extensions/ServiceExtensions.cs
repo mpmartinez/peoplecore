@@ -4,8 +4,11 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using PeopleCore.Application.Common.Interfaces;
+using PeopleCore.Application.Organization.Interfaces;
+using PeopleCore.Application.Organization.Services;
 using PeopleCore.Infrastructure.Identity;
 using PeopleCore.Infrastructure.Persistence;
+using PeopleCore.Infrastructure.Persistence.Repositories;
 
 namespace PeopleCore.API.Extensions;
 
@@ -51,6 +54,14 @@ public static class ServiceExtensions
 
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
+
+        // Organization
+        services.AddScoped<IDepartmentRepository, DepartmentRepository>();
+        services.AddScoped<IDepartmentService, DepartmentService>();
+        services.AddScoped<IPositionRepository, PositionRepository>();
+        services.AddScoped<IPositionService, PositionService>();
+        services.AddScoped<ITeamRepository, TeamRepository>();
+        services.AddScoped<ITeamService, TeamService>();
 
         return services;
     }
