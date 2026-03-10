@@ -32,7 +32,7 @@ public class AuthController : ControllerBase
         var user = await _userManager.FindByEmailAsync(request.Email);
         if (user is null) return Unauthorized(new { message = "Invalid credentials." });
 
-        var result = await _signInManager.CheckPasswordSignInAsync(user, request.Password, false);
+        var result = await _signInManager.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
         if (!result.Succeeded) return Unauthorized(new { message = "Invalid credentials." });
 
         var roles = await _userManager.GetRolesAsync(user);
