@@ -9,6 +9,12 @@ public class DepartmentRepository : Repository<Department>, IDepartmentRepositor
 {
     public DepartmentRepository(AppDbContext context) : base(context) { }
 
+    public override async Task<Department?> GetByIdAsync(Guid id, CancellationToken ct = default)
+        => await Context.Departments
+            .Include(d => d.ParentDepartment)
+            .Include(d => d.SubDepartments)
+            .FirstOrDefaultAsync(d => d.Id == id, ct);
+
     public async Task<(IReadOnlyList<Department> Items, int TotalCount)> GetPagedAsync(
         int page, int pageSize, CancellationToken ct = default)
     {

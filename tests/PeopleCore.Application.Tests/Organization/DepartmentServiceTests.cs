@@ -64,4 +64,27 @@ public class DepartmentServiceTests
         await act.Should().ThrowAsync<DomainException>()
                  .WithMessage("*sub-departments*");
     }
+
+    [Fact]
+    public async Task DeleteAsync_WhenDepartmentHasNoSubDepartments_CallsRepositoryDelete()
+    {
+        var dept = new Department { Id = Guid.NewGuid(), Name = "Leaf", CompanyId = Guid.NewGuid(), SubDepartments = [] };
+        _repo.Setup(r => r.GetByIdAsync(dept.Id, default)).ReturnsAsync(dept);
+
+        await _sut.DeleteAsync(dept.Id);
+
+        _repo.Verify(r => r.DeleteAsync(dept, default), Times.Once);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_WhenDepartmentNotFound_ThrowsKeyNotFoundException()
+    {
+        _repo.Setup(r => r.GetByIdAsync(It.IsAny<Guid>(), default))
+             .ReturnsAsync((Department?)null);
+
+        var act = () => _sut.DeleteAsync(Guid.NewGuid());
+
+        await act.Should().ThrowAsync<KeyNotFoundException>()
+                 .WithMessage("*not found*");
+    }
 }
