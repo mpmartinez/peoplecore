@@ -1,4 +1,3 @@
-using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.Application.Organization.DTOs;
@@ -16,19 +15,19 @@ public class TeamsController : ControllerBase
 
     [HttpGet]
     public async Task<IActionResult> GetAll(
-        [FromQuery][Range(1, int.MaxValue)] int page = 1,
-        [FromQuery][Range(1, 100)] int pageSize = 20,
-        [FromQuery] Guid? departmentId = null,
+        [FromQuery] Guid? departmentId,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
         CancellationToken ct = default)
         => Ok(await _service.GetAllAsync(page, pageSize, departmentId, ct));
 
     [HttpGet("{id:guid}")]
-    public async Task<IActionResult> GetById(Guid id, CancellationToken ct = default)
+    public async Task<IActionResult> GetById(Guid id, CancellationToken ct)
         => Ok(await _service.GetByIdAsync(id, ct));
 
     [HttpPost]
     [Authorize(Roles = "Admin,HRManager")]
-    public async Task<IActionResult> Create([FromBody] CreateTeamDto dto, CancellationToken ct = default)
+    public async Task<IActionResult> Create([FromBody] CreateTeamDto dto, CancellationToken ct)
     {
         var result = await _service.CreateAsync(dto, ct);
         return CreatedAtAction(nameof(GetById), new { id = result.Id }, result);
@@ -36,12 +35,12 @@ public class TeamsController : ControllerBase
 
     [HttpPut("{id:guid}")]
     [Authorize(Roles = "Admin,HRManager")]
-    public async Task<IActionResult> Update(Guid id, [FromBody] UpdateTeamDto dto, CancellationToken ct = default)
+    public async Task<IActionResult> Update(Guid id, [FromBody] UpdateTeamDto dto, CancellationToken ct)
         => Ok(await _service.UpdateAsync(id, dto, ct));
 
     [HttpDelete("{id:guid}")]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Delete(Guid id, CancellationToken ct = default)
+    public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
         await _service.DeleteAsync(id, ct);
         return NoContent();
