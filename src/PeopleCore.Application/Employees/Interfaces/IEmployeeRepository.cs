@@ -8,4 +8,5 @@ public interface IEmployeeRepository : IRepository<Employee>
 {
     Task<(IReadOnlyList<Employee> Items, int TotalCount)> GetPagedAsync(EmployeeFilterDto filter, CancellationToken ct = default);
     Task<bool> EmployeeNumberExistsAsync(string employeeNumber, CancellationToken ct = default);
+    Task<Employee?> GetByNumberAsync(string employeeNumber, CancellationToken ct = default);
 }

@@ -56,4 +56,10 @@ public class EmployeeRepository : Repository<Employee>, IEmployeeRepository
 
     public async Task<bool> EmployeeNumberExistsAsync(string employeeNumber, CancellationToken ct = default)
         => await Context.Employees.AnyAsync(e => e.EmployeeNumber == employeeNumber, ct);
+
+    public async Task<Employee?> GetByNumberAsync(string employeeNumber, CancellationToken ct = default)
+        => await Context.Employees
+            .Include(e => e.Department)
+            .Include(e => e.Position)
+            .FirstOrDefaultAsync(e => e.EmployeeNumber == employeeNumber, ct);
 }
