@@ -15,17 +15,20 @@ public class LeaveRequestService : ILeaveRequestService
     private readonly ILeaveBalanceRepository _balanceRepo;
     private readonly IHolidayService _holidayService;
     private readonly IEmployeeRepository _employeeRepo;
+    private readonly ILeaveTypeRepository _leaveTypeRepo;
 
     public LeaveRequestService(
         ILeaveRequestRepository leaveRepo,
         ILeaveBalanceRepository balanceRepo,
         IHolidayService holidayService,
-        IEmployeeRepository employeeRepo)
+        IEmployeeRepository employeeRepo,
+        ILeaveTypeRepository leaveTypeRepo)
     {
         _leaveRepo = leaveRepo;
         _balanceRepo = balanceRepo;
         _holidayService = holidayService;
         _employeeRepo = employeeRepo;
+        _leaveTypeRepo = leaveTypeRepo;
     }
 
     public async Task<PagedResult<LeaveRequestDto>> GetAllAsync(
@@ -47,13 +50,15 @@ public class LeaveRequestService : ILeaveRequestService
         var employee = await _employeeRepo.GetByIdAsync(dto.EmployeeId, ct)
             ?? throw new KeyNotFoundException($"Employee {dto.EmployeeId} not found.");
 
+        var leaveType = await _leaveTypeRepo.GetByIdAsync(dto.LeaveTypeId, ct)
+            ?? throw new KeyNotFoundException($"Leave type {dto.LeaveTypeId} not found.");
+
+        // Gender restriction check — always runs, even when no balance yet
+        if (leaveType.GenderRestriction is not null && leaveType.GenderRestriction != employee.Gender)
+            throw new DomainException($"Employee is not eligible for this leave type.");
+
         var balance = await _balanceRepo.GetByEmployeeAndTypeAsync(
             dto.EmployeeId, dto.LeaveTypeId, dto.StartDate.Year, ct);
-
-        // Gender restriction check (requires LeaveType navigation on balance)
-        var leaveType = balance?.LeaveType;
-        if (leaveType?.GenderRestriction is not null && leaveType.GenderRestriction != employee.Gender)
-            throw new DomainException($"Employee is not eligible for this leave type.");
 
         // Overlap check
         if (await _leaveRepo.HasOverlapAsync(dto.EmployeeId, dto.StartDate, dto.EndDate, null, ct))

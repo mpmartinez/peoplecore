@@ -19,11 +19,12 @@ public class LeaveRequestServiceTests
     private readonly Mock<ILeaveBalanceRepository> _balanceRepo = new();
     private readonly Mock<IHolidayService> _holidayService = new();
     private readonly Mock<IEmployeeRepository> _employeeRepo = new();
+    private readonly Mock<ILeaveTypeRepository> _leaveTypeRepo = new();
     private readonly LeaveRequestService _sut;
 
     public LeaveRequestServiceTests()
     {
-        _sut = new LeaveRequestService(_leaveRepo.Object, _balanceRepo.Object, _holidayService.Object, _employeeRepo.Object);
+        _sut = new LeaveRequestService(_leaveRepo.Object, _balanceRepo.Object, _holidayService.Object, _employeeRepo.Object, _leaveTypeRepo.Object);
     }
 
     private static Employee MakeEmployee(string gender = "Male") => new()
@@ -69,6 +70,7 @@ public class LeaveRequestServiceTests
         balance.LeaveType = lt;
 
         _employeeRepo.Setup(r => r.GetByIdAsync(emp.Id, default)).ReturnsAsync(emp);
+        _leaveTypeRepo.Setup(r => r.GetByIdAsync(lt.Id, default)).ReturnsAsync(lt);
         _balanceRepo.Setup(r => r.GetByEmployeeAndTypeAsync(emp.Id, lt.Id, It.IsAny<int>(), default)).ReturnsAsync(balance);
         _holidayService.Setup(h => h.IsHolidayAsync(It.IsAny<DateOnly>(), default)).ReturnsAsync((HolidayType?)null);
         _leaveRepo.Setup(r => r.HasOverlapAsync(emp.Id, It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), null, default)).ReturnsAsync(false);
@@ -91,6 +93,7 @@ public class LeaveRequestServiceTests
         balance.LeaveType = lt;
 
         _employeeRepo.Setup(r => r.GetByIdAsync(emp.Id, default)).ReturnsAsync(emp);
+        _leaveTypeRepo.Setup(r => r.GetByIdAsync(lt.Id, default)).ReturnsAsync(lt);
         _balanceRepo.Setup(r => r.GetByEmployeeAndTypeAsync(emp.Id, lt.Id, It.IsAny<int>(), default)).ReturnsAsync(balance);
         _holidayService.Setup(h => h.IsHolidayAsync(It.IsAny<DateOnly>(), default)).ReturnsAsync((HolidayType?)null);
         _leaveRepo.Setup(r => r.HasOverlapAsync(emp.Id, It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), null, default)).ReturnsAsync(true);
@@ -112,6 +115,7 @@ public class LeaveRequestServiceTests
         balance.LeaveType = lt;
 
         _employeeRepo.Setup(r => r.GetByIdAsync(emp.Id, default)).ReturnsAsync(emp);
+        _leaveTypeRepo.Setup(r => r.GetByIdAsync(lt.Id, default)).ReturnsAsync(lt);
         _balanceRepo.Setup(r => r.GetByEmployeeAndTypeAsync(emp.Id, lt.Id, It.IsAny<int>(), default)).ReturnsAsync(balance);
 
         var dto = new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), null);
@@ -132,6 +136,7 @@ public class LeaveRequestServiceTests
         balance.LeaveType = lt;
 
         _employeeRepo.Setup(r => r.GetByIdAsync(emp.Id, default)).ReturnsAsync(emp);
+        _leaveTypeRepo.Setup(r => r.GetByIdAsync(lt.Id, default)).ReturnsAsync(lt);
         _balanceRepo.Setup(r => r.GetByEmployeeAndTypeAsync(emp.Id, lt.Id, It.IsAny<int>(), default)).ReturnsAsync(balance);
         _holidayService.Setup(h => h.IsHolidayAsync(It.IsAny<DateOnly>(), default)).ReturnsAsync((HolidayType?)null);
         _leaveRepo.Setup(r => r.HasOverlapAsync(emp.Id, It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), null, default)).ReturnsAsync(false);

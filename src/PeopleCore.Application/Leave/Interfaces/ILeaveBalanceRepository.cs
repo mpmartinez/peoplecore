@@ -7,4 +7,5 @@ public interface ILeaveBalanceRepository : IRepository<LeaveBalance>
 {
     Task<LeaveBalance?> GetByEmployeeAndTypeAsync(Guid employeeId, Guid leaveTypeId, int year, CancellationToken ct = default);
     Task<IReadOnlyList<LeaveBalance>> GetByEmployeeAsync(Guid employeeId, int? year = null, CancellationToken ct = default);
+    Task<IReadOnlyList<LeaveBalance>> GetByYearAsync(int year, CancellationToken ct = default);
 }

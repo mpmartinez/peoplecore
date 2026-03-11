@@ -17,13 +17,18 @@ public class LeaveAccrualHostedService : BackgroundService
         _logger = logger;
     }
 
+    private int _lastRunMonth = -1;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
             var now = DateTime.UtcNow;
-            if (now.Day == 1 && now.Hour == 0)
+            if (now.Day == 1 && _lastRunMonth != now.Month)
+            {
+                _lastRunMonth = now.Month;
                 await RunAccrualAsync(stoppingToken);
+            }
             await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
         }
     }
