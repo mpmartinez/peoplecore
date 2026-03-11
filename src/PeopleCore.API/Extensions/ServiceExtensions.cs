@@ -10,9 +10,12 @@ using PeopleCore.Application.Attendance.Services;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Employees.Services;
+using PeopleCore.Application.Leave.Interfaces;
+using PeopleCore.Application.Leave.Services;
 using PeopleCore.Application.Organization.Interfaces;
 using PeopleCore.Application.Organization.Services;
 using PeopleCore.Infrastructure.Identity;
+using PeopleCore.Infrastructure.Jobs;
 using PeopleCore.Infrastructure.Persistence;
 using PeopleCore.Infrastructure.Persistence.Repositories;
 using PeopleCore.Infrastructure.Storage;
@@ -112,6 +115,12 @@ public static class ServiceExtensions
         services.AddScoped<IAttendanceService, AttendanceService>();
         services.AddScoped<IOvertimeService, OvertimeService>();
         services.AddScoped<IHolidayService, HolidayService>();
+
+        // Leave
+        services.AddScoped<ILeaveTypeService, LeaveTypeService>();
+        services.AddScoped<ILeaveRequestService, LeaveRequestService>();
+        services.AddScoped<ILeaveBalanceService, LeaveBalanceService>();
+        services.AddHostedService<LeaveAccrualHostedService>();
 
         return services;
     }
