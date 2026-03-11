@@ -1,4 +1,5 @@
 using System.Text;
+using Amazon.S3;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -67,15 +68,35 @@ public static class ServiceExtensions
         services.AddScoped<ITeamRepository, TeamRepository>();
         services.AddScoped<ITeamService, TeamService>();
 
-        // MinIO Storage
-        var minioConfig = configuration.GetSection("Minio");
-        services.AddSingleton<IMinioClient>(sp =>
-            new MinioClient()
-                .WithEndpoint(minioConfig["Endpoint"])
-                .WithCredentials(minioConfig["AccessKey"], minioConfig["SecretKey"])
-                .WithSSL(bool.Parse(minioConfig["UseSSL"] ?? "false"))
-                .Build());
-        services.AddScoped<IStorageService, MinioStorageService>();
+        // Storage (provider-selectable via Storage:Provider in appsettings.json)
+        var storageProvider = configuration["Storage:Provider"] ?? "Minio";
+
+        if (storageProvider.Equals("R2", StringComparison.OrdinalIgnoreCase))
+        {
+            var r2Config = configuration.GetSection("R2");
+            var accountId = r2Config["AccountId"]!;
+            var s3Config = new AmazonS3Config
+            {
+                ServiceURL = $"https://{accountId}.r2.cloudflarestorage.com",
+                ForcePathStyle = true
+            };
+            services.AddSingleton<IAmazonS3>(new AmazonS3Client(
+                r2Config["AccessKey"],
+                r2Config["SecretKey"],
+                s3Config));
+            services.AddScoped<IStorageService, R2StorageService>();
+        }
+        else
+        {
+            var minioConfig = configuration.GetSection("Minio");
+            services.AddSingleton<IMinioClient>(sp =>
+                new MinioClient()
+                    .WithEndpoint(minioConfig["Endpoint"])
+                    .WithCredentials(minioConfig["AccessKey"], minioConfig["SecretKey"])
+                    .WithSSL(bool.Parse(minioConfig["UseSSL"] ?? "false"))
+                    .Build());
+            services.AddScoped<IStorageService, MinioStorageService>();
+        }
 
         // Employees
         services.AddScoped<IEmployeeRepository, EmployeeRepository>();
