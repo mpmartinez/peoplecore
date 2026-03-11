@@ -25,11 +25,11 @@ public class AttendanceController : ControllerBase
 
     [HttpPost("time-in")]
     public async Task<IActionResult> TimeIn([FromBody] TimeInRequest request, CancellationToken ct = default)
-        => Ok(await _service.TimeInAsync(request, ct));
+        => StatusCode(201, await _service.TimeInAsync(request, ct));
 
     [HttpPost("time-out")]
     public async Task<IActionResult> TimeOut([FromBody] TimeOutRequest request, CancellationToken ct = default)
-        => Ok(await _service.TimeOutAsync(request, ct));
+        => StatusCode(201, await _service.TimeOutAsync(request, ct));
 
     [HttpGet("summary")]
     public async Task<IActionResult> GetSummary(

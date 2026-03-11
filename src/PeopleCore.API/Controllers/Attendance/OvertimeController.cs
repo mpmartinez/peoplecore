@@ -24,7 +24,7 @@ public class OvertimeController : ControllerBase
 
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateOvertimeRequestDto dto, CancellationToken ct = default)
-        => Ok(await _service.CreateAsync(dto, ct));
+        => StatusCode(201, await _service.CreateAsync(dto, ct));
 
     [HttpPut("{id:guid}/approve")]
     [Authorize(Roles = "Admin,HRManager,Manager")]

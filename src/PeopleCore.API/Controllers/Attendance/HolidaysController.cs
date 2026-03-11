@@ -20,7 +20,7 @@ public class HolidaysController : ControllerBase
     [HttpPost]
     [Authorize(Roles = "Admin,HRManager")]
     public async Task<IActionResult> Create([FromBody] CreateHolidayDto dto, CancellationToken ct = default)
-        => Ok(await _service.CreateAsync(dto, ct));
+        => StatusCode(201, await _service.CreateAsync(dto, ct));
 
     [HttpDelete("{id:guid}")]
     [Authorize(Roles = "Admin,HRManager")]

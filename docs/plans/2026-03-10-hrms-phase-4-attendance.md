@@ -648,4 +648,206 @@ git commit -m "feat: add attendance and overtime controllers"
 
 ---
 
+---
+
+### Task 16 (Extension): Biometric Device Sync + CSV Import
+
+> These are optional tasks to implement after Task 15. They reuse the same late/undertime calculation logic already in `AttendanceService`.
+
+#### 16A — AttendanceDevice entity + migration
+
+**Add to Domain:**
+
+```csharp
+// src/PeopleCore.Domain/Entities/Attendance/AttendanceDevice.cs
+namespace PeopleCore.Domain.Entities.Attendance;
+
+public class AttendanceDevice : AuditableEntity
+{
+    public string Name { get; set; } = string.Empty;        // e.g. "Main Entrance"
+    public string IpAddress { get; set; } = string.Empty;   // e.g. "192.168.1.201"
+    public int Port { get; set; } = 4370;                   // ZKTeco default
+    public string Protocol { get; set; } = "ZKTeco";        // ZKTeco | HTTP | ADMS
+    public bool IsActive { get; set; } = true;
+    public DateTime? LastSyncAt { get; set; }
+    public string? Location { get; set; }
+}
+```
+
+**EF Config:**
+
+```csharp
+// table: attendance_devices
+builder.ToTable("attendance_devices");
+builder.HasKey(x => x.Id);
+builder.Property(x => x.Name).HasMaxLength(100).IsRequired();
+builder.Property(x => x.IpAddress).HasMaxLength(50).IsRequired();
+builder.Property(x => x.Protocol).HasMaxLength(20).IsRequired();
+```
+
+**Add migration:**
+
+```bash
+dotnet ef migrations add AddAttendanceDevice \
+  --project src/PeopleCore.Infrastructure \
+  --startup-project src/PeopleCore.API
+```
+
+---
+
+#### 16B — Bulk sync endpoint (for biometric devices + CSV)
+
+Both biometric sync workers and CSV imports use the same endpoint. The server doesn't care about the source.
+
+**Add to DTOs:**
+
+```csharp
+// src/PeopleCore.Application/Attendance/DTOs/AttendanceDtos.cs (append)
+
+// One punch record from any source (biometric device, CSV, manual)
+public record AttendancePunchDto(
+    string EmployeeNumber,   // mapped to Employee.EmployeeNumber
+    DateTime PunchTime,
+    string? DeviceId = null  // optional, for audit trail
+);
+
+public record AttendanceImportResultDto(
+    int Imported,
+    int Skipped,
+    IReadOnlyList<string> Errors
+);
+```
+
+**Add to IAttendanceService:**
+
+```csharp
+Task<AttendanceImportResultDto> SyncPunchesAsync(
+    IReadOnlyList<AttendancePunchDto> punches,
+    CancellationToken ct = default);
+```
+
+**Implement in AttendanceService:**
+
+```csharp
+public async Task<AttendanceImportResultDto> SyncPunchesAsync(
+    IReadOnlyList<AttendancePunchDto> punches, CancellationToken ct = default)
+{
+    int imported = 0, skipped = 0;
+    var errors = new List<string>();
+
+    foreach (var punch in punches)
+    {
+        try
+        {
+            var employee = await _employeeRepo.GetByNumberAsync(punch.EmployeeNumber, ct);
+            if (employee is null)
+            {
+                errors.Add($"Employee '{punch.EmployeeNumber}' not found.");
+                skipped++;
+                continue;
+            }
+
+            var date = DateOnly.FromDateTime(punch.PunchTime);
+            var existing = await _repo.GetByEmployeeAndDateAsync(employee.Id, date, ct);
+
+            if (existing is null)
+            {
+                // First punch of day = time-in
+                await TimeInAsync(new TimeInRequest(employee.Id, punch.PunchTime), ct);
+            }
+            else if (existing.TimeIn is not null && existing.TimeOut is null &&
+                     punch.PunchTime > existing.TimeIn)
+            {
+                // Later punch = time-out
+                await TimeOutAsync(new TimeOutRequest(employee.Id, punch.PunchTime), ct);
+            }
+            else
+            {
+                skipped++; // duplicate or out-of-order punch
+                continue;
+            }
+            imported++;
+        }
+        catch (Exception ex)
+        {
+            errors.Add($"Row for '{punch.EmployeeNumber}': {ex.Message}");
+            skipped++;
+        }
+    }
+
+    return new AttendanceImportResultDto(imported, skipped, errors);
+}
+```
+
+**Add endpoint to AttendanceController:**
+
+```csharp
+// POST /api/attendance/sync  — accepts JSON (from biometric worker) or parsed CSV
+[HttpPost("sync")]
+[Authorize(Roles = "Admin,HRManager,Service")]
+public async Task<IActionResult> Sync(
+    [FromBody] IReadOnlyList<AttendancePunchDto> punches, CancellationToken ct)
+    => Ok(await _service.SyncPunchesAsync(punches, ct));
+
+// POST /api/attendance/import  — accepts CSV/Excel file upload
+[HttpPost("import")]
+[Authorize(Roles = "Admin,HRManager")]
+public async Task<IActionResult> Import(IFormFile file, CancellationToken ct)
+{
+    using var stream = file.OpenReadStream();
+    var punches = ParseCsv(stream);   // see below
+    return Ok(await _service.SyncPunchesAsync(punches, ct));
+}
+
+private static List<AttendancePunchDto> ParseCsv(Stream stream)
+{
+    // CSV format: employee_number,date,time_in,time_out
+    // Uses CsvHelper package (add: dotnet add package CsvHelper)
+    using var reader = new StreamReader(stream);
+    using var csv = new CsvHelper.CsvReader(reader, System.Globalization.CultureInfo.InvariantCulture);
+    var punches = new List<AttendancePunchDto>();
+    csv.Read(); csv.ReadHeader();
+    while (csv.Read())
+    {
+        var empNum = csv.GetField("employee_number")!;
+        var date = csv.GetField("date")!;
+        var timeIn = csv.GetField("time_in");
+        var timeOut = csv.GetField("time_out");
+
+        if (!string.IsNullOrEmpty(timeIn))
+            punches.Add(new(empNum, DateTime.Parse($"{date} {timeIn}")));
+        if (!string.IsNullOrEmpty(timeOut))
+            punches.Add(new(empNum, DateTime.Parse($"{date} {timeOut}")));
+    }
+    return punches;
+}
+```
+
+**Install CsvHelper:**
+
+```bash
+dotnet add src/PeopleCore.API/PeopleCore.API.csproj package CsvHelper
+```
+
+---
+
+#### 16C — AttendanceSync worker (separate project, implement post-Phase 9)
+
+This is a standalone `Worker Service` that polls biometric devices over LAN and calls `POST /api/attendance/sync`.
+
+```
+PeopleCore.AttendanceSync/
+├── Worker.cs                  — PeriodicTimer, calls DevicePoller
+├── DevicePoller.cs            — ZKTeco TCP or HTTP polling
+├── AttendanceSyncClient.cs    — HTTP client → POST /api/attendance/sync
+└── appsettings.json           — API base URL, service token, device IPs
+```
+
+> ZKLib.NET NuGet package provides .NET bindings for ZKTeco TCP protocol (port 4370).
+> One worker can manage multiple devices; each device is loaded from `attendance_devices` table via the API.
+
+**Defer this to post-Phase 9.** The sync endpoint (`POST /api/attendance/sync`) is ready in Phase 4, so the worker can be added at any time without touching the main API.
+
+---
+
 **Phase 4 complete.** Continue with [Phase 5 — Leave](2026-03-10-hrms-phase-5-leave.md).

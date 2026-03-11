@@ -30,6 +30,7 @@ public class AttendanceRepository : Repository<AttendanceRecord>, IAttendanceRep
     public async Task<IReadOnlyList<AttendanceRecord>> GetByEmployeeAndPeriodAsync(
         Guid employeeId, DateOnly from, DateOnly to, CancellationToken ct = default)
         => await Context.AttendanceRecords
+            .Include(r => r.Employee)
             .Where(r => r.EmployeeId == employeeId && r.AttendanceDate >= from && r.AttendanceDate <= to)
             .ToListAsync(ct);
 }

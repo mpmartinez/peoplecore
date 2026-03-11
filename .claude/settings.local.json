@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet new:*)",
+      "Bash(dotnet add:*)",
+      "Bash(dotnet build:*)",
+      "Bash(sort find:*)",
+      "Bash(dotnet test:*)",
+      "Bash(dotnet list:*)",
+      "Bash(find C:/Users/mpmar/.nuget/packages/minio/7.0.0 -name *.nupkg)",
+      "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/.worktrees/feature/hrms-implementation/src/PeopleCore.Application/Employees/DTOs\")",
+      "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/.worktrees/feature/hrms-implementation/src/PeopleCore.Application/Employees/Interfaces\")",
+      "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/.worktrees/feature/hrms-implementation/src/PeopleCore.Application/Employees/Services\")",
+      "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/.worktrees/feature/hrms-implementation/src/PeopleCore.Infrastructure/Storage\")",
+      "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/.worktrees/feature/hrms-implementation/tests/PeopleCore.Application.Tests/Employees\")",
+      "Bash(xargs grep:*)"
+    ]
+  }
+}
