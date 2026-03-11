@@ -3,12 +3,16 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Minio;
 using PeopleCore.Application.Common.Interfaces;
+using PeopleCore.Application.Employees.Interfaces;
+using PeopleCore.Application.Employees.Services;
 using PeopleCore.Application.Organization.Interfaces;
 using PeopleCore.Application.Organization.Services;
 using PeopleCore.Infrastructure.Identity;
 using PeopleCore.Infrastructure.Persistence;
 using PeopleCore.Infrastructure.Persistence.Repositories;
+using PeopleCore.Infrastructure.Storage;
 
 namespace PeopleCore.API.Extensions;
 
@@ -62,6 +66,21 @@ public static class ServiceExtensions
         services.AddScoped<IPositionService, PositionService>();
         services.AddScoped<ITeamRepository, TeamRepository>();
         services.AddScoped<ITeamService, TeamService>();
+
+        // MinIO Storage
+        var minioConfig = configuration.GetSection("Minio");
+        services.AddSingleton<IMinioClient>(sp =>
+            new MinioClient()
+                .WithEndpoint(minioConfig["Endpoint"])
+                .WithCredentials(minioConfig["AccessKey"], minioConfig["SecretKey"])
+                .WithSSL(bool.Parse(minioConfig["UseSSL"] ?? "false"))
+                .Build());
+        services.AddScoped<IStorageService, MinioStorageService>();
+
+        // Employees
+        services.AddScoped<IEmployeeRepository, EmployeeRepository>();
+        services.AddScoped<IEmployeeService, EmployeeService>();
+        services.AddScoped<IEmployeeDocumentService, EmployeeDocumentService>();
 
         return services;
     }
