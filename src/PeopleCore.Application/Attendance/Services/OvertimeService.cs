@@ -61,6 +61,8 @@ public class OvertimeService : IOvertimeService
 
         var employee = await _employeeRepo.GetByIdAsync(request.EmployeeId, ct)
             ?? throw new KeyNotFoundException($"Employee {request.EmployeeId} not found.");
+        if (employee.ReportingManagerId is null)
+            throw new DomainException("Employee does not have a reporting manager assigned.");
         if (employee.ReportingManagerId != dto.ApproverId)
             throw new DomainException("Only the direct reporting manager can approve overtime requests.");
 
