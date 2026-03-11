@@ -15,10 +15,7 @@ public class EmployeesController : ControllerBase
     private readonly IEmployeeDocumentService _documentService;
 
     public EmployeesController(IEmployeeService service, IEmployeeDocumentService documentService)
-    {
-        _service = service;
-        _documentService = documentService;
-    }
+        => (_service, _documentService) = (service, documentService);
 
     [HttpGet]
     public async Task<IActionResult> GetAll([FromQuery] EmployeeFilterDto filter, CancellationToken ct)
@@ -67,7 +64,10 @@ public class EmployeesController : ControllerBase
 
     [HttpPost("{id:guid}/emergency-contacts")]
     public async Task<IActionResult> AddEmergencyContact(Guid id, [FromBody] CreateEmergencyContactDto dto, CancellationToken ct)
-        => Ok(await _service.AddEmergencyContactAsync(id, dto, ct));
+    {
+        var result = await _service.AddEmergencyContactAsync(id, dto, ct);
+        return CreatedAtAction(nameof(GetEmergencyContacts), new { id }, result);
+    }
 
     [HttpDelete("{id:guid}/emergency-contacts/{contactId:guid}")]
     public async Task<IActionResult> DeleteEmergencyContact(Guid id, Guid contactId, CancellationToken ct)
@@ -81,7 +81,7 @@ public class EmployeesController : ControllerBase
         => Ok(await _documentService.GetDocumentsAsync(id, ct));
 
     [HttpPost("{id:guid}/documents")]
-    public async Task<IActionResult> UploadDocument(Guid id, IFormFile file, [FromQuery] DocumentType documentType, CancellationToken ct)
+    public async Task<IActionResult> UploadDocument(Guid id, [FromForm] IFormFile file, [FromQuery] DocumentType documentType, CancellationToken ct)
     {
         using var stream = file.OpenReadStream();
         var result = await _documentService.UploadDocumentAsync(id, documentType, file.FileName, stream, file.ContentType, ct);
