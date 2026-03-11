@@ -37,5 +37,6 @@ public class Employee : AuditableEntity
     public ICollection<EmergencyContact> EmergencyContacts { get; set; } = [];
     public ICollection<EmployeeDocument> Documents { get; set; } = [];
 
-    public string FullName => $"{FirstName} {MiddleName} {LastName}".Replace("  ", " ").Trim();
+    public string FullName => string.Join(" ", new[] { FirstName, MiddleName, LastName }
+        .Where(s => !string.IsNullOrWhiteSpace(s)));
 }

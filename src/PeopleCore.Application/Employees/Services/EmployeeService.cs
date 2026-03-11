@@ -164,6 +164,7 @@ public class EmployeeService : IEmployeeService
         e.DepartmentId, e.Department?.Name,
         e.PositionId, e.Position?.Title,
         e.ReportingManagerId, e.ReportingManager?.FullName,
+        e.TeamId,
         e.EmploymentStatus, e.EmploymentType, e.HireDate, e.RegularizationDate,
         e.IsActive, e.Is13thMonthEligible);
 }

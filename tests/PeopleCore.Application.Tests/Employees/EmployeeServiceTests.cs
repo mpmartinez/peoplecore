@@ -23,7 +23,7 @@ public class EmployeeServiceTests
     [Fact]
     public async Task GetByIdAsync_WhenEmployeeNotFound_ThrowsKeyNotFoundException()
     {
-        _repo.Setup(r => r.GetByIdAsync(It.IsAny<Guid>(), default))
+        _repo.Setup(r => r.GetByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
              .ReturnsAsync((Employee?)null);
 
         var act = () => _sut.GetByIdAsync(Guid.NewGuid());
@@ -35,7 +35,7 @@ public class EmployeeServiceTests
     [Fact]
     public async Task CreateAsync_WhenEmployeeNumberAlreadyExists_ThrowsDomainException()
     {
-        _repo.Setup(r => r.EmployeeNumberExistsAsync("EMP-001", default)).ReturnsAsync(true);
+        _repo.Setup(r => r.EmployeeNumberExistsAsync("EMP-001", It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         var dto = new CreateEmployeeDto("EMP-001", "Juan", null, "dela Cruz",
             new DateOnly(1990, 1, 1), "Male", "juan@company.com", null,
@@ -65,7 +65,7 @@ public class EmployeeServiceTests
             HireDate = new DateOnly(2020, 1, 1),
             IsActive = false
         };
-        _repo.Setup(r => r.GetByIdAsync(employee.Id, default)).ReturnsAsync(employee);
+        _repo.Setup(r => r.GetByIdAsync(employee.Id, It.IsAny<CancellationToken>())).ReturnsAsync(employee);
 
         var act = () => _sut.DeactivateAsync(employee.Id, new DateOnly(2025, 1, 1));
 
@@ -76,13 +76,13 @@ public class EmployeeServiceTests
     [Fact]
     public async Task CreateAsync_WithValidData_ReturnsEmployeeDto()
     {
-        _repo.Setup(r => r.EmployeeNumberExistsAsync("EMP-001", default)).ReturnsAsync(false);
+        _repo.Setup(r => r.EmployeeNumberExistsAsync("EMP-001", It.IsAny<CancellationToken>())).ReturnsAsync(false);
         var dto = new CreateEmployeeDto("EMP-001", "Juan", null, "dela Cruz",
             new DateOnly(1990, 1, 1), "Male", "juan@company.com", null,
             null, null, null, EmploymentStatus.Probationary, "FullTime",
             new DateOnly(2024, 1, 1));
 
-        _repo.Setup(r => r.AddAsync(It.IsAny<Employee>(), default))
+        _repo.Setup(r => r.AddAsync(It.IsAny<Employee>(), It.IsAny<CancellationToken>()))
              .ReturnsAsync((Employee e, CancellationToken _) => e);
 
         var result = await _sut.CreateAsync(dto);

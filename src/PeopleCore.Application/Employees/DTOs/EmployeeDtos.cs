@@ -20,6 +20,7 @@ public record EmployeeDto(
     string? PositionTitle,
     Guid? ReportingManagerId,
     string? ReportingManagerName,
+    Guid? TeamId,
     EmploymentStatus EmploymentStatus,
     string EmploymentType,
     DateOnly HireDate,

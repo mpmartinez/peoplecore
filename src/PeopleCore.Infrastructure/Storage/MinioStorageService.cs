@@ -29,7 +29,7 @@ public class MinioStorageService : IStorageService
         var args = new GetObjectArgs()
             .WithBucket(bucketName)
             .WithObject(objectKey)
-            .WithCallbackStream(stream => stream.CopyTo(ms));
+            .WithCallbackStream(async (stream, token) => await stream.CopyToAsync(ms, token));
         await _minio.GetObjectAsync(args, ct);
         ms.Position = 0;
         return ms;
@@ -41,7 +41,7 @@ public class MinioStorageService : IStorageService
         await _minio.RemoveObjectAsync(args, ct);
     }
 
-    public async Task<string> GetPresignedUrlAsync(string bucketName, string objectKey, int expirySeconds = 3600)
+    public async Task<string> GetPresignedUrlAsync(string bucketName, string objectKey, int expirySeconds = 3600, CancellationToken ct = default)
     {
         var args = new PresignedGetObjectArgs()
             .WithBucket(bucketName)

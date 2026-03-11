@@ -26,9 +26,6 @@ public class EmployeeRepository : Repository<Employee>, IEmployeeRepository
             .Include(e => e.Department)
             .Include(e => e.Position)
             .Include(e => e.ReportingManager)
-            .Include(e => e.GovernmentIds)
-            .Include(e => e.EmergencyContacts)
-            .Include(e => e.Documents)
             .AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(filter.Search))

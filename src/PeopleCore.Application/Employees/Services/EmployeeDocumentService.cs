@@ -44,10 +44,20 @@ public class EmployeeDocumentService : IEmployeeDocumentService
             FileName = fileName,
             StorageKey = objectKey,
             ContentType = contentType,
+            FileSizeBytes = fileStream.Length,
             UploadedAt = DateTime.UtcNow
         };
-        employee.Documents.Add(document);
-        await _employeeRepo.UpdateAsync(employee, ct);
+
+        try
+        {
+            employee.Documents.Add(document);
+            await _employeeRepo.UpdateAsync(employee, ct);
+        }
+        catch
+        {
+            await _storage.DeleteAsync(BucketName, objectKey, ct);
+            throw;
+        }
 
         return new EmployeeDocumentDto(document.Id, document.DocumentType.ToString(), document.FileName, document.FileSizeBytes, document.UploadedAt);
     }
@@ -58,7 +68,7 @@ public class EmployeeDocumentService : IEmployeeDocumentService
             ?? throw new KeyNotFoundException($"Employee {employeeId} not found.");
         var doc = employee.Documents.FirstOrDefault(d => d.Id == documentId)
             ?? throw new KeyNotFoundException($"Document {documentId} not found.");
-        return await _storage.GetPresignedUrlAsync(BucketName, doc.StorageKey);
+        return await _storage.GetPresignedUrlAsync(BucketName, doc.StorageKey, ct: ct);
     }
 
     public async Task DeleteDocumentAsync(Guid employeeId, Guid documentId, CancellationToken ct = default)
