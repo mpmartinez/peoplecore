@@ -30,6 +30,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Holiday> Holidays => Set<Holiday>();
     public DbSet<AttendanceRecord> AttendanceRecords => Set<AttendanceRecord>();
     public DbSet<OvertimeRequest> OvertimeRequests => Set<OvertimeRequest>();
+    public DbSet<AttendanceDevice> AttendanceDevices { get; set; } = null!;
 
     // Leave
     public DbSet<LeaveType> LeaveTypes => Set<LeaveType>();
