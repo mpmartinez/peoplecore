@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PeopleCore.API/PeopleCore.API.csproj" />
+    <Project Path="src/PeopleCore.Application/PeopleCore.Application.csproj" />
+    <Project Path="src/PeopleCore.Domain/PeopleCore.Domain.csproj" />
+    <Project Path="src/PeopleCore.Infrastructure/PeopleCore.Infrastructure.csproj" />
+    <Project Path="src/PeopleCore.Web/PeopleCore.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PeopleCore.Application.Tests/PeopleCore.Application.Tests.csproj" />
+  </Folder>
+</Solution>
