@@ -5,6 +5,8 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Minio;
+using PeopleCore.Application.Attendance.Interfaces;
+using PeopleCore.Application.Attendance.Services;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Employees.Services;
@@ -102,6 +104,14 @@ public static class ServiceExtensions
         services.AddScoped<IEmployeeRepository, EmployeeRepository>();
         services.AddScoped<IEmployeeService, EmployeeService>();
         services.AddScoped<IEmployeeDocumentService, EmployeeDocumentService>();
+
+        // Attendance
+        services.AddScoped<IAttendanceRepository, AttendanceRepository>();
+        services.AddScoped<IOvertimeRepository, OvertimeRepository>();
+        services.AddScoped<IHolidayRepository, HolidayRepository>();
+        services.AddScoped<IAttendanceService, AttendanceService>();
+        services.AddScoped<IOvertimeService, OvertimeService>();
+        services.AddScoped<IHolidayService, HolidayService>();
 
         return services;
     }
