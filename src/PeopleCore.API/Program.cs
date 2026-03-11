@@ -1,3 +1,7 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Security.Claims;
+using System.Text.Json;
 using PeopleCore.API.Extensions;
 using PeopleCore.API.Middleware;
 

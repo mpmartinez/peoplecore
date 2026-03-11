@@ -1,0 +1,93 @@
+@namespace IAS.Client.Components.UI
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<ChartContainer Title="@Title" Description="@Description" Class="@Class" HeightClass="@HeightClass">
+    <canvas id="@_canvasId"></canvas>
+</ChartContainer>
+
+@code {
+    private readonly string _canvasId = $"pie-chart-{Guid.NewGuid():N}";
+    private bool _isInitialized;
+
+    /// <summary>
+    /// Chart title displayed above the chart
+    /// </summary>
+    [Parameter] public string? Title { get; set; }
+
+    /// <summary>
+    /// Chart description displayed below the title
+    /// </summary>
+    [Parameter] public string? Description { get; set; }
+
+    /// <summary>
+    /// Additional CSS classes for the container
+    /// </summary>
+    [Parameter] public string? Class { get; set; }
+
+    /// <summary>
+    /// Height class for the chart (e.g., "min-h-[200px]", "h-[300px]")
+    /// </summary>
+    [Parameter] public string HeightClass { get; set; } = "min-h-[250px]";
+
+    /// <summary>
+    /// Labels for the pie slices
+    /// </summary>
+    [Parameter] public string[] Labels { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Data values for each slice
+    /// </summary>
+    [Parameter] public double[] Data { get; set; } = Array.Empty<double>();
+
+    /// <summary>
+    /// Whether to render as a doughnut chart
+    /// </summary>
+    [Parameter] public bool Doughnut { get; set; } = false;
+
+    /// <summary>
+    /// Whether to show the legend
+    /// </summary>
+    [Parameter] public bool ShowLegend { get; set; } = true;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await InitializeChart();
+            _isInitialized = true;
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_isInitialized && Labels.Length > 0 && Data.Length > 0)
+        {
+            await InitializeChart();
+        }
+    }
+
+    private async Task InitializeChart()
+    {
+        if (Labels.Length == 0 || Data.Length == 0) return;
+
+        var config = new
+        {
+            labels = Labels,
+            data = Data,
+            doughnut = Doughnut,
+            showLegend = ShowLegend
+        };
+
+        await JS.InvokeVoidAsync("chartInterop.createPieChart", _canvasId, config);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("chartInterop.destroyChart", _canvasId);
+        }
+        catch { }
+    }
+}

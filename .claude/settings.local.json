@@ -13,7 +13,8 @@
       "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/.worktrees/feature/hrms-implementation/src/PeopleCore.Application/Employees/Services\")",
       "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/.worktrees/feature/hrms-implementation/src/PeopleCore.Infrastructure/Storage\")",
       "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/.worktrees/feature/hrms-implementation/tests/PeopleCore.Application.Tests/Employees\")",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Bash(dotnet ef:*)"
     ]
   }
 }

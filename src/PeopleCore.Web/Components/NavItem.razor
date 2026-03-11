@@ -1,0 +1,24 @@
+@using Microsoft.AspNetCore.Components.Routing
+
+<NavLink class="@GetClasses()" href="@Href" Match="@Match" ActiveClass="sidebar-active">
+    <i class="bi @Icon @(IsCollapsed ? "text-base" : "text-sm") shrink-0 w-5 text-center"></i>
+    @if (!IsCollapsed)
+    {
+        <span>@Text</span>
+    }
+</NavLink>
+
+@code {
+    [Parameter] public string Icon { get; set; } = "";
+    [Parameter] public string Text { get; set; } = "";
+    [Parameter] public string Href { get; set; } = "";
+    [Parameter] public bool IsCollapsed { get; set; }
+    [Parameter] public NavLinkMatch Match { get; set; } = NavLinkMatch.Prefix;
+
+    private string GetClasses()
+    {
+        var baseClasses = "flex items-center gap-3 rounded-md text-sm font-medium text-sidebar-foreground no-underline transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground";
+        var sizeClasses = IsCollapsed ? "justify-center p-2" : "px-3 py-2";
+        return $"{baseClasses} {sizeClasses}";
+    }
+}

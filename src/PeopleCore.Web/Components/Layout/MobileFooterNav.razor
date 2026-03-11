@@ -1,0 +1,84 @@
+@namespace IAS.Client.Components.Layout
+@implements IDisposable
+@inject NavigationManager Navigation
+
+<nav class="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-border lg:hidden">
+    <div class="flex items-center justify-around h-16 px-2">
+        @* Dashboard *@
+        <a href="/" @onclick="@(() => Navigate("/"))" @onclick:preventDefault
+           class="flex flex-col items-center justify-center flex-1 py-2 @GetActiveClass("/")">
+            <svg class="w-5 h-5 mb-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+            </svg>
+            <span class="text-xs">Home</span>
+        </a>
+
+        @* Crew *@
+        <a href="/crew" @onclick="@(() => Navigate("/crew"))" @onclick:preventDefault
+           class="flex flex-col items-center justify-center flex-1 py-2 @GetActiveClass("/crew")">
+            <svg class="w-5 h-5 mb-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+            <span class="text-xs">Crew</span>
+        </a>
+
+        @* Crew Change *@
+        <a href="/crew-change" @onclick="@(() => Navigate("/crew-change"))" @onclick:preventDefault
+           class="flex flex-col items-center justify-center flex-1 py-2 @GetActiveClass("/crew-change")">
+            <svg class="w-5 h-5 mb-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <span class="text-xs">Change</span>
+        </a>
+
+        @* Search *@
+        <button @onclick="OnSearchClick"
+                class="flex flex-col items-center justify-center flex-1 py-2 text-muted-foreground hover:text-foreground transition-colors">
+            <svg class="w-5 h-5 mb-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"></circle>
+                <path d="M21 21l-4.35-4.35"></path>
+            </svg>
+            <span class="text-xs">Search</span>
+        </button>
+    </div>
+</nav>
+
+@code {
+    [Parameter]
+    public EventCallback OnSearchClick { get; set; }
+
+    private string _currentPath = "/";
+
+    protected override void OnInitialized()
+    {
+        _currentPath = "/" + Navigation.ToBaseRelativePath(Navigation.Uri);
+        Navigation.LocationChanged += OnLocationChanged;
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        _currentPath = "/" + Navigation.ToBaseRelativePath(e.Location);
+        StateHasChanged();
+    }
+
+    private void Navigate(string href)
+    {
+        Navigation.NavigateTo(href);
+    }
+
+    private string GetActiveClass(string href)
+    {
+        var isActive = href == "/"
+            ? _currentPath == "/"
+            : _currentPath.StartsWith(href, StringComparison.OrdinalIgnoreCase);
+
+        return isActive
+            ? "text-[#6B7F2B]"
+            : "text-muted-foreground hover:text-foreground transition-colors";
+    }
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+    }
+}

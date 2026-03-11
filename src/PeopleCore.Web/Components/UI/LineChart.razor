@@ -1,0 +1,120 @@
+@namespace IAS.Client.Components.UI
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<ChartContainer Title="@Title" Description="@Description" Class="@Class" HeightClass="@HeightClass">
+    <canvas id="@_canvasId"></canvas>
+</ChartContainer>
+
+@code {
+    private readonly string _canvasId = $"line-chart-{Guid.NewGuid():N}";
+    private bool _isInitialized;
+
+    /// <summary>
+    /// Chart title displayed above the chart
+    /// </summary>
+    [Parameter] public string? Title { get; set; }
+
+    /// <summary>
+    /// Chart description displayed below the title
+    /// </summary>
+    [Parameter] public string? Description { get; set; }
+
+    /// <summary>
+    /// Additional CSS classes for the container
+    /// </summary>
+    [Parameter] public string? Class { get; set; }
+
+    /// <summary>
+    /// Height class for the chart (e.g., "min-h-[200px]", "h-[300px]")
+    /// </summary>
+    [Parameter] public string HeightClass { get; set; } = "min-h-[250px]";
+
+    /// <summary>
+    /// Labels for the X-axis (e.g., months, dates)
+    /// </summary>
+    [Parameter] public string[] Labels { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Data series to display on the chart
+    /// </summary>
+    [Parameter] public List<ChartDataset> Datasets { get; set; } = new();
+
+    /// <summary>
+    /// Whether to show the legend
+    /// </summary>
+    [Parameter] public bool ShowLegend { get; set; } = true;
+
+    /// <summary>
+    /// Whether to show the X-axis
+    /// </summary>
+    [Parameter] public bool ShowXAxis { get; set; } = true;
+
+    /// <summary>
+    /// Whether to show the Y-axis
+    /// </summary>
+    [Parameter] public bool ShowYAxis { get; set; } = true;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await InitializeChart();
+            _isInitialized = true;
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_isInitialized && Labels.Length > 0 && Datasets.Count > 0)
+        {
+            await UpdateChart();
+        }
+    }
+
+    private async Task InitializeChart()
+    {
+        if (Labels.Length == 0 || Datasets.Count == 0) return;
+
+        var config = new
+        {
+            labels = Labels,
+            datasets = Datasets.Select(d => new
+            {
+                label = d.Label,
+                data = d.Data,
+                color = d.Color
+            }).ToArray(),
+            showLegend = ShowLegend,
+            showXAxis = ShowXAxis,
+            showYAxis = ShowYAxis
+        };
+
+        await JS.InvokeVoidAsync("chartInterop.createLineChart", _canvasId, config);
+    }
+
+    private async Task UpdateChart()
+    {
+        var datasets = Datasets.Select(d => new { data = d.Data }).ToArray();
+        await JS.InvokeVoidAsync("chartInterop.updateChart", _canvasId, Labels, datasets);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("chartInterop.destroyChart", _canvasId);
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// Represents a dataset for the chart
+    /// </summary>
+    public class ChartDataset
+    {
+        public string Label { get; set; } = "";
+        public double[] Data { get; set; } = Array.Empty<double>();
+        public string? Color { get; set; }
+    }
+}

@@ -1,0 +1,34 @@
+<div>
+    <button class="@GetHeaderClasses()" @onclick="Toggle">
+        <i class="bi @Icon text-sm shrink-0 w-5 text-center"></i>
+        @if (!IsCollapsed)
+        {
+            <span class="flex-1 text-left">@Text</span>
+            <i class="bi bi-chevron-right text-xs transition-transform duration-200 @(isOpen ? "rotate-90" : "")"></i>
+        }
+    </button>
+    @if (isOpen && !IsCollapsed)
+    {
+        <div class="ml-4 mt-1 flex flex-col gap-1 border-l border-sidebar-border pl-2">
+            @ChildContent
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string Icon { get; set; } = "";
+    [Parameter] public string Text { get; set; } = "";
+    [Parameter] public bool IsCollapsed { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private bool isOpen;
+
+    private void Toggle() => isOpen = !isOpen;
+
+    private string GetHeaderClasses()
+    {
+        var baseClasses = "flex w-full items-center gap-3 rounded-md text-sm font-medium text-sidebar-foreground bg-transparent border-0 cursor-pointer transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground";
+        var sizeClasses = IsCollapsed ? "justify-center p-2" : "px-3 py-2";
+        return $"{baseClasses} {sizeClasses}";
+    }
+}

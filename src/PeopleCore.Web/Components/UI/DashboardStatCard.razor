@@ -1,0 +1,40 @@
+@namespace IAS.Client.Components.UI
+
+<Card>
+    <CardHeader Class="pb-2">
+        <div class="flex items-start justify-between gap-3">
+            <p class="text-sm font-medium text-muted-foreground">@Label</p>
+            @if (!string.IsNullOrEmpty(Trend))
+            {
+                <Badge Variant="outline" Class="gap-1 text-xs shrink-0 font-medium">
+                    <i class="bi @(TrendUp ? "bi-graph-up-arrow" : "bi-graph-down-arrow") text-[11px] leading-none"></i>
+                    @Trend
+                </Badge>
+            }
+        </div>
+        <p class="text-2xl font-bold tabular-nums mt-2 leading-none">@Value</p>
+    </CardHeader>
+    <div class="px-6 pb-6 pt-0 flex flex-col gap-1">
+        @if (!string.IsNullOrEmpty(FooterPrimary))
+        {
+            <p class="text-sm font-medium flex items-center gap-1.5">
+                @FooterPrimary
+                <i class="bi @(TrendUp ? "bi-arrow-up-right" : "bi-arrow-down-right") text-xs text-muted-foreground"></i>
+            </p>
+        }
+        @if (!string.IsNullOrEmpty(FooterSecondary))
+        {
+            <p class="text-xs text-muted-foreground">@FooterSecondary</p>
+        }
+    </div>
+</Card>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter, EditorRequired] public string Value { get; set; } = "";
+    [Parameter] public string? Trend { get; set; }
+    [Parameter] public bool TrendUp { get; set; } = true;
+    [Parameter] public string FooterPrimary { get; set; } = "";
+    [Parameter] public string FooterSecondary { get; set; } = "";
+    [Parameter] public string Color { get; set; } = "blue"; // kept for backward compat
+}
