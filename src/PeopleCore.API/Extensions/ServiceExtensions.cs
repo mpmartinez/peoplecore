@@ -117,6 +117,9 @@ public static class ServiceExtensions
         services.AddScoped<IHolidayService, HolidayService>();
 
         // Leave
+        services.AddScoped<ILeaveTypeRepository, LeaveTypeRepository>();
+        services.AddScoped<ILeaveRequestRepository, LeaveRequestRepository>();
+        services.AddScoped<ILeaveBalanceRepository, LeaveBalanceRepository>();
         services.AddScoped<ILeaveTypeService, LeaveTypeService>();
         services.AddScoped<ILeaveRequestService, LeaveRequestService>();
         services.AddScoped<ILeaveBalanceService, LeaveBalanceService>();
