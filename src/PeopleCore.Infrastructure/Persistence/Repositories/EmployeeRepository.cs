@@ -9,6 +9,16 @@ public class EmployeeRepository : Repository<Employee>, IEmployeeRepository
 {
     public EmployeeRepository(AppDbContext context) : base(context) { }
 
+    public override async Task<Employee?> GetByIdAsync(Guid id, CancellationToken ct = default)
+        => await Context.Employees
+            .Include(e => e.Department)
+            .Include(e => e.Position)
+            .Include(e => e.ReportingManager)
+            .Include(e => e.GovernmentIds)
+            .Include(e => e.EmergencyContacts)
+            .Include(e => e.Documents)
+            .FirstOrDefaultAsync(e => e.Id == id, ct);
+
     public async Task<(IReadOnlyList<Employee> Items, int TotalCount)> GetPagedAsync(
         EmployeeFilterDto filter, CancellationToken ct = default)
     {
