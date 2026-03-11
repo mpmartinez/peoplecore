@@ -6,6 +6,7 @@ using PeopleCore.Application.Attendance.Services;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Domain.Entities.Attendance;
 using PeopleCore.Domain.Entities.Employees;
+using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
 using Xunit;
 
@@ -91,12 +92,58 @@ public class AttendanceServiceTests
         _employeeRepo.Setup(r => r.GetByIdAsync(emp.Id, default)).ReturnsAsync(emp);
         _repo.Setup(r => r.GetByEmployeeAndDateAsync(emp.Id, DateOnly.FromDateTime(timeIn), default))
              .ReturnsAsync((AttendanceRecord?)null);
-        _holidayService.Setup(h => h.IsHolidayAsync(It.IsAny<DateOnly>(), default)).ReturnsAsync(false);
+        _holidayService.Setup(h => h.IsHolidayAsync(It.IsAny<DateOnly>(), default)).ReturnsAsync((HolidayType?)null);
         _repo.Setup(r => r.AddAsync(It.IsAny<AttendanceRecord>(), default))
              .ReturnsAsync((AttendanceRecord a, CancellationToken _) => a);
 
         var result = await _sut.TimeInAsync(new TimeInRequest(emp.Id, timeIn));
 
         result.LateMinutes.Should().Be(65);
+    }
+
+    [Fact]
+    public async Task TimeOutAsync_Before5PM_CalculatesUndertimeCorrectly()
+    {
+        // Employee leaves at 16:00 (4 PM) = 60 minutes undertime
+        var emp = MakeEmployee();
+        var timeOut = new DateTime(2025, 1, 6, 16, 0, 0, DateTimeKind.Utc);
+        var existing = new AttendanceRecord
+        {
+            EmployeeId = emp.Id,
+            AttendanceDate = DateOnly.FromDateTime(timeOut),
+            TimeIn = new DateTime(2025, 1, 6, 8, 0, 0, DateTimeKind.Utc)
+        };
+        _employeeRepo.Setup(r => r.GetByIdAsync(emp.Id, default)).ReturnsAsync(emp);
+        _repo.Setup(r => r.GetByEmployeeAndDateAsync(emp.Id, DateOnly.FromDateTime(timeOut), default))
+             .ReturnsAsync(existing);
+        _repo.Setup(r => r.UpdateAsync(It.IsAny<AttendanceRecord>(), default)).Returns(Task.CompletedTask);
+
+        var result = await _sut.TimeOutAsync(new TimeOutRequest(emp.Id, timeOut));
+
+        result.UndertimeMinutes.Should().Be(60);
+        result.OvertimeMinutes.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task TimeOutAsync_After5PM_CalculatesOvertimeCorrectly()
+    {
+        // Employee leaves at 19:00 (7 PM) = 120 minutes overtime
+        var emp = MakeEmployee();
+        var timeOut = new DateTime(2025, 1, 6, 19, 0, 0, DateTimeKind.Utc);
+        var existing = new AttendanceRecord
+        {
+            EmployeeId = emp.Id,
+            AttendanceDate = DateOnly.FromDateTime(timeOut),
+            TimeIn = new DateTime(2025, 1, 6, 8, 0, 0, DateTimeKind.Utc)
+        };
+        _employeeRepo.Setup(r => r.GetByIdAsync(emp.Id, default)).ReturnsAsync(emp);
+        _repo.Setup(r => r.GetByEmployeeAndDateAsync(emp.Id, DateOnly.FromDateTime(timeOut), default))
+             .ReturnsAsync(existing);
+        _repo.Setup(r => r.UpdateAsync(It.IsAny<AttendanceRecord>(), default)).Returns(Task.CompletedTask);
+
+        var result = await _sut.TimeOutAsync(new TimeOutRequest(emp.Id, timeOut));
+
+        result.OvertimeMinutes.Should().Be(120);
+        result.UndertimeMinutes.Should().Be(0);
     }
 }

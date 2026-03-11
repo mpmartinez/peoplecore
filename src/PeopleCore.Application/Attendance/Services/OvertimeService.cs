@@ -59,8 +59,9 @@ public class OvertimeService : IOvertimeService
         if (request.Status != OvertimeStatus.Pending)
             throw new DomainException("Only pending overtime requests can be approved.");
 
-        var employee = await _employeeRepo.GetByIdAsync(request.EmployeeId, ct);
-        if (employee?.ReportingManagerId != dto.ApproverId)
+        var employee = await _employeeRepo.GetByIdAsync(request.EmployeeId, ct)
+            ?? throw new KeyNotFoundException($"Employee {request.EmployeeId} not found.");
+        if (employee.ReportingManagerId != dto.ApproverId)
             throw new DomainException("Only the direct reporting manager can approve overtime requests.");
 
         request.Status = OvertimeStatus.Approved;

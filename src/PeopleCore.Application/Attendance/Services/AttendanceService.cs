@@ -37,7 +37,7 @@ public class AttendanceService : IAttendanceService
         if (existing?.TimeIn is not null)
             throw new DomainException("Employee has already clocked in today.");
 
-        var isHoliday = await _holidayService.IsHolidayAsync(today, ct);
+        var holidayType = await _holidayService.IsHolidayAsync(today, ct);
         var lateMinutes = CalculateLateMinutes(TimeOnly.FromDateTime(request.TimeIn));
 
         var record = existing ?? new AttendanceRecord
@@ -49,11 +49,19 @@ public class AttendanceService : IAttendanceService
         record.TimeIn = request.TimeIn;
         record.IsPresent = true;
         record.LateMinutes = lateMinutes;
-        record.IsHoliday = isHoliday;
+        record.IsHoliday = holidayType is not null;
+        record.HolidayType = holidayType;
 
-        var saved = existing is null
-            ? await _repo.AddAsync(record, ct)
-            : await UpdateAndReturn(record, ct);
+        AttendanceRecord saved;
+        if (existing is null)
+        {
+            saved = await _repo.AddAsync(record, ct);
+        }
+        else
+        {
+            record.UpdatedAt = DateTime.UtcNow;
+            saved = await UpdateAndReturn(record, ct);
+        }
 
         return ToDto(saved, employee.FullName);
     }

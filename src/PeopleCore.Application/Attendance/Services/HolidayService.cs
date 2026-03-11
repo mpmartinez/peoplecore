@@ -1,6 +1,7 @@
 using PeopleCore.Application.Attendance.DTOs;
 using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Domain.Entities.Attendance;
+using PeopleCore.Domain.Enums;
 
 namespace PeopleCore.Application.Attendance.Services;
 
@@ -36,13 +37,16 @@ public class HolidayService : IHolidayService
         await _repo.DeleteAsync(holiday, ct);
     }
 
-    public async Task<bool> IsHolidayAsync(DateOnly date, CancellationToken ct = default)
+    public async Task<HolidayType?> IsHolidayAsync(DateOnly date, CancellationToken ct = default)
     {
+        // Check exact date match first
         var holiday = await _repo.GetByDateAsync(date, ct);
-        if (holiday is not null) return true;
-        // Check recurring (same month+day regardless of year)
-        var all = await _repo.GetByYearAsync(date.Year, ct);
-        return all.Any(h => h.IsRecurring && h.HolidayDate.Month == date.Month && h.HolidayDate.Day == date.Day);
+        if (holiday is not null) return holiday.HolidayType;
+
+        // Check recurring holidays (year-agnostic)
+        var recurring = await _repo.GetRecurringAsync(ct);
+        var match = recurring.FirstOrDefault(h => h.HolidayDate.Month == date.Month && h.HolidayDate.Day == date.Day);
+        return match?.HolidayType;
     }
 
     private static HolidayDto ToDto(Holiday h) => new(h.Id, h.Name, h.HolidayDate, h.HolidayType, h.IsRecurring);
