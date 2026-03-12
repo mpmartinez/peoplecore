@@ -45,7 +45,7 @@ public class ApplicantService : IApplicantService
         var jobPosting = await _jobPostingRepo.GetByIdAsync(dto.JobPostingId, ct)
             ?? throw new KeyNotFoundException($"Job posting {dto.JobPostingId} not found.");
 
-        if (jobPosting.Status != "Open")
+        if (jobPosting.Status != JobPostingStatus.Open)
             throw new DomainException("Applications can only be submitted for Open job postings.");
 
         var applicant = new Applicant
@@ -103,8 +103,8 @@ public class ApplicantService : IApplicantService
             EmploymentStatus = dto.EmploymentStatus,
             EmploymentType = "FullTime",
             HireDate = dto.HireDate,
-            DateOfBirth = DateOnly.MinValue,
-            Gender = string.Empty,
+            DateOfBirth = dto.DateOfBirth,
+            Gender = dto.Gender,
             IsActive = true,
             Is13thMonthEligible = true
         };

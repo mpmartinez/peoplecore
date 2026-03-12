@@ -14,7 +14,7 @@ public record CreateJobPostingDto(
 
 public record UpdateJobPostingDto(
     string Title, Guid? DepartmentId, Guid? PositionId,
-    string? Description, string? Requirements, int Vacancies, string Status);
+    string? Description, string? Requirements, int Vacancies);
 
 public record ApplicantDto(
     Guid Id, Guid JobPostingId, string JobPostingTitle,
@@ -33,7 +33,9 @@ public record ConvertToEmployeeDto(
     Guid? PositionId,
     Guid? ReportingManagerId,
     EmploymentStatus EmploymentStatus,
-    DateOnly HireDate);
+    DateOnly HireDate,
+    DateOnly DateOfBirth,
+    string Gender);
 
 public record InterviewStageDto(
     Guid Id, Guid ApplicantId, string ApplicantName,

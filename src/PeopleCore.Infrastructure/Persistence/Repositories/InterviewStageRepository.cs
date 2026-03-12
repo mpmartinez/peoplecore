@@ -8,6 +8,12 @@ public class InterviewStageRepository : Repository<InterviewStage>, IInterviewSt
 {
     public InterviewStageRepository(AppDbContext context) : base(context) { }
 
+    public override async Task<InterviewStage?> GetByIdAsync(Guid id, CancellationToken ct = default)
+        => await Context.InterviewStages
+            .Include(s => s.Applicant)
+            .Include(s => s.Interviewer)
+            .FirstOrDefaultAsync(s => s.Id == id, ct);
+
     public async Task<IReadOnlyList<InterviewStage>> GetByApplicantAsync(Guid applicantId, CancellationToken ct = default)
         => await Context.InterviewStages
             .Include(s => s.Applicant)

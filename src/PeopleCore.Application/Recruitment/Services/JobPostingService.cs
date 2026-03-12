@@ -2,6 +2,7 @@ using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Recruitment.DTOs;
 using PeopleCore.Application.Recruitment.Interfaces;
 using PeopleCore.Domain.Entities.Recruitment;
+using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
 
 namespace PeopleCore.Application.Recruitment.Services;
@@ -36,7 +37,7 @@ public class JobPostingService : IJobPostingService
             Description = dto.Description,
             Requirements = dto.Requirements,
             Vacancies = dto.Vacancies,
-            Status = "Draft"
+            Status = JobPostingStatus.Draft
         };
 
         var created = await _repo.AddAsync(posting, ct);
@@ -54,7 +55,6 @@ public class JobPostingService : IJobPostingService
         posting.Description = dto.Description;
         posting.Requirements = dto.Requirements;
         posting.Vacancies = dto.Vacancies;
-        posting.Status = dto.Status;
         posting.UpdatedAt = DateTime.UtcNow;
 
         await _repo.UpdateAsync(posting, ct);
@@ -66,10 +66,10 @@ public class JobPostingService : IJobPostingService
         var posting = await _repo.GetByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Job posting {id} not found.");
 
-        if (posting.Status != "Draft")
+        if (posting.Status != JobPostingStatus.Draft)
             throw new DomainException("Only Draft job postings can be published.");
 
-        posting.Status = "Open";
+        posting.Status = JobPostingStatus.Open;
         posting.PostedAt = DateTime.UtcNow;
         posting.UpdatedAt = DateTime.UtcNow;
 
@@ -82,10 +82,10 @@ public class JobPostingService : IJobPostingService
         var posting = await _repo.GetByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Job posting {id} not found.");
 
-        if (posting.Status != "Open")
+        if (posting.Status != JobPostingStatus.Open)
             throw new DomainException("Only Open job postings can be closed.");
 
-        posting.Status = "Closed";
+        posting.Status = JobPostingStatus.Closed;
         posting.ClosedAt = DateTime.UtcNow;
         posting.UpdatedAt = DateTime.UtcNow;
 

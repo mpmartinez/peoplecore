@@ -44,7 +44,7 @@ public class ApplicantServiceTests
         _applicantRepo.Setup(r => r.GetByIdAsync(applicant.Id, It.IsAny<CancellationToken>()))
                       .ReturnsAsync(applicant);
 
-        var dto = new ConvertToEmployeeDto("EMP-100", null, null, null, EmploymentStatus.Probationary, new DateOnly(2025, 1, 1));
+        var dto = new ConvertToEmployeeDto("EMP-100", null, null, null, EmploymentStatus.Probationary, new DateOnly(2025, 1, 1), new DateOnly(1990, 5, 15), "Female");
 
         var act = () => _sut.ConvertToEmployeeAsync(applicant.Id, dto);
 
@@ -59,7 +59,7 @@ public class ApplicantServiceTests
         _applicantRepo.Setup(r => r.GetByIdAsync(applicant.Id, It.IsAny<CancellationToken>()))
                       .ReturnsAsync(applicant);
 
-        var dto = new ConvertToEmployeeDto("EMP-100", null, null, null, EmploymentStatus.Probationary, new DateOnly(2025, 1, 1));
+        var dto = new ConvertToEmployeeDto("EMP-100", null, null, null, EmploymentStatus.Probationary, new DateOnly(2025, 1, 1), new DateOnly(1990, 5, 15), "Female");
 
         var act = () => _sut.ConvertToEmployeeAsync(applicant.Id, dto);
 
@@ -80,7 +80,7 @@ public class ApplicantServiceTests
         _applicantRepo.Setup(r => r.UpdateAsync(It.IsAny<Applicant>(), It.IsAny<CancellationToken>()))
                       .Returns(Task.CompletedTask);
 
-        var dto = new ConvertToEmployeeDto("EMP-100", null, null, null, EmploymentStatus.Probationary, new DateOnly(2025, 1, 1));
+        var dto = new ConvertToEmployeeDto("EMP-100", null, null, null, EmploymentStatus.Probationary, new DateOnly(2025, 1, 1), new DateOnly(1990, 5, 15), "Female");
 
         var result = await _sut.ConvertToEmployeeAsync(applicant.Id, dto);
 
@@ -88,5 +88,9 @@ public class ApplicantServiceTests
         result.LastName.Should().Be(applicant.LastName);
         result.WorkEmail.Should().Be(applicant.Email);
         result.EmployeeNumber.Should().Be("EMP-100");
+
+        _applicantRepo.Verify(r => r.UpdateAsync(
+            It.Is<Applicant>(a => a.ConvertedEmployeeId.HasValue),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 }

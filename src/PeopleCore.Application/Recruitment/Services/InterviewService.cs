@@ -21,6 +21,13 @@ public class InterviewService : IInterviewService
         return stages.Select(ToDto).ToList();
     }
 
+    public async Task<InterviewStageDto> GetByIdAsync(Guid id, CancellationToken ct = default)
+    {
+        var stage = await _repo.GetByIdAsync(id, ct)
+            ?? throw new KeyNotFoundException($"Interview stage {id} not found.");
+        return ToDto(stage);
+    }
+
     public async Task<InterviewStageDto> CreateAsync(CreateInterviewStageDto dto, CancellationToken ct = default)
     {
         var applicant = await _applicantRepo.GetByIdAsync(dto.ApplicantId, ct)

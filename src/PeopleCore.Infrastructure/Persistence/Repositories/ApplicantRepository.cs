@@ -9,6 +9,11 @@ public class ApplicantRepository : Repository<Applicant>, IApplicantRepository
 {
     public ApplicantRepository(AppDbContext context) : base(context) { }
 
+    public override async Task<Applicant?> GetByIdAsync(Guid id, CancellationToken ct = default)
+        => await Context.Applicants
+            .Include(a => a.JobPosting)
+            .FirstOrDefaultAsync(a => a.Id == id, ct);
+
     public async Task<(IReadOnlyList<Applicant> Items, int TotalCount)> GetPagedAsync(
         Guid? jobPostingId, string? status, int page, int pageSize, CancellationToken ct = default)
     {

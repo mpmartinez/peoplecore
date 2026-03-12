@@ -8,6 +8,12 @@ public class JobPostingRepository : Repository<JobPosting>, IJobPostingRepositor
 {
     public JobPostingRepository(AppDbContext context) : base(context) { }
 
+    public override async Task<JobPosting?> GetByIdAsync(Guid id, CancellationToken ct = default)
+        => await Context.JobPostings
+            .Include(j => j.Department)
+            .Include(j => j.Position)
+            .FirstOrDefaultAsync(j => j.Id == id, ct);
+
     public async Task<(IReadOnlyList<JobPosting> Items, int TotalCount)> GetPagedAsync(
         string? status, int page, int pageSize, CancellationToken ct = default)
     {

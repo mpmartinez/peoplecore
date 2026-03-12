@@ -77,6 +77,7 @@ public class RecruitmentController : ControllerBase
         => Ok(await _applicantService.GetByIdAsync(id, ct));
 
     [HttpPost("applicants")]
+    [Authorize(Roles = "Admin,HRManager")]
     public async Task<IActionResult> CreateApplicant([FromBody] CreateApplicantDto dto, CancellationToken ct)
     {
         var result = await _applicantService.CreateAsync(dto, ct);
@@ -99,12 +100,16 @@ public class RecruitmentController : ControllerBase
     public async Task<IActionResult> GetInterviews(Guid applicantId, CancellationToken ct)
         => Ok(await _interviewService.GetByApplicantAsync(applicantId, ct));
 
+    [HttpGet("interviews/{id:guid}")]
+    public async Task<IActionResult> GetInterview(Guid id, CancellationToken ct)
+        => Ok(await _interviewService.GetByIdAsync(id, ct));
+
     [HttpPost("interviews")]
     [Authorize(Roles = "Admin,HRManager")]
     public async Task<IActionResult> CreateInterview([FromBody] CreateInterviewStageDto dto, CancellationToken ct)
     {
         var result = await _interviewService.CreateAsync(dto, ct);
-        return StatusCode(201, result);
+        return CreatedAtAction(nameof(GetInterview), new { id = result.Id }, result);
     }
 
     [HttpPut("interviews/{id:guid}")]
