@@ -1,4 +1,3 @@
-using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Recruitment.DTOs;
 using PeopleCore.Application.Recruitment.Interfaces;
 using PeopleCore.Domain.Entities.Recruitment;
@@ -7,10 +6,10 @@ namespace PeopleCore.Application.Recruitment.Services;
 
 public class InterviewService : IInterviewService
 {
-    private readonly IRepository<InterviewStage> _repo;
+    private readonly IInterviewStageRepository _repo;
     private readonly IApplicantRepository _applicantRepo;
 
-    public InterviewService(IRepository<InterviewStage> repo, IApplicantRepository applicantRepo)
+    public InterviewService(IInterviewStageRepository repo, IApplicantRepository applicantRepo)
     {
         _repo = repo;
         _applicantRepo = applicantRepo;
@@ -18,11 +17,8 @@ public class InterviewService : IInterviewService
 
     public async Task<IReadOnlyList<InterviewStageDto>> GetByApplicantAsync(Guid applicantId, CancellationToken ct = default)
     {
-        var all = await _repo.GetAllAsync(ct);
-        return all
-            .Where(s => s.ApplicantId == applicantId)
-            .Select(ToDto)
-            .ToList();
+        var stages = await _repo.GetByApplicantAsync(applicantId, ct);
+        return stages.Select(ToDto).ToList();
     }
 
     public async Task<InterviewStageDto> CreateAsync(CreateInterviewStageDto dto, CancellationToken ct = default)

@@ -16,6 +16,7 @@ using PeopleCore.Application.Organization.Interfaces;
 using PeopleCore.Application.Organization.Services;
 using PeopleCore.Application.Recruitment.Interfaces;
 using PeopleCore.Application.Recruitment.Services;
+using PeopleCore.Domain.Entities.Recruitment;
 using PeopleCore.Infrastructure.Identity;
 using PeopleCore.Infrastructure.Jobs;
 using PeopleCore.Infrastructure.Persistence;
@@ -130,6 +131,7 @@ public static class ServiceExtensions
         // Recruitment
         services.AddScoped<IJobPostingRepository, JobPostingRepository>();
         services.AddScoped<IApplicantRepository, ApplicantRepository>();
+        services.AddScoped<IInterviewStageRepository, InterviewStageRepository>();
         services.AddScoped<IJobPostingService, JobPostingService>();
         services.AddScoped<IApplicantService, ApplicantService>();
         services.AddScoped<IInterviewService, InterviewService>();

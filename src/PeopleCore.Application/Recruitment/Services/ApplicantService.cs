@@ -45,6 +45,9 @@ public class ApplicantService : IApplicantService
         var jobPosting = await _jobPostingRepo.GetByIdAsync(dto.JobPostingId, ct)
             ?? throw new KeyNotFoundException($"Job posting {dto.JobPostingId} not found.");
 
+        if (jobPosting.Status != "Open")
+            throw new DomainException("Applications can only be submitted for Open job postings.");
+
         var applicant = new Applicant
         {
             JobPostingId = dto.JobPostingId,
