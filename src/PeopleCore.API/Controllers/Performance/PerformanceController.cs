@@ -67,17 +67,19 @@ public class PerformanceController : ControllerBase
     [HttpPost("performance-reviews/{id:guid}/self-evaluation")]
     public async Task<IActionResult> SubmitSelfEvaluation(Guid id, [FromBody] SubmitSelfEvaluationDto dto, CancellationToken ct)
     {
-        var employeeId = _currentUser.EmployeeId
-            ?? throw new UnauthorizedAccessException("Employee ID not found in token.");
-        return Ok(await _reviewService.SubmitSelfEvaluationAsync(id, employeeId, dto, ct));
+        var employeeId = _currentUser.EmployeeId;
+        if (employeeId is null)
+            return Unauthorized("Employee ID not found in token.");
+        return Ok(await _reviewService.SubmitSelfEvaluationAsync(id, employeeId.Value, dto, ct));
     }
 
     [HttpPost("performance-reviews/{id:guid}/manager-review")]
     [Authorize(Roles = "Admin,HRManager,Manager")]
     public async Task<IActionResult> SubmitManagerReview(Guid id, [FromBody] SubmitManagerReviewDto dto, CancellationToken ct)
     {
-        var reviewerId = _currentUser.EmployeeId
-            ?? throw new UnauthorizedAccessException("Employee ID not found in token.");
-        return Ok(await _reviewService.SubmitManagerReviewAsync(id, reviewerId, dto, ct));
+        var reviewerId = _currentUser.EmployeeId;
+        if (reviewerId is null)
+            return Unauthorized("Employee ID not found in token.");
+        return Ok(await _reviewService.SubmitManagerReviewAsync(id, reviewerId.Value, dto, ct));
     }
 }

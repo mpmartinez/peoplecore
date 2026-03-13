@@ -50,8 +50,8 @@ public class ReviewCycleService : IReviewCycleService
         var cycle = await _cycleRepo.GetByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Review cycle {id} not found.");
 
-        if (cycle.Status != ReviewStatus.Draft && cycle.Status != ReviewStatus.Submitted)
-            throw new DomainException("Only Draft or Submitted review cycles can be closed.");
+        if (cycle.Status != ReviewStatus.Draft)
+            throw new DomainException("Only Draft review cycles can be closed.");
 
         cycle.Status = ReviewStatus.Completed;
 

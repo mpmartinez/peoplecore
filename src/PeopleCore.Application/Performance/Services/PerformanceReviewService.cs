@@ -12,13 +12,16 @@ public class PerformanceReviewService : IPerformanceReviewService
 {
     private readonly IPerformanceReviewRepository _reviewRepo;
     private readonly IEmployeeRepository _employeeRepo;
+    private readonly IReviewCycleRepository _cycleRepo;
 
     public PerformanceReviewService(
         IPerformanceReviewRepository reviewRepo,
-        IEmployeeRepository employeeRepo)
+        IEmployeeRepository employeeRepo,
+        IReviewCycleRepository cycleRepo)
     {
         _reviewRepo = reviewRepo;
         _employeeRepo = employeeRepo;
+        _cycleRepo = cycleRepo;
     }
 
     public async Task<PagedResult<PerformanceReviewDto>> GetAllAsync(
@@ -42,6 +45,11 @@ public class PerformanceReviewService : IPerformanceReviewService
 
         var reviewer = await _employeeRepo.GetByIdAsync(dto.ReviewerId, ct)
             ?? throw new KeyNotFoundException($"Reviewer employee {dto.ReviewerId} not found.");
+
+        var cycle = await _cycleRepo.GetByIdAsync(dto.ReviewCycleId, ct)
+            ?? throw new KeyNotFoundException($"Review cycle {dto.ReviewCycleId} not found.");
+        if (cycle.Status == ReviewStatus.Completed)
+            throw new DomainException("Cannot create a review for a completed review cycle.");
 
         var review = new PerformanceReview
         {

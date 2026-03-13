@@ -15,11 +15,12 @@ public class PerformanceReviewServiceTests
 {
     private readonly Mock<IPerformanceReviewRepository> _reviewRepo = new();
     private readonly Mock<IEmployeeRepository> _employeeRepo = new();
+    private readonly Mock<IReviewCycleRepository> _cycleRepo = new();
     private readonly PerformanceReviewService _sut;
 
     public PerformanceReviewServiceTests()
     {
-        _sut = new PerformanceReviewService(_reviewRepo.Object, _employeeRepo.Object);
+        _sut = new PerformanceReviewService(_reviewRepo.Object, _employeeRepo.Object, _cycleRepo.Object);
     }
 
     [Fact]
