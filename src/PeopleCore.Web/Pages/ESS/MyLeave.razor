@@ -1,0 +1,185 @@
+@page "/my-leave"
+@attribute [Authorize]
+@inject ApiClient Api
+@inject AuthenticationStateProvider AuthStateProvider
+
+<h2 class="text-2xl font-semibold mb-4">My Leave</h2>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+    <div class="bg-white rounded-lg shadow p-4">
+        <h3 class="font-medium mb-3">Leave Balances (@DateTime.UtcNow.Year)</h3>
+        @if (_balances is null)
+        {
+            <p class="text-sm text-gray-400">Loading...</p>
+        }
+        else
+        {
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-left text-gray-500 border-b text-xs uppercase">
+                        <th class="pb-2">Type</th>
+                        <th class="pb-2 text-right">Total</th>
+                        <th class="pb-2 text-right">Used</th>
+                        <th class="pb-2 text-right">Remaining</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var b in _balances)
+                    {
+                        <tr class="border-b">
+                            <td class="py-2">@b.LeaveTypeName</td>
+                            <td class="text-right">@b.TotalDays</td>
+                            <td class="text-right">@b.UsedDays</td>
+                            <td class="text-right font-semibold text-blue-600">@b.RemainingDays</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+
+    <div class="bg-white rounded-lg shadow p-4">
+        <h3 class="font-medium mb-3">File Leave Request</h3>
+        @if (_successMsg is not null)
+        {
+            <div class="bg-green-50 text-green-700 rounded p-3 mb-3 text-sm">@_successMsg</div>
+        }
+        @if (_error is not null)
+        {
+            <div class="bg-red-50 text-red-700 rounded p-3 mb-3 text-sm">@_error</div>
+        }
+        <div class="space-y-3">
+            <div>
+                <label class="text-sm font-medium block mb-1">Leave Type</label>
+                <select @bind="_leaveTypeId" class="w-full border rounded px-3 py-2 text-sm">
+                    <option value="">-- Select leave type --</option>
+                    @if (_balances is not null)
+                    {
+                        @foreach (var b in _balances.Where(b => b.RemainingDays > 0))
+                        {
+                            <option value="@b.Id">@b.LeaveTypeName (@b.RemainingDays days left)</option>
+                        }
+                    }
+                </select>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="text-sm font-medium block mb-1">From</label>
+                    <input type="date" @bind="_startDate" class="w-full border rounded px-3 py-1.5 text-sm" />
+                </div>
+                <div>
+                    <label class="text-sm font-medium block mb-1">To</label>
+                    <input type="date" @bind="_endDate" class="w-full border rounded px-3 py-1.5 text-sm" />
+                </div>
+            </div>
+            <div>
+                <label class="text-sm font-medium block mb-1">Reason (optional)</label>
+                <textarea @bind="_reason" rows="2" class="w-full border rounded px-3 py-1.5 text-sm"></textarea>
+            </div>
+            <button @onclick="SubmitLeave" disabled="@_submitting"
+                    class="w-full bg-blue-600 text-white py-2 rounded text-sm hover:bg-blue-700 disabled:opacity-60">
+                @(_submitting ? "Submitting..." : "Submit Request")
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="bg-white rounded-lg shadow p-4">
+    <h3 class="font-medium mb-3">Leave History</h3>
+    @if (_requests is null)
+    {
+        <p class="text-sm text-gray-400">Loading...</p>
+    }
+    else if (!_requests.Items.Any())
+    {
+        <p class="text-sm text-gray-400">No leave requests yet.</p>
+    }
+    else
+    {
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="text-left text-gray-500 border-b text-xs uppercase">
+                    <th class="pb-2">Type</th>
+                    <th class="pb-2">From</th>
+                    <th class="pb-2">To</th>
+                    <th class="pb-2 text-right">Days</th>
+                    <th class="pb-2">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _requests.Items)
+                {
+                    <tr class="border-b hover:bg-gray-50">
+                        <td class="py-2">@r.LeaveTypeName</td>
+                        <td>@r.StartDate</td>
+                        <td>@r.EndDate</td>
+                        <td class="text-right">@r.TotalDays</td>
+                        <td><span class="@StatusBadge(r.Status) px-2 py-0.5 rounded-full text-xs">@r.Status</span></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private IReadOnlyList<LeaveBalanceDto>? _balances;
+    private PagedResult<LeaveRequestDto>? _requests;
+    private Guid _employeeId;
+    private string _leaveTypeId = string.Empty;
+    private DateTime _startDate = DateTime.Today;
+    private DateTime _endDate = DateTime.Today;
+    private string? _reason;
+    private string? _successMsg;
+    private string? _error;
+    private bool _submitting;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var empIdClaim = authState.User.FindFirst("employee_id")?.Value;
+        if (Guid.TryParse(empIdClaim, out var empId))
+            _employeeId = empId;
+
+        await Task.WhenAll(LoadBalances(), LoadRequests());
+    }
+
+    private async Task LoadBalances()
+        => _balances = await Api.GetLeaveBalancesAsync(_employeeId);
+
+    private async Task LoadRequests()
+        => _requests = await Api.GetLeaveRequestsAsync(_employeeId, page: 1, pageSize: 20);
+
+    private async Task SubmitLeave()
+    {
+        _submitting = true;
+        _error = null;
+        _successMsg = null;
+        try
+        {
+            if (string.IsNullOrEmpty(_leaveTypeId))
+            { _error = "Please select a leave type."; return; }
+
+            await Api.CreateLeaveRequestAsync(new
+            {
+                employeeId = _employeeId,
+                leaveTypeId = Guid.Parse(_leaveTypeId),
+                startDate = DateOnly.FromDateTime(_startDate),
+                endDate = DateOnly.FromDateTime(_endDate),
+                reason = _reason
+            });
+            _successMsg = "Leave request submitted successfully.";
+            await Task.WhenAll(LoadBalances(), LoadRequests());
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _submitting = false; }
+    }
+
+    private static string StatusBadge(string status) => status switch
+    {
+        "Approved" => "bg-green-100 text-green-700",
+        "Rejected" => "bg-red-100 text-red-700",
+        "Cancelled" => "bg-gray-100 text-gray-500",
+        _ => "bg-yellow-100 text-yellow-700"
+    };
+}

@@ -1,0 +1,75 @@
+@page "/"
+@attribute [Authorize]
+@inject ApiClient Api
+@inject AuthenticationStateProvider AuthStateProvider
+
+<h2 class="text-2xl font-semibold mb-6">Dashboard</h2>
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div class="bg-white rounded-lg shadow p-4">
+        <h3 class="font-medium text-gray-500 text-sm mb-3">Leave Balances</h3>
+        @if (_balances is null)
+        {
+            <p class="text-sm text-gray-400">Loading...</p>
+        }
+        else
+        {
+            @foreach (var b in _balances.Take(3))
+            {
+                <div class="flex justify-between text-sm mt-2">
+                    <span>@b.LeaveTypeName</span>
+                    <span class="font-semibold text-blue-600">@b.RemainingDays days</span>
+                </div>
+            }
+        }
+    </div>
+
+    <div class="bg-white rounded-lg shadow p-4">
+        <h3 class="font-medium text-gray-500 text-sm mb-3">Today's Attendance</h3>
+        @if (_todayRecord is not null)
+        {
+            <div class="text-sm space-y-1">
+                <div>Time In: <span class="font-medium">@(_todayRecord.TimeIn ?? "--:--")</span></div>
+                <div>Time Out: <span class="font-medium">@(_todayRecord.TimeOut ?? "--:--")</span></div>
+                @if (_todayRecord.LateMinutes > 0)
+                {
+                    <div class="text-red-500 text-xs">Late by @_todayRecord.LateMinutes minutes</div>
+                }
+            </div>
+        }
+        else
+        {
+            <p class="text-sm text-gray-400">Not clocked in yet today.</p>
+        }
+    </div>
+
+    <div class="bg-white rounded-lg shadow p-4">
+        <h3 class="font-medium text-gray-500 text-sm mb-3">Pending Leave Requests</h3>
+        <div class="text-3xl font-bold text-orange-500">@_pendingCount</div>
+        <div class="text-sm text-gray-400">awaiting approval</div>
+    </div>
+</div>
+
+@code {
+    private IReadOnlyList<LeaveBalanceDto>? _balances;
+    private AttendanceRecordDto? _todayRecord;
+    private int _pendingCount;
+    private Guid? _employeeId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var empIdClaim = authState.User.FindFirst("employee_id")?.Value;
+        if (Guid.TryParse(empIdClaim, out var empId))
+        {
+            _employeeId = empId;
+            _balances = await Api.GetLeaveBalancesAsync(empId);
+            var attendance = await Api.GetAttendanceAsync(empId, page: 1, pageSize: 1);
+            _todayRecord = attendance?.Items.FirstOrDefault(r =>
+                r.AttendanceDate == DateOnly.FromDateTime(DateTime.Today).ToString("yyyy-MM-dd"));
+        }
+
+        var leaveRequests = await Api.GetLeaveRequestsAsync(employeeId: _employeeId, page: 1, pageSize: 100);
+        _pendingCount = leaveRequests?.Items.Count(r => r.Status == "Pending") ?? 0;
+    }
+}

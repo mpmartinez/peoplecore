@@ -1,0 +1,99 @@
+@page "/leave-approvals"
+@attribute [Authorize(Roles = "Admin,HRManager,Manager")]
+@inject ApiClient Api
+
+<h2 class="text-2xl font-semibold mb-4">Leave Approvals</h2>
+
+@if (_message is not null)
+{
+    <div class="@(_isError ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700") rounded p-3 mb-4 text-sm">
+        @_message
+    </div>
+}
+
+<div class="bg-white rounded-lg shadow overflow-hidden">
+    @if (_requests is null)
+    {
+        <div class="p-6 text-sm text-gray-400">Loading...</div>
+    }
+    else if (!_requests.Items.Any())
+    {
+        <div class="p-6 text-sm text-gray-400">No pending leave requests.</div>
+    }
+    else
+    {
+        <table class="w-full text-sm">
+            <thead class="bg-gray-50">
+                <tr class="text-left text-gray-500 text-xs uppercase">
+                    <th class="px-4 py-3">Employee</th>
+                    <th class="px-4 py-3">Leave Type</th>
+                    <th class="px-4 py-3">From</th>
+                    <th class="px-4 py-3">To</th>
+                    <th class="px-4 py-3 text-right">Days</th>
+                    <th class="px-4 py-3">Reason</th>
+                    <th class="px-4 py-3">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _requests.Items)
+                {
+                    <tr class="border-t hover:bg-gray-50">
+                        <td class="px-4 py-3 font-medium">@r.EmployeeId</td>
+                        <td class="px-4 py-3">@r.LeaveTypeName</td>
+                        <td class="px-4 py-3">@r.StartDate</td>
+                        <td class="px-4 py-3">@r.EndDate</td>
+                        <td class="px-4 py-3 text-right">@r.TotalDays</td>
+                        <td class="px-4 py-3 text-gray-500 max-w-xs truncate">@(r.Reason ?? "--")</td>
+                        <td class="px-4 py-3">
+                            <div class="flex gap-2">
+                                <button @onclick="() => Approve(r.Id)"
+                                        class="bg-green-600 text-white text-xs px-3 py-1 rounded hover:bg-green-700">
+                                    Approve
+                                </button>
+                                <button @onclick="() => Reject(r.Id)"
+                                        class="bg-red-600 text-white text-xs px-3 py-1 rounded hover:bg-red-700">
+                                    Reject
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private PagedResult<LeaveRequestDto>? _requests;
+    private string? _message;
+    private bool _isError;
+
+    protected override async Task OnInitializedAsync() => await LoadRequests();
+
+    private async Task LoadRequests()
+        => _requests = await Api.GetLeaveRequestsAsync(page: 1, pageSize: 50);
+
+    private async Task Approve(Guid requestId)
+    {
+        try
+        {
+            await Api.ApproveLeaveAsync(requestId);
+            _message = "Leave request approved.";
+            _isError = false;
+            await LoadRequests();
+        }
+        catch (Exception ex) { _message = ex.Message; _isError = true; }
+    }
+
+    private async Task Reject(Guid requestId)
+    {
+        try
+        {
+            await Api.RejectLeaveAsync(requestId, "Rejected by manager.");
+            _message = "Leave request rejected.";
+            _isError = false;
+            await LoadRequests();
+        }
+        catch (Exception ex) { _message = ex.Message; _isError = true; }
+    }
+}

@@ -1,0 +1,117 @@
+@page "/my-attendance"
+@attribute [Authorize]
+@inject ApiClient Api
+@inject AuthenticationStateProvider AuthStateProvider
+
+<h2 class="text-2xl font-semibold mb-4">My Attendance</h2>
+
+<div class="bg-white rounded-lg shadow p-4 mb-6">
+    <div class="flex gap-4 items-center flex-wrap">
+        <button @onclick="TimeIn"
+                disabled="@(_clockedIn || _processing)"
+                class="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 disabled:opacity-50 text-sm">
+            Time In
+        </button>
+        <button @onclick="TimeOut"
+                disabled="@(!_clockedIn || _processing)"
+                class="bg-red-600 text-white px-6 py-2 rounded hover:bg-red-700 disabled:opacity-50 text-sm">
+            Time Out
+        </button>
+        <span class="text-sm text-gray-500">@DateTime.Now.ToString("hh:mm tt, MMMM dd yyyy")</span>
+        @if (_message is not null)
+        {
+            <span class="text-sm @(_isError ? "text-red-600" : "text-green-600")">@_message</span>
+        }
+    </div>
+</div>
+
+<div class="bg-white rounded-lg shadow p-4">
+    <h3 class="font-medium mb-3">Recent Attendance</h3>
+    @if (_records is null)
+    {
+        <p class="text-sm text-gray-400">Loading...</p>
+    }
+    else if (!_records.Items.Any())
+    {
+        <p class="text-sm text-gray-400">No attendance records found.</p>
+    }
+    else
+    {
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="text-left text-gray-500 border-b text-xs uppercase">
+                    <th class="pb-2">Date</th>
+                    <th class="pb-2">Time In</th>
+                    <th class="pb-2">Time Out</th>
+                    <th class="pb-2 text-right">Late (min)</th>
+                    <th class="pb-2 text-right">Undertime (min)</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _records.Items)
+                {
+                    <tr class="border-b hover:bg-gray-50">
+                        <td class="py-2">@r.AttendanceDate</td>
+                        <td>@(r.TimeIn ?? "--")</td>
+                        <td>@(r.TimeOut ?? "--")</td>
+                        <td class="text-right @(r.LateMinutes > 0 ? "text-red-600 font-medium" : "")">@r.LateMinutes</td>
+                        <td class="text-right @(r.UndertimeMinutes > 0 ? "text-orange-600 font-medium" : "")">@r.UndertimeMinutes</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private PagedResult<AttendanceRecordDto>? _records;
+    private bool _clockedIn;
+    private bool _processing;
+    private string? _message;
+    private bool _isError;
+    private Guid _employeeId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var empIdClaim = authState.User.FindFirst("employee_id")?.Value;
+        if (Guid.TryParse(empIdClaim, out var empId))
+            _employeeId = empId;
+
+        await LoadRecords();
+        var today = DateOnly.FromDateTime(DateTime.Today).ToString("yyyy-MM-dd");
+        _clockedIn = _records?.Items.Any(r => r.AttendanceDate == today && r.TimeIn != null) ?? false;
+    }
+
+    private async Task LoadRecords()
+        => _records = await Api.GetAttendanceAsync(_employeeId, page: 1, pageSize: 20);
+
+    private async Task TimeIn()
+    {
+        _processing = true;
+        try
+        {
+            await Api.TimeInAsync(_employeeId);
+            _clockedIn = true;
+            _message = "Clocked in successfully.";
+            _isError = false;
+            await LoadRecords();
+        }
+        catch (Exception ex) { _message = ex.Message; _isError = true; }
+        finally { _processing = false; }
+    }
+
+    private async Task TimeOut()
+    {
+        _processing = true;
+        try
+        {
+            await Api.TimeOutAsync(_employeeId);
+            _message = "Clocked out successfully.";
+            _isError = false;
+            await LoadRecords();
+        }
+        catch (Exception ex) { _message = ex.Message; _isError = true; }
+        finally { _processing = false; }
+    }
+}

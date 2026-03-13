@@ -1,0 +1,101 @@
+@page "/employees"
+@attribute [Authorize(Roles = "Admin,HRManager")]
+@inject ApiClient Api
+
+<h2 class="text-2xl font-semibold mb-4">Employees</h2>
+
+<div class="bg-white rounded-lg shadow p-4 mb-4">
+    <div class="flex gap-3 items-center">
+        <input @bind="_search" @bind:event="oninput" @onkeyup="OnSearch"
+               placeholder="Search by name or number..."
+               class="border rounded px-3 py-1.5 text-sm flex-1 max-w-xs" />
+        <select @bind="_statusFilter" @bind:after="LoadEmployees" class="border rounded px-3 py-1.5 text-sm">
+            <option value="">All Status</option>
+            <option value="true">Active</option>
+            <option value="false">Inactive</option>
+        </select>
+    </div>
+</div>
+
+<div class="bg-white rounded-lg shadow overflow-hidden">
+    @if (_employees is null)
+    {
+        <div class="p-6 text-sm text-gray-400">Loading...</div>
+    }
+    else if (!_employees.Items.Any())
+    {
+        <div class="p-6 text-sm text-gray-400">No employees found.</div>
+    }
+    else
+    {
+        <table class="w-full text-sm">
+            <thead class="bg-gray-50">
+                <tr class="text-left text-gray-500 text-xs uppercase">
+                    <th class="px-4 py-3">Employee #</th>
+                    <th class="px-4 py-3">Name</th>
+                    <th class="px-4 py-3">Department</th>
+                    <th class="px-4 py-3">Position</th>
+                    <th class="px-4 py-3">Status</th>
+                    <th class="px-4 py-3">Employment</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var emp in _employees.Items)
+                {
+                    <tr class="border-t hover:bg-gray-50">
+                        <td class="px-4 py-3 font-mono text-xs">@emp.EmployeeNumber</td>
+                        <td class="px-4 py-3">
+                            <div class="font-medium">@emp.FullName</div>
+                            <div class="text-xs text-gray-400">@emp.WorkEmail</div>
+                        </td>
+                        <td class="px-4 py-3 text-gray-600">@(emp.DepartmentName ?? "--")</td>
+                        <td class="px-4 py-3 text-gray-600">@(emp.PositionTitle ?? "--")</td>
+                        <td class="px-4 py-3">
+                            <span class="@(emp.IsActive ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500") px-2 py-0.5 rounded-full text-xs">
+                                @(emp.IsActive ? "Active" : "Inactive")
+                            </span>
+                        </td>
+                        <td class="px-4 py-3 text-gray-600">@emp.EmploymentStatus</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        @if (_employees.TotalPages > 1)
+        {
+            <div class="px-4 py-3 border-t flex items-center justify-between text-sm text-gray-500">
+                <span>Showing @((_page - 1) * _pageSize + 1)–@Math.Min(_page * _pageSize, _employees.TotalCount) of @_employees.TotalCount</span>
+                <div class="flex gap-2">
+                    <button @onclick="PrevPage" disabled="@(_page <= 1)"
+                            class="px-3 py-1 border rounded disabled:opacity-40 hover:bg-gray-50">Prev</button>
+                    <button @onclick="NextPage" disabled="@(_page >= _employees.TotalPages)"
+                            class="px-3 py-1 border rounded disabled:opacity-40 hover:bg-gray-50">Next</button>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private PagedResult<EmployeeListDto>? _employees;
+    private string _search = string.Empty;
+    private string _statusFilter = string.Empty;
+    private int _page = 1;
+    private const int _pageSize = 20;
+
+    protected override async Task OnInitializedAsync() => await LoadEmployees();
+
+    private async Task LoadEmployees()
+    {
+        _employees = await Api.GetEmployeesAsync(_page, _pageSize);
+    }
+
+    private async Task OnSearch()
+    {
+        _page = 1;
+        await LoadEmployees();
+    }
+
+    private async Task PrevPage() { if (_page > 1) { _page--; await LoadEmployees(); } }
+    private async Task NextPage() { if (_employees is not null && _page < _employees.TotalPages) { _page++; await LoadEmployees(); } }
+}
