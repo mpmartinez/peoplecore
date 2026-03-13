@@ -1,3 +1,4 @@
+using M2NET.Core.Enums;
 using PeopleCore.Domain.Enums;
 
 namespace PeopleCore.Application.Employees.DTOs;
@@ -10,8 +11,8 @@ public record EmployeeDto(
     string LastName,
     string FullName,
     DateOnly DateOfBirth,
-    string Gender,
-    string? CivilStatus,
+    Gender Gender,
+    CivilStatus? CivilStatus,
     string WorkEmail,
     string? MobileNumber,
     Guid? DepartmentId,
@@ -22,7 +23,7 @@ public record EmployeeDto(
     string? ReportingManagerName,
     Guid? TeamId,
     EmploymentStatus EmploymentStatus,
-    string EmploymentType,
+    EmploymentType EmploymentType,
     DateOnly HireDate,
     DateOnly? RegularizationDate,
     bool IsActive,
@@ -34,14 +35,14 @@ public record CreateEmployeeDto(
     string? MiddleName,
     string LastName,
     DateOnly DateOfBirth,
-    string Gender,
+    Gender Gender,
     string WorkEmail,
     string? MobileNumber,
     Guid? DepartmentId,
     Guid? PositionId,
     Guid? ReportingManagerId,
     EmploymentStatus EmploymentStatus,
-    string EmploymentType,
+    EmploymentType EmploymentType,
     DateOnly HireDate);
 
 public record UpdateEmployeeDto(

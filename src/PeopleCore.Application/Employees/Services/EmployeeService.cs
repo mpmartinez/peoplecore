@@ -1,3 +1,4 @@
+using M2NET.Core.Enums;
 using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Employees.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
@@ -62,7 +63,8 @@ public class EmployeeService : IEmployeeService
         employee.FirstName = dto.FirstName;
         employee.MiddleName = dto.MiddleName;
         employee.LastName = dto.LastName;
-        employee.CivilStatus = dto.CivilStatus;
+        if (dto.CivilStatus is not null && Enum.TryParse<CivilStatus>(dto.CivilStatus, true, out var cs))
+            employee.CivilStatus = cs;
         employee.PersonalEmail = dto.PersonalEmail;
         employee.MobileNumber = dto.MobileNumber;
         employee.Address = dto.Address;

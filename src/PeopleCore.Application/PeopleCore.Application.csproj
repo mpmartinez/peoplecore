@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PeopleCore.Domain\PeopleCore.Domain.csproj" />
+    <ProjectReference Include="..\..\..\M2NET.Core\src\M2NET.Core\M2NET.Core.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

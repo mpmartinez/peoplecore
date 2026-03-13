@@ -1,3 +1,4 @@
+using M2NET.Core.Enums;
 using PeopleCore.Domain.Enums;
 
 namespace PeopleCore.Application.Recruitment.DTOs;
@@ -35,7 +36,7 @@ public record ConvertToEmployeeDto(
     EmploymentStatus EmploymentStatus,
     DateOnly HireDate,
     DateOnly DateOfBirth,
-    string Gender);
+    Gender Gender);
 
 public record InterviewStageDto(
     Guid Id, Guid ApplicantId, string ApplicantName,

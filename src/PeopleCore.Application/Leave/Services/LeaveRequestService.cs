@@ -54,7 +54,7 @@ public class LeaveRequestService : ILeaveRequestService
             ?? throw new KeyNotFoundException($"Leave type {dto.LeaveTypeId} not found.");
 
         // Gender restriction check — always runs, even when no balance yet
-        if (leaveType.GenderRestriction is not null && leaveType.GenderRestriction != employee.Gender)
+        if (leaveType.GenderRestriction is not null && leaveType.GenderRestriction != employee.Gender.ToString())
             throw new DomainException($"Employee is not eligible for this leave type.");
 
         var balance = await _balanceRepo.GetByEmployeeAndTypeAsync(

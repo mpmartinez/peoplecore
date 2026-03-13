@@ -15,6 +15,22 @@ public class EmployeeConfiguration : IEntityTypeConfiguration<Employee>
         builder.Property(e => e.LastName).IsRequired().HasMaxLength(100);
         builder.Property(e => e.WorkEmail).IsRequired().HasMaxLength(200);
         builder.Property(e => e.EmploymentStatus).HasConversion<string>();
+        builder.Property(e => e.EmploymentType).HasConversion<string>();
+        builder.Property(e => e.Gender).HasConversion<string>();
+        builder.Property(e => e.CivilStatus).HasConversion<string>();
+
+        // Ignore base class properties superseded by PeopleCore equivalents
+        builder.Ignore("BirthDate");          // PeopleCore uses DateOfBirth (DateOnly)
+        builder.Ignore("DepartmentName");     // PeopleCore uses FK navigation
+        builder.Ignore("PositionName");       // PeopleCore uses FK navigation
+        builder.Ignore("TIN");               // PeopleCore uses GovernmentIds collection
+        builder.Ignore("SSSNumber");
+        builder.Ignore("PhilHealthNumber");
+        builder.Ignore("PagIbigNumber");
+        builder.Ignore("Email");             // PeopleCore uses PersonalEmail / WorkEmail
+        builder.Ignore("Phone");             // PeopleCore uses MobileNumber
+        builder.Ignore("Mobile");            // PeopleCore uses MobileNumber
+
         builder.HasOne(e => e.ReportingManager)
                .WithMany()
                .HasForeignKey(e => e.ReportingManagerId)
@@ -31,7 +47,10 @@ public class EmployeeConfiguration : IEntityTypeConfiguration<Employee>
                .WithOne(d => d.Employee)
                .HasForeignKey(d => d.EmployeeId)
                .OnDelete(DeleteBehavior.Cascade);
+
         builder.Ignore(e => e.FullName);
+        builder.Ignore(e => e.DisplayName);
+
         builder.ToTable("employees");
     }
 }

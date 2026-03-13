@@ -1,3 +1,4 @@
+using M2NET.Core.Enums;
 using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Employees.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
@@ -101,7 +102,7 @@ public class ApplicantService : IApplicantService
             PositionId = dto.PositionId,
             ReportingManagerId = dto.ReportingManagerId,
             EmploymentStatus = dto.EmploymentStatus,
-            EmploymentType = "FullTime",
+            EmploymentType = EmploymentType.Regular,
             HireDate = dto.HireDate,
             DateOfBirth = dto.DateOfBirth,
             Gender = dto.Gender,

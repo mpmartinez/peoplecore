@@ -44,7 +44,7 @@ public class PayrollExportService : IPayrollExportService
                 DepartmentName: e.Department?.Name ?? string.Empty,
                 PositionTitle: e.Position?.Title ?? string.Empty,
                 EmploymentStatus: e.EmploymentStatus.ToString(),
-                EmploymentType: e.EmploymentType,
+                EmploymentType: e.EmploymentType.ToString(),
                 HireDate: e.HireDate,
                 RegularizationDate: e.RegularizationDate,
                 Is13thMonthEligible: e.Is13thMonthEligible,
