@@ -14,6 +14,8 @@ using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Application.Leave.Services;
 using PeopleCore.Application.Organization.Interfaces;
 using PeopleCore.Application.Organization.Services;
+using PeopleCore.Application.PayrollIntegration.Interfaces;
+using PeopleCore.Application.PayrollIntegration.Services;
 using PeopleCore.Application.Performance.Interfaces;
 using PeopleCore.Application.Performance.Services;
 using PeopleCore.Application.Recruitment.Interfaces;
@@ -143,6 +145,9 @@ public static class ServiceExtensions
         services.AddScoped<IPerformanceReviewRepository, PerformanceReviewRepository>();
         services.AddScoped<IReviewCycleService, ReviewCycleService>();
         services.AddScoped<IPerformanceReviewService, PerformanceReviewService>();
+
+        // Payroll Export
+        services.AddScoped<IPayrollExportService, PayrollExportService>();
 
         return services;
     }
