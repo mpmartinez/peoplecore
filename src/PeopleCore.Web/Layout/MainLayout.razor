@@ -1,16 +1,31 @@
-﻿@inherits LayoutComponentBase
-<div class="page">
-    <div class="sidebar">
-        <NavMenu />
-    </div>
+@inherits LayoutComponentBase
+@inject PeopleCore.Web.Auth.JwtAuthStateProvider AuthProvider
+@inject NavigationManager Nav
 
-    <main>
-        <div class="top-row px-4">
-            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
-        </div>
-
-        <article class="content px-4">
+<div class="flex h-screen bg-gray-100">
+    <NavMenu />
+    <div class="flex-1 flex flex-col overflow-hidden">
+        <header class="bg-white shadow px-6 py-3 flex justify-between items-center">
+            <h1 class="text-xl font-semibold text-gray-800">PeopleCore HRMS</h1>
+            <AuthorizeView>
+                <Authorized>
+                    <div class="flex items-center gap-4">
+                        <span class="text-sm text-gray-600">@context.User.Identity?.Name</span>
+                        <button @onclick="Logout" class="text-sm text-red-600 hover:text-red-800">Logout</button>
+                    </div>
+                </Authorized>
+            </AuthorizeView>
+        </header>
+        <main class="flex-1 overflow-auto p-6">
             @Body
-        </article>
-    </main>
+        </main>
+    </div>
 </div>
+
+@code {
+    private async Task Logout()
+    {
+        await AuthProvider.LogoutAsync();
+        Nav.NavigateTo("/login");
+    }
+}

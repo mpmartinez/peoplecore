@@ -1,39 +1,43 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
-    <div class="container-fluid">
-        <a class="navbar-brand" href="">PeopleCore.Web</a>
-        <button title="Navigation menu" class="navbar-toggler" @onclick="ToggleNavMenu">
-            <span class="navbar-toggler-icon"></span>
-        </button>
+@using Microsoft.AspNetCore.Components.Authorization
+
+<nav class="w-64 bg-blue-800 text-white flex flex-col p-4 shrink-0">
+    <div class="text-xl font-bold mb-8 px-2">PeopleCore</div>
+
+    <AuthorizeView Roles="Admin,HRManager">
+        <Authorized>
+            <div class="mb-4">
+                <div class="text-xs uppercase text-blue-300 mb-2 px-2">Organization</div>
+                <NavLink href="/departments" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">Departments</NavLink>
+                <NavLink href="/positions" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">Positions</NavLink>
+            </div>
+            <div class="mb-4">
+                <div class="text-xs uppercase text-blue-300 mb-2 px-2">Employees</div>
+                <NavLink href="/employees" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">All Employees</NavLink>
+            </div>
+            <div class="mb-4">
+                <div class="text-xs uppercase text-blue-300 mb-2 px-2">Recruitment</div>
+                <NavLink href="/job-postings" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">Job Postings</NavLink>
+                <NavLink href="/applicants" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">Applicants</NavLink>
+            </div>
+        </Authorized>
+    </AuthorizeView>
+
+    <div class="mb-4">
+        <div class="text-xs uppercase text-blue-300 mb-2 px-2">My HR</div>
+        <NavLink href="/" Match="NavLinkMatch.All" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">Dashboard</NavLink>
+        <NavLink href="/my-profile" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">My Profile</NavLink>
+        <NavLink href="/my-attendance" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">Attendance</NavLink>
+        <NavLink href="/my-leave" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">Leave</NavLink>
     </div>
-</div>
 
-<div class="@NavMenuCssClass nav-scrollable" @onclick="ToggleNavMenu">
-    <nav class="nav flex-column">
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="counter">
-                <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Counter
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="weather">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Weather
-            </NavLink>
-        </div>
-    </nav>
-</div>
-
-@code {
-    private bool collapseNavMenu = true;
-
-    private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
-
-    private void ToggleNavMenu()
-    {
-        collapseNavMenu = !collapseNavMenu;
-    }
-}
+    <AuthorizeView Roles="Admin,HRManager,Manager">
+        <Authorized>
+            <div class="mb-4">
+                <div class="text-xs uppercase text-blue-300 mb-2 px-2">Management</div>
+                <NavLink href="/leave-approvals" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">Leave Approvals</NavLink>
+                <NavLink href="/overtime-approvals" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">OT Approvals</NavLink>
+                <NavLink href="/performance" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">Performance</NavLink>
+            </div>
+        </Authorized>
+    </AuthorizeView>
+</nav>

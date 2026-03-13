@@ -1,0 +1,64 @@
+@page "/login"
+@layout PeopleCore.Web.Components.Layout.EmptyLayout
+@inject PeopleCore.Web.Services.ApiClient Api
+@inject PeopleCore.Web.Auth.JwtAuthStateProvider AuthProvider
+@inject NavigationManager Nav
+
+<div class="min-h-screen flex items-center justify-center bg-gray-50">
+    <div class="max-w-md w-full bg-white rounded-lg shadow p-8">
+        <h2 class="text-2xl font-bold text-center mb-6">PeopleCore</h2>
+
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <div class="bg-red-50 text-red-700 rounded p-3 mb-4 text-sm">@_error</div>
+        }
+
+        <EditForm Model="_form" OnValidSubmit="HandleLogin">
+            <DataAnnotationsValidator />
+            <div class="mb-4">
+                <label class="block text-sm font-medium mb-1">Email</label>
+                <InputText @bind-Value="_form.Email" class="w-full border rounded px-3 py-2 text-sm" placeholder="you@company.com" />
+            </div>
+            <div class="mb-6">
+                <label class="block text-sm font-medium mb-1">Password</label>
+                <InputText @bind-Value="_form.Password" type="password" class="w-full border rounded px-3 py-2 text-sm" />
+            </div>
+            <button type="submit" disabled="@_loading"
+                    class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-60 text-sm">
+                @(_loading ? "Signing in..." : "Sign In")
+            </button>
+        </EditForm>
+    </div>
+</div>
+
+@code {
+    private readonly LoginForm _form = new();
+    private string? _error;
+    private bool _loading;
+
+    private async Task HandleLogin()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            var result = await Api.LoginAsync(_form.Email, _form.Password);
+            if (result is not null)
+            {
+                await AuthProvider.LoginAsync(result.Token);
+                Nav.NavigateTo("/");
+            }
+        }
+        catch
+        {
+            _error = "Invalid email or password.";
+        }
+        finally { _loading = false; }
+    }
+
+    private class LoginForm
+    {
+        public string Email { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+    }
+}
