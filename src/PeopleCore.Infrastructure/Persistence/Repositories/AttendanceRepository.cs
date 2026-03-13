@@ -33,4 +33,10 @@ public class AttendanceRepository : Repository<AttendanceRecord>, IAttendanceRep
             .Include(r => r.Employee)
             .Where(r => r.EmployeeId == employeeId && r.AttendanceDate >= from && r.AttendanceDate <= to)
             .ToListAsync(ct);
+
+    public async Task<IReadOnlyList<AttendanceRecord>> GetAllByPeriodAsync(DateOnly from, DateOnly to, CancellationToken ct = default)
+        => await Context.AttendanceRecords
+            .Include(r => r.Employee)
+            .Where(r => r.AttendanceDate >= from && r.AttendanceDate <= to)
+            .ToListAsync(ct);
 }

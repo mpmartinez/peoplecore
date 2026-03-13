@@ -62,19 +62,23 @@ public class PayrollExportService : IPayrollExportService
         if (employeeId.HasValue)
         {
             var employee = await _employeeRepo.GetByIdAsync(employeeId.Value, ct);
-            if (employee is null) return [];
+            if (employee is null || !employee.IsActive) return [];
 
             var records = await _attendanceRepo.GetByEmployeeAndPeriodAsync(employeeId.Value, from, to, ct);
             return [BuildSummary(employee, records, from, to)];
         }
 
-        var allEmployees = await _employeeRepo.GetAllAsync(ct);
-        var activeEmployees = allEmployees.Where(e => e.IsActive).ToList();
+        // Single query for all records in period — eliminates N+1
+        var allRecords = await _attendanceRepo.GetAllByPeriodAsync(from, to, ct);
+        var recordsByEmployee = allRecords
+            .GroupBy(r => r.EmployeeId)
+            .ToDictionary(g => g.Key, g => (IReadOnlyList<AttendanceRecord>)g.ToList());
 
+        var allEmployees = await _employeeRepo.GetAllAsync(ct);
         var summaries = new List<PayrollAttendanceSummaryDto>();
-        foreach (var emp in activeEmployees)
+        foreach (var emp in allEmployees.Where(e => e.IsActive))
         {
-            var records = await _attendanceRepo.GetByEmployeeAndPeriodAsync(emp.Id, from, to, ct);
+            var records = recordsByEmployee.GetValueOrDefault(emp.Id) ?? [];
             summaries.Add(BuildSummary(emp, records, from, to));
         }
 
@@ -89,11 +93,11 @@ public class PayrollExportService : IPayrollExportService
         return leaves.Select(l => new PayrollLeaveDeductionDto(
             LeaveRequestId: l.Id,
             EmployeeId: l.EmployeeId,
-            EmployeeNumber: l.Employee.EmployeeNumber,
-            FullName: l.Employee.FullName,
-            LeaveTypeCode: l.LeaveType.Code,
-            LeaveTypeName: l.LeaveType.Name,
-            IsPaid: l.LeaveType.IsPaid,
+            EmployeeNumber: l.Employee?.EmployeeNumber ?? string.Empty,
+            FullName: l.Employee?.FullName ?? string.Empty,
+            LeaveTypeCode: l.LeaveType?.Code ?? string.Empty,
+            LeaveTypeName: l.LeaveType?.Name ?? string.Empty,
+            IsPaid: l.LeaveType?.IsPaid ?? false,
             StartDate: l.StartDate,
             EndDate: l.EndDate,
             TotalDays: l.TotalDays,
@@ -109,8 +113,8 @@ public class PayrollExportService : IPayrollExportService
         return overtimes.Select(o => new PayrollOvertimeDto(
             OvertimeRequestId: o.Id,
             EmployeeId: o.EmployeeId,
-            EmployeeNumber: o.Employee.EmployeeNumber,
-            FullName: o.Employee.FullName,
+            EmployeeNumber: o.Employee?.EmployeeNumber ?? string.Empty,
+            FullName: o.Employee?.FullName ?? string.Empty,
             OvertimeDate: o.OvertimeDate,
             TotalMinutes: o.TotalMinutes,
             ApprovedAt: o.ApprovedAt!.Value))
