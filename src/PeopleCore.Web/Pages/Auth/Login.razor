@@ -46,7 +46,7 @@
             if (result is not null)
             {
                 await AuthProvider.LoginAsync(result.Token);
-                Nav.NavigateTo("/");
+                Nav.NavigateTo("/", forceLoad: true);
             }
         }
         catch
