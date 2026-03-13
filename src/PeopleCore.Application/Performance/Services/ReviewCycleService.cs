@@ -51,7 +51,7 @@ public class ReviewCycleService : IReviewCycleService
             ?? throw new KeyNotFoundException($"Review cycle {id} not found.");
 
         if (cycle.Status != ReviewStatus.Draft && cycle.Status != ReviewStatus.Submitted)
-            throw new DomainException("Only Draft or Active review cycles can be closed.");
+            throw new DomainException("Only Draft or Submitted review cycles can be closed.");
 
         cycle.Status = ReviewStatus.Completed;
 

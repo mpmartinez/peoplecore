@@ -110,7 +110,7 @@ public class PerformanceReviewService : IPerformanceReviewService
         review.ManagerComments = dto.Comments;
         review.Status = ReviewStatus.Completed;
         review.CompletedAt = DateTime.UtcNow;
-        review.FinalScore = (review.SelfEvaluationScore + dto.Score) / 2;
+        review.FinalScore = (review.SelfEvaluationScore!.Value + dto.Score) / 2;
 
         foreach (var kpiUpdate in dto.KpiItems)
         {
