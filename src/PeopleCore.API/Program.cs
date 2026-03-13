@@ -1,9 +1,11 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.IdentityModel.Tokens;
 using System.Security.Claims;
 using System.Text.Json;
 using PeopleCore.API.Extensions;
 using PeopleCore.API.Middleware;
+using PeopleCore.Infrastructure.Identity;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -34,5 +36,26 @@ app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+
+// Seed roles and default admin on first run
+using (var scope = app.Services.CreateScope())
+{
+    var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+    var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+
+    string[] roles = ["Admin", "HRManager", "Manager", "Employee", "PayrollService"];
+    foreach (var role in roles)
+        if (!await roleManager.RoleExistsAsync(role))
+            await roleManager.CreateAsync(new IdentityRole(role));
+
+    const string adminEmail = "admin@peoplecore.local";
+    const string adminPassword = "Admin@123456";
+    if (await userManager.FindByEmailAsync(adminEmail) is null)
+    {
+        var admin = new ApplicationUser { UserName = adminEmail, Email = adminEmail, EmailConfirmed = true };
+        await userManager.CreateAsync(admin, adminPassword);
+        await userManager.AddToRoleAsync(admin, "Admin");
+    }
+}
 
 app.Run();
