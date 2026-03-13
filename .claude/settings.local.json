@@ -14,7 +14,15 @@
       "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/.worktrees/feature/hrms-implementation/src/PeopleCore.Infrastructure/Storage\")",
       "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/.worktrees/feature/hrms-implementation/tests/PeopleCore.Application.Tests/Employees\")",
       "Bash(xargs grep:*)",
-      "Bash(dotnet ef:*)"
+      "Bash(dotnet ef:*)",
+      "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/src/PeopleCore.Application/Performance/DTOs\")",
+      "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/src/PeopleCore.Application/Performance/Interfaces\")",
+      "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/src/PeopleCore.Application/Performance/Services\")",
+      "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/src/PeopleCore.Infrastructure/Persistence/Repositories\")",
+      "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/src/PeopleCore.API/Controllers/Performance\")",
+      "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/tests/PeopleCore.Application.Tests/Performance\")",
+      "Bash(find 'c:/M2NET PROJECTS/peoplecore/src/PeopleCore.Web/Services' -name *.cs)",
+      "Bash(find 'c:/M2NET PROJECTS/peoplecore/src/PeopleCore.Web/Auth' -name *.razor -o -name *.cs)"
     ]
   }
 }
