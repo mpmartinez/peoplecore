@@ -14,6 +14,8 @@ using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Application.Leave.Services;
 using PeopleCore.Application.Organization.Interfaces;
 using PeopleCore.Application.Organization.Services;
+using PeopleCore.Application.Performance.Interfaces;
+using PeopleCore.Application.Performance.Services;
 using PeopleCore.Application.Recruitment.Interfaces;
 using PeopleCore.Application.Recruitment.Services;
 using PeopleCore.Domain.Entities.Recruitment;
@@ -135,6 +137,12 @@ public static class ServiceExtensions
         services.AddScoped<IJobPostingService, JobPostingService>();
         services.AddScoped<IApplicantService, ApplicantService>();
         services.AddScoped<IInterviewService, InterviewService>();
+
+        // Performance
+        services.AddScoped<IReviewCycleRepository, ReviewCycleRepository>();
+        services.AddScoped<IPerformanceReviewRepository, PerformanceReviewRepository>();
+        services.AddScoped<IReviewCycleService, ReviewCycleService>();
+        services.AddScoped<IPerformanceReviewService, PerformanceReviewService>();
 
         return services;
     }
