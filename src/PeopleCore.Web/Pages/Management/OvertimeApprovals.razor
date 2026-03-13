@@ -1,0 +1,101 @@
+@page "/overtime-approvals"
+@attribute [Authorize(Roles = "Admin,HRManager,Manager")]
+@inject ApiClient Api
+@inject AuthenticationStateProvider AuthStateProvider
+
+<h2 class="text-2xl font-semibold mb-4">Overtime Approvals</h2>
+
+<div class="bg-white rounded-lg shadow p-4 mb-4 flex items-center gap-3">
+    <select @bind="_statusFilter" @bind:after="Load" class="border rounded px-3 py-1.5 text-sm">
+        <option value="Pending">Pending</option>
+        <option value="">All</option>
+        <option value="Approved">Approved</option>
+        <option value="Rejected">Rejected</option>
+    </select>
+</div>
+
+@if (_error is not null) { <div class="bg-red-50 text-red-700 rounded p-3 mb-4 text-sm">@_error</div> }
+
+<div class="bg-white rounded-lg shadow overflow-hidden">
+    @if (_requests is null)
+    {
+        <div class="p-6 text-sm text-gray-400">Loading...</div>
+    }
+    else if (!_requests.Items.Any())
+    {
+        <div class="p-6 text-sm text-gray-400">No overtime requests.</div>
+    }
+    else
+    {
+        <table class="w-full text-sm">
+            <thead class="bg-gray-50">
+                <tr class="text-left text-gray-500 text-xs uppercase">
+                    <th class="px-4 py-3">Employee</th>
+                    <th class="px-4 py-3">Date</th>
+                    <th class="px-4 py-3">Hours</th>
+                    <th class="px-4 py-3">Reason</th>
+                    <th class="px-4 py-3">Status</th>
+                    <th class="px-4 py-3">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _requests.Items)
+                {
+                    <tr class="border-t hover:bg-gray-50">
+                        <td class="px-4 py-3 font-medium">@r.EmployeeName</td>
+                        <td class="px-4 py-3 text-gray-500">@r.OvertimeDate</td>
+                        <td class="px-4 py-3 text-gray-500">@((r.TotalMinutes / 60.0).ToString("F1"))h</td>
+                        <td class="px-4 py-3 text-gray-500 max-w-xs truncate">@r.Reason</td>
+                        <td class="px-4 py-3">
+                            <span class="px-2 py-0.5 rounded-full text-xs @OtStatusClass(r.Status)">@r.Status</span>
+                        </td>
+                        <td class="px-4 py-3 flex gap-2">
+                            @if (r.Status == "Pending" && _currentEmployeeId.HasValue)
+                            {
+                                <button @onclick="() => Approve(r.Id)" class="text-xs text-green-600 hover:underline">Approve</button>
+                                <button @onclick="() => Reject(r.Id)" class="text-xs text-red-500 hover:underline">Reject</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private PagedResult<OvertimeRequestDto>? _requests;
+    private string _statusFilter = "Pending";
+    private Guid? _currentEmployeeId;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+        var empId = auth.User.FindFirst("employee_id")?.Value;
+        if (Guid.TryParse(empId, out var id)) _currentEmployeeId = id;
+        await Load();
+    }
+
+    private async Task Load() => _requests = await Api.GetOvertimeRequestsAsync(status: string.IsNullOrEmpty(_statusFilter) ? null : _statusFilter);
+
+    private async Task Approve(Guid id)
+    {
+        if (!_currentEmployeeId.HasValue) { _error = "No employee ID linked to your account."; return; }
+        try { await Api.ApproveOvertimeAsync(id, _currentEmployeeId.Value); await Load(); }
+        catch { _error = "Failed to approve."; }
+    }
+
+    private async Task Reject(Guid id)
+    {
+        try { await Api.RejectOvertimeAsync(id, "Rejected by manager"); await Load(); }
+        catch { _error = "Failed to reject."; }
+    }
+
+    private static string OtStatusClass(string s) => s switch
+    {
+        "Approved" => "bg-green-100 text-green-700",
+        "Rejected" => "bg-red-100 text-red-700",
+        _ => "bg-yellow-100 text-yellow-700"
+    };
+}

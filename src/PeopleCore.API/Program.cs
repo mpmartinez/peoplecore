@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Security.Claims;
 using System.Text.Json;
@@ -55,6 +56,13 @@ using (var scope = app.Services.CreateScope())
         var admin = new ApplicationUser { UserName = adminEmail, Email = adminEmail, EmailConfirmed = true };
         await userManager.CreateAsync(admin, adminPassword);
         await userManager.AddToRoleAsync(admin, "Admin");
+    }
+
+    var dbContext = scope.ServiceProvider.GetRequiredService<PeopleCore.Infrastructure.Persistence.AppDbContext>();
+    if (!await dbContext.Companies.AnyAsync())
+    {
+        dbContext.Companies.Add(new PeopleCore.Domain.Entities.Organization.Company { Name = "My Company" });
+        await dbContext.SaveChangesAsync();
     }
 }
 

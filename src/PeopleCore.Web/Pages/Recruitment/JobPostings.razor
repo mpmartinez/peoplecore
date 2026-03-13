@@ -1,0 +1,137 @@
+@page "/job-postings"
+@attribute [Authorize(Roles = "Admin,HRManager")]
+@inject ApiClient Api
+
+<h2 class="text-2xl font-semibold mb-4">Job Postings</h2>
+
+<div class="bg-white rounded-lg shadow p-4 mb-4 flex items-center gap-3">
+    <select @bind="_statusFilter" @bind:after="Load" class="border rounded px-3 py-1.5 text-sm">
+        <option value="">All Status</option>
+        <option value="Draft">Draft</option>
+        <option value="Open">Open</option>
+        <option value="Closed">Closed</option>
+    </select>
+    <button @onclick="() => _showForm = !_showForm"
+            class="ml-auto bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700">
+        + New Posting
+    </button>
+</div>
+
+@if (_showForm)
+{
+    <div class="bg-white rounded-lg shadow p-4 mb-4">
+        <h3 class="font-medium mb-3 text-sm">New Job Posting</h3>
+        <div class="grid grid-cols-2 gap-3 mb-3">
+            <div>
+                <label class="block text-xs text-gray-500 mb-1">Title *</label>
+                <input @bind="_form.Title" class="border rounded px-3 py-1.5 text-sm w-full" />
+            </div>
+            <div>
+                <label class="block text-xs text-gray-500 mb-1">Vacancies</label>
+                <input type="number" @bind="_form.Vacancies" class="border rounded px-3 py-1.5 text-sm w-full" />
+            </div>
+        </div>
+        <div class="mb-3">
+            <label class="block text-xs text-gray-500 mb-1">Description</label>
+            <textarea @bind="_form.Description" rows="3" class="border rounded px-3 py-1.5 text-sm w-full"></textarea>
+        </div>
+        <div class="flex gap-2">
+            <button @onclick="CreatePosting" disabled="@(_saving || string.IsNullOrWhiteSpace(_form.Title))"
+                    class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
+                @(_saving ? "Saving..." : "Save Draft")
+            </button>
+            <button @onclick="() => _showForm = false" class="px-4 py-1.5 rounded text-sm border hover:bg-gray-50">Cancel</button>
+        </div>
+    </div>
+}
+
+@if (_error is not null)
+{
+    <div class="bg-red-50 text-red-700 rounded p-3 mb-4 text-sm">@_error</div>
+}
+
+<div class="bg-white rounded-lg shadow overflow-hidden">
+    @if (_postings is null)
+    {
+        <div class="p-6 text-sm text-gray-400">Loading...</div>
+    }
+    else if (!_postings.Items.Any())
+    {
+        <div class="p-6 text-sm text-gray-400">No job postings found.</div>
+    }
+    else
+    {
+        <table class="w-full text-sm">
+            <thead class="bg-gray-50">
+                <tr class="text-left text-gray-500 text-xs uppercase">
+                    <th class="px-4 py-3">Title</th>
+                    <th class="px-4 py-3">Department</th>
+                    <th class="px-4 py-3">Vacancies</th>
+                    <th class="px-4 py-3">Status</th>
+                    <th class="px-4 py-3">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var p in _postings.Items)
+                {
+                    <tr class="border-t hover:bg-gray-50">
+                        <td class="px-4 py-3 font-medium">@p.Title</td>
+                        <td class="px-4 py-3 text-gray-500">@(p.DepartmentName ?? "--")</td>
+                        <td class="px-4 py-3 text-gray-500">@p.Vacancies</td>
+                        <td class="px-4 py-3">
+                            <span class="px-2 py-0.5 rounded-full text-xs @StatusClass(p.Status)">@p.Status</span>
+                        </td>
+                        <td class="px-4 py-3 flex gap-2">
+                            @if (p.Status == "Draft")
+                            {
+                                <button @onclick="() => Publish(p.Id)" class="text-xs text-green-600 hover:underline">Publish</button>
+                            }
+                            @if (p.Status == "Open")
+                            {
+                                <button @onclick="() => Close(p.Id)" class="text-xs text-red-500 hover:underline">Close</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private PagedResult<JobPostingDto>? _postings;
+    private string _statusFilter = string.Empty;
+    private bool _showForm;
+    private bool _saving;
+    private string? _error;
+    private JobPostingForm _form = new();
+
+    protected override async Task OnInitializedAsync() => await Load();
+    private async Task Load() => _postings = await Api.GetJobPostingsAsync(string.IsNullOrEmpty(_statusFilter) ? null : _statusFilter);
+
+    private async Task CreatePosting()
+    {
+        _saving = true; _error = null;
+        try
+        {
+            await Api.CreateJobPostingAsync(new { title = _form.Title, description = _form.Description, vacancies = _form.Vacancies, departmentId = (Guid?)null, positionId = (Guid?)null, requirements = (string?)null });
+            _showForm = false;
+            _form = new();
+            await Load();
+        }
+        catch { _error = "Failed to create posting."; }
+        finally { _saving = false; }
+    }
+
+    private async Task Publish(Guid id) { try { await Api.PublishJobPostingAsync(id); await Load(); } catch { _error = "Failed to publish."; } }
+    private async Task Close(Guid id) { try { await Api.CloseJobPostingAsync(id); await Load(); } catch { _error = "Failed to close."; } }
+
+    private static string StatusClass(string status) => status switch
+    {
+        "Open" => "bg-green-100 text-green-700",
+        "Closed" => "bg-gray-100 text-gray-500",
+        _ => "bg-yellow-100 text-yellow-700"
+    };
+
+    private class JobPostingForm { public string Title { get; set; } = string.Empty; public string? Description { get; set; } public int Vacancies { get; set; } = 1; }
+}

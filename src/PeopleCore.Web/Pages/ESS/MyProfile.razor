@@ -1,0 +1,65 @@
+@page "/my-profile"
+@attribute [Authorize]
+@inject ApiClient Api
+@inject AuthenticationStateProvider AuthStateProvider
+
+<h2 class="text-2xl font-semibold mb-4">My Profile</h2>
+
+@if (_employee is null)
+{
+    <div class="bg-white rounded-lg shadow p-6 text-sm text-gray-400">
+        @(_loading ? "Loading..." : "Profile not linked to an employee record.")
+    </div>
+}
+else
+{
+    <div class="bg-white rounded-lg shadow p-6 max-w-lg">
+        <div class="flex items-center gap-4 mb-6">
+            <div class="w-14 h-14 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 text-xl font-bold">
+                @(_employee.FirstName.FirstOrDefault())@(_employee.LastName.FirstOrDefault())
+            </div>
+            <div>
+                <div class="text-lg font-semibold">@_employee.FullName</div>
+                <div class="text-sm text-gray-500">@_employee.WorkEmail</div>
+            </div>
+        </div>
+        <div class="space-y-3 text-sm">
+            <div class="flex justify-between border-b pb-2">
+                <span class="text-gray-500">Employee #</span>
+                <span class="font-mono">@_employee.EmployeeNumber</span>
+            </div>
+            <div class="flex justify-between border-b pb-2">
+                <span class="text-gray-500">Department</span>
+                <span>@(_employee.DepartmentName ?? "--")</span>
+            </div>
+            <div class="flex justify-between border-b pb-2">
+                <span class="text-gray-500">Position</span>
+                <span>@(_employee.PositionTitle ?? "--")</span>
+            </div>
+            <div class="flex justify-between border-b pb-2">
+                <span class="text-gray-500">Employment Status</span>
+                <span>@_employee.EmploymentStatus</span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-gray-500">Account Status</span>
+                <span class="@(_employee.IsActive ? "text-green-600" : "text-gray-400")">
+                    @(_employee.IsActive ? "Active" : "Inactive")
+                </span>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private EmployeeListDto? _employee;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+        var empIdStr = auth.User.FindFirst("employee_id")?.Value;
+        if (Guid.TryParse(empIdStr, out var empId))
+            _employee = await Api.GetEmployeeAsync(empId);
+        _loading = false;
+    }
+}

@@ -1,0 +1,103 @@
+@page "/positions"
+@attribute [Authorize(Roles = "Admin,HRManager")]
+@inject ApiClient Api
+
+<h2 class="text-2xl font-semibold mb-4">Positions</h2>
+
+<div class="bg-white rounded-lg shadow p-4 mb-4 flex items-end gap-3 flex-wrap">
+    <div>
+        <label class="block text-xs font-medium text-gray-500 mb-1">Department</label>
+        <select @bind="_newDeptId" class="border rounded px-3 py-1.5 text-sm">
+            <option value="">-- Select --</option>
+            @foreach (var d in _allDepts?.Items ?? [])
+            {
+                <option value="@d.Id">@d.Name</option>
+            }
+        </select>
+    </div>
+    <div>
+        <label class="block text-xs font-medium text-gray-500 mb-1">Title</label>
+        <input @bind="_newTitle" class="border rounded px-3 py-1.5 text-sm" placeholder="Position title" />
+    </div>
+    <div>
+        <label class="block text-xs font-medium text-gray-500 mb-1">Level</label>
+        <input @bind="_newLevel" class="border rounded px-3 py-1.5 text-sm" placeholder="e.g. Junior, Senior" />
+    </div>
+    <button @onclick="Create" disabled="@(_creating || string.IsNullOrWhiteSpace(_newTitle) || string.IsNullOrWhiteSpace(_newDeptId))"
+            class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
+        @(_creating ? "Adding..." : "+ Add")
+    </button>
+</div>
+
+@if (_error is not null)
+{
+    <div class="bg-red-50 text-red-700 rounded p-3 mb-4 text-sm">@_error</div>
+}
+
+<div class="bg-white rounded-lg shadow overflow-hidden">
+    @if (_positions is null)
+    {
+        <div class="p-6 text-sm text-gray-400">Loading...</div>
+    }
+    else if (!_positions.Items.Any())
+    {
+        <div class="p-6 text-sm text-gray-400">No positions yet.</div>
+    }
+    else
+    {
+        <table class="w-full text-sm">
+            <thead class="bg-gray-50">
+                <tr class="text-left text-gray-500 text-xs uppercase">
+                    <th class="px-4 py-3">Title</th>
+                    <th class="px-4 py-3">Department</th>
+                    <th class="px-4 py-3">Level</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var p in _positions.Items)
+                {
+                    <tr class="border-t hover:bg-gray-50">
+                        <td class="px-4 py-3 font-medium">@p.Title</td>
+                        <td class="px-4 py-3 text-gray-500">@p.DepartmentName</td>
+                        <td class="px-4 py-3 text-gray-500">@(p.Level ?? "--")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private PagedResult<PositionDto>? _positions;
+    private PagedResult<DepartmentDto>? _allDepts;
+    private string _newTitle = string.Empty;
+    private string? _newLevel;
+    private string _newDeptId = string.Empty;
+    private bool _creating;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _allDepts = await Api.GetDepartmentsAsync(pageSize: 100);
+        await Load();
+    }
+
+    private async Task Load() => _positions = await Api.GetPositionsAsync(pageSize: 100);
+
+    private async Task Create()
+    {
+        if (string.IsNullOrWhiteSpace(_newTitle) || string.IsNullOrWhiteSpace(_newDeptId)) return;
+        _creating = true;
+        _error = null;
+        try
+        {
+            await Api.CreatePositionAsync(new { departmentId = Guid.Parse(_newDeptId), title = _newTitle, level = _newLevel });
+            _newTitle = string.Empty;
+            _newLevel = null;
+            _newDeptId = string.Empty;
+            await Load();
+        }
+        catch { _error = "Failed to create position."; }
+        finally { _creating = false; }
+    }
+}

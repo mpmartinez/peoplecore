@@ -1,0 +1,141 @@
+@page "/performance"
+@attribute [Authorize(Roles = "Admin,HRManager,Manager")]
+@inject ApiClient Api
+
+<h2 class="text-2xl font-semibold mb-4">Performance</h2>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div>
+        <div class="flex items-center justify-between mb-3">
+            <h3 class="font-semibold text-gray-700">Review Cycles</h3>
+            <button @onclick="() => _showCycleForm = !_showCycleForm"
+                    class="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">+ New Cycle</button>
+        </div>
+
+        @if (_showCycleForm)
+        {
+            <div class="bg-white rounded-lg shadow p-4 mb-3">
+                <div class="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">Name *</label>
+                        <input @bind="_cycleName" class="border rounded px-3 py-1.5 text-sm w-full" placeholder="e.g. Q1 2026" />
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">Year</label>
+                        <input type="number" @bind="_cycleYear" class="border rounded px-3 py-1.5 text-sm w-full" />
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">Start Date</label>
+                        <input type="date" @bind="_cycleStart" class="border rounded px-3 py-1.5 text-sm w-full" />
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">End Date</label>
+                        <input type="date" @bind="_cycleEnd" class="border rounded px-3 py-1.5 text-sm w-full" />
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <button @onclick="CreateCycle" disabled="@_savingCycle"
+                            class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
+                        @(_savingCycle ? "Saving..." : "Save")
+                    </button>
+                    <button @onclick="() => _showCycleForm = false" class="px-4 py-1.5 border rounded text-sm hover:bg-gray-50">Cancel</button>
+                </div>
+            </div>
+        }
+
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            @if (_cycles is null) { <div class="p-4 text-sm text-gray-400">Loading...</div> }
+            else if (!_cycles.Items.Any()) { <div class="p-4 text-sm text-gray-400">No review cycles.</div> }
+            else
+            {
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-50"><tr class="text-left text-gray-500 text-xs uppercase"><th class="px-4 py-2">Name</th><th class="px-4 py-2">Year</th><th class="px-4 py-2">Status</th></tr></thead>
+                    <tbody>
+                        @foreach (var c in _cycles.Items)
+                        {
+                            <tr class="border-t hover:bg-gray-50 cursor-pointer @(_selectedCycleId == c.Id ? "bg-blue-50" : "")" @onclick="() => SelectCycle(c.Id)">
+                                <td class="px-4 py-2 font-medium">@c.Name</td>
+                                <td class="px-4 py-2 text-gray-500">@c.Year @(c.Quarter.HasValue ? $"Q{c.Quarter}" : "")</td>
+                                <td class="px-4 py-2"><span class="px-2 py-0.5 rounded-full text-xs @CycleStatusClass(c.Status)">@c.Status</span></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+
+    <div>
+        <h3 class="font-semibold text-gray-700 mb-3">Performance Reviews @(_selectedCycleId.HasValue ? "(filtered by cycle)" : "")</h3>
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            @if (_reviews is null) { <div class="p-4 text-sm text-gray-400">Loading...</div> }
+            else if (!_reviews.Items.Any()) { <div class="p-4 text-sm text-gray-400">No reviews found.</div> }
+            else
+            {
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-50"><tr class="text-left text-gray-500 text-xs uppercase"><th class="px-4 py-2">Employee</th><th class="px-4 py-2">Score</th><th class="px-4 py-2">Status</th></tr></thead>
+                    <tbody>
+                        @foreach (var r in _reviews.Items)
+                        {
+                            <tr class="border-t hover:bg-gray-50">
+                                <td class="px-4 py-2 font-medium">@r.EmployeeName</td>
+                                <td class="px-4 py-2 text-gray-500">@(r.FinalScore.HasValue ? r.FinalScore.Value.ToString("F1") : "--")</td>
+                                <td class="px-4 py-2"><span class="px-2 py-0.5 rounded-full text-xs @CycleStatusClass(r.Status)">@r.Status</span></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+</div>
+
+@if (_error is not null) { <div class="bg-red-50 text-red-700 rounded p-3 mt-4 text-sm">@_error</div> }
+
+@code {
+    private PagedResult<ReviewCycleDto>? _cycles;
+    private PagedResult<PerformanceReviewDto>? _reviews;
+    private Guid? _selectedCycleId;
+    private bool _showCycleForm;
+    private bool _savingCycle;
+    private string? _error;
+    private string _cycleName = string.Empty;
+    private int _cycleYear = DateTime.Today.Year;
+    private DateOnly _cycleStart = DateOnly.FromDateTime(DateTime.Today);
+    private DateOnly _cycleEnd = DateOnly.FromDateTime(DateTime.Today.AddMonths(3));
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Task.WhenAll(LoadCycles(), LoadReviews());
+    }
+
+    private async Task LoadCycles() => _cycles = await Api.GetReviewCyclesAsync();
+    private async Task LoadReviews() => _reviews = await Api.GetPerformanceReviewsAsync(cycleId: _selectedCycleId);
+
+    private async Task SelectCycle(Guid id)
+    {
+        _selectedCycleId = _selectedCycleId == id ? null : id;
+        await LoadReviews();
+    }
+
+    private async Task CreateCycle()
+    {
+        _savingCycle = true; _error = null;
+        try
+        {
+            await Api.CreateReviewCycleAsync(new { name = _cycleName, year = _cycleYear, quarter = (int?)null, startDate = _cycleStart.ToString("yyyy-MM-dd"), endDate = _cycleEnd.ToString("yyyy-MM-dd") });
+            _showCycleForm = false;
+            _cycleName = string.Empty;
+            await LoadCycles();
+        }
+        catch { _error = "Failed to create cycle."; }
+        finally { _savingCycle = false; }
+    }
+
+    private static string CycleStatusClass(string s) => s switch
+    {
+        "Active" or "Open" => "bg-green-100 text-green-700",
+        "Completed" or "Closed" => "bg-gray-100 text-gray-500",
+        _ => "bg-yellow-100 text-yellow-700"
+    };
+}
