@@ -2,6 +2,7 @@ using FluentAssertions;
 using Moq;
 using PeopleCore.Application.Careers.DTOs;
 using PeopleCore.Application.Careers.Interfaces;
+using PeopleCore.Application.Careers.Services;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Recruitment.Interfaces;
 using PeopleCore.Domain.Entities.Organization;
@@ -28,8 +29,7 @@ public class CareersServiceTests
 
     private ICareersService CreateSut()
     {
-        // Placeholder: replace with concrete CareersService once implemented.
-        throw new NotImplementedException("CareersService has not been implemented yet.");
+        return new CareersService(_jobPostingRepo.Object, _applicantRepo.Object, _storageService.Object);
     }
 
     private static JobPosting MakeOpenJobPosting(Guid? id = null) => new()
