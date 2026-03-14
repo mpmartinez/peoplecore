@@ -10,7 +10,10 @@ public class EmployeeShiftAssignment : AuditableEntity
     public ShiftTemplate? ShiftTemplate { get; set; }
     public Guid? RotatingPatternId { get; set; }
     public RotatingPattern? RotatingPattern { get; set; }
-    public DateOnly PatternStartDate { get; set; }
+    public DateOnly? PatternStartDate { get; set; }
     public DateOnly EffectiveFrom { get; set; }
     public DateOnly? EffectiveTo { get; set; }
+
+    /// <summary>Exactly one of ShiftTemplateId or RotatingPatternId must be set.</summary>
+    public bool IsValid => ShiftTemplateId.HasValue != RotatingPatternId.HasValue;
 }
