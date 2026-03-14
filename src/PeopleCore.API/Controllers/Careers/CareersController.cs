@@ -26,7 +26,7 @@ public class CareersController : ControllerBase
     }
 
     [HttpPost("jobs/{id:guid}/apply")]
-    public async Task<IActionResult> Apply(Guid id, JobApplicationRequest request, CancellationToken ct = default)
+    public async Task<IActionResult> Apply(Guid id, [FromBody] JobApplicationRequest request, CancellationToken ct = default)
     {
         var result = await _service.ApplyAsync(id, request, ct);
         return CreatedAtAction(nameof(GetJob), new { id }, result);

@@ -8,6 +8,7 @@ using PeopleCore.Application.Recruitment.Interfaces;
 using PeopleCore.Domain.Entities.Organization;
 using PeopleCore.Domain.Entities.Recruitment;
 using PeopleCore.Domain.Enums;
+using PeopleCore.Domain.Exceptions;
 using Xunit;
 
 namespace PeopleCore.Application.Tests.Careers;
@@ -99,7 +100,7 @@ public class CareersServiceTests
     }
 
     [Fact]
-    public async Task Apply_DuplicateEmail_ThrowsInvalidOperationException()
+    public async Task Apply_DuplicateEmail_ThrowsDomainException()
     {
         // Arrange
         var jobPosting = MakeOpenJobPosting();
@@ -129,11 +130,11 @@ public class CareersServiceTests
         var act = () => sut.ApplyAsync(jobPosting.Id, request);
 
         // Assert
-        await act.Should().ThrowAsync<InvalidOperationException>();
+        await act.Should().ThrowAsync<DomainException>();
     }
 
     [Fact]
-    public async Task Apply_ClosedJob_ThrowsInvalidOperationException()
+    public async Task Apply_ClosedJob_ThrowsDomainException()
     {
         // Arrange
         var jobPosting = MakeOpenJobPosting();
@@ -149,6 +150,6 @@ public class CareersServiceTests
         var act = () => sut.ApplyAsync(jobPosting.Id, request);
 
         // Assert
-        await act.Should().ThrowAsync<InvalidOperationException>();
+        await act.Should().ThrowAsync<DomainException>();
     }
 }

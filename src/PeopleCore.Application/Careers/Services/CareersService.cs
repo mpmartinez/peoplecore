@@ -4,6 +4,7 @@ using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Recruitment.Interfaces;
 using PeopleCore.Domain.Entities.Recruitment;
 using PeopleCore.Domain.Enums;
+using PeopleCore.Domain.Exceptions;
 
 namespace PeopleCore.Application.Careers.Services;
 
@@ -51,27 +52,27 @@ public class CareersService : ICareersService
     public async Task<JobApplicationResponse> ApplyAsync(Guid jobPostingId, JobApplicationRequest request, CancellationToken ct = default)
     {
         var jobPosting = await _jobPostingRepo.GetByIdAsync(jobPostingId, ct)
-            ?? throw new InvalidOperationException($"Job posting {jobPostingId} not found.");
+            ?? throw new KeyNotFoundException($"Job posting {jobPostingId} not found.");
 
         if (jobPosting.Status != JobPostingStatus.Open)
-            throw new InvalidOperationException($"Job posting {jobPostingId} is not open for applications.");
+            throw new DomainException($"Job posting {jobPostingId} is not open for applications.");
 
         // Check for duplicate email on same job
         var existingApplicants = await _applicantRepo.GetAllAsync(ct);
         if (existingApplicants.Any(a => a.JobPostingId == jobPostingId &&
                                         a.Email.Equals(request.Email, StringComparison.OrdinalIgnoreCase)))
         {
-            throw new InvalidOperationException($"An application with email '{request.Email}' already exists for this job posting.");
+            throw new DomainException($"An application with email '{request.Email}' already exists for this job posting.");
         }
 
         // Validate resume
         var extension = Path.GetExtension(request.ResumeFileName);
         if (!AllowedExtensions.Contains(extension))
-            throw new ArgumentException($"Resume file type '{extension}' is not supported. Allowed: .pdf, .docx");
+            throw new DomainException($"Resume file type '{extension}' is not supported. Allowed: .pdf, .docx");
 
         var resumeBytes = Convert.FromBase64String(request.ResumeBase64);
         if (resumeBytes.Length > MaxResumeSizeBytes)
-            throw new ArgumentException("Resume file size exceeds the 5 MB limit.");
+            throw new DomainException("Resume file size exceeds the 5 MB limit.");
 
         // Upload resume
         var objectKey = $"resumes/{Guid.NewGuid()}{extension}";
