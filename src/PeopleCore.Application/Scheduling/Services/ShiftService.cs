@@ -148,7 +148,8 @@ public class ShiftService : IShiftService
         {
             var pattern = assignment.RotatingPattern;
             var anchorDate = assignment.PatternStartDate ?? assignment.EffectiveFrom;
-            var dayOffset = (date.DayNumber - anchorDate.DayNumber) % pattern.CycleLengthDays;
+            var rawOffset = (date.DayNumber - anchorDate.DayNumber) % pattern.CycleLengthDays;
+            var dayOffset = rawOffset < 0 ? rawOffset + pattern.CycleLengthDays : rawOffset;
             var slot = pattern.Slots.FirstOrDefault(s => s.DayOffset == dayOffset);
 
             if (slot is null || slot.ShiftTemplateId is null || slot.ShiftTemplate is null)
