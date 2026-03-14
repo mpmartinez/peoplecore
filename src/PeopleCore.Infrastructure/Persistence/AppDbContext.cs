@@ -6,6 +6,7 @@ using PeopleCore.Domain.Entities.Leave;
 using PeopleCore.Domain.Entities.Organization;
 using PeopleCore.Domain.Entities.Performance;
 using PeopleCore.Domain.Entities.Recruitment;
+using PeopleCore.Domain.Entities.Scheduling;
 using PeopleCore.Infrastructure.Identity;
 
 namespace PeopleCore.Infrastructure.Persistence;
@@ -46,6 +47,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<ReviewCycle> ReviewCycles => Set<ReviewCycle>();
     public DbSet<PerformanceReview> PerformanceReviews => Set<PerformanceReview>();
     public DbSet<KpiItem> KpiItems => Set<KpiItem>();
+
+    // Scheduling
+    public DbSet<ShiftTemplate> ShiftTemplates => Set<ShiftTemplate>();
+    public DbSet<RotatingPattern> RotatingPatterns => Set<RotatingPattern>();
+    public DbSet<RotatingPatternSlot> RotatingPatternSlots => Set<RotatingPatternSlot>();
+    public DbSet<EmployeeShiftAssignment> ShiftAssignments => Set<EmployeeShiftAssignment>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
