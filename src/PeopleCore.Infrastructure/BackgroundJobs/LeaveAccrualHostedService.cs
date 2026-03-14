@@ -18,6 +18,20 @@ public class LeaveAccrualHostedService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Catch up current month on startup
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<ILeaveAccrualService>();
+            var now = DateTime.UtcNow;
+            await service.RunAccrualsAsync(now.Year, now.Month, stoppingToken);
+            _logger.LogInformation("Leave accrual catch-up completed for {Year}-{Month}", now.Year, now.Month);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Leave accrual catch-up failed");
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             var now = DateTime.UtcNow;

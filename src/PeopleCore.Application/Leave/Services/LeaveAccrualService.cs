@@ -103,10 +103,17 @@ public class LeaveAccrualService : ILeaveAccrualService
 
                 if (policy.DaysPerYear <= 0) continue;
 
+                // For annual policies, only accrue in January (month 1)
+                if (policy.AccrualFrequency == AccrualFrequency.Annual && month != 1)
+                    continue;
+
                 if (await _accrualRepo.TransactionExistsAsync(employee.Id, policy.LeaveTypeId, year, month, ct))
                     continue;
 
-                var daysAccrued = policy.DaysPerYear / 12m;
+                // For annual: full DaysPerYear at once; for monthly: DaysPerYear / 12
+                var daysAccrued = policy.AccrualFrequency == AccrualFrequency.Annual
+                    ? policy.DaysPerYear
+                    : policy.DaysPerYear / 12m;
                 var transaction = new LeaveAccrualTransaction
                 {
                     EmployeeId = employee.Id,
@@ -118,6 +125,24 @@ public class LeaveAccrualService : ILeaveAccrualService
                     PeriodMonth = month
                 };
                 await _accrualRepo.AddTransactionAsync(transaction, ct);
+
+                // Update the employee's leave balance
+                var balance = await _balanceRepo.GetByEmployeeAndTypeAsync(employee.Id, policy.LeaveTypeId, year, ct);
+                if (balance is not null)
+                {
+                    balance.TotalDays += daysAccrued;
+                    await _balanceRepo.UpdateAsync(balance, ct);
+                }
+                else
+                {
+                    await _balanceRepo.AddAsync(new LeaveBalance
+                    {
+                        EmployeeId = employee.Id,
+                        LeaveTypeId = policy.LeaveTypeId,
+                        Year = year,
+                        TotalDays = daysAccrued
+                    }, ct);
+                }
             }
         }
     }
