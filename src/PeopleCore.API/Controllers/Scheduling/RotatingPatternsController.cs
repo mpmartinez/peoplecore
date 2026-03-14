@@ -21,7 +21,7 @@ public class RotatingPatternsController : ControllerBase
     public async Task<IActionResult> Create([FromBody] CreateRotatingPatternRequest request, CancellationToken ct = default)
     {
         var result = await _service.CreateRotatingPatternAsync(request, ct);
-        return CreatedAtAction(nameof(GetAll), result);
+        return CreatedAtAction(nameof(GetAll), null, result);
     }
 
     [HttpDelete("{id:guid}")]

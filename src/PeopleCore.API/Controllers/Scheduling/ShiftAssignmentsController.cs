@@ -5,6 +5,7 @@ using PeopleCore.Application.Scheduling.Interfaces;
 
 namespace PeopleCore.API.Controllers.Scheduling;
 
+[Authorize]
 [ApiController]
 [Route("api/shift-assignments")]
 public class ShiftAssignmentsController : ControllerBase

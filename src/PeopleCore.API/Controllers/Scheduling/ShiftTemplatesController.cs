@@ -21,7 +21,7 @@ public class ShiftTemplatesController : ControllerBase
     public async Task<IActionResult> Create([FromBody] CreateShiftTemplateRequest request, CancellationToken ct = default)
     {
         var result = await _service.CreateShiftTemplateAsync(request, ct);
-        return CreatedAtAction(nameof(GetAll), result);
+        return CreatedAtAction(nameof(GetAll), null, result);
     }
 
     [HttpPut("{id:guid}")]
