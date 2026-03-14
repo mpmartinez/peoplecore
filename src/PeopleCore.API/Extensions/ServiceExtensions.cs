@@ -20,6 +20,9 @@ using PeopleCore.Application.Performance.Interfaces;
 using PeopleCore.Application.Performance.Services;
 using PeopleCore.Application.Recruitment.Interfaces;
 using PeopleCore.Application.Recruitment.Services;
+using PeopleCore.Application.Scheduling.Interfaces;
+using PeopleCore.Application.Scheduling.Services;
+using PeopleCore.Domain.Interfaces;
 using PeopleCore.Domain.Entities.Recruitment;
 using PeopleCore.Infrastructure.Identity;
 using PeopleCore.Infrastructure.Jobs;
@@ -145,6 +148,12 @@ public static class ServiceExtensions
         services.AddScoped<IPerformanceReviewRepository, PerformanceReviewRepository>();
         services.AddScoped<IReviewCycleService, ReviewCycleService>();
         services.AddScoped<IPerformanceReviewService, PerformanceReviewService>();
+
+        // Scheduling
+        services.AddScoped<IShiftTemplateRepository, ShiftTemplateRepository>();
+        services.AddScoped<IRotatingPatternRepository, RotatingPatternRepository>();
+        services.AddScoped<IShiftAssignmentRepository, ShiftAssignmentRepository>();
+        services.AddScoped<IShiftService, ShiftService>();
 
         // Payroll Export
         services.AddScoped<IPayrollExportService, PayrollExportService>();
