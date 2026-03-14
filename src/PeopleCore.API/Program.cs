@@ -21,6 +21,14 @@ builder.Services.AddCors(options =>
         policy.WithOrigins(builder.Configuration["AllowedOrigins"] ?? "http://localhost:5002")
               .AllowAnyHeader()
               .AllowAnyMethod());
+
+    options.AddPolicy("CareersPortal", policy =>
+    {
+        var origins = builder.Configuration.GetSection("CareersPortal:AllowedOrigins").Get<string[]>() ?? [];
+        policy.WithOrigins(origins)
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
 });
 
 var app = builder.Build();

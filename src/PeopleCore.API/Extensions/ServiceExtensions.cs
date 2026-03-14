@@ -18,6 +18,8 @@ using PeopleCore.Application.PayrollIntegration.Interfaces;
 using PeopleCore.Application.PayrollIntegration.Services;
 using PeopleCore.Application.Performance.Interfaces;
 using PeopleCore.Application.Performance.Services;
+using PeopleCore.Application.Careers.Interfaces;
+using PeopleCore.Application.Careers.Services;
 using PeopleCore.Application.Recruitment.Interfaces;
 using PeopleCore.Application.Recruitment.Services;
 using PeopleCore.Application.Scheduling.Interfaces;
@@ -156,6 +158,9 @@ public static class ServiceExtensions
         services.AddScoped<IRotatingPatternRepository, RotatingPatternRepository>();
         services.AddScoped<IShiftAssignmentRepository, ShiftAssignmentRepository>();
         services.AddScoped<IShiftService, ShiftService>();
+
+        // Careers
+        services.AddScoped<ICareersService, CareersService>();
 
         // Payroll Export
         services.AddScoped<IPayrollExportService, PayrollExportService>();
