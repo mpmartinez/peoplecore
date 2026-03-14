@@ -166,7 +166,9 @@ public class PayrollExportService : IPayrollExportService
             TotalUndertimeMinutes: totalUndertimeMinutes,
             TotalApprovedOvertimeMinutes: totalOvertimeMinutes,
             RegularHolidaysWorked: regularHolidaysWorked,
-            SpecialHolidaysWorked: specialHolidaysWorked);
+            SpecialHolidaysWorked: specialHolidaysWorked,
+            ShiftName: null,
+            HasNightShift: false);
     }
 
     private static string? GetGovId(Employee employee, GovernmentIdType idType)

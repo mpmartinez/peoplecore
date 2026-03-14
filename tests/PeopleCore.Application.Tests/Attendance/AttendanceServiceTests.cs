@@ -4,8 +4,11 @@ using PeopleCore.Application.Attendance.DTOs;
 using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Application.Attendance.Services;
 using PeopleCore.Application.Employees.Interfaces;
+using PeopleCore.Application.Scheduling.DTOs;
+using PeopleCore.Application.Scheduling.Interfaces;
 using PeopleCore.Domain.Entities.Attendance;
 using PeopleCore.Domain.Entities.Employees;
+using M2NET.Core.Enums;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
 using Xunit;
@@ -17,11 +20,16 @@ public class AttendanceServiceTests
     private readonly Mock<IAttendanceRepository> _repo = new();
     private readonly Mock<IHolidayService> _holidayService = new();
     private readonly Mock<IEmployeeRepository> _employeeRepo = new();
+    private readonly Mock<IShiftService> _shiftService = new();
     private readonly AttendanceService _sut;
 
     public AttendanceServiceTests()
     {
-        _sut = new AttendanceService(_repo.Object, _holidayService.Object, _employeeRepo.Object);
+        // Default: no shift assigned — falls back to 08:00 start, preserving all existing test expectations
+        _shiftService.Setup(s => s.ResolveShiftForDayAsync(It.IsAny<Guid>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                     .ReturnsAsync((DailyScheduleDto?)null);
+
+        _sut = new AttendanceService(_repo.Object, _holidayService.Object, _employeeRepo.Object, _shiftService.Object);
     }
 
     private static Employee MakeEmployee(Guid? id = null) => new()
@@ -31,9 +39,9 @@ public class AttendanceServiceTests
         FirstName = "Juan",
         LastName = "dela Cruz",
         DateOfBirth = new DateOnly(1990, 1, 1),
-        Gender = "Male",
+        Gender = Gender.Male,
         WorkEmail = "juan@test.com",
-        EmploymentType = "FullTime",
+        EmploymentType = EmploymentType.Regular,
         HireDate = new DateOnly(2020, 1, 1),
         IsActive = true
     };

@@ -11,7 +11,8 @@ public record PayrollAttendanceSummaryDto(
     Guid EmployeeId, string EmployeeNumber, string FullName,
     DateOnly PeriodFrom, DateOnly PeriodTo,
     int DaysPresent, int TotalLateMinutes, int TotalUndertimeMinutes,
-    int TotalApprovedOvertimeMinutes, int RegularHolidaysWorked, int SpecialHolidaysWorked);
+    int TotalApprovedOvertimeMinutes, int RegularHolidaysWorked, int SpecialHolidaysWorked,
+    string? ShiftName, bool HasNightShift);
 
 public record PayrollLeaveDeductionDto(
     Guid LeaveRequestId, Guid EmployeeId, string EmployeeNumber, string FullName,

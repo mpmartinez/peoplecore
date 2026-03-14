@@ -2,6 +2,7 @@ using PeopleCore.Application.Attendance.DTOs;
 using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
+using PeopleCore.Application.Scheduling.Interfaces;
 using PeopleCore.Domain.Entities.Attendance;
 using PeopleCore.Domain.Exceptions;
 
@@ -9,21 +10,24 @@ namespace PeopleCore.Application.Attendance.Services;
 
 public class AttendanceService : IAttendanceService
 {
-    private static readonly TimeOnly ShiftStart = new(8, 0);
+    private static readonly TimeOnly DefaultShiftStart = new(8, 0);
     private static readonly TimeOnly ShiftEnd = new(17, 0);
 
     private readonly IAttendanceRepository _repo;
     private readonly IHolidayService _holidayService;
     private readonly IEmployeeRepository _employeeRepo;
+    private readonly IShiftService _shiftService;
 
     public AttendanceService(
         IAttendanceRepository repo,
         IHolidayService holidayService,
-        IEmployeeRepository employeeRepo)
+        IEmployeeRepository employeeRepo,
+        IShiftService shiftService)
     {
         _repo = repo;
         _holidayService = holidayService;
         _employeeRepo = employeeRepo;
+        _shiftService = shiftService;
     }
 
     public async Task<AttendanceRecordDto> TimeInAsync(TimeInRequest request, CancellationToken ct = default)
@@ -38,7 +42,12 @@ public class AttendanceService : IAttendanceService
             throw new DomainException("Employee has already clocked in today.");
 
         var holidayType = await _holidayService.IsHolidayAsync(today, ct);
-        var lateMinutes = CalculateLateMinutes(TimeOnly.FromDateTime(request.TimeIn));
+        var schedule = await _shiftService.ResolveShiftForDayAsync(request.EmployeeId, today, ct);
+        var shiftStart = schedule?.StartTime ?? DefaultShiftStart;
+        var timeInOnly = TimeOnly.FromDateTime(request.TimeIn);
+        var lateMinutes = timeInOnly > shiftStart
+            ? (int)(timeInOnly - shiftStart).TotalMinutes
+            : 0;
 
         var record = existing ?? new AttendanceRecord
         {
@@ -161,12 +170,6 @@ public class AttendanceService : IAttendanceService
         }
 
         return new AttendanceImportResultDto(imported, skipped, errors);
-    }
-
-    private static int CalculateLateMinutes(TimeOnly timeIn)
-    {
-        if (timeIn <= ShiftStart) return 0;
-        return (int)(timeIn - ShiftStart).TotalMinutes;
     }
 
     private static int CalculateUndertimeMinutes(TimeOnly timeOut)
