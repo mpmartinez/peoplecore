@@ -22,7 +22,9 @@
       "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/src/PeopleCore.API/Controllers/Performance\")",
       "Bash(mkdir -p \"c:/M2NET PROJECTS/peoplecore/tests/PeopleCore.Application.Tests/Performance\")",
       "Bash(find 'c:/M2NET PROJECTS/peoplecore/src/PeopleCore.Web/Services' -name *.cs)",
-      "Bash(find 'c:/M2NET PROJECTS/peoplecore/src/PeopleCore.Web/Auth' -name *.razor -o -name *.cs)"
+      "Bash(find 'c:/M2NET PROJECTS/peoplecore/src/PeopleCore.Web/Auth' -name *.razor -o -name *.cs)",
+      "Bash(xargs cat:*)",
+      "Bash(cmd.exe /c \"taskkill /IM PeopleCore.API.exe /F 2>&1 & echo done\")"
     ]
   }
 }
