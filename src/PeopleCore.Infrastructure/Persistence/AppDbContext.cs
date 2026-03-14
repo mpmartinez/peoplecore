@@ -37,6 +37,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<LeaveType> LeaveTypes => Set<LeaveType>();
     public DbSet<LeaveBalance> LeaveBalances => Set<LeaveBalance>();
     public DbSet<LeaveRequest> LeaveRequests => Set<LeaveRequest>();
+    public DbSet<LeaveAccrualPolicy> LeaveAccrualPolicies => Set<LeaveAccrualPolicy>();
+    public DbSet<LeaveAccrualTransaction> LeaveAccrualTransactions => Set<LeaveAccrualTransaction>();
 
     // Recruitment
     public DbSet<JobPosting> JobPostings => Set<JobPosting>();

@@ -133,6 +133,8 @@ public static class ServiceExtensions
         services.AddScoped<ILeaveTypeService, LeaveTypeService>();
         services.AddScoped<ILeaveRequestService, LeaveRequestService>();
         services.AddScoped<ILeaveBalanceService, LeaveBalanceService>();
+        services.AddScoped<ILeaveAccrualRepository, LeaveAccrualRepository>();
+        services.AddScoped<ILeaveAccrualService, LeaveAccrualService>();
         services.AddHostedService<LeaveAccrualHostedService>();
 
         // Recruitment
