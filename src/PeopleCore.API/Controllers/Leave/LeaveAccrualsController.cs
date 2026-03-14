@@ -24,7 +24,7 @@ public class LeaveAccrualsController : ControllerBase
         return Ok(new { message = $"Accruals processed for {year}-{month:D2}." });
     }
 
-    [HttpGet("employees/{employeeId:guid}/history")]
+    [HttpGet("/api/employees/{employeeId:guid}/accrual-history")]
     public async Task<IActionResult> GetEmployeeAccrualHistoryAsync(Guid employeeId, CancellationToken ct = default)
         => Ok(await _accrualService.GetEmployeeAccrualHistoryAsync(employeeId, ct));
 }

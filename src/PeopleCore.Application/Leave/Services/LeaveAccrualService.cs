@@ -50,16 +50,17 @@ public class LeaveAccrualService : ILeaveAccrualService
         };
 
         var created = await _accrualRepo.AddPolicyAsync(policy, ct);
+        var loaded = await _accrualRepo.GetPolicyByIdAsync(created.Id, ct);
 
         return new LeaveAccrualPolicyDto(
-            created.Id,
-            created.LeaveTypeId,
-            created.LeaveType?.Name ?? string.Empty,
-            created.TenureMonthsMin,
-            created.TenureMonthsMax,
-            created.DaysPerYear,
-            created.AccrualFrequency.ToString(),
-            created.IsActive);
+            loaded!.Id,
+            loaded.LeaveTypeId,
+            loaded.LeaveType?.Name ?? string.Empty,
+            loaded.TenureMonthsMin,
+            loaded.TenureMonthsMax,
+            loaded.DaysPerYear,
+            loaded.AccrualFrequency.ToString(),
+            loaded.IsActive);
     }
 
     public async Task UpdatePolicyAsync(Guid id, CreateLeaveAccrualPolicyRequest request, CancellationToken ct = default)

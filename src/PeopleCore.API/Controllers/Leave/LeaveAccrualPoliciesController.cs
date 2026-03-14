@@ -21,6 +21,10 @@ public class LeaveAccrualPoliciesController : ControllerBase
     public async Task<IActionResult> GetPoliciesAsync([FromQuery] Guid leaveTypeId, CancellationToken ct = default)
         => Ok(await _accrualService.GetPoliciesAsync(leaveTypeId, ct));
 
+    [HttpGet("{leaveTypeId:guid}/rules")]
+    public async Task<IActionResult> GetRules(Guid leaveTypeId, CancellationToken ct = default)
+        => Ok(await _accrualService.GetPoliciesAsync(leaveTypeId, ct));
+
     [HttpPost]
     public async Task<IActionResult> CreatePolicyAsync([FromBody] CreateLeaveAccrualPolicyRequest request, CancellationToken ct = default)
         => StatusCode(201, await _accrualService.CreatePolicyAsync(request, ct));
