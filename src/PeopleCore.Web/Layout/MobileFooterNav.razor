@@ -1,0 +1,55 @@
+@using Microsoft.AspNetCore.Components.Authorization
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager Nav
+
+<div class="mobile-footer-nav">
+    <NavLink class="footer-tab" href="" Match="NavLinkMatch.All">
+        <span class="bi bi-house-door"></span>
+        <span class="footer-label">Home</span>
+    </NavLink>
+    <NavLink class="footer-tab" href="my-attendance" Match="NavLinkMatch.All">
+        <span class="bi bi-clock"></span>
+        <span class="footer-label">Attendance</span>
+    </NavLink>
+    <NavLink class="footer-tab" href="my-leave" Match="NavLinkMatch.All">
+        <span class="bi bi-calendar-event"></span>
+        <span class="footer-label">Leave</span>
+    </NavLink>
+    <NavLink class="footer-tab" href="my-profile" Match="NavLinkMatch.All">
+        <span class="bi bi-person"></span>
+        <span class="footer-label">Profile</span>
+    </NavLink>
+    <button class="footer-tab" @onclick="ToggleMore">
+        <span class="bi bi-three-dots"></span>
+        <span class="footer-label">More</span>
+    </button>
+</div>
+
+@if (showMore)
+{
+    <div class="mobile-more-panel" @onclick="ToggleMore">
+        <div class="mobile-more-content" @onclick:stopPropagation>
+            <!-- Role-based additional links -->
+            <AuthorizeView Roles="Admin,HRManager">
+                <NavLink class="more-link" href="employees">Employees</NavLink>
+                <NavLink class="more-link" href="departments">Departments</NavLink>
+                <NavLink class="more-link" href="positions">Positions</NavLink>
+                <NavLink class="more-link" href="leave-approvals">Leave Approvals</NavLink>
+                <NavLink class="more-link" href="analytics">Analytics</NavLink>
+            </AuthorizeView>
+            <AuthorizeView Roles="Admin,HRManager,Manager">
+                <NavLink class="more-link" href="overtime-approvals">OT Approvals</NavLink>
+                <NavLink class="more-link" href="performance">Performance</NavLink>
+            </AuthorizeView>
+            <AuthorizeView Roles="Admin,HRManager">
+                <NavLink class="more-link" href="job-postings">Recruitment</NavLink>
+                <NavLink class="more-link" href="applicants">Applicants</NavLink>
+            </AuthorizeView>
+        </div>
+    </div>
+}
+
+@code {
+    private bool showMore;
+    private void ToggleMore() => showMore = !showMore;
+}
