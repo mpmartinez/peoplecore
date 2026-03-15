@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using PeopleCore.Application.Analytics.Interfaces;
 
 namespace PeopleCore.API.Controllers.Analytics;
@@ -10,58 +11,109 @@ namespace PeopleCore.API.Controllers.Analytics;
 public class HRAnalyticsController : ControllerBase
 {
     private readonly IHRAnalyticsService _service;
+    private readonly IMemoryCache _cache;
 
-    public HRAnalyticsController(IHRAnalyticsService service)
+    public HRAnalyticsController(IHRAnalyticsService service, IMemoryCache cache)
     {
         _service = service;
+        _cache = cache;
     }
 
     [HttpGet("headcount")]
-    [ResponseCache(Duration = 900)]
     public async Task<IActionResult> GetHeadcount(
         [FromQuery] DateOnly from, [FromQuery] DateOnly to,
         [FromQuery] Guid? departmentId = null, CancellationToken ct = default)
-        => Ok(await _service.GetHeadcountAsync(from, to, departmentId, ct));
+    {
+        var key = $"analytics:hr:headcount:{from}:{to}:{departmentId}";
+        if (!_cache.TryGetValue(key, out object? result))
+        {
+            result = await _service.GetHeadcountAsync(from, to, departmentId, ct);
+            _cache.Set(key, result, TimeSpan.FromMinutes(15));
+        }
+        return Ok(result);
+    }
 
     [HttpGet("turnover")]
-    [ResponseCache(Duration = 900)]
     public async Task<IActionResult> GetTurnover(
         [FromQuery] DateOnly from, [FromQuery] DateOnly to,
         [FromQuery] string groupBy = "month", CancellationToken ct = default)
-        => Ok(await _service.GetTurnoverAsync(from, to, groupBy, ct));
+    {
+        var key = $"analytics:hr:turnover:{from}:{to}:{groupBy}";
+        if (!_cache.TryGetValue(key, out object? result))
+        {
+            result = await _service.GetTurnoverAsync(from, to, groupBy, ct);
+            _cache.Set(key, result, TimeSpan.FromMinutes(15));
+        }
+        return Ok(result);
+    }
 
     [HttpGet("attendance")]
-    [ResponseCache(Duration = 900)]
     public async Task<IActionResult> GetAttendance(
         [FromQuery] DateOnly from, [FromQuery] DateOnly to,
         [FromQuery] Guid? departmentId = null, CancellationToken ct = default)
-        => Ok(await _service.GetAttendanceRateAsync(from, to, departmentId, ct));
+    {
+        var key = $"analytics:hr:attendance:{from}:{to}:{departmentId}";
+        if (!_cache.TryGetValue(key, out object? result))
+        {
+            result = await _service.GetAttendanceRateAsync(from, to, departmentId, ct);
+            _cache.Set(key, result, TimeSpan.FromMinutes(15));
+        }
+        return Ok(result);
+    }
 
     [HttpGet("leave-utilization")]
-    [ResponseCache(Duration = 900)]
     public async Task<IActionResult> GetLeaveUtilization(
         [FromQuery] DateOnly from, [FromQuery] DateOnly to,
         [FromQuery] Guid? departmentId = null, CancellationToken ct = default)
-        => Ok(await _service.GetLeaveUtilizationAsync(from, to, departmentId, ct));
+    {
+        var key = $"analytics:hr:leave-utilization:{from}:{to}:{departmentId}";
+        if (!_cache.TryGetValue(key, out object? result))
+        {
+            result = await _service.GetLeaveUtilizationAsync(from, to, departmentId, ct);
+            _cache.Set(key, result, TimeSpan.FromMinutes(15));
+        }
+        return Ok(result);
+    }
 
     [HttpGet("overtime")]
-    [ResponseCache(Duration = 900)]
     public async Task<IActionResult> GetOvertime(
         [FromQuery] DateOnly from, [FromQuery] DateOnly to,
         [FromQuery] Guid? departmentId = null, CancellationToken ct = default)
-        => Ok(await _service.GetOvertimeAsync(from, to, departmentId, ct));
+    {
+        var key = $"analytics:hr:overtime:{from}:{to}:{departmentId}";
+        if (!_cache.TryGetValue(key, out object? result))
+        {
+            result = await _service.GetOvertimeAsync(from, to, departmentId, ct);
+            _cache.Set(key, result, TimeSpan.FromMinutes(15));
+        }
+        return Ok(result);
+    }
 
     [HttpGet("recruitment-funnel")]
-    [ResponseCache(Duration = 900)]
     public async Task<IActionResult> GetRecruitmentFunnel(
         [FromQuery] DateOnly from, [FromQuery] DateOnly to,
         CancellationToken ct = default)
-        => Ok(await _service.GetRecruitmentFunnelAsync(from, to, ct));
+    {
+        var key = $"analytics:hr:recruitment-funnel:{from}:{to}";
+        if (!_cache.TryGetValue(key, out object? result))
+        {
+            result = await _service.GetRecruitmentFunnelAsync(from, to, ct);
+            _cache.Set(key, result, TimeSpan.FromMinutes(15));
+        }
+        return Ok(result);
+    }
 
     [HttpGet("performance-distribution")]
-    [ResponseCache(Duration = 900)]
     public async Task<IActionResult> GetPerformanceDistribution(
         [FromQuery] DateOnly from, [FromQuery] DateOnly to,
         CancellationToken ct = default)
-        => Ok(await _service.GetPerformanceDistributionAsync(from, to, ct));
+    {
+        var key = $"analytics:hr:performance-distribution:{from}:{to}";
+        if (!_cache.TryGetValue(key, out object? result))
+        {
+            result = await _service.GetPerformanceDistributionAsync(from, to, ct);
+            _cache.Set(key, result, TimeSpan.FromMinutes(15));
+        }
+        return Ok(result);
+    }
 }

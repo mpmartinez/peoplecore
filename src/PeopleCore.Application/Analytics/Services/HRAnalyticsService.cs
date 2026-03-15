@@ -132,7 +132,12 @@ public class HRAnalyticsService : IHRAnalyticsService
     public async Task<AnalyticsResponse<LeaveUtilization>> GetLeaveUtilizationAsync(
         DateOnly from, DateOnly to, Guid? departmentId = null, CancellationToken ct = default)
     {
-        var balances = await _leaveBalanceRepo.GetByYearAsync(from.Year, ct);
+        var balances = new List<Domain.Entities.Leave.LeaveBalance>();
+        for (int year = from.Year; year <= to.Year; year++)
+        {
+            var yearBalances = await _leaveBalanceRepo.GetByYearAsync(year, ct);
+            balances.AddRange(yearBalances);
+        }
 
         var filtered = balances.AsEnumerable();
         if (departmentId.HasValue)

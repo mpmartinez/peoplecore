@@ -25,46 +25,25 @@ public class ExecutiveAnalyticsService : IExecutiveAnalyticsService
         _hrAnalytics = hrAnalytics;
     }
 
-    public async Task<WorkforceSummary> GetWorkforceSummaryAsync(CancellationToken ct = default)
+    public async Task<WorkforceSummary> GetWorkforceSummaryAsync(
+        DateOnly from, DateOnly to, CancellationToken ct = default)
     {
         var employees = await _employeeRepo.GetAllAsync(ct);
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
         var totalActive = employees.Count(e => e.SeparationDate == null);
         var totalInactive = employees.Count(e => e.SeparationDate != null);
 
-        // Get headcount breakdown using a wide date range
-        var yearStart = new DateOnly(today.Year, 1, 1);
-        var headcountResponse = await _hrAnalytics.GetHeadcountAsync(yearStart, today, ct: ct);
+        var headcountResponse = await _hrAnalytics.GetHeadcountAsync(from, to, ct: ct);
 
         return new WorkforceSummary(totalActive, totalInactive, headcountResponse.Data);
     }
 
     public async Task<IReadOnlyList<HiringTrend>> GetHiringTrendAsync(
-        int months = 12, CancellationToken ct = default)
-    {
-        var employees = await _employeeRepo.GetAllAsync(ct);
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-
-        var result = new List<HiringTrend>();
-
-        for (int i = months - 1; i >= 0; i--)
-        {
-            var monthStart = new DateOnly(today.Year, today.Month, 1).AddMonths(-i);
-            var monthEnd = monthStart.AddMonths(1).AddDays(-1);
-
-            var newHires = employees.Count(e => e.HireDate >= monthStart && e.HireDate <= monthEnd);
-            result.Add(new HiringTrend(monthStart.ToString("yyyy-MM"), newHires));
-        }
-
-        return result;
-    }
-
-    public async Task<IReadOnlyList<AttritionData>> GetAttritionRateAsync(
         DateOnly from, DateOnly to, CancellationToken ct = default)
     {
         var employees = await _employeeRepo.GetAllAsync(ct);
-        var result = new List<AttritionData>();
+
+        var result = new List<HiringTrend>();
 
         var current = new DateOnly(from.Year, from.Month, 1);
         var end = new DateOnly(to.Year, to.Month, 1);
@@ -72,27 +51,65 @@ public class ExecutiveAnalyticsService : IExecutiveAnalyticsService
         while (current <= end)
         {
             var monthEnd = current.AddMonths(1).AddDays(-1);
+            if (monthEnd > to) monthEnd = to;
+
+            var newHires = employees.Count(e => e.HireDate >= current && e.HireDate <= monthEnd);
+            result.Add(new HiringTrend(current.ToString("yyyy-MM"), newHires));
+
+            current = current.AddMonths(1);
+        }
+
+        return result;
+    }
+
+    public async Task<IReadOnlyList<AttritionData>> GetAttritionRateAsync(
+        DateOnly from, DateOnly to, string groupBy = "month", CancellationToken ct = default)
+    {
+        var employees = await _employeeRepo.GetAllAsync(ct);
+        var result = new List<AttritionData>();
+
+        var current = new DateOnly(from.Year, from.Month, 1);
+        var end = new DateOnly(to.Year, to.Month, 1);
+
+        int increment = groupBy switch
+        {
+            "quarter" => 3,
+            "year" => 12,
+            _ => 1
+        };
+
+        while (current <= end)
+        {
+            var periodEnd = current.AddMonths(increment).AddDays(-1);
+            if (periodEnd > to) periodEnd = to;
 
             var activeAtStart = employees.Count(e =>
                 e.HireDate <= current &&
                 (e.SeparationDate == null || e.SeparationDate > current));
             var activeAtEnd = employees.Count(e =>
-                e.HireDate <= monthEnd &&
-                (e.SeparationDate == null || e.SeparationDate > monthEnd));
+                e.HireDate <= periodEnd &&
+                (e.SeparationDate == null || e.SeparationDate > periodEnd));
             var avgHeadcount = (activeAtStart + activeAtEnd) / 2;
 
             var separations = employees.Count(e =>
                 e.SeparationDate.HasValue &&
                 e.SeparationDate.Value >= current &&
-                e.SeparationDate.Value <= monthEnd);
+                e.SeparationDate.Value <= periodEnd);
 
             var attritionRate = avgHeadcount > 0
                 ? Math.Round((decimal)separations / avgHeadcount * 100, 2)
                 : 0m;
 
-            result.Add(new AttritionData(current.ToString("yyyy-MM"), attritionRate, separations, avgHeadcount));
+            var label = groupBy switch
+            {
+                "quarter" => $"{current.Year}-Q{(current.Month - 1) / 3 + 1}",
+                "year" => current.Year.ToString(),
+                _ => current.ToString("yyyy-MM")
+            };
 
-            current = current.AddMonths(1);
+            result.Add(new AttritionData(label, attritionRate, separations, avgHeadcount));
+
+            current = current.AddMonths(increment);
         }
 
         return result;
@@ -127,12 +144,13 @@ public class ExecutiveAnalyticsService : IExecutiveAnalyticsService
         var scored = reviews.Where(r => r.FinalScore.HasValue).ToList();
 
         return scored
-            .GroupBy(r => r.Employee?.Department?.Name ?? "Unassigned")
+            .GroupBy(r => (Dept: r.Employee?.Department?.Name ?? "Unassigned", Cycle: r.ReviewCycle?.Name ?? "Unknown"))
             .Select(g => new PerformanceOverview(
-                g.Key,
+                g.Key.Dept,
                 Math.Round(g.Average(r => r.FinalScore!.Value), 2),
-                g.First().ReviewCycle?.Name ?? "Unknown"))
+                g.Key.Cycle))
             .OrderBy(d => d.Department)
+            .ThenBy(d => d.Cycle)
             .ToList();
     }
 }

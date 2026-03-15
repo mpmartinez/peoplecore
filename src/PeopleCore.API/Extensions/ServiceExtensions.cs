@@ -164,6 +164,9 @@ public static class ServiceExtensions
         // Careers
         services.AddScoped<ICareersService, CareersService>();
 
+        // Caching
+        services.AddMemoryCache();
+
         // Analytics
         services.AddScoped<IHRAnalyticsService, HRAnalyticsService>();
         services.AddScoped<IExecutiveAnalyticsService, ExecutiveAnalyticsService>();
