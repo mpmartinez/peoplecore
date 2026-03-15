@@ -197,5 +197,71 @@ code {
     main.flex-1 {
         padding-bottom: 80px !important;
     }
+
+    /* Responsive forms — full-width inputs on mobile */
+    .form-control, .form-select, select, input[type="text"], input[type="email"],
+    input[type="password"], input[type="date"], input[type="number"], textarea {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+    }
+
+    .row .col-md-3, .row .col-md-4, .row .col-md-6 {
+        margin-bottom: 0.5rem;
+    }
+
+    /* Stack flex filter bars vertically on mobile */
+    .flex.gap-3.flex-wrap,
+    .flex.flex-wrap.items-end.gap-3,
+    .flex.flex-wrap.items-end.gap-4,
+    .flex.items-center.gap-3 {
+        flex-direction: column;
+        align-items: stretch !important;
+    }
+
+    .flex.gap-3.flex-wrap > *,
+    .flex.flex-wrap.items-end.gap-3 > *,
+    .flex.flex-wrap.items-end.gap-4 > *,
+    .flex.items-center.gap-3 > * {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    /* Page header — stack title and actions vertically */
+    .flex.items-center.justify-between {
+        flex-wrap: wrap;
+        gap: 0.75rem;
+    }
+
+    /* MyAttendance — prominent time in/out buttons on mobile */
+    .btn-time-action {
+        width: 100%;
+        padding: 16px;
+        font-size: 1.25rem;
+        margin-bottom: 8px;
+    }
+
+    /* Login page — full width card with padding on mobile */
+    .max-w-sm {
+        max-width: 100% !important;
+        margin: 0 1rem;
+    }
+
+    /* Cards grid — ensure cards stack vertically */
+    .grid.grid-cols-2 {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* Table text sizing for readability on small screens */
+    table {
+        font-size: 0.8rem;
+    }
+
+    /* Fix fixed-width selects */
+    select.w-48, select.w-40, .max-w-\\[160px\\] {
+        width: 100% !important;
+        max-width: 100% !important;
+    }
 }
 

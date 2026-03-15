@@ -3,65 +3,77 @@
 @inject ApiClient Api
 @inject AuthenticationStateProvider AuthStateProvider
 
-<h2 class="text-2xl font-semibold mb-4">My Attendance</h2>
+<h2 class="text-2xl font-semibold text-foreground mb-6">My Attendance</h2>
 
-<div class="bg-white rounded-lg shadow p-4 mb-6">
-    <div class="flex gap-4 items-center flex-wrap">
-        <button @onclick="TimeIn"
-                disabled="@(_clockedIn || _processing)"
-                class="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 disabled:opacity-50 text-sm">
-            Time In
-        </button>
-        <button @onclick="TimeOut"
-                disabled="@(!_clockedIn || _processing)"
-                class="bg-red-600 text-white px-6 py-2 rounded hover:bg-red-700 disabled:opacity-50 text-sm">
-            Time Out
-        </button>
-        <span class="text-sm text-gray-500">@DateTime.Now.ToString("hh:mm tt, MMMM dd yyyy")</span>
-        @if (_message is not null)
+<Card Class="mb-6">
+    <CardContent Class="pt-4">
+        @if (_employeeId == Guid.Empty)
         {
-            <span class="text-sm @(_isError ? "text-red-600" : "text-green-600")">@_message</span>
+            <Alert Variant="warning" Title="Account not linked">
+                Your account is not linked to an employee record. Time In / Time Out is unavailable.
+            </Alert>
         }
-    </div>
-</div>
-
-<div class="bg-white rounded-lg shadow p-4">
-    <h3 class="font-medium mb-3">Recent Attendance</h3>
-    @if (_records is null)
-    {
-        <p class="text-sm text-gray-400">Loading...</p>
-    }
-    else if (!_records.Items.Any())
-    {
-        <p class="text-sm text-gray-400">No attendance records found.</p>
-    }
-    else
-    {
-        <table class="w-full text-sm">
-            <thead>
-                <tr class="text-left text-gray-500 border-b text-xs uppercase">
-                    <th class="pb-2">Date</th>
-                    <th class="pb-2">Time In</th>
-                    <th class="pb-2">Time Out</th>
-                    <th class="pb-2 text-right">Late (min)</th>
-                    <th class="pb-2 text-right">Undertime (min)</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var r in _records.Items)
+        else
+        {
+            <div class="flex gap-3 items-center flex-wrap">
+                <Button Variant="primary" Class="btn-time-action" OnClick="TimeIn" Disabled="@(_clockedIn || _processing)" Loading="@(_processing && !_clockedIn)">
+                    <i class="bi bi-clock-history mr-1"></i> Time In
+                </Button>
+                <Button Variant="destructive" Class="btn-time-action" OnClick="TimeOut" Disabled="@(!_clockedIn || _processing)" Loading="@(_processing && _clockedIn)">
+                    <i class="bi bi-clock mr-1"></i> Time Out
+                </Button>
+                <Separator Orientation="vertical" Class="h-6" />
+                <span class="text-sm text-muted-foreground">@DateTime.Now.ToString("hh:mm tt, MMMM dd yyyy")</span>
+                @if (_message is not null)
                 {
-                    <tr class="border-b hover:bg-gray-50">
-                        <td class="py-2">@r.AttendanceDate</td>
-                        <td>@(r.TimeIn ?? "--")</td>
-                        <td>@(r.TimeOut ?? "--")</td>
-                        <td class="text-right @(r.LateMinutes > 0 ? "text-red-600 font-medium" : "")">@r.LateMinutes</td>
-                        <td class="text-right @(r.UndertimeMinutes > 0 ? "text-orange-600 font-medium" : "")">@r.UndertimeMinutes</td>
-                    </tr>
+                    <Badge Variant="@(_isError ? "destructive" : "success")">@_message</Badge>
                 }
-            </tbody>
-        </table>
-    }
-</div>
+            </div>
+        }
+    </CardContent>
+</Card>
+
+<Card>
+    <CardHeader>
+        <CardTitle>Recent Attendance</CardTitle>
+    </CardHeader>
+    <CardContent Class="p-0">
+        @if (_records is null)
+        {
+            <div class="p-6 flex justify-center"><Spinner /></div>
+        }
+        else if (!_records.Items.Any())
+        {
+            <div class="p-6 text-center text-muted-foreground text-sm">No attendance records found.</div>
+        }
+        else
+        {
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead Class="px-4">Date</TableHead>
+                        <TableHead Class="px-4">Time In</TableHead>
+                        <TableHead Class="px-4">Time Out</TableHead>
+                        <TableHead Class="px-4 text-right">Late (min)</TableHead>
+                        <TableHead Class="px-4 text-right">Undertime (min)</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    @foreach (var r in _records.Items)
+                    {
+                        <TableRow>
+                            <TableCell Class="px-4 py-3">@r.AttendanceDate</TableCell>
+                            <TableCell Class="px-4 py-3">@(r.TimeIn ?? "--")</TableCell>
+                            <TableCell Class="px-4 py-3">@(r.TimeOut ?? "--")</TableCell>
+                            <TableCell Class="@("px-4 py-3 text-right " + (r.LateMinutes > 0 ? "text-destructive font-medium" : ""))">@r.LateMinutes</TableCell>
+                            <TableCell Class="@("px-4 py-3 text-right " + (r.UndertimeMinutes > 0 ? "text-orange-600 font-medium" : ""))">@r.UndertimeMinutes</TableCell>
+                        </TableRow>
+                    }
+                </TableBody>
+            </Table>
+        }
+    </CardContent>
+</Card>
 
 @code {
     private PagedResult<AttendanceRecordDto>? _records;
@@ -84,7 +96,10 @@
     }
 
     private async Task LoadRecords()
-        => _records = await Api.GetAttendanceAsync(_employeeId, page: 1, pageSize: 20);
+    {
+        if (_employeeId == Guid.Empty) return;
+        _records = await Api.GetAttendanceAsync(_employeeId, page: 1, pageSize: 20);
+    }
 
     private async Task TimeIn()
     {
