@@ -1,0 +1,677 @@
+@page "/analytics"
+@attribute [Authorize(Roles = "Admin,HRManager")]
+@inject ApiClient Api
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>Analytics Dashboard</PageTitle>
+
+<h2 class="text-2xl font-semibold text-foreground mb-6">Analytics Dashboard</h2>
+
+<!-- Date Range Picker -->
+<Card Class="mb-6">
+    <CardContent>
+        <div class="flex flex-wrap items-end gap-4 pt-4">
+            <div>
+                <label class="text-sm font-medium text-foreground">From</label>
+                <InputDate @bind-Value="fromDate" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
+            </div>
+            <div>
+                <label class="text-sm font-medium text-foreground">To</label>
+                <InputDate @bind-Value="toDate" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
+            </div>
+            <div>
+                <button class="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                        @onclick="LoadData" disabled="@isLoading">
+                    @if (isLoading)
+                    {
+                        <span>Loading...</span>
+                    }
+                    else
+                    {
+                        <span>Apply</span>
+                    }
+                </button>
+            </div>
+        </div>
+    </CardContent>
+</Card>
+
+@if (errorMessage is not null)
+{
+    <div class="rounded-md border border-destructive bg-destructive/10 p-4 mb-6">
+        <p class="text-sm text-destructive">@errorMessage</p>
+    </div>
+}
+
+<!-- HR Analytics Section -->
+<h3 class="text-xl font-semibold text-foreground mb-4">HR Analytics</h3>
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+    <!-- Headcount by Department -->
+    <Card>
+        <CardHeader>
+            <CardTitle>Headcount by Department</CardTitle>
+        </CardHeader>
+        <CardContent>
+            @if (headcountData is null)
+            {
+                <p class="text-sm text-muted-foreground">Loading...</p>
+            }
+            else if (headcountData.Data.Count == 0)
+            {
+                <p class="text-sm text-muted-foreground">No data available.</p>
+            }
+            else
+            {
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Department</TableHead>
+                            <TableHead Class="text-right">Active</TableHead>
+                            <TableHead Class="text-right">Inactive</TableHead>
+                            <TableHead Class="text-right">Total</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        @foreach (var row in headcountData.Data)
+                        {
+                            <TableRow>
+                                <TableCell>@row.Department</TableCell>
+                                <TableCell Class="text-right">
+                                    <Badge Variant="success">@row.Active</Badge>
+                                </TableCell>
+                                <TableCell Class="text-right">
+                                    <Badge Variant="secondary">@row.Inactive</Badge>
+                                </TableCell>
+                                <TableCell Class="text-right font-medium">@row.Total</TableCell>
+                            </TableRow>
+                        }
+                    </TableBody>
+                </Table>
+            }
+        </CardContent>
+    </Card>
+
+    <!-- Attendance Rates -->
+    <Card>
+        <CardHeader>
+            <CardTitle>Attendance Rates</CardTitle>
+        </CardHeader>
+        <CardContent>
+            @if (attendanceData is null)
+            {
+                <p class="text-sm text-muted-foreground">Loading...</p>
+            }
+            else if (attendanceData.Data.Count == 0)
+            {
+                <p class="text-sm text-muted-foreground">No data available.</p>
+            }
+            else
+            {
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Department</TableHead>
+                            <TableHead Class="text-right">On Time %</TableHead>
+                            <TableHead Class="text-right">Late %</TableHead>
+                            <TableHead Class="text-right">Absent %</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        @foreach (var row in attendanceData.Data)
+                        {
+                            <TableRow>
+                                <TableCell>@row.Department</TableCell>
+                                <TableCell Class="text-right">@row.OnTimeRate.ToString("F1")%</TableCell>
+                                <TableCell Class="text-right">@row.LateRate.ToString("F1")%</TableCell>
+                                <TableCell Class="text-right">@row.AbsentRate.ToString("F1")%</TableCell>
+                            </TableRow>
+                        }
+                    </TableBody>
+                </Table>
+            }
+        </CardContent>
+    </Card>
+
+    <!-- Leave Utilization -->
+    <Card>
+        <CardHeader>
+            <CardTitle>Leave Utilization</CardTitle>
+        </CardHeader>
+        <CardContent>
+            @if (leaveUtilData is null)
+            {
+                <p class="text-sm text-muted-foreground">Loading...</p>
+            }
+            else if (leaveUtilData.Data.Count == 0)
+            {
+                <p class="text-sm text-muted-foreground">No data available.</p>
+            }
+            else
+            {
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Leave Type</TableHead>
+                            <TableHead Class="text-right">Allocated</TableHead>
+                            <TableHead Class="text-right">Used</TableHead>
+                            <TableHead Class="text-right">Utilization %</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        @foreach (var row in leaveUtilData.Data)
+                        {
+                            <TableRow>
+                                <TableCell>@row.LeaveType</TableCell>
+                                <TableCell Class="text-right">@row.TotalAllocated.ToString("F1")</TableCell>
+                                <TableCell Class="text-right">@row.TotalUsed.ToString("F1")</TableCell>
+                                <TableCell Class="text-right">
+                                    <Badge Variant="@(row.UtilizationRate > 80 ? "destructive" : "secondary")">
+                                        @row.UtilizationRate.ToString("F1")%
+                                    </Badge>
+                                </TableCell>
+                            </TableRow>
+                        }
+                    </TableBody>
+                </Table>
+            }
+        </CardContent>
+    </Card>
+
+    <!-- Overtime -->
+    <Card>
+        <CardHeader>
+            <CardTitle>Overtime by Department</CardTitle>
+        </CardHeader>
+        <CardContent>
+            @if (overtimeData is null)
+            {
+                <p class="text-sm text-muted-foreground">Loading...</p>
+            }
+            else if (overtimeData.Data.Count == 0)
+            {
+                <p class="text-sm text-muted-foreground">No data available.</p>
+            }
+            else
+            {
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Department</TableHead>
+                            <TableHead Class="text-right">Total Hours</TableHead>
+                            <TableHead Class="text-right">Avg/Employee</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        @foreach (var row in overtimeData.Data)
+                        {
+                            <TableRow>
+                                <TableCell>@row.Department</TableCell>
+                                <TableCell Class="text-right">@row.TotalHours.ToString("F1")</TableCell>
+                                <TableCell Class="text-right">@row.AverageHoursPerEmployee.ToString("F1")</TableCell>
+                            </TableRow>
+                        }
+                    </TableBody>
+                </Table>
+            }
+        </CardContent>
+    </Card>
+
+    <!-- Turnover -->
+    <Card>
+        <CardHeader>
+            <CardTitle>Turnover</CardTitle>
+        </CardHeader>
+        <CardContent>
+            @if (turnoverData is null)
+            {
+                <p class="text-sm text-muted-foreground">Loading...</p>
+            }
+            else if (turnoverData.Data.Count == 0)
+            {
+                <p class="text-sm text-muted-foreground">No data available.</p>
+            }
+            else
+            {
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Period</TableHead>
+                            <TableHead Class="text-right">New Hires</TableHead>
+                            <TableHead Class="text-right">Separations</TableHead>
+                            <TableHead Class="text-right">Turnover %</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        @foreach (var row in turnoverData.Data)
+                        {
+                            <TableRow>
+                                <TableCell>@row.Period</TableCell>
+                                <TableCell Class="text-right">
+                                    <Badge Variant="success">@row.NewHires</Badge>
+                                </TableCell>
+                                <TableCell Class="text-right">
+                                    <Badge Variant="destructive">@row.Separations</Badge>
+                                </TableCell>
+                                <TableCell Class="text-right">@row.TurnoverRate.ToString("F1")%</TableCell>
+                            </TableRow>
+                        }
+                    </TableBody>
+                </Table>
+            }
+        </CardContent>
+    </Card>
+
+    <!-- Recruitment Funnel -->
+    <Card>
+        <CardHeader>
+            <CardTitle>Recruitment Funnel</CardTitle>
+        </CardHeader>
+        <CardContent>
+            @if (recruitmentData is null)
+            {
+                <p class="text-sm text-muted-foreground">Loading...</p>
+            }
+            else if (recruitmentData.Data.Count == 0)
+            {
+                <p class="text-sm text-muted-foreground">No data available.</p>
+            }
+            else
+            {
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Stage</TableHead>
+                            <TableHead Class="text-right">Count</TableHead>
+                            <TableHead Class="text-right">Conversion %</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        @foreach (var row in recruitmentData.Data)
+                        {
+                            <TableRow>
+                                <TableCell>@row.Stage</TableCell>
+                                <TableCell Class="text-right">@row.Count</TableCell>
+                                <TableCell Class="text-right">@row.ConversionRate.ToString("F1")%</TableCell>
+                            </TableRow>
+                        }
+                    </TableBody>
+                </Table>
+            }
+        </CardContent>
+    </Card>
+
+    <!-- Performance Distribution -->
+    <Card>
+        <CardHeader>
+            <CardTitle>Performance Distribution</CardTitle>
+        </CardHeader>
+        <CardContent>
+            @if (perfDistData is null)
+            {
+                <p class="text-sm text-muted-foreground">Loading...</p>
+            }
+            else if (perfDistData.Data.Count == 0)
+            {
+                <p class="text-sm text-muted-foreground">No data available.</p>
+            }
+            else
+            {
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Score Range</TableHead>
+                            <TableHead Class="text-right">Count</TableHead>
+                            <TableHead Class="text-right">Percentage</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        @foreach (var row in perfDistData.Data)
+                        {
+                            <TableRow>
+                                <TableCell>@row.ScoreRange</TableCell>
+                                <TableCell Class="text-right">@row.Count</TableCell>
+                                <TableCell Class="text-right">@row.Percentage.ToString("F1")%</TableCell>
+                            </TableRow>
+                        }
+                    </TableBody>
+                </Table>
+            }
+        </CardContent>
+    </Card>
+</div>
+
+<!-- Executive Section (Admin only) -->
+@if (isAdmin)
+{
+    <Separator Class="my-6" />
+    <h3 class="text-xl font-semibold text-foreground mb-4">Executive Analytics</h3>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+        <!-- Workforce Summary -->
+        <Card Class="md:col-span-2">
+            <CardHeader>
+                <CardTitle>Workforce Summary</CardTitle>
+            </CardHeader>
+            <CardContent>
+                @if (workforceSummary is null)
+                {
+                    <p class="text-sm text-muted-foreground">Loading...</p>
+                }
+                else if (workforceSummary.Data.Count == 0)
+                {
+                    <p class="text-sm text-muted-foreground">No data available.</p>
+                }
+                else
+                {
+                    @foreach (var summary in workforceSummary.Data)
+                    {
+                        <div class="flex gap-6 mb-4">
+                            <div class="text-center">
+                                <div class="text-3xl font-bold text-foreground">@summary.TotalActive</div>
+                                <p class="text-sm text-muted-foreground">Active</p>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-3xl font-bold text-muted-foreground">@summary.TotalInactive</div>
+                                <p class="text-sm text-muted-foreground">Inactive</p>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-3xl font-bold text-foreground">@(summary.TotalActive + summary.TotalInactive)</div>
+                                <p class="text-sm text-muted-foreground">Total</p>
+                            </div>
+                        </div>
+                        @if (summary.ByDepartment?.Count > 0)
+                        {
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Department</TableHead>
+                                        <TableHead Class="text-right">Active</TableHead>
+                                        <TableHead Class="text-right">Inactive</TableHead>
+                                        <TableHead Class="text-right">Total</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    @foreach (var dept in summary.ByDepartment)
+                                    {
+                                        <TableRow>
+                                            <TableCell>@dept.Department</TableCell>
+                                            <TableCell Class="text-right">@dept.Active</TableCell>
+                                            <TableCell Class="text-right">@dept.Inactive</TableCell>
+                                            <TableCell Class="text-right font-medium">@dept.Total</TableCell>
+                                        </TableRow>
+                                    }
+                                </TableBody>
+                            </Table>
+                        }
+                    }
+                }
+            </CardContent>
+        </Card>
+
+        <!-- Hiring Trend -->
+        <Card>
+            <CardHeader>
+                <CardTitle>Hiring Trend</CardTitle>
+            </CardHeader>
+            <CardContent>
+                @if (hiringTrend is null)
+                {
+                    <p class="text-sm text-muted-foreground">Loading...</p>
+                }
+                else if (hiringTrend.Data.Count == 0)
+                {
+                    <p class="text-sm text-muted-foreground">No data available.</p>
+                }
+                else
+                {
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead>Month</TableHead>
+                                <TableHead Class="text-right">New Hires</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            @foreach (var row in hiringTrend.Data)
+                            {
+                                <TableRow>
+                                    <TableCell>@row.Month</TableCell>
+                                    <TableCell Class="text-right">
+                                        <Badge Variant="success">@row.NewHires</Badge>
+                                    </TableCell>
+                                </TableRow>
+                            }
+                        </TableBody>
+                    </Table>
+                }
+            </CardContent>
+        </Card>
+
+        <!-- Attrition Rate -->
+        <Card>
+            <CardHeader>
+                <CardTitle>Attrition Rate</CardTitle>
+            </CardHeader>
+            <CardContent>
+                @if (attritionData is null)
+                {
+                    <p class="text-sm text-muted-foreground">Loading...</p>
+                }
+                else if (attritionData.Data.Count == 0)
+                {
+                    <p class="text-sm text-muted-foreground">No data available.</p>
+                }
+                else
+                {
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead>Period</TableHead>
+                                <TableHead Class="text-right">Attrition %</TableHead>
+                                <TableHead Class="text-right">Separations</TableHead>
+                                <TableHead Class="text-right">Avg Headcount</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            @foreach (var row in attritionData.Data)
+                            {
+                                <TableRow>
+                                    <TableCell>@row.Period</TableCell>
+                                    <TableCell Class="text-right">
+                                        <Badge Variant="@(row.AttritionRate > 10 ? "destructive" : "secondary")">
+                                            @row.AttritionRate.ToString("F1")%
+                                        </Badge>
+                                    </TableCell>
+                                    <TableCell Class="text-right">@row.Separations</TableCell>
+                                    <TableCell Class="text-right">@row.AverageHeadcount</TableCell>
+                                </TableRow>
+                            }
+                        </TableBody>
+                    </Table>
+                }
+            </CardContent>
+        </Card>
+
+        <!-- Leave Summary -->
+        <Card>
+            <CardHeader>
+                <CardTitle>Leave Summary</CardTitle>
+            </CardHeader>
+            <CardContent>
+                @if (leaveSummary is null)
+                {
+                    <p class="text-sm text-muted-foreground">Loading...</p>
+                }
+                else if (leaveSummary.Data.Count == 0)
+                {
+                    <p class="text-sm text-muted-foreground">No data available.</p>
+                }
+                else
+                {
+                    @foreach (var summary in leaveSummary.Data)
+                    {
+                        <div class="flex gap-6 mb-4">
+                            <div class="text-center">
+                                <div class="text-2xl font-bold text-foreground">@summary.TotalDaysConsumed.ToString("F0")</div>
+                                <p class="text-sm text-muted-foreground">Total Days</p>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-2xl font-bold text-foreground">@summary.AverageDaysPerEmployee.ToString("F1")</div>
+                                <p class="text-sm text-muted-foreground">Avg/Employee</p>
+                            </div>
+                        </div>
+                        @if (summary.ByType?.Count > 0)
+                        {
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Leave Type</TableHead>
+                                        <TableHead Class="text-right">Allocated</TableHead>
+                                        <TableHead Class="text-right">Used</TableHead>
+                                        <TableHead Class="text-right">Utilization %</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    @foreach (var t in summary.ByType)
+                                    {
+                                        <TableRow>
+                                            <TableCell>@t.LeaveType</TableCell>
+                                            <TableCell Class="text-right">@t.TotalAllocated.ToString("F1")</TableCell>
+                                            <TableCell Class="text-right">@t.TotalUsed.ToString("F1")</TableCell>
+                                            <TableCell Class="text-right">@t.UtilizationRate.ToString("F1")%</TableCell>
+                                        </TableRow>
+                                    }
+                                </TableBody>
+                            </Table>
+                        }
+                    }
+                }
+            </CardContent>
+        </Card>
+
+        <!-- Performance Overview -->
+        <Card>
+            <CardHeader>
+                <CardTitle>Performance Overview</CardTitle>
+            </CardHeader>
+            <CardContent>
+                @if (perfOverview is null)
+                {
+                    <p class="text-sm text-muted-foreground">Loading...</p>
+                }
+                else if (perfOverview.Data.Count == 0)
+                {
+                    <p class="text-sm text-muted-foreground">No data available.</p>
+                }
+                else
+                {
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead>Department</TableHead>
+                                <TableHead Class="text-right">Avg Score</TableHead>
+                                <TableHead>Cycle</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            @foreach (var row in perfOverview.Data)
+                            {
+                                <TableRow>
+                                    <TableCell>@row.Department</TableCell>
+                                    <TableCell Class="text-right font-medium">@row.AverageScore.ToString("F2")</TableCell>
+                                    <TableCell>@row.Cycle</TableCell>
+                                </TableRow>
+                            }
+                        </TableBody>
+                    </Table>
+                }
+            </CardContent>
+        </Card>
+    </div>
+}
+
+@code {
+    private DateOnly fromDate = DateOnly.FromDateTime(DateTime.Today.AddMonths(-12));
+    private DateOnly toDate = DateOnly.FromDateTime(DateTime.Today);
+    private bool isLoading;
+    private bool isAdmin;
+    private string? errorMessage;
+
+    // HR Analytics data
+    private AnalyticsResponse<HeadcountByDepartmentDto>? headcountData;
+    private AnalyticsResponse<TurnoverDataDto>? turnoverData;
+    private AnalyticsResponse<AttendanceRateDto>? attendanceData;
+    private AnalyticsResponse<LeaveUtilizationDto>? leaveUtilData;
+    private AnalyticsResponse<OvertimeDataDto>? overtimeData;
+    private AnalyticsResponse<RecruitmentFunnelDto>? recruitmentData;
+    private AnalyticsResponse<PerformanceDistributionDto>? perfDistData;
+
+    // Executive Analytics data
+    private AnalyticsResponse<WorkforceSummaryDto>? workforceSummary;
+    private AnalyticsResponse<HiringTrendDto>? hiringTrend;
+    private AnalyticsResponse<AttritionDataDto>? attritionData;
+    private AnalyticsResponse<LeaveSummaryDto>? leaveSummary;
+    private AnalyticsResponse<PerformanceOverviewDto>? perfOverview;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        isAdmin = authState.User.IsInRole("Admin");
+
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        errorMessage = null;
+
+        try
+        {
+            // Load HR analytics in parallel
+            var hrTasks = new List<Task>
+            {
+                LoadSafe(async () => headcountData = await Api.GetHeadcountAnalyticsAsync(fromDate, toDate)),
+                LoadSafe(async () => turnoverData = await Api.GetTurnoverAnalyticsAsync(fromDate, toDate)),
+                LoadSafe(async () => attendanceData = await Api.GetAttendanceAnalyticsAsync(fromDate, toDate)),
+                LoadSafe(async () => leaveUtilData = await Api.GetLeaveUtilizationAnalyticsAsync(fromDate, toDate)),
+                LoadSafe(async () => overtimeData = await Api.GetOvertimeAnalyticsAsync(fromDate, toDate)),
+                LoadSafe(async () => recruitmentData = await Api.GetRecruitmentFunnelAnalyticsAsync(fromDate, toDate)),
+                LoadSafe(async () => perfDistData = await Api.GetPerformanceDistributionAnalyticsAsync(fromDate, toDate))
+            };
+
+            // Load executive analytics if admin
+            if (isAdmin)
+            {
+                hrTasks.Add(LoadSafe(async () => workforceSummary = await Api.GetWorkforceSummaryAsync(fromDate, toDate)));
+                hrTasks.Add(LoadSafe(async () => hiringTrend = await Api.GetHiringTrendAsync(fromDate, toDate)));
+                hrTasks.Add(LoadSafe(async () => attritionData = await Api.GetAttritionRateAsync(fromDate, toDate)));
+                hrTasks.Add(LoadSafe(async () => leaveSummary = await Api.GetLeaveSummaryAsync(fromDate, toDate)));
+                hrTasks.Add(LoadSafe(async () => perfOverview = await Api.GetPerformanceOverviewAsync()));
+            }
+
+            await Task.WhenAll(hrTasks);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load analytics data: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private static async Task LoadSafe(Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch
+        {
+            // Individual section failures are handled by null checks in the UI
+        }
+    }
+}

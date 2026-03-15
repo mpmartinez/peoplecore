@@ -18,7 +18,7 @@ public class ApiClient
     public async Task<LoginResponse?> LoginAsync(string email, string password)
     {
         var response = await _http.PostAsJsonAsync("api/auth/login", new { email, password });
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode) return null;
         return await response.Content.ReadFromJsonAsync<LoginResponse>(JsonOptions);
     }
 
@@ -28,6 +28,13 @@ public class ApiClient
 
     public async Task<EmployeeListDto?> GetEmployeeAsync(Guid id)
         => await _http.GetFromJsonAsync<EmployeeListDto>($"api/employees/{id}", JsonOptions);
+
+    public async Task<EmployeeListDto?> CreateEmployeeAsync(object dto)
+    {
+        var response = await _http.PostAsJsonAsync("api/employees", dto);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<EmployeeListDto>(JsonOptions);
+    }
 
     // Leave
     public async Task<IReadOnlyList<LeaveBalanceDto>?> GetLeaveBalancesAsync(Guid employeeId)
@@ -194,6 +201,64 @@ public class ApiClient
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<ReviewCycleDto>(JsonOptions);
     }
+
+    // HR Analytics
+    public async Task<AnalyticsResponse<HeadcountByDepartmentDto>?> GetHeadcountAnalyticsAsync(DateOnly from, DateOnly to, Guid? departmentId = null)
+    {
+        var url = $"api/analytics/hr/headcount?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}";
+        if (departmentId.HasValue) url += $"&departmentId={departmentId}";
+        return await _http.GetFromJsonAsync<AnalyticsResponse<HeadcountByDepartmentDto>>(url, JsonOptions);
+    }
+
+    public async Task<AnalyticsResponse<TurnoverDataDto>?> GetTurnoverAnalyticsAsync(DateOnly from, DateOnly to, string groupBy = "month")
+        => await _http.GetFromJsonAsync<AnalyticsResponse<TurnoverDataDto>>($"api/analytics/hr/turnover?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}&groupBy={groupBy}", JsonOptions);
+
+    public async Task<AnalyticsResponse<AttendanceRateDto>?> GetAttendanceAnalyticsAsync(DateOnly from, DateOnly to, Guid? departmentId = null)
+    {
+        var url = $"api/analytics/hr/attendance?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}";
+        if (departmentId.HasValue) url += $"&departmentId={departmentId}";
+        return await _http.GetFromJsonAsync<AnalyticsResponse<AttendanceRateDto>>(url, JsonOptions);
+    }
+
+    public async Task<AnalyticsResponse<LeaveUtilizationDto>?> GetLeaveUtilizationAnalyticsAsync(DateOnly from, DateOnly to, Guid? departmentId = null)
+    {
+        var url = $"api/analytics/hr/leave-utilization?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}";
+        if (departmentId.HasValue) url += $"&departmentId={departmentId}";
+        return await _http.GetFromJsonAsync<AnalyticsResponse<LeaveUtilizationDto>>(url, JsonOptions);
+    }
+
+    public async Task<AnalyticsResponse<OvertimeDataDto>?> GetOvertimeAnalyticsAsync(DateOnly from, DateOnly to, Guid? departmentId = null)
+    {
+        var url = $"api/analytics/hr/overtime?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}";
+        if (departmentId.HasValue) url += $"&departmentId={departmentId}";
+        return await _http.GetFromJsonAsync<AnalyticsResponse<OvertimeDataDto>>(url, JsonOptions);
+    }
+
+    public async Task<AnalyticsResponse<RecruitmentFunnelDto>?> GetRecruitmentFunnelAnalyticsAsync(DateOnly from, DateOnly to)
+        => await _http.GetFromJsonAsync<AnalyticsResponse<RecruitmentFunnelDto>>($"api/analytics/hr/recruitment-funnel?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}", JsonOptions);
+
+    public async Task<AnalyticsResponse<PerformanceDistributionDto>?> GetPerformanceDistributionAnalyticsAsync(DateOnly from, DateOnly to)
+        => await _http.GetFromJsonAsync<AnalyticsResponse<PerformanceDistributionDto>>($"api/analytics/hr/performance-distribution?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}", JsonOptions);
+
+    // Executive Analytics
+    public async Task<AnalyticsResponse<WorkforceSummaryDto>?> GetWorkforceSummaryAsync(DateOnly from, DateOnly to)
+        => await _http.GetFromJsonAsync<AnalyticsResponse<WorkforceSummaryDto>>($"api/analytics/executive/workforce-summary?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}", JsonOptions);
+
+    public async Task<AnalyticsResponse<HiringTrendDto>?> GetHiringTrendAsync(DateOnly from, DateOnly to)
+        => await _http.GetFromJsonAsync<AnalyticsResponse<HiringTrendDto>>($"api/analytics/executive/hiring-trend?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}", JsonOptions);
+
+    public async Task<AnalyticsResponse<AttritionDataDto>?> GetAttritionRateAsync(DateOnly from, DateOnly to, string groupBy = "month")
+        => await _http.GetFromJsonAsync<AnalyticsResponse<AttritionDataDto>>($"api/analytics/executive/attrition-rate?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}&groupBy={groupBy}", JsonOptions);
+
+    public async Task<AnalyticsResponse<LeaveSummaryDto>?> GetLeaveSummaryAsync(DateOnly from, DateOnly to)
+        => await _http.GetFromJsonAsync<AnalyticsResponse<LeaveSummaryDto>>($"api/analytics/executive/leave-summary?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}", JsonOptions);
+
+    public async Task<AnalyticsResponse<PerformanceOverviewDto>?> GetPerformanceOverviewAsync(Guid? reviewCycleId = null)
+    {
+        var url = "api/analytics/executive/performance-overview";
+        if (reviewCycleId.HasValue) url += $"?reviewCycleId={reviewCycleId}";
+        return await _http.GetFromJsonAsync<AnalyticsResponse<PerformanceOverviewDto>>(url, JsonOptions);
+    }
 }
 
 // Client-side DTO copies
@@ -201,7 +266,7 @@ public record LoginResponse(string Token, string Email, IReadOnlyList<string> Ro
 public record PagedResult<T>(IReadOnlyList<T> Items, int TotalCount, int Page, int PageSize, int TotalPages);
 public record EmployeeListDto(Guid Id, string EmployeeNumber, string FirstName, string LastName, string FullName, string WorkEmail, string? DepartmentName, string? PositionTitle, string EmploymentStatus, bool IsActive);
 public record LeaveBalanceDto(Guid Id, string LeaveTypeName, int Year, decimal TotalDays, decimal UsedDays, decimal RemainingDays);
-public record LeaveRequestDto(Guid Id, Guid EmployeeId, string LeaveTypeName, string StartDate, string EndDate, decimal TotalDays, string Status, string? Reason);
+public record LeaveRequestDto(Guid Id, Guid EmployeeId, string EmployeeName, string LeaveTypeName, string StartDate, string EndDate, decimal TotalDays, string Status, string? Reason);
 public record AttendanceRecordDto(Guid Id, string AttendanceDate, string? TimeIn, string? TimeOut, int LateMinutes, int UndertimeMinutes, bool IsPresent);
 public record CompanyDto(Guid Id, string Name);
 public record DepartmentDto(Guid Id, Guid CompanyId, Guid? ParentDepartmentId, string? ParentDepartmentName, string Name, string? Code, int SubDepartmentCount);
@@ -211,3 +276,19 @@ public record ApplicantDto(Guid Id, Guid JobPostingId, string JobPostingTitle, s
 public record OvertimeRequestDto(Guid Id, Guid EmployeeId, string EmployeeName, string OvertimeDate, string StartTime, string EndTime, int TotalMinutes, string Reason, string Status, string? RejectionReason);
 public record ReviewCycleDto(Guid Id, string Name, int Year, int? Quarter, string StartDate, string EndDate, string Status);
 public record PerformanceReviewDto(Guid Id, Guid EmployeeId, string EmployeeName, Guid ReviewCycleId, string ReviewCycleName, decimal? FinalScore, string Status);
+
+// Analytics DTOs
+public record AnalyticsResponse<T>(AnalyticsPeriodDto Period, IReadOnlyList<T> Data, DateTime GeneratedAt);
+public record AnalyticsPeriodDto(DateOnly From, DateOnly To);
+public record HeadcountByDepartmentDto(string Department, int Active, int Inactive, int Total);
+public record TurnoverDataDto(string Period, int NewHires, int Separations, decimal TurnoverRate);
+public record AttendanceRateDto(string Department, decimal OnTimeRate, decimal LateRate, decimal AbsentRate);
+public record LeaveUtilizationDto(string LeaveType, decimal TotalAllocated, decimal TotalUsed, decimal UtilizationRate);
+public record OvertimeDataDto(string Department, decimal TotalHours, decimal AverageHoursPerEmployee);
+public record RecruitmentFunnelDto(string Stage, int Count, decimal ConversionRate);
+public record PerformanceDistributionDto(string ScoreRange, int Count, decimal Percentage);
+public record WorkforceSummaryDto(int TotalActive, int TotalInactive, IReadOnlyList<HeadcountByDepartmentDto> ByDepartment);
+public record HiringTrendDto(string Month, int NewHires);
+public record AttritionDataDto(string Period, decimal AttritionRate, int Separations, int AverageHeadcount);
+public record LeaveSummaryDto(decimal TotalDaysConsumed, decimal AverageDaysPerEmployee, IReadOnlyList<LeaveUtilizationDto> ByType);
+public record PerformanceOverviewDto(string Department, decimal AverageScore, string Cycle);
