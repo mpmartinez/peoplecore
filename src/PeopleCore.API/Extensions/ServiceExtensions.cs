@@ -18,6 +18,8 @@ using PeopleCore.Application.PayrollIntegration.Interfaces;
 using PeopleCore.Application.PayrollIntegration.Services;
 using PeopleCore.Application.Performance.Interfaces;
 using PeopleCore.Application.Performance.Services;
+using PeopleCore.Application.Analytics.Interfaces;
+using PeopleCore.Application.Analytics.Services;
 using PeopleCore.Application.Careers.Interfaces;
 using PeopleCore.Application.Careers.Services;
 using PeopleCore.Application.Recruitment.Interfaces;
@@ -161,6 +163,10 @@ public static class ServiceExtensions
 
         // Careers
         services.AddScoped<ICareersService, CareersService>();
+
+        // Analytics
+        services.AddScoped<IHRAnalyticsService, HRAnalyticsService>();
+        services.AddScoped<IExecutiveAnalyticsService, ExecutiveAnalyticsService>();
 
         // Payroll Export
         services.AddScoped<IPayrollExportService, PayrollExportService>();
