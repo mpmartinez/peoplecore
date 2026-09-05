@@ -29,7 +29,7 @@ using PeopleCore.Application.Scheduling.Services;
 using PeopleCore.Domain.Interfaces;
 using PeopleCore.Domain.Entities.Recruitment;
 using PeopleCore.Infrastructure.Identity;
-using PeopleCore.Infrastructure.Jobs;
+using PeopleCore.Infrastructure.BackgroundJobs;
 using PeopleCore.Infrastructure.Persistence;
 using PeopleCore.Infrastructure.Persistence.Repositories;
 using PeopleCore.Infrastructure.Storage;

@@ -2,13 +2,14 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PeopleCore.Domain\PeopleCore.Domain.csproj" />
-    <ProjectReference Include="..\..\..\M2NET.Core\src\M2NET.Core\M2NET.Core.csproj" />
+    <ProjectReference Include="$(M2NetCoreProject)" Condition=" '$(M2NetCoreProject)' != '' " />
   </ItemGroup>
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <UsesM2NetCore>true</UsesM2NetCore>
   </PropertyGroup>
 
 </Project>
