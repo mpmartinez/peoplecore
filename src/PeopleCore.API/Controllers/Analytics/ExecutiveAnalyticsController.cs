@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
+using PeopleCore.Application.Analytics.DTOs;
 using PeopleCore.Application.Analytics.Interfaces;
 
 namespace PeopleCore.API.Controllers.Analytics;
@@ -27,7 +28,8 @@ public class ExecutiveAnalyticsController : ControllerBase
         var key = $"analytics:executive:workforce-summary:{from}:{to}";
         if (!_cache.TryGetValue(key, out object? result))
         {
-            result = await _service.GetWorkforceSummaryAsync(from, to, ct);
+            var data = await _service.GetWorkforceSummaryAsync(from, to, ct);
+            result = Wrap(from, to, data);
             _cache.Set(key, result, TimeSpan.FromMinutes(15));
         }
         return Ok(result);
@@ -41,7 +43,8 @@ public class ExecutiveAnalyticsController : ControllerBase
         var key = $"analytics:executive:hiring-trend:{from}:{to}";
         if (!_cache.TryGetValue(key, out object? result))
         {
-            result = await _service.GetHiringTrendAsync(from, to, ct);
+            var data = await _service.GetHiringTrendAsync(from, to, ct);
+            result = Wrap(from, to, data);
             _cache.Set(key, result, TimeSpan.FromMinutes(15));
         }
         return Ok(result);
@@ -55,7 +58,8 @@ public class ExecutiveAnalyticsController : ControllerBase
         var key = $"analytics:executive:attrition-rate:{from}:{to}:{groupBy}";
         if (!_cache.TryGetValue(key, out object? result))
         {
-            result = await _service.GetAttritionRateAsync(from, to, groupBy, ct);
+            var data = await _service.GetAttritionRateAsync(from, to, groupBy, ct);
+            result = Wrap(from, to, data);
             _cache.Set(key, result, TimeSpan.FromMinutes(15));
         }
         return Ok(result);
@@ -69,7 +73,8 @@ public class ExecutiveAnalyticsController : ControllerBase
         var key = $"analytics:executive:leave-summary:{from}:{to}";
         if (!_cache.TryGetValue(key, out object? result))
         {
-            result = await _service.GetLeaveSummaryAsync(from, to, ct);
+            var data = await _service.GetLeaveSummaryAsync(from, to, ct);
+            result = Wrap(from, to, data);
             _cache.Set(key, result, TimeSpan.FromMinutes(15));
         }
         return Ok(result);
@@ -77,14 +82,24 @@ public class ExecutiveAnalyticsController : ControllerBase
 
     [HttpGet("performance-overview")]
     public async Task<IActionResult> GetPerformanceOverview(
+        [FromQuery] DateOnly? from = null, [FromQuery] DateOnly? to = null,
         [FromQuery] Guid? reviewCycleId = null, CancellationToken ct = default)
     {
-        var key = $"analytics:executive:performance-overview:{reviewCycleId}";
+        var fromDate = from ?? new DateOnly(DateTime.UtcNow.Year, 1, 1);
+        var toDate = to ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        var key = $"analytics:executive:performance-overview:{fromDate}:{toDate}:{reviewCycleId}";
         if (!_cache.TryGetValue(key, out object? result))
         {
-            result = await _service.GetPerformanceOverviewAsync(reviewCycleId, ct);
+            var data = await _service.GetPerformanceOverviewAsync(reviewCycleId, ct);
+            result = Wrap(fromDate, toDate, data);
             _cache.Set(key, result, TimeSpan.FromMinutes(15));
         }
         return Ok(result);
     }
+
+    private static AnalyticsResponse<T> Wrap<T>(DateOnly from, DateOnly to, IReadOnlyList<T> data)
+        => new(new AnalyticsPeriod(from, to), data, DateTime.UtcNow);
+
+    private static AnalyticsResponse<T> Wrap<T>(DateOnly from, DateOnly to, T singleItem)
+        => new(new AnalyticsPeriod(from, to), new[] { singleItem }, DateTime.UtcNow);
 }
