@@ -24,7 +24,19 @@
       "Bash(find 'c:/M2NET PROJECTS/peoplecore/src/PeopleCore.Web/Services' -name *.cs)",
       "Bash(find 'c:/M2NET PROJECTS/peoplecore/src/PeopleCore.Web/Auth' -name *.razor -o -name *.cs)",
       "Bash(xargs cat:*)",
-      "Bash(cmd.exe /c \"taskkill /IM PeopleCore.API.exe /F 2>&1 & echo done\")"
+      "Bash(cmd.exe /c \"taskkill /IM PeopleCore.API.exe /F 2>&1 & echo done\")",
+      "WebSearch",
+      "WebFetch(domain:sprout.ph)",
+      "WebFetch(domain:www.g2.com)",
+      "WebFetch(domain:www.capterra.com)",
+      "WebFetch(domain:help.sprout.ph)",
+      "WebFetch(domain:support.sprout.ph)",
+      "WebFetch(domain:web.archive.org)",
+      "Bash(docker info:*)",
+      "Bash(docker compose:*)",
+      "Bash(where psql:*)",
+      "Read(//c/Program Files/**)",
+      "Bash(ls \"C:/Program Files/PostgreSQL/\"*/bin/psql.exe)"
     ]
   }
 }
