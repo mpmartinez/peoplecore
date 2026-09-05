@@ -3,10 +3,21 @@
 @inject NavigationManager Nav
 
 <div class="flex h-screen bg-background">
-    <NavMenu />
+    @if (sidebarOpen)
+    {
+        <div class="fixed inset-0 bg-black/50 z-30 md:hidden" @onclick="ToggleSidebar"></div>
+    }
+    <div class="@SidebarCss">
+        <NavMenu />
+    </div>
     <div class="flex-1 flex flex-col overflow-hidden">
         <header class="bg-card border-b border-border px-6 py-3 flex justify-between items-center shadow-sm">
-            <h1 class="text-lg font-semibold text-foreground">PeopleCore HRMS</h1>
+            <div class="flex items-center gap-3">
+                <button class="text-muted-foreground hover:text-foreground" @onclick="ToggleSidebar">
+                    <i class="bi @(sidebarOpen ? "bi-x-lg" : "bi-list") text-xl"></i>
+                </button>
+                <h1 class="text-lg font-semibold text-foreground">PeopleCore HRMS</h1>
+            </div>
             <AuthorizeView>
                 <Authorized>
                     <div class="flex items-center gap-4">
@@ -24,6 +35,14 @@
 </div>
 
 @code {
+    private bool sidebarOpen = true;
+
+    private string SidebarCss => sidebarOpen
+        ? "sidebar-panel sidebar-open"
+        : "sidebar-panel sidebar-closed";
+
+    private void ToggleSidebar() => sidebarOpen = !sidebarOpen;
+
     private async Task Logout()
     {
         await AuthProvider.LogoutAsync();

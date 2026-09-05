@@ -4,49 +4,64 @@
 @inject PeopleCore.Web.Auth.JwtAuthStateProvider AuthProvider
 @inject NavigationManager Nav
 
-<div class="min-h-screen flex items-center justify-center bg-gray-50">
-    <div class="max-w-md w-full bg-white rounded-lg shadow p-8">
-        <h2 class="text-2xl font-bold text-center mb-6">PeopleCore</h2>
+<div class="min-h-screen flex items-center justify-center bg-muted/30">
+    <Card Class="w-full max-w-sm">
+        <CardHeader>
+            <CardTitle Class="text-2xl text-center">PeopleCore</CardTitle>
+            <p class="text-sm text-muted-foreground text-center mt-1">Sign in to your account</p>
+        </CardHeader>
+        <CardContent>
+            @if (_error != null)
+            {
+                <Alert Variant="destructive" Class="mb-4">@_error</Alert>
+            }
 
-        @if (!string.IsNullOrEmpty(_error))
-        {
-            <div class="bg-red-50 text-red-700 rounded p-3 mb-4 text-sm">@_error</div>
-        }
-
-        <EditForm Model="_form" OnValidSubmit="HandleLogin">
-            <DataAnnotationsValidator />
-            <div class="mb-4">
-                <label class="block text-sm font-medium mb-1">Email</label>
-                <InputText @bind-Value="_form.Email" class="w-full border rounded px-3 py-2 text-sm" placeholder="you@company.com" />
+            <div class="space-y-4">
+                <FormField LabelText="Email" Id="email">
+                    <input id="email" type="email" @bind="_email" @bind:event="oninput"
+                           class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                           placeholder="you@company.com" />
+                </FormField>
+                <FormField LabelText="Password" Id="password" Class="mb-6">
+                    <input id="password" type="password" @bind="_password" @bind:event="oninput"
+                           @onkeydown="@(async e => { if (e.Key == "Enter") await HandleLogin(); })"
+                           class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
+                </FormField>
+                <Button Variant="primary" Class="w-full" OnClick="HandleLogin" Loading="@_loading">
+                    Sign In
+                </Button>
             </div>
-            <div class="mb-6">
-                <label class="block text-sm font-medium mb-1">Password</label>
-                <InputText @bind-Value="_form.Password" type="password" class="w-full border rounded px-3 py-2 text-sm" />
-            </div>
-            <button type="submit" disabled="@_loading"
-                    class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-60 text-sm">
-                @(_loading ? "Signing in..." : "Sign In")
-            </button>
-        </EditForm>
-    </div>
+        </CardContent>
+    </Card>
 </div>
 
 @code {
-    private readonly LoginForm _form = new();
+    private string _email = string.Empty;
+    private string _password = string.Empty;
     private string? _error;
     private bool _loading;
 
     private async Task HandleLogin()
     {
+        if (string.IsNullOrWhiteSpace(_email) || string.IsNullOrWhiteSpace(_password))
+        {
+            _error = "Please enter your email and password.";
+            return;
+        }
+
         _loading = true;
         _error = null;
         try
         {
-            var result = await Api.LoginAsync(_form.Email, _form.Password);
+            var result = await Api.LoginAsync(_email, _password);
             if (result is not null)
             {
                 await AuthProvider.LoginAsync(result.Token);
                 Nav.NavigateTo("/", forceLoad: true);
+            }
+            else
+            {
+                _error = "Invalid email or password.";
             }
         }
         catch
@@ -54,11 +69,5 @@
             _error = "Invalid email or password.";
         }
         finally { _loading = false; }
-    }
-
-    private class LoginForm
-    {
-        public string Email { get; set; } = string.Empty;
-        public string Password { get; set; } = string.Empty;
     }
 }

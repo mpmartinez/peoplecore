@@ -265,7 +265,7 @@ public class ApiClient
 public record LoginResponse(string Token, string Email, IReadOnlyList<string> Roles);
 public record PagedResult<T>(IReadOnlyList<T> Items, int TotalCount, int Page, int PageSize, int TotalPages);
 public record EmployeeListDto(Guid Id, string EmployeeNumber, string FirstName, string LastName, string FullName, string WorkEmail, string? DepartmentName, string? PositionTitle, string EmploymentStatus, bool IsActive);
-public record LeaveBalanceDto(Guid Id, string LeaveTypeName, int Year, decimal TotalDays, decimal UsedDays, decimal RemainingDays);
+public record LeaveBalanceDto(Guid Id, Guid EmployeeId, string EmployeeName, Guid LeaveTypeId, string LeaveTypeName, int Year, decimal TotalDays, decimal UsedDays, decimal CarriedOverDays, decimal RemainingDays);
 public record LeaveRequestDto(Guid Id, Guid EmployeeId, string EmployeeName, string LeaveTypeName, string StartDate, string EndDate, decimal TotalDays, string Status, string? Reason);
 public record AttendanceRecordDto(Guid Id, string AttendanceDate, string? TimeIn, string? TimeOut, int LateMinutes, int UndertimeMinutes, bool IsPresent);
 public record CompanyDto(Guid Id, string Name);

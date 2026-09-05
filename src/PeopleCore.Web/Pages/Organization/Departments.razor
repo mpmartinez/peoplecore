@@ -2,62 +2,69 @@
 @attribute [Authorize(Roles = "Admin,HRManager")]
 @inject ApiClient Api
 
-<h2 class="text-2xl font-semibold mb-4">Departments</h2>
-
-<div class="bg-white rounded-lg shadow p-4 mb-4 flex items-end gap-3">
-    <div class="flex-1">
-        <label class="block text-xs font-medium text-gray-500 mb-1">Name</label>
-        <input @bind="_newName" class="border rounded px-3 py-1.5 text-sm w-full max-w-xs" placeholder="Department name" />
-    </div>
-    <div class="flex-1">
-        <label class="block text-xs font-medium text-gray-500 mb-1">Code</label>
-        <input @bind="_newCode" class="border rounded px-3 py-1.5 text-sm w-full max-w-xs" placeholder="e.g. HR, FIN" />
-    </div>
-    <button @onclick="Create" disabled="@(_creating || string.IsNullOrWhiteSpace(_newName))"
-            class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
-        @(_creating ? "Adding..." : "+ Add")
-    </button>
-</div>
+<h2 class="text-2xl font-semibold mb-6">Departments</h2>
 
 @if (_error is not null)
 {
-    <div class="bg-red-50 text-red-700 rounded p-3 mb-4 text-sm">@_error</div>
+    <Alert Variant="destructive" Class="mb-4">@_error</Alert>
 }
 
-<div class="bg-white rounded-lg shadow overflow-hidden">
-    @if (_departments is null)
-    {
-        <div class="p-6 text-sm text-gray-400">Loading...</div>
-    }
-    else if (!_departments.Items.Any())
-    {
-        <div class="p-6 text-sm text-gray-400">No departments yet.</div>
-    }
-    else
-    {
-        <table class="w-full text-sm">
-            <thead class="bg-gray-50">
-                <tr class="text-left text-gray-500 text-xs uppercase">
-                    <th class="px-4 py-3">Name</th>
-                    <th class="px-4 py-3">Code</th>
-                    <th class="px-4 py-3">Parent</th>
-                    <th class="px-4 py-3">Sub-depts</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var d in _departments.Items)
-                {
-                    <tr class="border-t hover:bg-gray-50">
-                        <td class="px-4 py-3 font-medium">@d.Name</td>
-                        <td class="px-4 py-3 font-mono text-xs text-gray-500">@(d.Code ?? "--")</td>
-                        <td class="px-4 py-3 text-gray-500">@(d.ParentDepartmentName ?? "--")</td>
-                        <td class="px-4 py-3 text-gray-500">@d.SubDepartmentCount</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-    }
-</div>
+<Card Class="mb-4">
+    <CardContent>
+        <div class="flex items-end gap-3 flex-wrap">
+            <div class="flex-1 min-w-[160px]">
+                <Label>Name</Label>
+                <Input Value="@_newName" ValueChanged="@(v => _newName = v)" Placeholder="Department name" />
+            </div>
+            <div class="flex-1 min-w-[120px]">
+                <Label>Code</Label>
+                <Input Value="@(_newCode ?? "")" ValueChanged="@(v => _newCode = string.IsNullOrEmpty(v) ? null : v)" Placeholder="e.g. HR, FIN" />
+            </div>
+            <Button Variant="primary" OnClick="Create" Disabled="@(_creating || string.IsNullOrWhiteSpace(_newName))" Loading="@_creating">
+                + Add
+            </Button>
+        </div>
+    </CardContent>
+</Card>
+
+<Card>
+    <CardContent Class="p-0">
+        @if (_departments is null)
+        {
+            <div class="flex items-center justify-center p-10">
+                <Spinner />
+            </div>
+        }
+        else if (!_departments.Items.Any())
+        {
+            <div class="p-6 text-sm text-muted-foreground">No departments yet.</div>
+        }
+        else
+        {
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead Class="px-4">Name</TableHead>
+                        <TableHead Class="px-4">Code</TableHead>
+                        <TableHead Class="px-4">Parent</TableHead>
+                        <TableHead Class="px-4">Sub-depts</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    @foreach (var d in _departments.Items)
+                    {
+                        <TableRow>
+                            <TableCell Class="px-4 py-3 font-medium">@d.Name</TableCell>
+                            <TableCell Class="px-4 py-3 font-mono text-xs">@(d.Code ?? "--")</TableCell>
+                            <TableCell Class="px-4 py-3">@(d.ParentDepartmentName ?? "--")</TableCell>
+                            <TableCell Class="px-4 py-3">@d.SubDepartmentCount</TableCell>
+                        </TableRow>
+                    }
+                </TableBody>
+            </Table>
+        }
+    </CardContent>
+</Card>
 
 @code {
     private PagedResult<DepartmentDto>? _departments;

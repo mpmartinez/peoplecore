@@ -2,88 +2,234 @@
 @attribute [Authorize(Roles = "Admin,HRManager")]
 @inject ApiClient Api
 
-<h2 class="text-2xl font-semibold mb-4">Employees</h2>
-
-<div class="bg-white rounded-lg shadow p-4 mb-4">
-    <div class="flex gap-3 items-center">
-        <input @bind="_search" @bind:event="oninput" @onkeyup="OnSearch"
-               placeholder="Search by name or number..."
-               class="border rounded px-3 py-1.5 text-sm flex-1 max-w-xs" />
-        <select @bind="_statusFilter" @bind:after="LoadEmployees" class="border rounded px-3 py-1.5 text-sm">
-            <option value="">All Status</option>
-            <option value="true">Active</option>
-            <option value="false">Inactive</option>
-        </select>
-    </div>
+<div class="flex items-center justify-between mb-6">
+    <h2 class="text-2xl font-semibold text-foreground">Employees</h2>
+    <Button Variant="primary" OnClick="OpenAddForm">
+        <i class="bi bi-plus-lg mr-1"></i> Add Employee
+    </Button>
 </div>
 
-<div class="bg-white rounded-lg shadow overflow-hidden">
-    @if (_employees is null)
-    {
-        <div class="p-6 text-sm text-gray-400">Loading...</div>
-    }
-    else if (!_employees.Items.Any())
-    {
-        <div class="p-6 text-sm text-gray-400">No employees found.</div>
-    }
-    else
-    {
-        <table class="w-full text-sm">
-            <thead class="bg-gray-50">
-                <tr class="text-left text-gray-500 text-xs uppercase">
-                    <th class="px-4 py-3">Employee #</th>
-                    <th class="px-4 py-3">Name</th>
-                    <th class="px-4 py-3">Department</th>
-                    <th class="px-4 py-3">Position</th>
-                    <th class="px-4 py-3">Status</th>
-                    <th class="px-4 py-3">Employment</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var emp in _employees.Items)
-                {
-                    <tr class="border-t hover:bg-gray-50">
-                        <td class="px-4 py-3 font-mono text-xs">@emp.EmployeeNumber</td>
-                        <td class="px-4 py-3">
-                            <div class="font-medium">@emp.FullName</div>
-                            <div class="text-xs text-gray-400">@emp.WorkEmail</div>
-                        </td>
-                        <td class="px-4 py-3 text-gray-600">@(emp.DepartmentName ?? "--")</td>
-                        <td class="px-4 py-3 text-gray-600">@(emp.PositionTitle ?? "--")</td>
-                        <td class="px-4 py-3">
-                            <span class="@(emp.IsActive ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500") px-2 py-0.5 rounded-full text-xs">
-                                @(emp.IsActive ? "Active" : "Inactive")
-                            </span>
-                        </td>
-                        <td class="px-4 py-3 text-gray-600">@emp.EmploymentStatus</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
+<Card Class="mb-4">
+    <CardContent Class="pt-4">
+        <div class="flex gap-3 flex-wrap">
+            <Input Value="@_search"
+                   ValueChanged="@(async v => { _search = v; await OnSearch(); })"
+                   Placeholder="Search by name or number..."
+                   Type="text"
+                   Class="flex-1 max-w-xs" />
+            <select @bind="_statusFilter" @bind:after="LoadEmployees"
+                    class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 max-w-[160px]">
+                <option value="">All Status</option>
+                <option value="true">Active</option>
+                <option value="false">Inactive</option>
+            </select>
+        </div>
+    </CardContent>
+</Card>
 
-        @if (_employees.TotalPages > 1)
+<Card>
+    <CardContent Class="p-0">
+        @if (_employees is null)
         {
-            <div class="px-4 py-3 border-t flex items-center justify-between text-sm text-gray-500">
-                <span>Showing @((_page - 1) * _pageSize + 1)–@Math.Min(_page * _pageSize, _employees.TotalCount) of @_employees.TotalCount</span>
-                <div class="flex gap-2">
-                    <button @onclick="PrevPage" disabled="@(_page <= 1)"
-                            class="px-3 py-1 border rounded disabled:opacity-40 hover:bg-gray-50">Prev</button>
-                    <button @onclick="NextPage" disabled="@(_page >= _employees.TotalPages)"
-                            class="px-3 py-1 border rounded disabled:opacity-40 hover:bg-gray-50">Next</button>
-                </div>
-            </div>
+            <div class="p-6 flex justify-center"><Spinner /></div>
         }
-    }
-</div>
+        else if (!_employees.Items.Any())
+        {
+            <div class="p-6 text-center text-muted-foreground text-sm">No employees found.</div>
+        }
+        else
+        {
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead Class="px-4">Employee #</TableHead>
+                        <TableHead Class="px-4">Name</TableHead>
+                        <TableHead Class="px-4">Department</TableHead>
+                        <TableHead Class="px-4">Position</TableHead>
+                        <TableHead Class="px-4">Status</TableHead>
+                        <TableHead Class="px-4">Employment</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    @foreach (var emp in _employees.Items)
+                    {
+                        <TableRow>
+                            <TableCell Class="px-4 py-3 font-mono text-xs">@emp.EmployeeNumber</TableCell>
+                            <TableCell Class="px-4 py-3">
+                                <div class="font-medium">@emp.FullName</div>
+                                <div class="text-xs text-muted-foreground">@emp.WorkEmail</div>
+                            </TableCell>
+                            <TableCell Class="px-4 py-3 text-muted-foreground">@(emp.DepartmentName ?? "--")</TableCell>
+                            <TableCell Class="px-4 py-3 text-muted-foreground">@(emp.PositionTitle ?? "--")</TableCell>
+                            <TableCell Class="px-4 py-3">
+                                <Badge Variant="@(emp.IsActive ? "success" : "secondary")">@(emp.IsActive ? "Active" : "Inactive")</Badge>
+                            </TableCell>
+                            <TableCell Class="px-4 py-3 text-muted-foreground">@emp.EmploymentStatus</TableCell>
+                        </TableRow>
+                    }
+                </TableBody>
+            </Table>
+
+            @if (_employees.TotalPages > 1)
+            {
+                <div class="border-t px-4 py-3">
+                    <Pagination CurrentPage="@_page" TotalPages="@_employees.TotalPages" OnPageChange="@HandlePageChange" />
+                </div>
+            }
+        }
+    </CardContent>
+</Card>
+
+<Sheet IsOpen="@_showForm"
+       IsOpenChanged="@(v => _showForm = v)"
+       Title="Add Employee"
+       Description="Fill in the employee details below."
+       Side="right">
+    <ChildContent>
+        @if (_formError is not null)
+        {
+            <Alert Variant="destructive" Class="mb-4">@_formError</Alert>
+        }
+
+        <div class="grid grid-cols-2 gap-4">
+            <div class="col-span-2">
+                <FormField LabelText="Employee Number *" Id="empNumber" Class="mb-4">
+                    <Input Value="@_form.EmployeeNumber"
+                           ValueChanged="@(v => _form.EmployeeNumber = v)"
+                           Placeholder="e.g. EMP-001"
+                           Type="text" />
+                </FormField>
+            </div>
+            <div>
+                <FormField LabelText="First Name *" Id="firstName" Class="mb-4">
+                    <Input Value="@_form.FirstName"
+                           ValueChanged="@(v => _form.FirstName = v)"
+                           Type="text" />
+                </FormField>
+            </div>
+            <div>
+                <FormField LabelText="Middle Name" Id="middleName" Class="mb-4">
+                    <Input Value="@_form.MiddleName"
+                           ValueChanged="@(v => _form.MiddleName = v)"
+                           Type="text" />
+                </FormField>
+            </div>
+            <div class="col-span-2">
+                <FormField LabelText="Last Name *" Id="lastName" Class="mb-4">
+                    <Input Value="@_form.LastName"
+                           ValueChanged="@(v => _form.LastName = v)"
+                           Type="text" />
+                </FormField>
+            </div>
+            <div>
+                <Label For="dob">Date of Birth *</Label>
+                <input id="dob" type="date" @bind="_form.DateOfBirth"
+                       class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1" />
+            </div>
+            <div>
+                <Label For="gender">Gender *</Label>
+                <select id="gender" @bind="_form.Gender"
+                        class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1">
+                    <option value="">Select...</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                </select>
+            </div>
+            <div class="col-span-2">
+                <FormField LabelText="Work Email *" Id="workEmail" Class="mb-4">
+                    <Input Value="@_form.WorkEmail"
+                           ValueChanged="@(v => _form.WorkEmail = v)"
+                           Type="email" />
+                </FormField>
+            </div>
+            <div class="col-span-2">
+                <FormField LabelText="Mobile Number" Id="mobileNumber" Class="mb-4">
+                    <Input Value="@_form.MobileNumber"
+                           ValueChanged="@(v => _form.MobileNumber = v)"
+                           Placeholder="+63..."
+                           Type="text" />
+                </FormField>
+            </div>
+            <div>
+                <Label For="department">Department</Label>
+                <select id="department" @bind="_form.DepartmentId" @bind:after="OnDepartmentChanged"
+                        class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1">
+                    <option value="">None</option>
+                    @foreach (var dept in _departments)
+                    {
+                        <option value="@dept.Id">@dept.Name</option>
+                    }
+                </select>
+            </div>
+            <div>
+                <Label For="position">Position</Label>
+                <select id="position" @bind="_form.PositionId"
+                        class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1">
+                    <option value="">None</option>
+                    @foreach (var pos in _positions)
+                    {
+                        <option value="@pos.Id">@pos.Title</option>
+                    }
+                </select>
+            </div>
+            <div>
+                <Label For="empStatus">Employment Status *</Label>
+                <select id="empStatus" @bind="_form.EmploymentStatus"
+                        class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1">
+                    <option value="">Select...</option>
+                    <option value="Probationary">Probationary</option>
+                    <option value="Regular">Regular</option>
+                    <option value="Contractual">Contractual</option>
+                </select>
+            </div>
+            <div>
+                <Label For="empType">Employment Type *</Label>
+                <select id="empType" @bind="_form.EmploymentType"
+                        class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1">
+                    <option value="">Select...</option>
+                    <option value="Regular">Regular</option>
+                    <option value="Probationary">Probationary</option>
+                    <option value="Contractual">Contractual</option>
+                    <option value="PartTime">Part-Time</option>
+                    <option value="Casual">Casual</option>
+                </select>
+            </div>
+            <div class="col-span-2">
+                <Label For="hireDate">Hire Date *</Label>
+                <input id="hireDate" type="date" @bind="_form.HireDate"
+                       class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1" />
+            </div>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <Button Variant="outline" Size="sm" OnClick="CloseForm">Cancel</Button>
+        <Button Variant="primary" Size="sm" OnClick="SubmitForm" Loading="@_saving">Save Employee</Button>
+    </FooterContent>
+</Sheet>
 
 @code {
     private PagedResult<EmployeeListDto>? _employees;
+    private List<DepartmentDto> _departments = [];
+    private List<PositionDto> _positions = [];
     private string _search = string.Empty;
     private string _statusFilter = string.Empty;
     private int _page = 1;
     private const int _pageSize = 20;
+    private bool _showForm;
+    private bool _saving;
+    private string? _formError;
+    private EmployeeFormModel _form = new();
 
-    protected override async Task OnInitializedAsync() => await LoadEmployees();
+    protected override async Task OnInitializedAsync()
+    {
+        await Task.WhenAll(LoadEmployees(), LoadDepartments());
+    }
+
+    private async Task LoadDepartments()
+    {
+        var result = await Api.GetDepartmentsAsync(pageSize: 100);
+        _departments = result?.Items.ToList() ?? [];
+    }
 
     private async Task LoadEmployees()
     {
@@ -98,4 +244,96 @@
 
     private async Task PrevPage() { if (_page > 1) { _page--; await LoadEmployees(); } }
     private async Task NextPage() { if (_employees is not null && _page < _employees.TotalPages) { _page++; await LoadEmployees(); } }
+
+    private async Task HandlePageChange(int page)
+    {
+        _page = page;
+        await LoadEmployees();
+    }
+
+    private void OpenAddForm()
+    {
+        _form = new EmployeeFormModel();
+        _positions = [];
+        _formError = null;
+        _showForm = true;
+    }
+
+    private void CloseForm() => _showForm = false;
+
+    private async Task OnDepartmentChanged()
+    {
+        _form.PositionId = null;
+        _positions = [];
+        if (_form.DepartmentId.HasValue)
+        {
+            var result = await Api.GetPositionsAsync(_form.DepartmentId, pageSize: 100);
+            _positions = result?.Items.ToList() ?? [];
+        }
+    }
+
+    private async Task SubmitForm()
+    {
+        _formError = null;
+        if (string.IsNullOrWhiteSpace(_form.EmployeeNumber) ||
+            string.IsNullOrWhiteSpace(_form.FirstName) ||
+            string.IsNullOrWhiteSpace(_form.LastName) ||
+            string.IsNullOrWhiteSpace(_form.WorkEmail) ||
+            string.IsNullOrWhiteSpace(_form.Gender) ||
+            string.IsNullOrWhiteSpace(_form.EmploymentStatus) ||
+            string.IsNullOrWhiteSpace(_form.EmploymentType))
+        {
+            _formError = "Please fill in all required fields.";
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            await Api.CreateEmployeeAsync(new
+            {
+                employeeNumber = _form.EmployeeNumber,
+                firstName = _form.FirstName,
+                middleName = _form.MiddleName,
+                lastName = _form.LastName,
+                dateOfBirth = _form.DateOfBirth.ToString("yyyy-MM-dd"),
+                gender = _form.Gender,
+                workEmail = _form.WorkEmail,
+                mobileNumber = _form.MobileNumber,
+                departmentId = _form.DepartmentId,
+                positionId = _form.PositionId,
+                employmentStatus = _form.EmploymentStatus,
+                employmentType = _form.EmploymentType,
+                hireDate = _form.HireDate.ToString("yyyy-MM-dd")
+            });
+            CloseForm();
+            _page = 1;
+            await LoadEmployees();
+        }
+        catch
+        {
+            _formError = "Failed to save employee. Check all fields and try again.";
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private class EmployeeFormModel
+    {
+        public string EmployeeNumber { get; set; } = "";
+        public string FirstName { get; set; } = "";
+        public string? MiddleName { get; set; }
+        public string LastName { get; set; } = "";
+        public DateOnly DateOfBirth { get; set; } = new DateOnly(1990, 1, 1);
+        public string Gender { get; set; } = "";
+        public string WorkEmail { get; set; } = "";
+        public string? MobileNumber { get; set; }
+        public Guid? DepartmentId { get; set; }
+        public Guid? PositionId { get; set; }
+        public string EmploymentStatus { get; set; } = "";
+        public string EmploymentType { get; set; } = "";
+        public DateOnly HireDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+    }
 }

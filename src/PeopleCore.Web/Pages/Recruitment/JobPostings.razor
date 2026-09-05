@@ -2,101 +2,108 @@
 @attribute [Authorize(Roles = "Admin,HRManager")]
 @inject ApiClient Api
 
-<h2 class="text-2xl font-semibold mb-4">Job Postings</h2>
-
-<div class="bg-white rounded-lg shadow p-4 mb-4 flex items-center gap-3">
-    <select @bind="_statusFilter" @bind:after="Load" class="border rounded px-3 py-1.5 text-sm">
-        <option value="">All Status</option>
-        <option value="Draft">Draft</option>
-        <option value="Open">Open</option>
-        <option value="Closed">Closed</option>
-    </select>
-    <button @onclick="() => _showForm = !_showForm"
-            class="ml-auto bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700">
-        + New Posting
-    </button>
+<div class="flex items-center justify-between mb-6">
+    <h2 class="text-2xl font-semibold">Job Postings</h2>
+    <div class="flex items-center gap-3">
+        <select @bind="_statusFilter" @bind:after="Load"
+                class="flex h-9 w-40 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50">
+            <option value="">All Status</option>
+            <option value="Draft">Draft</option>
+            <option value="Open">Open</option>
+            <option value="Closed">Closed</option>
+        </select>
+        <Button Variant="primary" OnClick="() => _showForm = !_showForm">+ New Posting</Button>
+    </div>
 </div>
 
 @if (_showForm)
 {
-    <div class="bg-white rounded-lg shadow p-4 mb-4">
-        <h3 class="font-medium mb-3 text-sm">New Job Posting</h3>
-        <div class="grid grid-cols-2 gap-3 mb-3">
-            <div>
-                <label class="block text-xs text-gray-500 mb-1">Title *</label>
-                <input @bind="_form.Title" class="border rounded px-3 py-1.5 text-sm w-full" />
+    <Card Class="mb-4">
+        <CardHeader>
+            <CardTitle>New Job Posting</CardTitle>
+        </CardHeader>
+        <CardContent>
+            <div class="grid grid-cols-2 gap-3 mb-3">
+                <FormField LabelText="Title *" Id="posting-title">
+                    <Input Value="@_form.Title" ValueChanged="@(v => _form.Title = v)" Placeholder="Position title" />
+                </FormField>
+                <FormField LabelText="Vacancies" Id="posting-vacancies">
+                    <Input Value="@_form.Vacancies.ToString()" ValueChanged="@(v => { if (int.TryParse(v, out var n)) _form.Vacancies = n; })" Type="number" />
+                </FormField>
             </div>
-            <div>
-                <label class="block text-xs text-gray-500 mb-1">Vacancies</label>
-                <input type="number" @bind="_form.Vacancies" class="border rounded px-3 py-1.5 text-sm w-full" />
+            <div class="mb-3">
+                <Label>Description</Label>
+                <textarea @bind="_form.Description" rows="3"
+                          class="flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"></textarea>
             </div>
-        </div>
-        <div class="mb-3">
-            <label class="block text-xs text-gray-500 mb-1">Description</label>
-            <textarea @bind="_form.Description" rows="3" class="border rounded px-3 py-1.5 text-sm w-full"></textarea>
-        </div>
-        <div class="flex gap-2">
-            <button @onclick="CreatePosting" disabled="@(_saving || string.IsNullOrWhiteSpace(_form.Title))"
-                    class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
-                @(_saving ? "Saving..." : "Save Draft")
-            </button>
-            <button @onclick="() => _showForm = false" class="px-4 py-1.5 rounded text-sm border hover:bg-gray-50">Cancel</button>
-        </div>
-    </div>
+            <div class="flex gap-2">
+                <Button Variant="primary" Size="sm" OnClick="CreatePosting" Disabled="@(_saving || string.IsNullOrWhiteSpace(_form.Title))" Loading="@_saving">
+                    Save Draft
+                </Button>
+                <Button Variant="outline" Size="sm" OnClick="() => _showForm = false">Cancel</Button>
+            </div>
+        </CardContent>
+    </Card>
 }
 
 @if (_error is not null)
 {
-    <div class="bg-red-50 text-red-700 rounded p-3 mb-4 text-sm">@_error</div>
+    <Alert Variant="destructive" Class="mb-4">@_error</Alert>
 }
 
-<div class="bg-white rounded-lg shadow overflow-hidden">
-    @if (_postings is null)
-    {
-        <div class="p-6 text-sm text-gray-400">Loading...</div>
-    }
-    else if (!_postings.Items.Any())
-    {
-        <div class="p-6 text-sm text-gray-400">No job postings found.</div>
-    }
-    else
-    {
-        <table class="w-full text-sm">
-            <thead class="bg-gray-50">
-                <tr class="text-left text-gray-500 text-xs uppercase">
-                    <th class="px-4 py-3">Title</th>
-                    <th class="px-4 py-3">Department</th>
-                    <th class="px-4 py-3">Vacancies</th>
-                    <th class="px-4 py-3">Status</th>
-                    <th class="px-4 py-3">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var p in _postings.Items)
-                {
-                    <tr class="border-t hover:bg-gray-50">
-                        <td class="px-4 py-3 font-medium">@p.Title</td>
-                        <td class="px-4 py-3 text-gray-500">@(p.DepartmentName ?? "--")</td>
-                        <td class="px-4 py-3 text-gray-500">@p.Vacancies</td>
-                        <td class="px-4 py-3">
-                            <span class="px-2 py-0.5 rounded-full text-xs @StatusClass(p.Status)">@p.Status</span>
-                        </td>
-                        <td class="px-4 py-3 flex gap-2">
-                            @if (p.Status == "Draft")
-                            {
-                                <button @onclick="() => Publish(p.Id)" class="text-xs text-green-600 hover:underline">Publish</button>
-                            }
-                            @if (p.Status == "Open")
-                            {
-                                <button @onclick="() => Close(p.Id)" class="text-xs text-red-500 hover:underline">Close</button>
-                            }
-                        </td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-    }
-</div>
+<Card>
+    <CardContent Class="p-0">
+        @if (_postings is null)
+        {
+            <div class="flex items-center justify-center p-10">
+                <Spinner />
+            </div>
+        }
+        else if (!_postings.Items.Any())
+        {
+            <div class="p-6 text-sm text-muted-foreground">No job postings found.</div>
+        }
+        else
+        {
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead Class="px-4">Title</TableHead>
+                        <TableHead Class="px-4">Department</TableHead>
+                        <TableHead Class="px-4">Vacancies</TableHead>
+                        <TableHead Class="px-4">Status</TableHead>
+                        <TableHead Class="px-4">Actions</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    @foreach (var p in _postings.Items)
+                    {
+                        <TableRow>
+                            <TableCell Class="px-4 py-3 font-medium">@p.Title</TableCell>
+                            <TableCell Class="px-4 py-3">@(p.DepartmentName ?? "--")</TableCell>
+                            <TableCell Class="px-4 py-3">@p.Vacancies</TableCell>
+                            <TableCell Class="px-4 py-3">
+                                <Badge Variant="@JobStatusVariant(p.Status)">@p.Status</Badge>
+                            </TableCell>
+                            <TableCell Class="px-4 py-3">
+                                <div class="flex gap-2">
+                                    @if (p.Status == "Draft")
+                                    {
+                                        <Button Variant="ghost" Size="sm" OnClick="() => Publish(p.Id)">Publish</Button>
+                                    }
+                                    @if (p.Status == "Open")
+                                    {
+                                        <Button Variant="destructive" Size="sm" OnClick="() => Close(p.Id)">Close</Button>
+                                    }
+                                </div>
+                            </TableCell>
+                        </TableRow>
+                    }
+                </TableBody>
+            </Table>
+        }
+    </CardContent>
+</Card>
 
 @code {
     private PagedResult<JobPostingDto>? _postings;
@@ -126,11 +133,11 @@
     private async Task Publish(Guid id) { try { await Api.PublishJobPostingAsync(id); await Load(); } catch { _error = "Failed to publish."; } }
     private async Task Close(Guid id) { try { await Api.CloseJobPostingAsync(id); await Load(); } catch { _error = "Failed to close."; } }
 
-    private static string StatusClass(string status) => status switch
+    private static string JobStatusVariant(string s) => s switch
     {
-        "Open" => "bg-green-100 text-green-700",
-        "Closed" => "bg-gray-100 text-gray-500",
-        _ => "bg-yellow-100 text-yellow-700"
+        "Open" => "success",
+        "Closed" => "secondary",
+        _ => "warning"
     };
 
     private class JobPostingForm { public string Title { get; set; } = string.Empty; public string? Description { get; set; } public int Vacancies { get; set; } = 1; }

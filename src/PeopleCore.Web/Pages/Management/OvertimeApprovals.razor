@@ -3,10 +3,10 @@
 @inject ApiClient Api
 @inject AuthenticationStateProvider AuthStateProvider
 
-<h2 class="text-2xl font-semibold mb-4">Overtime Approvals</h2>
-
-<div class="bg-white rounded-lg shadow p-4 mb-4 flex items-center gap-3">
-    <select @bind="_statusFilter" @bind:after="Load" class="border rounded px-3 py-1.5 text-sm">
+<div class="flex items-center justify-between mb-6">
+    <h2 class="text-2xl font-semibold">Overtime Approvals</h2>
+    <select @bind="_statusFilter" @bind:after="Load"
+            class="flex h-9 w-48 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50">
         <option value="Pending">Pending</option>
         <option value="">All</option>
         <option value="Approved">Approved</option>
@@ -14,54 +14,63 @@
     </select>
 </div>
 
-@if (_error is not null) { <div class="bg-red-50 text-red-700 rounded p-3 mb-4 text-sm">@_error</div> }
+@if (_error is not null)
+{
+    <Alert Variant="destructive" Class="mt-4">@_error</Alert>
+}
 
-<div class="bg-white rounded-lg shadow overflow-hidden">
-    @if (_requests is null)
-    {
-        <div class="p-6 text-sm text-gray-400">Loading...</div>
-    }
-    else if (!_requests.Items.Any())
-    {
-        <div class="p-6 text-sm text-gray-400">No overtime requests.</div>
-    }
-    else
-    {
-        <table class="w-full text-sm">
-            <thead class="bg-gray-50">
-                <tr class="text-left text-gray-500 text-xs uppercase">
-                    <th class="px-4 py-3">Employee</th>
-                    <th class="px-4 py-3">Date</th>
-                    <th class="px-4 py-3">Hours</th>
-                    <th class="px-4 py-3">Reason</th>
-                    <th class="px-4 py-3">Status</th>
-                    <th class="px-4 py-3">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var r in _requests.Items)
-                {
-                    <tr class="border-t hover:bg-gray-50">
-                        <td class="px-4 py-3 font-medium">@r.EmployeeName</td>
-                        <td class="px-4 py-3 text-gray-500">@r.OvertimeDate</td>
-                        <td class="px-4 py-3 text-gray-500">@((r.TotalMinutes / 60.0).ToString("F1"))h</td>
-                        <td class="px-4 py-3 text-gray-500 max-w-xs truncate">@r.Reason</td>
-                        <td class="px-4 py-3">
-                            <span class="px-2 py-0.5 rounded-full text-xs @OtStatusClass(r.Status)">@r.Status</span>
-                        </td>
-                        <td class="px-4 py-3 flex gap-2">
-                            @if (r.Status == "Pending" && _currentEmployeeId.HasValue)
-                            {
-                                <button @onclick="() => Approve(r.Id)" class="text-xs text-green-600 hover:underline">Approve</button>
-                                <button @onclick="() => Reject(r.Id)" class="text-xs text-red-500 hover:underline">Reject</button>
-                            }
-                        </td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-    }
-</div>
+<Card>
+    <CardContent Class="p-0">
+        @if (_requests is null)
+        {
+            <div class="flex items-center justify-center p-10">
+                <Spinner />
+            </div>
+        }
+        else if (!_requests.Items.Any())
+        {
+            <div class="p-6 text-sm text-muted-foreground">No overtime requests.</div>
+        }
+        else
+        {
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead Class="px-4">Employee</TableHead>
+                        <TableHead Class="px-4">Date</TableHead>
+                        <TableHead Class="px-4">Hours</TableHead>
+                        <TableHead Class="px-4">Reason</TableHead>
+                        <TableHead Class="px-4">Status</TableHead>
+                        <TableHead Class="px-4">Actions</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    @foreach (var r in _requests.Items)
+                    {
+                        <TableRow>
+                            <TableCell Class="px-4 py-3 font-medium">@r.EmployeeName</TableCell>
+                            <TableCell Class="px-4 py-3">@r.OvertimeDate</TableCell>
+                            <TableCell Class="px-4 py-3">@((r.TotalMinutes / 60.0).ToString("F1"))h</TableCell>
+                            <TableCell Class="px-4 py-3 max-w-xs truncate">@r.Reason</TableCell>
+                            <TableCell Class="px-4 py-3">
+                                <Badge Variant="@OtStatusVariant(r.Status)">@r.Status</Badge>
+                            </TableCell>
+                            <TableCell Class="px-4 py-3">
+                                @if (r.Status == "Pending" && _currentEmployeeId.HasValue)
+                                {
+                                    <div class="flex gap-2">
+                                        <Button Variant="ghost" Size="sm" OnClick="() => Approve(r.Id)">Approve</Button>
+                                        <Button Variant="destructive" Size="sm" OnClick="() => Reject(r.Id)">Reject</Button>
+                                    </div>
+                                }
+                            </TableCell>
+                        </TableRow>
+                    }
+                </TableBody>
+            </Table>
+        }
+    </CardContent>
+</Card>
 
 @code {
     private PagedResult<OvertimeRequestDto>? _requests;
@@ -92,10 +101,10 @@
         catch { _error = "Failed to reject."; }
     }
 
-    private static string OtStatusClass(string s) => s switch
+    private static string OtStatusVariant(string s) => s switch
     {
-        "Approved" => "bg-green-100 text-green-700",
-        "Rejected" => "bg-red-100 text-red-700",
-        _ => "bg-yellow-100 text-yellow-700"
+        "Approved" => "success",
+        "Rejected" => "destructive",
+        _ => "warning"
     };
 }

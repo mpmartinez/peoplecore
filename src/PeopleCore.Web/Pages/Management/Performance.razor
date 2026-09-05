@@ -2,95 +2,132 @@
 @attribute [Authorize(Roles = "Admin,HRManager,Manager")]
 @inject ApiClient Api
 
-<h2 class="text-2xl font-semibold mb-4">Performance</h2>
+<h2 class="text-2xl font-semibold mb-6">Performance</h2>
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     <div>
-        <div class="flex items-center justify-between mb-3">
-            <h3 class="font-semibold text-gray-700">Review Cycles</h3>
-            <button @onclick="() => _showCycleForm = !_showCycleForm"
-                    class="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">+ New Cycle</button>
-        </div>
-
-        @if (_showCycleForm)
-        {
-            <div class="bg-white rounded-lg shadow p-4 mb-3">
-                <div class="grid grid-cols-2 gap-3 mb-3">
-                    <div>
-                        <label class="block text-xs text-gray-500 mb-1">Name *</label>
-                        <input @bind="_cycleName" class="border rounded px-3 py-1.5 text-sm w-full" placeholder="e.g. Q1 2026" />
-                    </div>
-                    <div>
-                        <label class="block text-xs text-gray-500 mb-1">Year</label>
-                        <input type="number" @bind="_cycleYear" class="border rounded px-3 py-1.5 text-sm w-full" />
-                    </div>
-                    <div>
-                        <label class="block text-xs text-gray-500 mb-1">Start Date</label>
-                        <input type="date" @bind="_cycleStart" class="border rounded px-3 py-1.5 text-sm w-full" />
-                    </div>
-                    <div>
-                        <label class="block text-xs text-gray-500 mb-1">End Date</label>
-                        <input type="date" @bind="_cycleEnd" class="border rounded px-3 py-1.5 text-sm w-full" />
-                    </div>
+        <Card>
+            <CardHeader>
+                <div class="flex items-center justify-between">
+                    <CardTitle>Review Cycles</CardTitle>
+                    <Button Variant="primary" Size="sm" OnClick="() => _showCycleForm = !_showCycleForm">+ New Cycle</Button>
                 </div>
-                <div class="flex gap-2">
-                    <button @onclick="CreateCycle" disabled="@_savingCycle"
-                            class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
-                        @(_savingCycle ? "Saving..." : "Save")
-                    </button>
-                    <button @onclick="() => _showCycleForm = false" class="px-4 py-1.5 border rounded text-sm hover:bg-gray-50">Cancel</button>
-                </div>
-            </div>
-        }
+            </CardHeader>
 
-        <div class="bg-white rounded-lg shadow overflow-hidden">
-            @if (_cycles is null) { <div class="p-4 text-sm text-gray-400">Loading...</div> }
-            else if (!_cycles.Items.Any()) { <div class="p-4 text-sm text-gray-400">No review cycles.</div> }
-            else
+            @if (_showCycleForm)
             {
-                <table class="w-full text-sm">
-                    <thead class="bg-gray-50"><tr class="text-left text-gray-500 text-xs uppercase"><th class="px-4 py-2">Name</th><th class="px-4 py-2">Year</th><th class="px-4 py-2">Status</th></tr></thead>
-                    <tbody>
-                        @foreach (var c in _cycles.Items)
-                        {
-                            <tr class="border-t hover:bg-gray-50 cursor-pointer @(_selectedCycleId == c.Id ? "bg-blue-50" : "")" @onclick="() => SelectCycle(c.Id)">
-                                <td class="px-4 py-2 font-medium">@c.Name</td>
-                                <td class="px-4 py-2 text-gray-500">@c.Year @(c.Quarter.HasValue ? $"Q{c.Quarter}" : "")</td>
-                                <td class="px-4 py-2"><span class="px-2 py-0.5 rounded-full text-xs @CycleStatusClass(c.Status)">@c.Status</span></td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
+                <CardContent>
+                    <div class="grid grid-cols-2 gap-3 mb-3">
+                        <FormField LabelText="Name *" Id="cycle-name">
+                            <Input Value="@_cycleName" ValueChanged="@(v => _cycleName = v)" Placeholder="e.g. Q1 2026" />
+                        </FormField>
+                        <FormField LabelText="Year" Id="cycle-year">
+                            <Input Value="@_cycleYear.ToString()" ValueChanged="@(v => { if (int.TryParse(v, out var yr)) _cycleYear = yr; })" Type="number" />
+                        </FormField>
+                        <div>
+                            <Label>Start Date</Label>
+                            <input type="date" @bind="_cycleStart"
+                                   class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50" />
+                        </div>
+                        <div>
+                            <Label>End Date</Label>
+                            <input type="date" @bind="_cycleEnd"
+                                   class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50" />
+                        </div>
+                    </div>
+                    <div class="flex gap-2 mt-2">
+                        <Button Variant="primary" Size="sm" OnClick="CreateCycle" Loading="@_savingCycle" Disabled="@_savingCycle">Save</Button>
+                        <Button Variant="outline" Size="sm" OnClick="() => _showCycleForm = false">Cancel</Button>
+                    </div>
+                </CardContent>
             }
-        </div>
+
+            <Separator />
+
+            <CardContent Class="p-0">
+                @if (_cycles is null)
+                {
+                    <div class="flex items-center justify-center p-8"><Spinner /></div>
+                }
+                else if (!_cycles.Items.Any())
+                {
+                    <div class="p-4 text-sm text-muted-foreground">No review cycles.</div>
+                }
+                else
+                {
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead Class="px-4">Name</TableHead>
+                                <TableHead Class="px-4">Year</TableHead>
+                                <TableHead Class="px-4">Status</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            @foreach (var c in _cycles.Items)
+                            {
+                                <TableRow Selected="@(_selectedCycleId == c.Id)" @onclick="() => SelectCycle(c.Id)">
+                                    <TableCell Class="px-4 py-3 font-medium cursor-pointer">@c.Name</TableCell>
+                                    <TableCell Class="px-4 py-3 cursor-pointer">@c.Year @(c.Quarter.HasValue ? $"Q{c.Quarter}" : "")</TableCell>
+                                    <TableCell Class="px-4 py-3 cursor-pointer">
+                                        <Badge Variant="@CycleStatusVariant(c.Status)">@c.Status</Badge>
+                                    </TableCell>
+                                </TableRow>
+                            }
+                        </TableBody>
+                    </Table>
+                }
+            </CardContent>
+        </Card>
     </div>
 
     <div>
-        <h3 class="font-semibold text-gray-700 mb-3">Performance Reviews @(_selectedCycleId.HasValue ? "(filtered by cycle)" : "")</h3>
-        <div class="bg-white rounded-lg shadow overflow-hidden">
-            @if (_reviews is null) { <div class="p-4 text-sm text-gray-400">Loading...</div> }
-            else if (!_reviews.Items.Any()) { <div class="p-4 text-sm text-gray-400">No reviews found.</div> }
-            else
-            {
-                <table class="w-full text-sm">
-                    <thead class="bg-gray-50"><tr class="text-left text-gray-500 text-xs uppercase"><th class="px-4 py-2">Employee</th><th class="px-4 py-2">Score</th><th class="px-4 py-2">Status</th></tr></thead>
-                    <tbody>
-                        @foreach (var r in _reviews.Items)
-                        {
-                            <tr class="border-t hover:bg-gray-50">
-                                <td class="px-4 py-2 font-medium">@r.EmployeeName</td>
-                                <td class="px-4 py-2 text-gray-500">@(r.FinalScore.HasValue ? r.FinalScore.Value.ToString("F1") : "--")</td>
-                                <td class="px-4 py-2"><span class="px-2 py-0.5 rounded-full text-xs @CycleStatusClass(r.Status)">@r.Status</span></td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            }
-        </div>
+        <Card>
+            <CardHeader>
+                <CardTitle>Performance Reviews @(_selectedCycleId.HasValue ? "(filtered by cycle)" : "")</CardTitle>
+            </CardHeader>
+            <CardContent Class="p-0">
+                @if (_reviews is null)
+                {
+                    <div class="flex items-center justify-center p-8"><Spinner /></div>
+                }
+                else if (!_reviews.Items.Any())
+                {
+                    <div class="p-4 text-sm text-muted-foreground">No reviews found.</div>
+                }
+                else
+                {
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead Class="px-4">Employee</TableHead>
+                                <TableHead Class="px-4">Score</TableHead>
+                                <TableHead Class="px-4">Status</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            @foreach (var r in _reviews.Items)
+                            {
+                                <TableRow>
+                                    <TableCell Class="px-4 py-3 font-medium">@r.EmployeeName</TableCell>
+                                    <TableCell Class="px-4 py-3">@(r.FinalScore.HasValue ? r.FinalScore.Value.ToString("F1") : "--")</TableCell>
+                                    <TableCell Class="px-4 py-3">
+                                        <Badge Variant="@CycleStatusVariant(r.Status)">@r.Status</Badge>
+                                    </TableCell>
+                                </TableRow>
+                            }
+                        </TableBody>
+                    </Table>
+                }
+            </CardContent>
+        </Card>
     </div>
 </div>
 
-@if (_error is not null) { <div class="bg-red-50 text-red-700 rounded p-3 mt-4 text-sm">@_error</div> }
+@if (_error is not null)
+{
+    <Alert Variant="destructive" Class="mt-4">@_error</Alert>
+}
 
 @code {
     private PagedResult<ReviewCycleDto>? _cycles;
@@ -132,10 +169,10 @@
         finally { _savingCycle = false; }
     }
 
-    private static string CycleStatusClass(string s) => s switch
+    private static string CycleStatusVariant(string s) => s switch
     {
-        "Active" or "Open" => "bg-green-100 text-green-700",
-        "Completed" or "Closed" => "bg-gray-100 text-gray-500",
-        _ => "bg-yellow-100 text-yellow-700"
+        "Active" or "Open" => "success",
+        "Completed" or "Closed" => "secondary",
+        _ => "warning"
     };
 }

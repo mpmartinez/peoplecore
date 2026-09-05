@@ -3,51 +3,93 @@
 @inject ApiClient Api
 @inject AuthenticationStateProvider AuthStateProvider
 
-<h2 class="text-2xl font-semibold mb-6">Dashboard</h2>
+<h2 class="text-2xl font-semibold text-foreground mb-6">Dashboard</h2>
+<p class="text-muted-foreground mb-6">Welcome back! Here's your HR overview.</p>
 
-<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-    <div class="bg-white rounded-lg shadow p-4">
-        <h3 class="font-medium text-gray-500 text-sm mb-3">Leave Balances</h3>
-        @if (_balances is null)
-        {
-            <p class="text-sm text-gray-400">Loading...</p>
-        }
-        else
-        {
-            @foreach (var b in _balances.Take(3))
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+    <Card Class="mb-6">
+        <CardHeader>
+            <CardTitle>Leave Balances</CardTitle>
+        </CardHeader>
+        <CardContent>
+            @if (_balances is null)
             {
-                <div class="flex justify-between text-sm mt-2">
-                    <span>@b.LeaveTypeName</span>
-                    <span class="font-semibold text-blue-600">@b.RemainingDays days</span>
+                <p class="text-sm text-muted-foreground">Loading...</p>
+            }
+            else
+            {
+                <Table>
+                    <TableBody>
+                        @foreach (var b in _balances.Take(3))
+                        {
+                            <TableRow>
+                                <TableCell>@b.LeaveTypeName</TableCell>
+                                <TableCell Class="text-right">
+                                    <Badge Variant="secondary">@b.RemainingDays days</Badge>
+                                </TableCell>
+                            </TableRow>
+                        }
+                    </TableBody>
+                </Table>
+            }
+        </CardContent>
+    </Card>
+
+    <Card Class="mb-6">
+        <CardHeader>
+            <CardTitle>Today's Attendance</CardTitle>
+        </CardHeader>
+        <CardContent>
+            @if (_todayRecord is not null)
+            {
+                <div class="text-sm space-y-2">
+                    <div class="flex justify-between">
+                        <span class="text-muted-foreground">Time In</span>
+                        <span class="font-medium">@(_todayRecord.TimeIn ?? "--:--")</span>
+                    </div>
+                    <Separator />
+                    <div class="flex justify-between">
+                        <span class="text-muted-foreground">Time Out</span>
+                        <span class="font-medium">@(_todayRecord.TimeOut ?? "--:--")</span>
+                    </div>
+                    @if (_todayRecord.LateMinutes > 0)
+                    {
+                        <div class="pt-1">
+                            <Badge Variant="destructive">Late by @_todayRecord.LateMinutes minutes</Badge>
+                        </div>
+                    }
                 </div>
             }
-        }
-    </div>
+            else
+            {
+                <p class="text-sm text-muted-foreground">Not clocked in yet today.</p>
+            }
+        </CardContent>
+    </Card>
 
-    <div class="bg-white rounded-lg shadow p-4">
-        <h3 class="font-medium text-gray-500 text-sm mb-3">Today's Attendance</h3>
-        @if (_todayRecord is not null)
-        {
-            <div class="text-sm space-y-1">
-                <div>Time In: <span class="font-medium">@(_todayRecord.TimeIn ?? "--:--")</span></div>
-                <div>Time Out: <span class="font-medium">@(_todayRecord.TimeOut ?? "--:--")</span></div>
-                @if (_todayRecord.LateMinutes > 0)
-                {
-                    <div class="text-red-500 text-xs">Late by @_todayRecord.LateMinutes minutes</div>
-                }
-            </div>
-        }
-        else
-        {
-            <p class="text-sm text-gray-400">Not clocked in yet today.</p>
-        }
-    </div>
+    <Card Class="mb-6">
+        <CardHeader>
+            <CardTitle>Pending Leave Requests</CardTitle>
+        </CardHeader>
+        <CardContent>
+            <div class="text-3xl font-bold text-foreground mb-1">@_pendingCount</div>
+            <p class="text-sm text-muted-foreground">awaiting approval</p>
+            @if (_pendingCount > 0)
+            {
+                <div class="mt-3">
+                    <Badge Variant="warning">Action Required</Badge>
+                </div>
+            }
+            else
+            {
+                <div class="mt-3">
+                    <Badge Variant="success">All Clear</Badge>
+                </div>
+            }
+        </CardContent>
+    </Card>
 
-    <div class="bg-white rounded-lg shadow p-4">
-        <h3 class="font-medium text-gray-500 text-sm mb-3">Pending Leave Requests</h3>
-        <div class="text-3xl font-bold text-orange-500">@_pendingCount</div>
-        <div class="text-sm text-gray-400">awaiting approval</div>
-    </div>
 </div>
 
 @code {
