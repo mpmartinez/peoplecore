@@ -1,9 +1,10 @@
-using System.IdentityModel.Tokens.Jwt;
+﻿using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
+using PeopleCore.API.Extensions;
 using PeopleCore.Infrastructure.Identity;
 
 namespace PeopleCore.API.Controllers.Auth;
@@ -43,7 +44,7 @@ public class AuthController : ControllerBase
 
     private string GenerateJwtToken(ApplicationUser user, IList<string> roles)
     {
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]!));
+        var key = new SymmetricSecurityKey(ServiceExtensions.ResolveJwtSigningKey(_configuration));
         var claims = new List<Claim>
         {
             new(ClaimTypes.NameIdentifier, user.Id),

@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using Amazon.S3;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
@@ -56,6 +56,8 @@ public static class ServiceExtensions
         .AddEntityFrameworkStores<AppDbContext>()
         .AddDefaultTokenProviders();
 
+        var signingKey = ResolveJwtSigningKey(configuration);
+
         services.AddAuthentication(options =>
         {
             options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -71,8 +73,7 @@ public static class ServiceExtensions
                 ValidateIssuerSigningKey = true,
                 ValidIssuer = configuration["Jwt:Issuer"],
                 ValidAudience = configuration["Jwt:Audience"],
-                IssuerSigningKey = new SymmetricSecurityKey(
-                    Encoding.UTF8.GetBytes(configuration["Jwt:Key"]!))
+                IssuerSigningKey = new SymmetricSecurityKey(signingKey)
             };
         });
 
@@ -175,5 +176,28 @@ public static class ServiceExtensions
         services.AddScoped<IPayrollExportService, PayrollExportService>();
 
         return services;
+    }
+
+    /// <summary>
+    /// HMAC-SHA256 needs at least 256 bits of key material, and the key is a credential: it belongs
+    /// in user-secrets, an environment variable, or a secrets store — never in a committed
+    /// appsettings file. Fail at startup rather than signing tokens with a guessable placeholder.
+    /// </summary>
+    public static byte[] ResolveJwtSigningKey(IConfiguration configuration)
+    {
+        var key = configuration["Jwt:Key"];
+
+        if (string.IsNullOrWhiteSpace(key))
+            throw new InvalidOperationException(
+                "Jwt:Key is not configured. Set it out of source control, for example: " +
+                "dotnet user-secrets set \"Jwt:Key\" \"<random value>\" --project src/PeopleCore.API, " +
+                "or via the Jwt__Key environment variable.");
+
+        var bytes = Encoding.UTF8.GetBytes(key);
+        if (bytes.Length < 32)
+            throw new InvalidOperationException(
+                $"Jwt:Key must be at least 32 bytes for HMAC-SHA256; the configured value is {bytes.Length}.");
+
+        return bytes;
     }
 }
