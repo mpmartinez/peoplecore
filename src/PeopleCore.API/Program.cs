@@ -1,9 +1,12 @@
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Security.Claims;
 using System.Text.Json;
+using PeopleCore.API;
 using PeopleCore.API.Extensions;
 using PeopleCore.API.Middleware;
 using PeopleCore.Infrastructure.Identity;
@@ -32,6 +35,23 @@ builder.Services.AddCors(options =>
     });
 });
 
+// The careers apply endpoint is public and unauthenticated, so throttle it per client IP.
+builder.Services.AddRateLimiter(options =>
+{
+    var permitPerHour = builder.Configuration.GetValue<int?>("CareersPortal:MaxApplicationsPerHourPerIp") ?? 3;
+
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy(RateLimitPolicies.CareersApply, httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = permitPerHour,
+                Window = TimeSpan.FromHours(1),
+                QueueLimit = 0
+            }));
+});
+
 var app = builder.Build();
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
@@ -44,6 +64,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseCors();
 app.UseResponseCaching();
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
@@ -54,18 +75,37 @@ using (var scope = app.Services.CreateScope())
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
     var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
 
-    string[] roles = ["Admin", "HRManager", "Manager", "Employee", "PayrollService"];
+    string[] roles = ["Admin", "HRManager", "Manager", "Employee", "PayrollService", "Service"];
     foreach (var role in roles)
         if (!await roleManager.RoleExistsAsync(role))
             await roleManager.CreateAsync(new IdentityRole(role));
 
-    const string adminEmail = "admin@peoplecore.local";
-    const string adminPassword = "Admin@123456";
-    if (await userManager.FindByEmailAsync(adminEmail) is null)
+    var adminEmail = builder.Configuration["Seed:AdminEmail"] ?? "admin@peoplecore.local";
+    var adminPassword = builder.Configuration["Seed:AdminPassword"];
+
+    if (string.IsNullOrWhiteSpace(adminPassword) && app.Environment.IsDevelopment())
+    {
+        adminPassword = "Admin@123456";
+        app.Logger.LogWarning(
+            "Seeding {Email} with the well-known development password. Set Seed:AdminPassword to override.",
+            adminEmail);
+    }
+
+    if (string.IsNullOrWhiteSpace(adminPassword))
+    {
+        // Outside development, refuse to create a login nobody chose the password for.
+        app.Logger.LogWarning(
+            "Seed:AdminPassword is not configured; skipping the default admin account.");
+    }
+    else if (await userManager.FindByEmailAsync(adminEmail) is null)
     {
         var admin = new ApplicationUser { UserName = adminEmail, Email = adminEmail, EmailConfirmed = true };
-        await userManager.CreateAsync(admin, adminPassword);
-        await userManager.AddToRoleAsync(admin, "Admin");
+        var created = await userManager.CreateAsync(admin, adminPassword);
+        if (created.Succeeded)
+            await userManager.AddToRoleAsync(admin, "Admin");
+        else
+            app.Logger.LogError("Failed to seed the admin account: {Errors}",
+                string.Join("; ", created.Errors.Select(e => e.Description)));
     }
 
     var dbContext = scope.ServiceProvider.GetRequiredService<PeopleCore.Infrastructure.Persistence.AppDbContext>();

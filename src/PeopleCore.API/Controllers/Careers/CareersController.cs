@@ -1,4 +1,5 @@
-using Microsoft.AspNetCore.Cors;
+﻿using Microsoft.AspNetCore.Cors;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.Application.Careers.DTOs;
 using PeopleCore.Application.Careers.Interfaces;
@@ -26,6 +27,7 @@ public class CareersController : ControllerBase
     }
 
     [HttpPost("jobs/{id:guid}/apply")]
+    [EnableRateLimiting(RateLimitPolicies.CareersApply)]
     public async Task<IActionResult> Apply(Guid id, [FromBody] JobApplicationRequest request, CancellationToken ct = default)
     {
         var result = await _service.ApplyAsync(id, request, ct);
