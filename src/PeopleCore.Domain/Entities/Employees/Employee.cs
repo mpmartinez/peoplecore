@@ -1,10 +1,11 @@
 using M2NET.Core.Enums;
+using PeopleCore.Domain.Entities;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Entities.Organization;
 
 namespace PeopleCore.Domain.Entities.Employees;
 
-public class Employee : M2NET.Core.Entities.Employee
+public class Employee : M2NET.Core.Entities.Employee, IAuditableEntity
 {
     // Shadow MiddleName to allow null (base has non-nullable string)
     public new string? MiddleName { get; set; }

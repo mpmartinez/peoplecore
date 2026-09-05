@@ -1,6 +1,6 @@
 namespace PeopleCore.Domain.Entities;
 
-public abstract class AuditableEntity
+public abstract class AuditableEntity : IAuditableEntity
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

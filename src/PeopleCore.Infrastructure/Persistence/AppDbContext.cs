@@ -1,5 +1,7 @@
-using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+﻿using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using PeopleCore.Application.Common.Interfaces;
+using PeopleCore.Domain.Entities;
 using PeopleCore.Domain.Entities.Attendance;
 using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Leave;
@@ -13,7 +15,15 @@ namespace PeopleCore.Infrastructure.Persistence;
 
 public class AppDbContext : IdentityDbContext<ApplicationUser>
 {
-    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+    private readonly ICurrentUserService? _currentUser;
+
+    // currentUser is optional so design-time tooling and the startup seeder, which have no
+    // HTTP context, can still construct the context. Audit columns are left null in that case.
+    public AppDbContext(DbContextOptions<AppDbContext> options, ICurrentUserService? currentUser = null)
+        : base(options)
+    {
+        _currentUser = currentUser;
+    }
 
     // Organization
     public DbSet<Company> Companies => Set<Company>();
@@ -60,5 +70,43 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     {
         base.OnModelCreating(builder);
         builder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
+    }
+
+    public override int SaveChanges()
+    {
+        StampAuditColumns();
+        return base.SaveChanges();
+    }
+
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        StampAuditColumns();
+        return base.SaveChangesAsync(cancellationToken);
+    }
+
+    private void StampAuditColumns()
+    {
+        var userId = _currentUser?.UserId;
+        var now = DateTime.UtcNow;
+
+        foreach (var entry in ChangeTracker.Entries<IAuditableEntity>())
+        {
+            if (entry.State == EntityState.Added)
+            {
+                entry.Entity.CreatedAt = now;
+                entry.Entity.CreatedBy = userId;
+                entry.Entity.UpdatedAt = now;
+                entry.Entity.UpdatedBy = userId;
+            }
+            else if (entry.State == EntityState.Modified)
+            {
+                entry.Entity.UpdatedAt = now;
+                entry.Entity.UpdatedBy = userId;
+
+                // Never let an update rewrite who created the row.
+                entry.Property(e => e.CreatedAt).IsModified = false;
+                entry.Property(e => e.CreatedBy).IsModified = false;
+            }
+        }
     }
 }
