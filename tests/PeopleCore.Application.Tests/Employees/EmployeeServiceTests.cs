@@ -4,6 +4,7 @@ using PeopleCore.Application.Employees.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Employees.Services;
 using PeopleCore.Domain.Entities.Employees;
+using M2NET.Core.Enums;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
 using Xunit;
@@ -38,8 +39,8 @@ public class EmployeeServiceTests
         _repo.Setup(r => r.EmployeeNumberExistsAsync("EMP-001", It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         var dto = new CreateEmployeeDto("EMP-001", "Juan", null, "dela Cruz",
-            new DateOnly(1990, 1, 1), "Male", "juan@company.com", null,
-            null, null, null, EmploymentStatus.Probationary, "FullTime",
+            new DateOnly(1990, 1, 1), Gender.Male, "juan@company.com", null,
+            null, null, null, EmploymentStatus.Probationary, EmploymentType.Regular,
             new DateOnly(2024, 1, 1));
 
         var act = () => _sut.CreateAsync(dto);
@@ -58,10 +59,10 @@ public class EmployeeServiceTests
             FirstName = "Juan",
             LastName = "dela Cruz",
             DateOfBirth = new DateOnly(1990, 1, 1),
-            Gender = "Male",
+            Gender = Gender.Male,
             WorkEmail = "juan@company.com",
             EmploymentStatus = EmploymentStatus.Regular,
-            EmploymentType = "FullTime",
+            EmploymentType = EmploymentType.Regular,
             HireDate = new DateOnly(2020, 1, 1),
             IsActive = false
         };
@@ -78,8 +79,8 @@ public class EmployeeServiceTests
     {
         _repo.Setup(r => r.EmployeeNumberExistsAsync("EMP-001", It.IsAny<CancellationToken>())).ReturnsAsync(false);
         var dto = new CreateEmployeeDto("EMP-001", "Juan", null, "dela Cruz",
-            new DateOnly(1990, 1, 1), "Male", "juan@company.com", null,
-            null, null, null, EmploymentStatus.Probationary, "FullTime",
+            new DateOnly(1990, 1, 1), Gender.Male, "juan@company.com", null,
+            null, null, null, EmploymentStatus.Probationary, EmploymentType.Regular,
             new DateOnly(2024, 1, 1));
 
         _repo.Setup(r => r.AddAsync(It.IsAny<Employee>(), It.IsAny<CancellationToken>()))

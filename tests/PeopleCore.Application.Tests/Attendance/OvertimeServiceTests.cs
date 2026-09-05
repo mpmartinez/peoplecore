@@ -6,6 +6,7 @@ using PeopleCore.Application.Attendance.Services;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Domain.Entities.Attendance;
 using PeopleCore.Domain.Entities.Employees;
+using M2NET.Core.Enums;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
 using Xunit;
@@ -31,8 +32,8 @@ public class OvertimeServiceTests
         {
             Id = employeeId,
             EmployeeNumber = "EMP-001", FirstName = "Juan", LastName = "Cruz",
-            DateOfBirth = new DateOnly(1990, 1, 1), Gender = "Male",
-            WorkEmail = "j@test.com", EmploymentType = "FT",
+            DateOfBirth = new DateOnly(1990, 1, 1), Gender = Gender.Male,
+            WorkEmail = "j@test.com", EmploymentType = EmploymentType.Regular,
             HireDate = new DateOnly(2020, 1, 1), IsActive = true
         };
         _employeeRepo.Setup(r => r.GetByIdAsync(employeeId, default)).ReturnsAsync(employee);
@@ -66,8 +67,8 @@ public class OvertimeServiceTests
             Id = request.EmployeeId,
             ReportingManagerId = managerId,
             EmployeeNumber = "EMP-001", FirstName = "Juan", LastName = "Cruz",
-            DateOfBirth = new DateOnly(1990, 1, 1), Gender = "Male",
-            WorkEmail = "j@test.com", EmploymentType = "FT",
+            DateOfBirth = new DateOnly(1990, 1, 1), Gender = Gender.Male,
+            WorkEmail = "j@test.com", EmploymentType = EmploymentType.Regular,
             HireDate = new DateOnly(2020, 1, 1), IsActive = true
         };
 

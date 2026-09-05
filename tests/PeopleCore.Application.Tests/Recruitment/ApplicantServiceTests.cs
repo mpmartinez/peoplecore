@@ -6,6 +6,7 @@ using PeopleCore.Application.Recruitment.Interfaces;
 using PeopleCore.Application.Recruitment.Services;
 using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Recruitment;
+using M2NET.Core.Enums;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
 using Xunit;
@@ -44,7 +45,7 @@ public class ApplicantServiceTests
         _applicantRepo.Setup(r => r.GetByIdAsync(applicant.Id, It.IsAny<CancellationToken>()))
                       .ReturnsAsync(applicant);
 
-        var dto = new ConvertToEmployeeDto("EMP-100", null, null, null, EmploymentStatus.Probationary, new DateOnly(2025, 1, 1), new DateOnly(1990, 5, 15), "Female");
+        var dto = new ConvertToEmployeeDto("EMP-100", null, null, null, EmploymentStatus.Probationary, new DateOnly(2025, 1, 1), new DateOnly(1990, 5, 15), Gender.Female);
 
         var act = () => _sut.ConvertToEmployeeAsync(applicant.Id, dto);
 
@@ -59,7 +60,7 @@ public class ApplicantServiceTests
         _applicantRepo.Setup(r => r.GetByIdAsync(applicant.Id, It.IsAny<CancellationToken>()))
                       .ReturnsAsync(applicant);
 
-        var dto = new ConvertToEmployeeDto("EMP-100", null, null, null, EmploymentStatus.Probationary, new DateOnly(2025, 1, 1), new DateOnly(1990, 5, 15), "Female");
+        var dto = new ConvertToEmployeeDto("EMP-100", null, null, null, EmploymentStatus.Probationary, new DateOnly(2025, 1, 1), new DateOnly(1990, 5, 15), Gender.Female);
 
         var act = () => _sut.ConvertToEmployeeAsync(applicant.Id, dto);
 
@@ -80,7 +81,7 @@ public class ApplicantServiceTests
         _applicantRepo.Setup(r => r.UpdateAsync(It.IsAny<Applicant>(), It.IsAny<CancellationToken>()))
                       .Returns(Task.CompletedTask);
 
-        var dto = new ConvertToEmployeeDto("EMP-100", null, null, null, EmploymentStatus.Probationary, new DateOnly(2025, 1, 1), new DateOnly(1990, 5, 15), "Female");
+        var dto = new ConvertToEmployeeDto("EMP-100", null, null, null, EmploymentStatus.Probationary, new DateOnly(2025, 1, 1), new DateOnly(1990, 5, 15), Gender.Female);
 
         var result = await _sut.ConvertToEmployeeAsync(applicant.Id, dto);
 

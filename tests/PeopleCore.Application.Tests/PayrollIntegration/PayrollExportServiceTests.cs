@@ -7,6 +7,7 @@ using PeopleCore.Application.PayrollIntegration.Services;
 using PeopleCore.Domain.Entities.Attendance;
 using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Leave;
+using M2NET.Core.Enums;
 using PeopleCore.Domain.Enums;
 
 namespace PeopleCore.Application.Tests.PayrollIntegration;
@@ -40,7 +41,7 @@ public class PayrollExportServiceTests
             WorkEmail = "jane@test.com",
             IsActive = true,
             EmploymentStatus = EmploymentStatus.Regular,
-            EmploymentType = "FullTime",
+            EmploymentType = EmploymentType.Regular,
             HireDate = new DateOnly(2020, 1, 1),
             Department = new Domain.Entities.Organization.Department { Name = "Engineering" },
             Position = new Domain.Entities.Organization.Position { Title = "Developer" },
@@ -60,7 +61,7 @@ public class PayrollExportServiceTests
             WorkEmail = "john@test.com",
             IsActive = false,
             EmploymentStatus = EmploymentStatus.Contractual,
-            EmploymentType = "FullTime",
+            EmploymentType = EmploymentType.Regular,
             HireDate = new DateOnly(2019, 1, 1),
             GovernmentIds = []
         };
@@ -93,7 +94,7 @@ public class PayrollExportServiceTests
             WorkEmail = "jane@test.com",
             IsActive = true,
             EmploymentStatus = EmploymentStatus.Regular,
-            EmploymentType = "FullTime",
+            EmploymentType = EmploymentType.Regular,
             HireDate = new DateOnly(2020, 1, 1),
             GovernmentIds = []
         };
@@ -137,7 +138,7 @@ public class PayrollExportServiceTests
             WorkEmail = "jane@test.com",
             IsActive = true,
             EmploymentStatus = EmploymentStatus.Regular,
-            EmploymentType = "FullTime",
+            EmploymentType = EmploymentType.Regular,
             HireDate = new DateOnly(2020, 1, 1),
             GovernmentIds = []
         };

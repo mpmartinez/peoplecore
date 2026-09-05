@@ -7,6 +7,7 @@ using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Application.Leave.Services;
 using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Leave;
+using M2NET.Core.Enums;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
 using Xunit;
@@ -27,7 +28,7 @@ public class LeaveRequestServiceTests
         _sut = new LeaveRequestService(_leaveRepo.Object, _balanceRepo.Object, _holidayService.Object, _employeeRepo.Object, _leaveTypeRepo.Object);
     }
 
-    private static Employee MakeEmployee(string gender = "Male") => new()
+    private static Employee MakeEmployee(Gender gender = Gender.Male) => new()
     {
         Id = Guid.NewGuid(),
         EmployeeNumber = "EMP-001",
@@ -36,7 +37,7 @@ public class LeaveRequestServiceTests
         DateOfBirth = new DateOnly(1990, 1, 1),
         Gender = gender,
         WorkEmail = "juan@test.com",
-        EmploymentType = "FullTime",
+        EmploymentType = EmploymentType.Regular,
         HireDate = new DateOnly(2020, 1, 1),
         IsActive = true
     };
@@ -109,7 +110,7 @@ public class LeaveRequestServiceTests
     [Fact]
     public async Task CreateAsync_WhenMaternityLeaveAndMaleEmployee_ThrowsDomainException()
     {
-        var emp = MakeEmployee(gender: "Male");
+        var emp = MakeEmployee(gender: Gender.Male);
         var lt = MakeLeaveType(genderRestriction: "Female");
         var balance = MakeBalance(emp.Id, lt.Id);
         balance.LeaveType = lt;
