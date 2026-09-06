@@ -26,7 +26,7 @@ else
     <Card Class="max-w-xl">
         <CardContent Class="pt-6 space-y-4">
             <FormField LabelText="Basic Salary" Id="basicSalary" Required="true">
-                <Input Id="basicSalary" Type="number" Step="0.01"
+                <Input Id="basicSalary" Type="number" Step="0.01" Min="0"
                        Value="@_form.BasicSalary.ToString(System.Globalization.CultureInfo.InvariantCulture)"
                        ValueChanged="@(v => _form.BasicSalary = ParseDecimal(v))" />
             </FormField>
@@ -108,6 +108,18 @@ else
     private async Task Save()
     {
         _saveError = null;
+
+        if (_form.BasicSalary <= 0)
+        {
+            _saveError = "Basic salary must be greater than zero.";
+            return;
+        }
+        if (_form.Dependents < 0)
+        {
+            _saveError = "Dependents cannot be negative.";
+            return;
+        }
+
         _saving = true;
         try
         {
@@ -126,6 +138,10 @@ else
             }
 
             Nav.NavigateTo("/employees");
+        }
+        catch (Exception ex)
+        {
+            _saveError = ex.Message;
         }
         finally
         {
