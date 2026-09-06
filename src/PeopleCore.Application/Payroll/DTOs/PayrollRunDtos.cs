@@ -38,12 +38,16 @@ public record PayrollRunEmployeeInput(
 /// <summary>
 /// One employee's line in a run. Deliberately carries only what this run computed - not the
 /// compensation it computed from (BasicSalary/PayFrequency/TaxCode/Dependents live only on
-/// EmployeeCompensationDto; see that record's remarks).
+/// EmployeeCompensationDto; see that record's remarks). EmployeeNumber is an identifier, not
+/// compensation, and DaysWorked is a figure this run itself computed (persisted on
+/// PayrollRunEmployee), so both belong here alongside EmployeeName.
 /// </summary>
 public record PayrollRunEmployeeDto(
     Guid Id,
     Guid EmployeeId,
     string EmployeeName,
+    string EmployeeNumber,
+    decimal DaysWorked,
     decimal GrossPay,
     decimal TotalDeductions,
     decimal NetPay,

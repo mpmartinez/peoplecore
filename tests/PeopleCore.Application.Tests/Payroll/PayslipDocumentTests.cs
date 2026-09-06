@@ -44,15 +44,16 @@ public class PayslipDocumentTests
     }
 
     [Fact]
-    public void Renders_with_many_earning_and_deduction_lines()
+    public void Renders_with_every_earning_and_deduction_line_populated()
     {
         // PayZen's PayrollRunEmployeeDto carried free-form EarningLines/DeductionLines
         // collections, so this test could inject 25+25 synthetic rows to stress pagination.
         // PeopleCore's PayrollRunEmployeeDto has no such collections - earnings and deductions
-        // are fixed named fields (see PayrollRunDtos.cs). The closest equivalent stress case is
-        // an employee where every one of those fixed earning, deduction and employer-contribution
-        // fields is populated with a distinct non-zero amount, exercising every line the document
-        // renders at once. The assertion is unchanged.
+        // are fixed named fields (see PayrollRunDtos.cs), capping the document at a small,
+        // fixed number of rows. Pagination is no longer reachable through this DTO; what
+        // remains worth testing is that every one of those fixed earning, deduction and
+        // employer-contribution fields renders correctly when populated with a distinct
+        // non-zero amount at once.
         var employee = Employee() with
         {
             RegularPay = 100m,
@@ -75,7 +76,7 @@ public class PayslipDocumentTests
 
         var act = () => new PayslipDocument(Run(), employee, Company()).GeneratePdf();
 
-        act.Should().NotThrow("a fully populated breakdown must paginate, not overflow");
+        act.Should().NotThrow("a fully populated breakdown must render without overflow");
     }
 
     private static PayrollRunDto Run() => new(
@@ -104,6 +105,8 @@ public class PayslipDocumentTests
             Id: Guid.NewGuid(),
             EmployeeId: Guid.NewGuid(),
             EmployeeName: "Dela Cruz, Juan P.",
+            EmployeeNumber: "EMP-0042",
+            DaysWorked: 22m,
             GrossPay: V(10_000m),
             TotalDeductions: V(761.25m),
             NetPay: V(9_238.75m),

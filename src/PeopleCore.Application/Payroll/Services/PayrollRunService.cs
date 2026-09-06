@@ -365,6 +365,7 @@ public class PayrollRunService : IPayrollRunService
 
     private static PayrollRunEmployeeDto ToEmployeeDto(PayrollRunEmployee e) => new(
         e.Id, e.EmployeeId, e.Employee?.FullName ?? string.Empty,
+        e.Employee?.EmployeeNumber ?? string.Empty, e.DaysWorked,
         e.GrossPay, e.TotalDeductions, e.NetPay,
         e.RegularPay, e.OvertimePay, e.HolidayPay, e.NightDiffPay,
         e.TaxableAllowances, e.NonTaxableAllowances, e.ThirteenthMonth,

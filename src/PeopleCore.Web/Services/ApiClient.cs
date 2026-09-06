@@ -370,6 +370,8 @@ public record PayrollRunEmployeeDto(
     Guid Id,
     Guid EmployeeId,
     string EmployeeName,
+    string EmployeeNumber,
+    decimal DaysWorked,
     decimal GrossPay,
     decimal TotalDeductions,
     decimal NetPay,

@@ -75,15 +75,22 @@ public class PayslipDocument : IDocument
     private void ComposeEmployeeInfo(IContainer c)
     {
         // PayZen's PayrollRunEmployeeDto carried EmployeeNumber/Position/Department/BasicSalary/
-        // DaysWorked, laid out here as a 12-column, two-row grid. PeopleCore's PayrollRunEmployeeDto
-        // carries none of those (BasicSalary deliberately does not exist on it at all - see that
-        // record's remarks in PayrollRunDtos.cs), so EmployeeName is the only field this panel can
-        // show and the grid collapses to a single full-width cell rather than the original 2x3 layout.
+        // DaysWorked, laid out here as a 12-column, two-row grid (Name/Number/BasicSalary, then
+        // Position/Department/DaysWorked). PeopleCore's PayrollRunEmployeeDto now carries
+        // EmployeeNumber and DaysWorked too, but BasicSalary deliberately does not exist on it at
+        // all (see that record's remarks in PayrollRunDtos.cs) and Position/Department are not
+        // cheaply available here - PayrollRunEmployee.Employee is loaded, but its Department and
+        // Position navigations are not, and including them would mean a new join on every payslip
+        // render. So this keeps the original first row's column spans (5/3/4), substituting
+        // DaysWorked for BasicSalary, and drops the second row entirely rather than fetch Position
+        // and Department for a payslip.
         c.Border(1).BorderColor(Colors.Grey.Lighten2).Background("#eff6ff").Padding(10)
             .Grid(grid =>
             {
                 grid.Columns(12);
-                InfoCell(grid, "Employee Name:", _emp.EmployeeName, 12);
+                InfoCell(grid, "Employee Name:", _emp.EmployeeName, 5);
+                InfoCell(grid, "Employee No.:", _emp.EmployeeNumber, 3);
+                InfoCell(grid, "Days Worked:", $"{_emp.DaysWorked:N1}", 4);
             });
     }
 
