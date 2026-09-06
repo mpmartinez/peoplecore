@@ -41,9 +41,14 @@ public class LeaveRequestRepository : Repository<LeaveRequest>, ILeaveRequestRep
 
     public async Task<IReadOnlyList<LeaveRequest>> GetApprovedByPeriodAsync(
         DateOnly from, DateOnly to, CancellationToken ct = default)
+        // Deliberately overlap (StartDate <= to && EndDate >= from), not containment
+        // (StartDate >= from && EndDate <= to): a leave request that starts before the period or
+        // ends after it is still leave taken *within* the period on the days that fall inside it.
+        // Containment silently drops any leave straddling a period boundary, which the caller then
+        // deducts as unexcused absence.
         => await Context.LeaveRequests
             .Include(r => r.Employee)
             .Include(r => r.LeaveType)
-            .Where(r => r.Status == LeaveStatus.Approved && r.StartDate >= from && r.EndDate <= to)
+            .Where(r => r.Status == LeaveStatus.Approved && r.StartDate <= to && r.EndDate >= from)
             .ToListAsync(ct);
 }
