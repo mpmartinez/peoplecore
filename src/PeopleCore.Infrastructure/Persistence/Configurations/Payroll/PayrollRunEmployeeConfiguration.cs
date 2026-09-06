@@ -14,6 +14,13 @@ public class PayrollRunEmployeeConfiguration : IEntityTypeConfiguration<PayrollR
         builder.Property(x => x.DaysWorked).HasColumnType("numeric(6,2)");
         builder.Property(x => x.OvertimeHours).HasColumnType("numeric(6,2)");
         builder.Property(x => x.HolidayDays).HasColumnType("numeric(6,2)");
+        builder.Property(x => x.AbsenceDays).HasColumnType("numeric(6,2)");
+        builder.Property(x => x.LateMinutes).HasColumnType("numeric(6,2)");
+        builder.Property(x => x.UndertimeMinutes).HasColumnType("numeric(6,2)");
+        builder.Property(x => x.NightDiffHours).HasColumnType("numeric(6,2)");
+        builder.Property(x => x.RestDayOTHours).HasColumnType("numeric(6,2)");
+        builder.Property(x => x.HolidayRegularDays).HasColumnType("numeric(6,2)");
+        builder.Property(x => x.HolidaySpecialDays).HasColumnType("numeric(6,2)");
 
         // Earnings
         builder.Property(x => x.RegularPay).HasColumnType("numeric(18,2)");

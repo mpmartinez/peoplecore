@@ -19,6 +19,20 @@ public class PayrollRunEmployee : AuditableEntity
     public decimal HolidayDays { get; set; } = 0m;
     public bool IncludeThirteenthMonth { get; set; } = false;
 
+    /// <summary>
+    /// The attendance totals this entry was computed from, snapshotted so a recompute cannot
+    /// change what an employee was paid when a punch is edited later. OvertimeHours and
+    /// HolidayDays above are the computed roll-ups; these are the inputs, and RestDayOTHours
+    /// is the part of OvertimeHours that attracts the rest-day rate.
+    /// </summary>
+    public decimal AbsenceDays { get; set; }
+    public decimal LateMinutes { get; set; }
+    public decimal UndertimeMinutes { get; set; }
+    public decimal NightDiffHours { get; set; }
+    public decimal RestDayOTHours { get; set; }
+    public decimal HolidayRegularDays { get; set; }
+    public decimal HolidaySpecialDays { get; set; }
+
     // Earnings
     /// <summary>Pay for ordinary time, already net of absences and tardiness.</summary>
     public decimal RegularPay { get; set; }
