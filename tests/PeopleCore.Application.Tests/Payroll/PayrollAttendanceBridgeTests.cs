@@ -456,6 +456,58 @@ public class PayrollAttendanceBridgeTests
     }
 
     [Fact]
+    public async Task BuildAsync_FixedTemplateAssignment_TreatsSaturdayAndSundayAsNonWorking()
+    {
+        var employeeId = Guid.NewGuid();
+        var saturday = new DateOnly(2026, 3, 7);
+        var sunday = new DateOnly(2026, 3, 8);
+
+        // A plain fixed shift template has no day-of-week concept, so on its own it would make
+        // Saturday and Sunday scheduled working days too. The bridge must fall back to the
+        // Mon-Fri convention for a fixed-template assignment.
+        _assignments.Setup(r => r.GetActiveForPeriodAsync(
+                        It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync([FixedAssignment(employeeId, saturday)]);
+
+        var result = await _sut.BuildAsync([employeeId], saturday, sunday, CancellationToken.None);
+
+        // No attendance at all on a Saturday and Sunday, but neither should be deducted.
+        result.Inputs[employeeId].AbsenceDays.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task BuildAsync_RotatingPatternSchedulingSaturdayAsWork_StillTreatsItAsAWorkingDay()
+    {
+        var employeeId = Guid.NewGuid();
+        var saturday = new DateOnly(2026, 3, 7);
+
+        // A rotating pattern that anchors and works its one-day cycle on a Saturday - its own
+        // rest-day slots are authoritative and must not be second-guessed by the Mon-Fri
+        // fallback that applies to fixed-template assignments.
+        var template = DayShift();
+        var pattern = new RotatingPattern { Name = "always-on", CycleLengthDays = 1 };
+        pattern.Slots.Add(new RotatingPatternSlot { DayOffset = 0, ShiftTemplateId = template.Id, ShiftTemplate = template });
+        var assignment = new EmployeeShiftAssignment
+        {
+            EmployeeId = employeeId,
+            RotatingPatternId = pattern.Id,
+            RotatingPattern = pattern,
+            PatternStartDate = saturday,
+            EffectiveFrom = saturday
+        };
+
+        _assignments.Setup(r => r.GetActiveForPeriodAsync(
+                        It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync([assignment]);
+
+        var result = await _sut.BuildAsync([employeeId], saturday, saturday, CancellationToken.None);
+
+        // The pattern says Saturday is a working day, and no attendance was recorded, so it is an
+        // absence - the rotating pattern's own rest-day slots govern, not the calendar day.
+        result.Inputs[employeeId].AbsenceDays.Should().Be(1m);
+    }
+
+    [Fact]
     public async Task BuildAsync_ThrowsArgumentException_WhenPeriodEndPrecedesStart()
     {
         var employeeId = Guid.NewGuid();
