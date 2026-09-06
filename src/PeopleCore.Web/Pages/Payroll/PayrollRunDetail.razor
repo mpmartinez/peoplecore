@@ -1,0 +1,217 @@
+@page "/payroll-runs/{Id:guid}"
+@attribute [Authorize(Roles = "Admin,HRManager,PayrollService")]
+@inject ApiClient Api
+@inject NavigationManager Nav
+
+<div class="flex items-start justify-between mb-6 gap-4 flex-wrap">
+    <div>
+        <div class="flex items-center gap-3">
+            <h2 class="text-2xl font-semibold text-foreground">@(_run?.RunNumber ?? "Payroll Run")</h2>
+            @if (_run is not null)
+            {
+                <Badge Variant="@RunStatusVariant(_run.Status)">@_run.Status</Badge>
+            }
+        </div>
+        @if (_run is not null)
+        {
+            <p class="text-sm text-muted-foreground mt-1">@_run.PeriodLabel &middot; Pay date @_run.PayDate</p>
+        }
+    </div>
+    <div class="flex gap-2">
+        <Button Variant="outline" OnClick="GoBack">Back to Runs</Button>
+        @if (_run is not null)
+        {
+            @if (CanCompute(_run.Status))
+            {
+                <Button Variant="secondary" OnClick="Compute" Loading="@_computing" Disabled="@(_computing || _markingPaid)">Compute</Button>
+            }
+            @if (CanMarkPaid(_run.Status))
+            {
+                <Button Variant="primary" OnClick="MarkPaid" Loading="@_markingPaid" Disabled="@(_computing || _markingPaid)">Mark Paid</Button>
+            }
+        }
+    </div>
+</div>
+
+@if (_run is null)
+{
+    if (_error is not null)
+    {
+        <Alert Variant="destructive">@_error</Alert>
+    }
+    else
+    {
+        <div class="p-6 flex justify-center"><Spinner /></div>
+    }
+}
+else
+{
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+        <Card>
+            <CardContent Class="pt-4">
+                <div class="text-xs text-muted-foreground">Total Gross Pay</div>
+                <div class="text-xl font-semibold">&#8369;@_run.TotalGrossPay.ToString("N2")</div>
+            </CardContent>
+        </Card>
+        <Card>
+            <CardContent Class="pt-4">
+                <div class="text-xs text-muted-foreground">Total Deductions</div>
+                <div class="text-xl font-semibold">&#8369;@_run.TotalDeductions.ToString("N2")</div>
+            </CardContent>
+        </Card>
+        <Card>
+            <CardContent Class="pt-4">
+                <div class="text-xs text-muted-foreground">Total Net Pay</div>
+                <div class="text-xl font-semibold">&#8369;@_run.TotalNetPay.ToString("N2")</div>
+            </CardContent>
+        </Card>
+    </div>
+
+    @if (_run.EmployeesMissingAttendance > 0)
+    {
+        <Alert Variant="warning" Class="mb-4">
+            @_run.EmployeesMissingAttendance @(_run.EmployeesMissingAttendance == 1 ? "employee" : "employees") had no shift schedule for this period, so no absences were derived for @(_run.EmployeesMissingAttendance == 1 ? "them" : "those employees").
+        </Alert>
+    }
+
+    @if (_actionError is not null)
+    {
+        <Alert Variant="destructive" Class="mb-4">@_actionError</Alert>
+    }
+
+    <Card>
+        <CardContent Class="p-0">
+            @if (!_run.Employees.Any())
+            {
+                <div class="p-6 text-center text-muted-foreground text-sm">No employees on this run.</div>
+            }
+            else
+            {
+                <div class="overflow-x-auto">
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead Class="px-4">Employee</TableHead>
+                            <TableHead Class="px-4">Regular</TableHead>
+                            <TableHead Class="px-4">Overtime</TableHead>
+                            <TableHead Class="px-4">Holiday</TableHead>
+                            <TableHead Class="px-4">Night Diff</TableHead>
+                            <TableHead Class="px-4">Gross</TableHead>
+                            <TableHead Class="px-4">SSS</TableHead>
+                            <TableHead Class="px-4">PhilHealth</TableHead>
+                            <TableHead Class="px-4">Pag-IBIG</TableHead>
+                            <TableHead Class="px-4">Withholding Tax</TableHead>
+                            <TableHead Class="px-4">Total Deductions</TableHead>
+                            <TableHead Class="px-4">Net</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        @foreach (var e in _run.Employees)
+                        {
+                            <TableRow>
+                                <TableCell Class="px-4 py-3 font-medium">@e.EmployeeName</TableCell>
+                                <TableCell Class="px-4 py-3">&#8369;@e.RegularPay.ToString("N2")</TableCell>
+                                <TableCell Class="px-4 py-3">&#8369;@e.OvertimePay.ToString("N2")</TableCell>
+                                <TableCell Class="px-4 py-3">&#8369;@e.HolidayPay.ToString("N2")</TableCell>
+                                <TableCell Class="px-4 py-3">&#8369;@e.NightDiffPay.ToString("N2")</TableCell>
+                                <TableCell Class="px-4 py-3 font-medium">&#8369;@e.GrossPay.ToString("N2")</TableCell>
+                                <TableCell Class="px-4 py-3">&#8369;@e.SSSEmployee.ToString("N2")</TableCell>
+                                <TableCell Class="px-4 py-3">&#8369;@e.PhilHealthEmployee.ToString("N2")</TableCell>
+                                <TableCell Class="px-4 py-3">&#8369;@e.PagIbigEmployee.ToString("N2")</TableCell>
+                                <TableCell Class="px-4 py-3">&#8369;@e.WithholdingTax.ToString("N2")</TableCell>
+                                <TableCell Class="px-4 py-3">&#8369;@e.TotalDeductions.ToString("N2")</TableCell>
+                                <TableCell Class="px-4 py-3 font-medium">&#8369;@e.NetPay.ToString("N2")</TableCell>
+                            </TableRow>
+                        }
+                    </TableBody>
+                </Table>
+                </div>
+            }
+        </CardContent>
+    </Card>
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private PayrollRunDto? _run;
+    private string? _error;
+    private string? _actionError;
+    private bool _computing;
+    private bool _markingPaid;
+
+    protected override async Task OnParametersSetAsync() => await LoadRun();
+
+    private async Task LoadRun()
+    {
+        try
+        {
+            _run = await Api.GetPayrollRunAsync(Id);
+            if (_run is null) _error = "Payroll run not found.";
+            else _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private void GoBack() => Nav.NavigateTo("/payroll-runs");
+
+    private async Task Compute()
+    {
+        _actionError = null;
+        _computing = true;
+        try
+        {
+            var (ok, error) = await Api.ComputePayrollRunAsync(Id);
+            if (!ok)
+            {
+                _actionError = error ?? "Failed to compute payroll run. Please try again.";
+                return;
+            }
+            await LoadRun();
+        }
+        finally
+        {
+            _computing = false;
+        }
+    }
+
+    private async Task MarkPaid()
+    {
+        _actionError = null;
+        _markingPaid = true;
+        try
+        {
+            var (ok, error) = await Api.MarkPayrollRunPaidAsync(Id);
+            if (!ok)
+            {
+                _actionError = error ?? "Failed to mark payroll run as paid. Please try again.";
+                return;
+            }
+            await LoadRun();
+        }
+        finally
+        {
+            _markingPaid = false;
+        }
+    }
+
+    // Compute is withheld once a run is Approved or Paid: PayrollRunService.ComputeAsync throws a
+    // DomainException in both cases (an approver has signed off, or - for Paid - the figures have
+    // already retired loan balances), so offering the button there would guarantee a failed call.
+    private static bool CanCompute(string status) => status is "Draft" or "Processing" or "ForApproval";
+
+    // Mark Paid is offered only when Approved: PayrollRunService.MarkPaidAsync throws a
+    // DomainException for every other status ("Only approved payroll runs can be marked as
+    // paid."), so Draft/Processing/ForApproval/Paid must not offer it either.
+    private static bool CanMarkPaid(string status) => status == "Approved";
+
+    private static string RunStatusVariant(string status) => status switch
+    {
+        "Approved" or "Paid" => "success",
+        "Processing" or "ForApproval" => "warning",
+        _ => "secondary"
+    };
+}
