@@ -24,6 +24,7 @@
     <ProjectReference Include="..\..\src\PeopleCore.Application\PeopleCore.Application.csproj" />
     <ProjectReference Include="..\..\src\PeopleCore.Domain\PeopleCore.Domain.csproj" />
     <ProjectReference Include="..\..\src\PeopleCore.API\PeopleCore.API.csproj" />
+    <ProjectReference Include="..\..\src\PeopleCore.Reports\PeopleCore.Reports.csproj" />
   </ItemGroup>
 
 </Project>

@@ -21,6 +21,7 @@
   <ItemGroup>
     <ProjectReference Include="..\PeopleCore.Infrastructure\PeopleCore.Infrastructure.csproj" />
     <ProjectReference Include="..\PeopleCore.Application\PeopleCore.Application.csproj" />
+    <ProjectReference Include="..\PeopleCore.Reports\PeopleCore.Reports.csproj" />
   </ItemGroup>
 
 </Project>

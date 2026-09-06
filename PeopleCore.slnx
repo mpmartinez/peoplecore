@@ -5,6 +5,7 @@
     <Project Path="src/PeopleCore.Application/PeopleCore.Application.csproj" />
     <Project Path="src/PeopleCore.Domain/PeopleCore.Domain.csproj" />
     <Project Path="src/PeopleCore.Infrastructure/PeopleCore.Infrastructure.csproj" />
+    <Project Path="src/PeopleCore.Reports/PeopleCore.Reports.csproj" />
     <Project Path="src/PeopleCore.Web/PeopleCore.Web.csproj" />
   </Folder>
   <Folder Name="/tests/">
