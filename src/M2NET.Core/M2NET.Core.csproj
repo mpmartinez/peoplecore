@@ -6,8 +6,4 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="$(M2NetCoreProject)" Condition=" '$(M2NetCoreProject)' != '' " />
-  </ItemGroup>
-
 </Project>

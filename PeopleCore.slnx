@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/M2NET.Core/M2NET.Core.csproj" />
     <Project Path="src/PeopleCore.API/PeopleCore.API.csproj" />
     <Project Path="src/PeopleCore.Application/PeopleCore.Application.csproj" />
     <Project Path="src/PeopleCore.Domain/PeopleCore.Domain.csproj" />

@@ -1,41 +1,11 @@
 <Project>
 
   <!--
-    M2NET.Core lives in a sibling repository rather than inside this one, so it cannot be
-    referenced by a fixed relative path: the number of directories between this repo's root and
-    its parent varies. The main checkout sits one level below the shared parent, while a git
-    worktree under .claude/worktrees/<name> sits four levels below it.
-
-    Resolve it by searching upward from this file, nearest match winning. Override with
-    -p:M2NetCoreProject=<path> (or an M2NetCoreProject environment variable) when it lives
-    somewhere else entirely.
+    M2NET.Core is vendored into this repository so the solution is self-contained. Override
+    with -p:M2NetCoreProject=<path> only if consuming a copy from elsewhere.
   -->
-  <PropertyGroup>
-    <M2NetCoreRelativePath>M2NET.Core\src\M2NET.Core\M2NET.Core.csproj</M2NetCoreRelativePath>
-  </PropertyGroup>
-
   <PropertyGroup Condition=" '$(M2NetCoreProject)' == '' ">
-    <_M2NetCoreUp1>$(MSBuildThisFileDirectory)..\$(M2NetCoreRelativePath)</_M2NetCoreUp1>
-    <_M2NetCoreUp2>$(MSBuildThisFileDirectory)..\..\$(M2NetCoreRelativePath)</_M2NetCoreUp2>
-    <_M2NetCoreUp3>$(MSBuildThisFileDirectory)..\..\..\$(M2NetCoreRelativePath)</_M2NetCoreUp3>
-    <_M2NetCoreUp4>$(MSBuildThisFileDirectory)..\..\..\..\$(M2NetCoreRelativePath)</_M2NetCoreUp4>
-    <_M2NetCoreUp5>$(MSBuildThisFileDirectory)..\..\..\..\..\$(M2NetCoreRelativePath)</_M2NetCoreUp5>
-
-    <!-- Assigned furthest-first so the nearest existing candidate overwrites the rest. -->
-    <M2NetCoreProject Condition="Exists('$(_M2NetCoreUp5)')">$(_M2NetCoreUp5)</M2NetCoreProject>
-    <M2NetCoreProject Condition="Exists('$(_M2NetCoreUp4)')">$(_M2NetCoreUp4)</M2NetCoreProject>
-    <M2NetCoreProject Condition="Exists('$(_M2NetCoreUp3)')">$(_M2NetCoreUp3)</M2NetCoreProject>
-    <M2NetCoreProject Condition="Exists('$(_M2NetCoreUp2)')">$(_M2NetCoreUp2)</M2NetCoreProject>
-    <M2NetCoreProject Condition="Exists('$(_M2NetCoreUp1)')">$(_M2NetCoreUp1)</M2NetCoreProject>
+    <M2NetCoreProject>$(MSBuildThisFileDirectory)src\M2NET.Core\M2NET.Core.csproj</M2NetCoreProject>
   </PropertyGroup>
-
-  <!--
-    Projects that consume M2NET.Core set UsesM2NetCore, so a missing sibling repo reports one
-    actionable error instead of a scattering of CS0246 "type or namespace 'M2NET'" failures.
-  -->
-  <Target Name="ValidateM2NetCoreProject" BeforeTargets="PrepareForBuild"
-          Condition=" '$(UsesM2NetCore)' == 'true' AND '$(M2NetCoreProject)' == '' ">
-    <Error Text="Could not locate $(M2NetCoreRelativePath) in any directory above '$(MSBuildThisFileDirectory)'. Clone the M2NET.Core repository alongside this one, or build with -p:M2NetCoreProject=&lt;full path to M2NET.Core.csproj&gt;." />
-  </Target>
 
 </Project>
