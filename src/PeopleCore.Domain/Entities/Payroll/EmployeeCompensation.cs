@@ -16,4 +16,14 @@ public class EmployeeCompensation : AuditableEntity
     public PayFrequency PayFrequency { get; set; } = PayFrequency.SemiMonthly;
     public string TaxCode { get; set; } = "ME";
     public int Dependents { get; set; }
+
+    /// <summary>
+    /// The employee's recurring allowances. Both collections relate on <see cref="EmployeeId"/>
+    /// rather than on this row's own key - allowances and loans stay keyed by employee, as the
+    /// design requires, so a loan can be recorded before a compensation row exists.
+    /// </summary>
+    public List<EmployeeAllowance> Allowances { get; set; } = [];
+
+    /// <summary>The employee's loans, related on <see cref="EmployeeId"/>. See <see cref="Allowances"/>.</summary>
+    public List<EmployeeLoan> Loans { get; set; } = [];
 }
