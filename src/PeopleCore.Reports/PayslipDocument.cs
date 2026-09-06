@@ -2,6 +2,7 @@ using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
 using PeopleCore.Application.Payroll.DTOs;
+using PeopleCore.Application.Payroll.Services;
 
 namespace PeopleCore.Reports;
 
@@ -105,39 +106,14 @@ public class PayslipDocument : IDocument
 
     private void ComposeEarningsDeductions(IContainer c)
     {
-        // PayZen's PayrollRunEmployeeDto carried free-form EarningLines/DeductionLines
-        // (each with a Description/Amount, deduction lines flagged IsEmployer). PeopleCore's
-        // PayrollRunEmployeeDto has no such collections - earnings, employee deductions and
-        // employer contributions are fixed named fields. The three lists below reproduce the
-        // same shape (Description, Amount) from those fixed fields so the rendering loops
-        // below are otherwise unchanged from the original.
-        var earningLines = new (string Description, decimal Amount)[]
-        {
-            ("Regular Pay", _emp.RegularPay),
-            ("Overtime Pay", _emp.OvertimePay),
-            ("Holiday Pay", _emp.HolidayPay),
-            ("Night Differential", _emp.NightDiffPay),
-            ("Taxable Allowances", _emp.TaxableAllowances),
-            ("Non-Taxable Allowances", _emp.NonTaxableAllowances),
-            ("13th Month Pay", _emp.ThirteenthMonth),
-        };
-
-        var deductionLines = new (string Description, decimal Amount)[]
-        {
-            ("SSS Contribution", _emp.SSSEmployee),
-            ("PhilHealth Contribution", _emp.PhilHealthEmployee),
-            ("Pag-IBIG Contribution", _emp.PagIbigEmployee),
-            ("Withholding Tax", _emp.WithholdingTax),
-            ("Loan Deductions", _emp.LoanDeductions),
-            ("Other Deductions", _emp.OtherDeductions),
-        };
-
-        var employerContributionLines = new (string Description, decimal Amount)[]
-        {
-            ("SSS Employer Share", _emp.SSSEmployer),
-            ("PhilHealth Employer Share", _emp.PhilHealthEmployer),
-            ("Pag-IBIG Employer Share", _emp.PagIbigEmployer),
-        };
+        // Driven by PayslipLineBuilder - the DTO-shaped counterpart of PayrollLineBuilder,
+        // which the payroll register uses - so the two can never drift onto two different
+        // breakdowns of the same run, and so the reductions RegularPay already nets out
+        // (absences, tardiness) are visible on the document rather than silently folded away.
+        // Zero-value lines are suppressed by the builder itself.
+        var earningLines = PayslipLineBuilder.Earnings(_emp);
+        var deductionLines = PayslipLineBuilder.Deductions(_emp).Where(l => !l.IsEmployer).ToList();
+        var employerContributionLines = PayslipLineBuilder.Deductions(_emp).Where(l => l.IsEmployer).ToList();
 
         c.Row(row =>
         {

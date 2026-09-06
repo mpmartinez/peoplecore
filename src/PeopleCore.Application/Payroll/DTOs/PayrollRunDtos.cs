@@ -58,6 +58,13 @@ public record PayrollRunEmployeeDto(
     decimal TaxableAllowances,
     decimal NonTaxableAllowances,
     decimal ThirteenthMonth,
+    // Already netted out of RegularPay above - a figure this run computed, not compensation
+    // (see PayrollRunEmployee's remarks), which is why these two are here and BasicSalary,
+    // PayFrequency, TaxCode and Dependents are not. PayslipLineBuilder reconstructs the basic
+    // figure from RegularPay + AbsenceDeduction + TardinessDeduction and must not have these
+    // added again anywhere they touch TotalDeductions.
+    decimal AbsenceDeduction,
+    decimal TardinessDeduction,
     decimal SSSEmployee,
     decimal SSSEmployer,
     decimal PhilHealthEmployee,

@@ -412,6 +412,8 @@ public record PayrollRunEmployeeDto(
     decimal TaxableAllowances,
     decimal NonTaxableAllowances,
     decimal ThirteenthMonth,
+    decimal AbsenceDeduction,
+    decimal TardinessDeduction,
     decimal SSSEmployee,
     decimal SSSEmployer,
     decimal PhilHealthEmployee,

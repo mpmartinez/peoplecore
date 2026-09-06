@@ -117,6 +117,8 @@ public class PayslipDocumentTests
             TaxableAllowances: 0m,
             NonTaxableAllowances: 0m,
             ThirteenthMonth: 0m,
+            AbsenceDeduction: 0m,
+            TardinessDeduction: 0m,
             SSSEmployee: V(461.25m),
             SSSEmployer: V(978.75m),
             PhilHealthEmployee: V(250m),

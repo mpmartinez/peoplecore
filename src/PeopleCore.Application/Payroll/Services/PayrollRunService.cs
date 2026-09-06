@@ -369,6 +369,7 @@ public class PayrollRunService : IPayrollRunService
         e.GrossPay, e.TotalDeductions, e.NetPay,
         e.RegularPay, e.OvertimePay, e.HolidayPay, e.NightDiffPay,
         e.TaxableAllowances, e.NonTaxableAllowances, e.ThirteenthMonth,
+        e.AbsenceDeduction, e.TardinessDeduction,
         e.SSSEmployee, e.SSSEmployer, e.PhilHealthEmployee, e.PhilHealthEmployer,
         e.PagIbigEmployee, e.PagIbigEmployer, e.WithholdingTax, e.LoanDeductions, e.OtherDeductions);
 }
