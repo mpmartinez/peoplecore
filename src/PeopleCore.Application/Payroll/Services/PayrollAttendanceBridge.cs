@@ -197,9 +197,11 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                     }
                 }
 
+                var isHoliday = holidaysByDate.TryGetValue(date, out var holidayType);
+
                 // The Holiday calendar governs, never AttendanceRecord.IsHoliday - the record
                 // carries a denormalised flag that can drift from the calendar.
-                if (isPresent && holidaysByDate.TryGetValue(date, out var holidayType))
+                if (isPresent && isHoliday)
                 {
                     if (holidayType == HolidayType.RegularHoliday) holidayRegularDays += 1m;
                     else holidaySpecialDays += 1m;
@@ -218,10 +220,18 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                 }
 
                 // An absence needs a scheduled working day. A rest day is not one, and a null
-                // schedule is no basis to deduct at all.
+                // schedule is no basis to deduct at all. Nor is an unworked REGULAR holiday: the
+                // Labor Code entitles the employee to 100% of the daily wage whether or not they
+                // work it, and basePeriodPay already pays that - deducting an absence here would
+                // claw it straight back. This is deliberately asymmetric: a SPECIAL NON-WORKING
+                // day follows "no work, no pay", so it is NOT excluded here and still creates an
+                // absence when unworked. That asymmetry looks like an oversight if you don't know
+                // the Labor Code distinction, so it is spelled out here rather than left implicit.
+                var isUnworkedRegularHoliday = isHoliday && holidayType == HolidayType.RegularHoliday;
                 if (schedule is { IsRestDay: false }
                     && !isPresent
-                    && employeePaidLeave?.Contains(date) != true)
+                    && employeePaidLeave?.Contains(date) != true
+                    && !isUnworkedRegularHoliday)
                 {
                     absenceDays += 1m;
                 }

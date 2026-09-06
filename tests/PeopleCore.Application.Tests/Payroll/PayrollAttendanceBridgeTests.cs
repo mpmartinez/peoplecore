@@ -508,6 +508,72 @@ public class PayrollAttendanceBridgeTests
     }
 
     [Fact]
+    public async Task BuildAsync_UnworkedRegularHolidayCreatesNoAbsence_UnworkedSpecialNonWorkingDoes()
+    {
+        var employeeId = Guid.NewGuid();
+        var regularHoliday = new DateOnly(2026, 1, 1);       // New Year's Day - regular holiday
+        var specialNonWorking = new DateOnly(2026, 1, 2);    // adjacent day - special non-working
+
+        // Fixed shift, scheduled on both dates; the employee does not show up on either.
+        _assignments.Setup(r => r.GetActiveForPeriodAsync(
+                        It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync([FixedAssignment(employeeId, regularHoliday)]);
+
+        _holidays.Setup(r => r.GetByYearAsync(2026, It.IsAny<CancellationToken>()))
+                 .ReturnsAsync([
+                     new Holiday { Name = "New Year's Day", HolidayDate = regularHoliday, HolidayType = HolidayType.RegularHoliday },
+                     new Holiday { Name = "Special Day", HolidayDate = specialNonWorking, HolidayType = HolidayType.SpecialNonWorking }
+                 ]);
+
+        var result = await _sut.BuildAsync([employeeId], regularHoliday, specialNonWorking, CancellationToken.None);
+
+        // Regular holiday: 100% of the daily wage is owed whether worked or not, and
+        // basePeriodPay already pays it - deducting an absence would claw it back. Special
+        // non-working: "no work, no pay" governs, so the absence still applies.
+        result.Inputs[employeeId].AbsenceDays.Should().Be(1m);
+    }
+
+    [Fact]
+    public async Task BuildAsync_DuplicateHolidayDates_PreferRegularOverSpecial_RegardlessOfOrder()
+    {
+        var employeeId = Guid.NewGuid();
+        var date = new DateOnly(2026, 4, 9); // e.g. a regular holiday a local government also
+                                              // declares a special non-working day
+
+        _assignments.Setup(r => r.GetActiveForPeriodAsync(
+                        It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync([FixedAssignment(employeeId, date)]);
+
+        _attendance.Setup(r => r.GetAllByPeriodAsync(
+                       It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync([new AttendanceRecord { EmployeeId = employeeId, AttendanceDate = date, IsPresent = true }]);
+
+        // Order 1: RegularHoliday row first.
+        _holidays.Setup(r => r.GetByYearAsync(2026, It.IsAny<CancellationToken>()))
+                 .ReturnsAsync([
+                     new Holiday { Name = "Regular", HolidayDate = date, HolidayType = HolidayType.RegularHoliday },
+                     new Holiday { Name = "Special", HolidayDate = date, HolidayType = HolidayType.SpecialNonWorking }
+                 ]);
+
+        var resultRegularFirst = await _sut.BuildAsync([employeeId], date, date, CancellationToken.None);
+
+        resultRegularFirst.Inputs[employeeId].HolidayRegularDays.Should().Be(1m);
+        resultRegularFirst.Inputs[employeeId].HolidaySpecialDays.Should().Be(0m);
+
+        // Order 2: SpecialNonWorking row first - the tie-break must still prefer RegularHoliday.
+        _holidays.Setup(r => r.GetByYearAsync(2026, It.IsAny<CancellationToken>()))
+                 .ReturnsAsync([
+                     new Holiday { Name = "Special", HolidayDate = date, HolidayType = HolidayType.SpecialNonWorking },
+                     new Holiday { Name = "Regular", HolidayDate = date, HolidayType = HolidayType.RegularHoliday }
+                 ]);
+
+        var resultSpecialFirst = await _sut.BuildAsync([employeeId], date, date, CancellationToken.None);
+
+        resultSpecialFirst.Inputs[employeeId].HolidayRegularDays.Should().Be(1m);
+        resultSpecialFirst.Inputs[employeeId].HolidaySpecialDays.Should().Be(0m);
+    }
+
+    [Fact]
     public async Task BuildAsync_ThrowsArgumentException_WhenPeriodEndPrecedesStart()
     {
         var employeeId = Guid.NewGuid();
