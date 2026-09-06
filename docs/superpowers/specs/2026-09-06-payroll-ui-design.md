@@ -97,17 +97,20 @@ would invite an operator to type a zero that silently beats a derived figure.
 The register: one row per employee with regular pay, overtime, holiday, night differential, gross,
 each statutory deduction, withholding tax, and net. Run totals in a header.
 
-Two actions, gated on status:
+Three actions, gated on status:
 
-| Status | Compute | Mark Paid |
-|---|---|---|
-| `Draft`, `Processing`, `ForApproval` | offered | offered |
-| `Approved` | **not offered** | offered |
-| `Paid` | **not offered** | **not offered** |
+| Status | Compute | Approve | Mark Paid |
+|---|---|---|---|
+| `Draft`, `Processing`, `ForApproval` | offered | offered | **not offered** |
+| `Approved` | **not offered** | **not offered** | offered |
+| `Paid` | **not offered** | **not offered** | **not offered** |
 
-`Compute` is withheld at `Approved` because `PayrollRunService.ComputeAsync` throws a
-`DomainException` for both `Approved` and `Paid` — recomputing over signed-off figures would change
-them. The UI matches the service rather than offering an action that will fail.
+`Compute` and `Approve` are both withheld at `Approved` because `PayrollRunService.ComputeAsync`
+and `ApproveAsync` throw a `DomainException` for both `Approved` and `Paid` — recomputing or
+re-approving over signed-off figures would change them. The UI matches the service rather than
+offering an action that will fail. `MarkPaidAsync` requires the run to already be `Approved` and
+throws a `DomainException` for every other status; before the Approve action existed in this phase,
+nothing ever transitioned a run to `Approved`, so a run could never actually be paid.
 
 **`EmployeesMissingAttendance` is displayed prominently**, not buried. Phase 2 records it precisely
 so an operator can see who had no resolvable shift schedule — and therefore had no absences derived
