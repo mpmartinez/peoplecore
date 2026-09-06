@@ -5,7 +5,13 @@ public class PayrollRunEmployee : AuditableEntity
     public Guid PayrollRunId { get; set; }
     public PayrollRun PayrollRun { get; set; } = null!;
     public Guid EmployeeId { get; set; }
-    public Employees.Employee Employee { get; set; } = null!;
+    /// <summary>
+    /// Populated by EF fixup when a run is loaded with .Include(...).ThenInclude(e => e.Employee)
+    /// (see IPayrollRunRepository.GetWithEntriesAsync) - never set by
+    /// PayrollComputationService.Compute, which works from the employee's compensation record,
+    /// not the person. Null on an entry that has not been reloaded from the database.
+    /// </summary>
+    public Employees.Employee? Employee { get; set; }
 
     // Work details
     public decimal DaysWorked { get; set; } = 22m;

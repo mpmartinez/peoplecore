@@ -7,8 +7,19 @@ public record CreatePayrollRunRequest(
     DateOnly PeriodEnd,
     DateOnly PayDate,
     PayFrequency Frequency,
-    IReadOnlyList<Guid> EmployeeIds,
+    IReadOnlyList<PayrollRunEmployeeInput> Employees,
     Guid? AttendancePeriodId = null);
+
+/// <summary>
+/// Per-employee inputs for a payroll run. Phase 1 supplies these explicitly; Phase 2's
+/// attendance bridge will derive them from punches, approved leave and approved overtime.
+/// </summary>
+public record PayrollRunEmployeeInput(
+    Guid EmployeeId,
+    decimal? DaysWorked = null,
+    decimal OvertimeHours = 0m,
+    decimal HolidayDays = 0m,
+    bool IncludeThirteenthMonth = false);
 
 /// <summary>
 /// One employee's line in a run. Deliberately carries only what this run computed - not the

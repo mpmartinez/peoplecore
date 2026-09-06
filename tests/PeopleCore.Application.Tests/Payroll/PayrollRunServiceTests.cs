@@ -282,6 +282,49 @@ public class PayrollRunServiceTests
     }
 
     [Fact]
+    public async Task ComputeAsync_PreservesTheStoredPerEmployeeInputsFromTheExistingEntry()
+    {
+        var employeeId = Guid.NewGuid();
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = employeeId, BasicSalary = 20_000m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "ME"
+        };
+
+        var run = new PayrollRun
+        {
+            RunNumber = "PAY-2026-009",
+            PeriodStart = new DateOnly(2026, 1, 1),
+            PeriodEnd = new DateOnly(2026, 1, 15),
+            PayDate = new DateOnly(2026, 1, 20),
+            Frequency = PayFrequency.SemiMonthly,
+            Status = PayrollRunStatus.Draft
+        };
+        // Non-default inputs already persisted on the entry from when the run was created -
+        // ComputeAsync must read these back rather than re-defaulting them.
+        run.Employees.Add(new PayrollRunEmployee { EmployeeId = employeeId, OvertimeHours = 5m });
+
+        _runRepo.Setup(r => r.GetWithEntriesAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        _settingsRepo.Setup(r => r.GetDefaultAsync(It.IsAny<CancellationToken>())).ReturnsAsync((PayrollSettings?)null);
+        _compensationRepo.Setup(r => r.GetByEmployeeIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+                          .ReturnsAsync([compensation]);
+        _allowanceRepo.Setup(r => r.GetByEmployeeIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+                       .ReturnsAsync([]);
+        _loanRepo.Setup(r => r.GetByEmployeeIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+                 .ReturnsAsync([]);
+
+        List<PayrollRunEmployee>? capturedEntries = null;
+        _runRepo.Setup(r => r.ReplaceEntriesAsync(run, It.IsAny<IReadOnlyList<PayrollRunEmployee>>(), It.IsAny<CancellationToken>()))
+                .Callback<PayrollRun, IReadOnlyList<PayrollRunEmployee>, CancellationToken>((_, entries, _) => capturedEntries = entries.ToList())
+                .Returns(Task.CompletedTask);
+
+        await _sut.ComputeAsync(run.Id, CancellationToken.None);
+
+        capturedEntries.Should().ContainSingle();
+        capturedEntries!.Single().OvertimeHours.Should().Be(5m,
+            "a recompute must preserve the OvertimeHours already stored on the entry, not re-default it to zero");
+    }
+
+    [Fact]
     public async Task ComputeAsync_WhenRunHasNoEmployees_ThrowsDomainException()
     {
         var run = new PayrollRun { RunNumber = "PR-0008", Status = PayrollRunStatus.Draft };
@@ -316,9 +359,18 @@ public class PayrollRunServiceTests
         _runRepo.Setup(r => r.AddWithEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
 
+        PayrollRun? capturedRun = null;
+        _runRepo.Setup(r => r.AddWithEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()))
+                .Callback<PayrollRun, CancellationToken>((run, _) => capturedRun = run)
+                .Returns(Task.CompletedTask);
+        // CreateAsync reloads via GetWithEntriesAsync after saving, so its response's employee
+        // names come from the same lookup GET uses (see PayrollRunEmployee.Employee's remarks).
+        _runRepo.Setup(r => r.GetWithEntriesAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(() => capturedRun);
+
         var request = new CreatePayrollRunRequest(
             new DateOnly(2026, 1, 1), new DateOnly(2026, 1, 15), new DateOnly(2026, 1, 20),
-            PayFrequency.SemiMonthly, [employeeId]);
+            PayFrequency.SemiMonthly, [new PayrollRunEmployeeInput(employeeId)]);
 
         var result = await _sut.CreateAsync(request, CancellationToken.None);
 

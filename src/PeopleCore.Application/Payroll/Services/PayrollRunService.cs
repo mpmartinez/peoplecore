@@ -34,7 +34,7 @@ public class PayrollRunService : IPayrollRunService
 
     public async Task<PayrollRunDto> CreateAsync(CreatePayrollRunRequest request, CancellationToken ct = default)
     {
-        if (request.EmployeeIds is not { Count: > 0 })
+        if (request.Employees is not { Count: > 0 })
             throw new DomainException("A payroll run must include at least one employee.");
 
         var year = request.PeriodStart.Year;
@@ -51,11 +51,20 @@ public class PayrollRunService : IPayrollRunService
             AttendancePeriodId = request.AttendancePeriodId
         };
 
-        run.Employees = await ComputeEntriesAsync(run, request.EmployeeIds, ct);
+        run.Employees = await ComputeEntriesAsync(run, request.Employees, ct);
 
         await _runRepo.AddWithEntriesAsync(run, ct);
 
-        return ToDto(run);
+        // PayrollRunEmployee.Employee is populated by EF fixup only when a run is reloaded via
+        // GetWithEntriesAsync's .Include(...).ThenInclude(e => e.Employee) - Compute never sets
+        // it, since it works from the employee's compensation, not the person (see that
+        // property's remarks). Reloading here, rather than mapping names from data already in
+        // hand, guarantees the create response reports the exact same names GET would - the two
+        // can never drift onto two different lookups.
+        var saved = await _runRepo.GetWithEntriesAsync(run.Id, ct)
+            ?? throw new InvalidOperationException($"Payroll run {run.Id} was not found immediately after being saved.");
+
+        return ToDto(saved);
     }
 
     public async Task ComputeAsync(Guid runId, CancellationToken ct = default)
@@ -69,11 +78,20 @@ public class PayrollRunService : IPayrollRunService
         if (run.Status is PayrollRunStatus.Approved or PayrollRunStatus.Paid)
             throw new DomainException("Only draft or for-approval payroll runs can be recomputed.");
 
-        var employeeIds = run.Employees.Select(e => e.EmployeeId).Distinct().ToList();
-        if (employeeIds.Count == 0)
+        if (run.Employees.Count == 0)
             throw new DomainException("Payroll run has no employees to compute.");
 
-        var entries = await ComputeEntriesAsync(run, employeeIds, ct);
+        // Recompute against current rates/settings, but keep the per-employee inputs already on
+        // the run - DaysWorked, OvertimeHours, HolidayDays and IncludeThirteenthMonth are Phase 1
+        // explicit inputs (see PayrollRunEmployeeInput's remarks), not derived from anything a
+        // recompute could re-derive, so re-defaulting them here would silently discard whatever
+        // was recorded when the run was created.
+        var employeeInputs = run.Employees
+            .Select(e => new PayrollRunEmployeeInput(
+                e.EmployeeId, e.DaysWorked, e.OvertimeHours, e.HolidayDays, e.IncludeThirteenthMonth))
+            .ToList();
+
+        var entries = await ComputeEntriesAsync(run, employeeInputs, ct);
 
         // The figures an approver would be asked to sign off on have changed, so any submission
         // no longer stands and the run goes back to draft to be resubmitted.
@@ -134,11 +152,13 @@ public class PayrollRunService : IPayrollRunService
     /// never drift on rates or the rate basis.
     /// </summary>
     private async Task<List<PayrollRunEmployee>> ComputeEntriesAsync(
-        PayrollRun run, IReadOnlyList<Guid> employeeIds, CancellationToken ct)
+        PayrollRun run, IReadOnlyList<PayrollRunEmployeeInput> employees, CancellationToken ct)
     {
         var settings = await _settingsRepo.GetDefaultAsync(ct);
         var rates = ToRates(settings);
         decimal dailyRateFactor = settings?.DailyRateFactor ?? 365m;
+
+        var employeeIds = employees.Select(e => e.EmployeeId).Distinct().ToList();
 
         var compensations = await _compensationRepo.GetByEmployeeIdsAsync(employeeIds, ct);
         var allowancesByEmployee = (await _allowanceRepo.GetByEmployeeIdsAsync(employeeIds, ct))
@@ -147,23 +167,29 @@ public class PayrollRunService : IPayrollRunService
             .Where(l => l.IsActive)
             .ToLookup(l => l.EmployeeId);
 
-        // Scheduled days for the period; attendance-driven absences are Phase 2 (see
-        // PayrollComputationService's own remarks on PayrollAttendanceInput).
-        decimal daysInPeriod = run.Frequency == PayFrequency.SemiMonthly ? 11m : 22m;
+        // Scheduled days for the period when a caller does not override DaysWorked;
+        // attendance-driven absences are Phase 2 (see PayrollComputationService's own remarks
+        // on PayrollAttendanceInput).
+        decimal defaultDaysInPeriod = run.Frequency == PayFrequency.SemiMonthly ? 11m : 22m;
 
         var entries = new List<PayrollRunEmployee>();
-        foreach (var employeeId in employeeIds)
+        foreach (var employee in employees)
         {
-            var compensation = compensations.FirstOrDefault(c => c.EmployeeId == employeeId)
-                ?? throw new DomainException($"Employee {employeeId} has no compensation record.");
+            var compensation = compensations.FirstOrDefault(c => c.EmployeeId == employee.EmployeeId)
+                ?? throw new DomainException($"Employee {employee.EmployeeId} has no compensation record.");
 
             // Populated from their own repositories - EmployeeCompensation.Allowances and
             // .Loans are not mapped in EF (see that entity's remarks).
-            compensation.Allowances = allowancesByEmployee[employeeId].ToList();
-            compensation.Loans = loansByEmployee[employeeId].ToList();
+            compensation.Allowances = allowancesByEmployee[employee.EmployeeId].ToList();
+            compensation.Loans = loansByEmployee[employee.EmployeeId].ToList();
 
             entries.Add(_computationService.Compute(
-                compensation, run, daysWorked: daysInPeriod, rates: rates, dailyRateFactor: dailyRateFactor));
+                compensation, run,
+                daysWorked: employee.DaysWorked ?? defaultDaysInPeriod,
+                overtimeHours: employee.OvertimeHours,
+                holidayDays: employee.HolidayDays,
+                includeThirteenthMonth: employee.IncludeThirteenthMonth,
+                rates: rates, dailyRateFactor: dailyRateFactor));
         }
 
         return entries;
