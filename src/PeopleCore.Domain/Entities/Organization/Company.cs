@@ -15,4 +15,6 @@ public class Company : AuditableEntity
     public string PagIbigNumber { get; set; } = "";
     public string City { get; set; } = "";
     public byte[]? Logo { get; set; }
+    public string? RdoCode { get; set; }
+    public string? ZipCode { get; set; }
 }

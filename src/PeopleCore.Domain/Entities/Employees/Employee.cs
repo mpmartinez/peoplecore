@@ -27,6 +27,10 @@ public class Employee : M2NET.Core.Entities.Employee, IAuditableEntity
     public string? MobileNumber { get; set; }      // base has Mobile/Phone
     public string? Address { get; set; }
 
+    /// <summary>BIR Revenue District Office code. Stable per employee; printed on Form 2316.</summary>
+    public string? RdoCode { get; set; }
+    public string? ZipCode { get; set; }
+
     // Navigation properties (DepartmentId/PositionId FKs come from M2NET.Core base)
     public Department? Department { get; set; }    // nav for DepartmentId
     public Position? Position { get; set; }        // nav for PositionId
