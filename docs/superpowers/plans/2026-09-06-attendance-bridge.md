@@ -132,8 +132,10 @@ public class ShiftScheduleResolverTests
             EffectiveFrom = new DateOnly(2026, 1, 1)
         };
 
-        // 2026-02-27 is three days before the anchor, so it lands back on offset 0.
-        ShiftScheduleResolver.Resolve(assignment, new DateOnly(2026, 2, 26))!.IsRestDay.Should().BeTrue();
+        // 2026-02-28 is one day before the anchor: -1 % 3 is -1 in C#, so the normalization
+        // branch must fire and land it on offset 2, the rest day. A date exactly one cycle
+        // before the anchor would yield 0 and never exercise that branch.
+        ShiftScheduleResolver.Resolve(assignment, new DateOnly(2026, 2, 28))!.IsRestDay.Should().BeTrue();
     }
 }
 ```
