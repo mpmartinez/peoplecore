@@ -177,6 +177,10 @@ else
             }
             await LoadRun();
         }
+        catch (Exception ex)
+        {
+            _actionError = ex.Message;
+        }
         finally
         {
             _computing = false;
@@ -197,6 +201,10 @@ else
             }
             await LoadRun();
         }
+        catch (Exception ex)
+        {
+            _actionError = ex.Message;
+        }
         finally
         {
             _approving = false;
@@ -216,6 +224,10 @@ else
                 return;
             }
             await LoadRun();
+        }
+        catch (Exception ex)
+        {
+            _actionError = ex.Message;
         }
         finally
         {
