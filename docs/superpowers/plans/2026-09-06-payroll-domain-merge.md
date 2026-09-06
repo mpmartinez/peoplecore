@@ -609,6 +609,21 @@ Carry over from PayZen's `AppDbContext.OnModelCreating` for the remaining entiti
 - `EmployeeCompensation.EmployeeId` **unique** index (1:1 with Employee).
 - `PayrollLoanDeduction.LoanType` max length 64 and an index on `EmployeeLoanId`.
 - Cascade delete from `PayrollRun` to `PayrollRunEmployee` and from `PayrollRunEmployee` to `LoanDeductionLines`; `Restrict` from `Employee` to `PayrollRunEmployee` so an employee with payroll history cannot be deleted.
+- **`Ignore` the `Allowances` and `Loans` navigations on `EmployeeCompensation`.** Task 7 added those
+  collections because the computation reads them, but they must NOT be mapped. `EmployeeAllowance` and
+  `EmployeeLoan` are keyed by `EmployeeId` and stay mapped independently — mapping the navigations
+  instead would either create shadow `EmployeeCompensationId` columns nobody wrote, or, if configured
+  with `HasForeignKey(x => x.EmployeeId).HasPrincipalKey(c => c.EmployeeId)`, produce a required FK that
+  forces a compensation row to exist before a loan can be recorded. That is precisely the coupling the
+  design spec rejects. Add to `EmployeeCompensationConfiguration`:
+
+```csharp
+        // Populated by the application service from their own repositories before computation.
+        // Not mapped: allowances and loans are keyed by EmployeeId and stand alone, so a loan can
+        // be recorded before a compensation row exists.
+        builder.Ignore(x => x.Allowances);
+        builder.Ignore(x => x.Loans);
+```
 
 - [ ] **Step 3: Create the migration**
 
