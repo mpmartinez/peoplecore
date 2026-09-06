@@ -39,7 +39,13 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
             .Where(e => e.PayrollRunId == run.Id)
             .ExecuteDeleteAsync(ct);
 
-        Context.PayrollRuns.Update(run);
+        // ExecuteDeleteAsync bypasses the change tracker, so the deleted entries are still
+        // attached to run.Employees. Detach them before adding the replacements, or EF will
+        // try to update rows that no longer exist.
+        foreach (var stale in run.Employees.ToList())
+            Context.Entry(stale).State = EntityState.Detached;
+        run.Employees.Clear();
+
         await Context.PayrollRunEmployees.AddRangeAsync(newEntries, ct);
 
         await Context.SaveChangesAsync(ct);
