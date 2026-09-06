@@ -17,6 +17,14 @@ public interface IPayrollRunService
     Task ComputeAsync(Guid runId, CancellationToken ct = default);
 
     /// <summary>
+    /// Approves a run, freezing the figures it holds. This is the gate between computing and
+    /// paying: once approved, ComputeAsync refuses to run again (an approver has signed off on
+    /// these numbers), and MarkPaidAsync goes on to retire loan balances against exactly what was
+    /// approved. Valid from Draft, Processing or ForApproval; throws DomainException otherwise.
+    /// </summary>
+    Task ApproveAsync(Guid runId, CancellationToken ct = default);
+
+    /// <summary>
     /// Retires each active loan's balance by exactly what this run withheld (its
     /// PayrollLoanDeduction line), never by re-deriving the instalment from the loan's own
     /// schedule, and marks the run Paid.

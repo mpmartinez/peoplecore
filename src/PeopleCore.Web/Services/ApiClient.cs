@@ -282,6 +282,13 @@ public class ApiClient
         return (false, await ReadProblemDetailAsync(response));
     }
 
+    public async Task<(bool Ok, string? Error)> ApprovePayrollRunAsync(Guid id)
+    {
+        var response = await _http.PutAsJsonAsync($"api/payroll-runs/{id}/approve", new { });
+        if (response.IsSuccessStatusCode) return (true, null);
+        return (false, await ReadProblemDetailAsync(response));
+    }
+
     public async Task<(bool Ok, string? Error)> MarkPayrollRunPaidAsync(Guid id)
     {
         var response = await _http.PutAsJsonAsync($"api/payroll-runs/{id}/mark-paid", new { });

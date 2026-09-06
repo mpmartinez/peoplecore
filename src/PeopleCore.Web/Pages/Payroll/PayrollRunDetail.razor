@@ -23,11 +23,15 @@
         {
             @if (CanCompute(_run.Status))
             {
-                <Button Variant="secondary" OnClick="Compute" Loading="@_computing" Disabled="@(_computing || _markingPaid)">Compute</Button>
+                <Button Variant="secondary" OnClick="Compute" Loading="@_computing" Disabled="@(_computing || _approving || _markingPaid)">Compute</Button>
+            }
+            @if (CanApprove(_run.Status))
+            {
+                <Button Variant="secondary" OnClick="Approve" Loading="@_approving" Disabled="@(_computing || _approving || _markingPaid)">Approve</Button>
             }
             @if (CanMarkPaid(_run.Status))
             {
-                <Button Variant="primary" OnClick="MarkPaid" Loading="@_markingPaid" Disabled="@(_computing || _markingPaid)">Mark Paid</Button>
+                <Button Variant="primary" OnClick="MarkPaid" Loading="@_markingPaid" Disabled="@(_computing || _approving || _markingPaid)">Mark Paid</Button>
             }
         }
     </div>
@@ -138,6 +142,7 @@ else
     private string? _error;
     private string? _actionError;
     private bool _computing;
+    private bool _approving;
     private bool _markingPaid;
 
     protected override async Task OnParametersSetAsync() => await LoadRun();
@@ -178,6 +183,26 @@ else
         }
     }
 
+    private async Task Approve()
+    {
+        _actionError = null;
+        _approving = true;
+        try
+        {
+            var (ok, error) = await Api.ApprovePayrollRunAsync(Id);
+            if (!ok)
+            {
+                _actionError = error ?? "Failed to approve payroll run. Please try again.";
+                return;
+            }
+            await LoadRun();
+        }
+        finally
+        {
+            _approving = false;
+        }
+    }
+
     private async Task MarkPaid()
     {
         _actionError = null;
@@ -202,6 +227,10 @@ else
     // DomainException in both cases (an approver has signed off, or - for Paid - the figures have
     // already retired loan balances), so offering the button there would guarantee a failed call.
     private static bool CanCompute(string status) => status is "Draft" or "Processing" or "ForApproval";
+
+    // Approve is offered for the same statuses as Compute: PayrollRunService.ApproveAsync accepts
+    // exactly Draft, Processing or ForApproval and throws a DomainException for Approved or Paid.
+    private static bool CanApprove(string status) => status is "Draft" or "Processing" or "ForApproval";
 
     // Mark Paid is offered only when Approved: PayrollRunService.MarkPaidAsync throws a
     // DomainException for every other status ("Only approved payroll runs can be marked as

@@ -40,6 +40,13 @@ public class PayrollRunsController : ControllerBase
         return NoContent();
     }
 
+    [HttpPut("{id:guid}/approve")]
+    public async Task<IActionResult> Approve(Guid id, CancellationToken ct = default)
+    {
+        await _service.ApproveAsync(id, ct);
+        return NoContent();
+    }
+
     [HttpPut("{id:guid}/mark-paid")]
     public async Task<IActionResult> MarkPaid(Guid id, CancellationToken ct = default)
     {

@@ -117,6 +117,26 @@ public class PayrollRunService : IPayrollRunService
         await _runRepo.ReplaceEntriesAsync(run, entries, ct);
     }
 
+    /// <summary>
+    /// Approves a run, freezing the figures it holds: this is the gate between computing and
+    /// paying. ComputeAsync refuses to run once a run is Approved, so approving a run locks in
+    /// its numbers against any further recompute, and MarkPaidAsync then retires loan balances
+    /// against exactly what was approved here.
+    /// </summary>
+    public async Task ApproveAsync(Guid runId, CancellationToken ct = default)
+    {
+        var run = await _runRepo.GetWithEntriesAsync(runId, ct)
+            ?? throw new KeyNotFoundException($"Payroll run {runId} not found.");
+
+        if (run.Status is not (PayrollRunStatus.Draft or PayrollRunStatus.Processing or PayrollRunStatus.ForApproval))
+            throw new DomainException("Only draft, processing or for-approval payroll runs can be approved.");
+
+        run.Status = PayrollRunStatus.Approved;
+        run.UpdatedAt = DateTime.UtcNow;
+
+        await _runRepo.UpdateAsync(run, ct);
+    }
+
     public async Task MarkPaidAsync(Guid runId, CancellationToken ct = default)
     {
         var run = await _runRepo.GetWithEntriesAsync(runId, ct)

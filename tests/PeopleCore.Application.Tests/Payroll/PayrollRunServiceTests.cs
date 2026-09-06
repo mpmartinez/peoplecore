@@ -184,6 +184,71 @@ public class PayrollRunServiceTests
     }
 
     // ------------------------------------------------------------------
+    // ApproveAsync - the gate between computing and paying
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task ApproveAsync_MovesADraftRunToApproved()
+    {
+        var run = new PayrollRun { RunNumber = "PR-0009", Status = PayrollRunStatus.Draft };
+        _runRepo.Setup(r => r.GetWithEntriesAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        _runRepo.Setup(r => r.UpdateAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        await _sut.ApproveAsync(run.Id, CancellationToken.None);
+
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+        _runRepo.Verify(r => r.UpdateAsync(run, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApproveAsync_WhenRunIsAlreadyPaid_ThrowsDomainException()
+    {
+        var run = new PayrollRun { RunNumber = "PR-0010", Status = PayrollRunStatus.Paid };
+        _runRepo.Setup(r => r.GetWithEntriesAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+
+        var act = () => _sut.ApproveAsync(run.Id, CancellationToken.None);
+
+        await act.Should().ThrowAsync<DomainException>();
+    }
+
+    [Fact]
+    public async Task FullSequence_CreateComputeApproveMarkPaid_EndsWithTheRunPaid()
+    {
+        var employeeId = Guid.NewGuid();
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = employeeId, BasicSalary = 20_000m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "ME"
+        };
+
+        var savedRun = SetupRoundTripRepositories(compensation);
+        _runRepo.Setup(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(),
+                    It.IsAny<IReadOnlyList<PayrollRunEmployee>>(), It.IsAny<CancellationToken>()))
+                .Callback<PayrollRun, IReadOnlyList<PayrollRunEmployee>, CancellationToken>(
+                    (run, entries, _) => run.Employees = entries.ToList())
+                .Returns(Task.CompletedTask);
+        _runRepo.Setup(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+        _loanRepo.Setup(r => r.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+                 .ReturnsAsync([]);
+
+        await _sut.CreateAsync(RoundTripRequest(employeeId), CancellationToken.None);
+        var run = savedRun()!;
+        run.Status.Should().Be(PayrollRunStatus.Draft);
+
+        await _sut.ComputeAsync(run.Id, CancellationToken.None);
+        run.Status.Should().Be(PayrollRunStatus.Draft);
+
+        await _sut.ApproveAsync(run.Id, CancellationToken.None);
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+
+        await _sut.MarkPaidAsync(run.Id, CancellationToken.None);
+
+        // This is the regression test: before ApproveAsync existed, nothing could ever move a
+        // run into Approved, so MarkPaidAsync would always throw and the run could never be paid.
+        run.Status.Should().Be(PayrollRunStatus.Paid);
+    }
+
+    // ------------------------------------------------------------------
     // ComputeAsync - recomputing a run in place
     // ------------------------------------------------------------------
 
