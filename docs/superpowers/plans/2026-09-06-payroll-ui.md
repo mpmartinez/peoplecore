@@ -281,9 +281,13 @@ A header with the run number, period label, pay date, status badge, and the thre
 
 | Status | Compute | Mark Paid |
 |---|---|---|
-| `Draft`, `Processing`, `ForApproval` | offered | offered |
+| `Draft`, `Processing`, `ForApproval` | offered | **not offered** |
 | `Approved` | **not offered** | offered |
 | `Paid` | **not offered** | **not offered** |
+
+An **Approve** action sits between them, offered for the same statuses as Compute. `MarkPaidAsync`
+throws unless the run is `Approved`, and before this phase nothing anywhere assigned that status —
+a run could be computed forever and never paid. The sequence is Compute → Approve → Mark Paid.
 
 `Compute` is withheld at `Approved` because `PayrollRunService.ComputeAsync` throws a `DomainException` for both `Approved` and `Paid`. The UI matches the service rather than offering an action guaranteed to fail. Show the error text returned by the client method if a call fails anyway.
 
