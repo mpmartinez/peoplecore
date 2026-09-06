@@ -319,6 +319,36 @@ public class ApiClient
         return (false, await ReadProblemDetailAsync(response));
     }
 
+    // Payslip downloads
+    //
+    // A PDF is bytes, not JSON, so these three differ from every other method here: they read
+    // the raw byte content of a successful response instead of deserializing JSON, and return
+    // null (rather than throwing) on failure so callers can show an inline error the same way
+    // the JSON-returning methods above do via ReadProblemDetailAsync.
+    public async Task<byte[]?> GetPayslipAsync(Guid runId, Guid employeeId)
+    {
+        var response = await _http.GetAsync($"api/reports/payslip/{runId}/{employeeId}");
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadAsByteArrayAsync();
+    }
+
+    public async Task<byte[]?> GetRunPayslipsAsync(Guid runId)
+    {
+        var response = await _http.GetAsync($"api/reports/payslips/{runId}");
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadAsByteArrayAsync();
+    }
+
+    public async Task<byte[]?> GetMyPayslipAsync(Guid runId)
+    {
+        var response = await _http.GetAsync($"api/reports/my-payslip/{runId}");
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadAsByteArrayAsync();
+    }
+
+    public async Task<IReadOnlyList<MyPayslipSummaryDto>?> GetMyPayslipListAsync()
+        => await _http.GetFromJsonAsync<IReadOnlyList<MyPayslipSummaryDto>>("api/reports/my-payslips", JsonOptions);
+
     private static async Task<string?> ReadProblemDetailAsync(HttpResponseMessage response)
     {
         try
@@ -432,6 +462,13 @@ public record EmployeeCompensationDto(
     string PayFrequency,
     string TaxCode,
     int Dependents);
+
+public record MyPayslipSummaryDto(
+    Guid RunId,
+    string RunNumber,
+    string PeriodLabel,
+    string PayDate,
+    decimal NetPay);
 
 // Problem-detail body from ExceptionHandlingMiddleware (400 responses for DomainException)
 public record ProblemDetailResponse(string? Title, string? Detail, int? Status);

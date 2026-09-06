@@ -2,6 +2,7 @@
 @attribute [Authorize(Roles = "Admin,HRManager,PayrollService")]
 @inject ApiClient Api
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
 <div class="flex items-start justify-between mb-6 gap-4 flex-wrap">
     <div>
@@ -32,6 +33,12 @@
             @if (CanMarkPaid(_run.Status))
             {
                 <Button Variant="primary" OnClick="MarkPaid" Loading="@_markingPaid" Disabled="@(_computing || _approving || _markingPaid)">Mark Paid</Button>
+            }
+            @if (_run.Employees.Any())
+            {
+                <Button Variant="outline" OnClick="DownloadAll" Loading="@_downloadingAll" Disabled="@_downloadingAll">
+                    <i class="bi bi-download mr-1"></i> Download all
+                </Button>
             }
         }
     </div>
@@ -107,6 +114,7 @@ else
                             <TableHead Class="px-4">Withholding Tax</TableHead>
                             <TableHead Class="px-4">Total Deductions</TableHead>
                             <TableHead Class="px-4">Net</TableHead>
+                            <TableHead Class="px-4">Payslip</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -125,6 +133,12 @@ else
                                 <TableCell Class="px-4 py-3">&#8369;@e.WithholdingTax.ToString("N2")</TableCell>
                                 <TableCell Class="px-4 py-3">&#8369;@e.TotalDeductions.ToString("N2")</TableCell>
                                 <TableCell Class="px-4 py-3 font-medium">&#8369;@e.NetPay.ToString("N2")</TableCell>
+                                <TableCell Class="px-4 py-3">
+                                    <Button Variant="ghost" Size="sm" Title="@($"Download payslip for {e.EmployeeName}")" OnClick="@(() => DownloadPayslip(e))" Loading="@_downloadingEmployeeIds.Contains(e.EmployeeId)" Disabled="@_downloadingEmployeeIds.Contains(e.EmployeeId)">
+                                        <i class="bi bi-download"></i>
+                                        <span class="sr-only">Download payslip for @e.EmployeeName</span>
+                                    </Button>
+                                </TableCell>
                             </TableRow>
                         }
                     </TableBody>
@@ -144,6 +158,8 @@ else
     private bool _computing;
     private bool _approving;
     private bool _markingPaid;
+    private bool _downloadingAll;
+    private readonly HashSet<Guid> _downloadingEmployeeIds = new();
 
     protected override async Task OnParametersSetAsync() => await LoadRun();
 
@@ -232,6 +248,56 @@ else
         finally
         {
             _markingPaid = false;
+        }
+    }
+
+    private async Task DownloadPayslip(PayrollRunEmployeeDto employee)
+    {
+        _actionError = null;
+        _downloadingEmployeeIds.Add(employee.EmployeeId);
+        try
+        {
+            var pdf = await Api.GetPayslipAsync(Id, employee.EmployeeId);
+            if (pdf is null)
+            {
+                _actionError = $"Failed to download payslip for {employee.EmployeeName}. Please try again.";
+                return;
+            }
+            var fileName = $"Payslip-{_run?.RunNumber ?? Id.ToString()}-{employee.EmployeeNumber}.pdf";
+            await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(pdf), fileName, "application/pdf");
+        }
+        catch (Exception ex)
+        {
+            _actionError = ex.Message;
+        }
+        finally
+        {
+            _downloadingEmployeeIds.Remove(employee.EmployeeId);
+        }
+    }
+
+    private async Task DownloadAll()
+    {
+        _actionError = null;
+        _downloadingAll = true;
+        try
+        {
+            var pdf = await Api.GetRunPayslipsAsync(Id);
+            if (pdf is null)
+            {
+                _actionError = "Failed to download payslips for this run. Please try again.";
+                return;
+            }
+            var fileName = $"Payslips-{_run?.RunNumber ?? Id.ToString()}.pdf";
+            await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(pdf), fileName, "application/pdf");
+        }
+        catch (Exception ex)
+        {
+            _actionError = ex.Message;
+        }
+        finally
+        {
+            _downloadingAll = false;
         }
     }
 

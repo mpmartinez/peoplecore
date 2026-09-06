@@ -1,0 +1,119 @@
+@page "/my-payslips"
+@attribute [Authorize]
+@inject ApiClient Api
+@inject IJSRuntime JS
+
+<h2 class="text-2xl font-semibold text-foreground mb-6">My Payslips</h2>
+
+@if (_actionError is not null)
+{
+    <Alert Variant="destructive" Class="mb-4">@_actionError</Alert>
+}
+
+<Card>
+    <CardHeader>
+        <CardTitle>Payslip History</CardTitle>
+    </CardHeader>
+    <CardContent Class="p-0">
+        @if (_payslips is null)
+        {
+            @if (_loadError is not null)
+            {
+                <div class="p-6">
+                    <Alert Variant="warning" Title="Account not linked">@_loadError</Alert>
+                </div>
+            }
+            else
+            {
+                <div class="p-6 flex justify-center"><Spinner /></div>
+            }
+        }
+        else if (!_payslips.Any())
+        {
+            <div class="p-6 text-center text-muted-foreground text-sm">No payslips found.</div>
+        }
+        else
+        {
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead Class="px-4">Run</TableHead>
+                        <TableHead Class="px-4">Period</TableHead>
+                        <TableHead Class="px-4">Pay Date</TableHead>
+                        <TableHead Class="px-4 text-right">Net Pay</TableHead>
+                        <TableHead Class="px-4">Payslip</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    @foreach (var p in _payslips)
+                    {
+                        <TableRow>
+                            <TableCell Class="px-4 py-3 font-medium">@p.RunNumber</TableCell>
+                            <TableCell Class="px-4 py-3">@p.PeriodLabel</TableCell>
+                            <TableCell Class="px-4 py-3">@p.PayDate</TableCell>
+                            <TableCell Class="px-4 py-3 text-right">&#8369;@p.NetPay.ToString("N2")</TableCell>
+                            <TableCell Class="px-4 py-3">
+                                <Button Variant="outline" Size="sm" OnClick="@(() => Download(p))" Loading="@_downloadingRunIds.Contains(p.RunId)" Disabled="@_downloadingRunIds.Contains(p.RunId)">
+                                    <i class="bi bi-download mr-1"></i> Download
+                                </Button>
+                            </TableCell>
+                        </TableRow>
+                    }
+                </TableBody>
+            </Table>
+        }
+    </CardContent>
+</Card>
+
+@code {
+    private IReadOnlyList<MyPayslipSummaryDto>? _payslips;
+    private string? _loadError;
+    private string? _actionError;
+    private readonly HashSet<Guid> _downloadingRunIds = new();
+
+    protected override async Task OnInitializedAsync() => await LoadPayslips();
+
+    private async Task LoadPayslips()
+    {
+        try
+        {
+            _payslips = await Api.GetMyPayslipListAsync();
+        }
+        catch (Exception ex)
+        {
+            // A 403 here means the signed-in account has no linked employee record - there is no
+            // "my payslip" to show, not a transient failure, so this reads as guidance rather
+            // than an error banner.
+            _loadError = ex.Message.Contains("403") || ex.Message.Contains("Forbidden")
+                ? "Your account is not linked to an employee record. Payslips are unavailable."
+                : ex.Message;
+        }
+    }
+
+    // The endpoint resolves the caller from their JWT claim - this page never sends an employee
+    // id, only the run id, matching GetMyPayslipAsync's signature exactly.
+    private async Task Download(MyPayslipSummaryDto payslip)
+    {
+        _actionError = null;
+        _downloadingRunIds.Add(payslip.RunId);
+        try
+        {
+            var pdf = await Api.GetMyPayslipAsync(payslip.RunId);
+            if (pdf is null)
+            {
+                _actionError = $"Failed to download payslip for {payslip.RunNumber}. Please try again.";
+                return;
+            }
+            var fileName = $"Payslip-{payslip.RunNumber}.pdf";
+            await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(pdf), fileName, "application/pdf");
+        }
+        catch (Exception ex)
+        {
+            _actionError = ex.Message;
+        }
+        finally
+        {
+            _downloadingRunIds.Remove(payslip.RunId);
+        }
+    }
+}
