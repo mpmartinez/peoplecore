@@ -268,11 +268,11 @@ public class ApiClient
     public async Task<PayrollRunDto?> GetPayrollRunAsync(Guid id)
         => await _http.GetFromJsonAsync<PayrollRunDto>($"api/payroll-runs/{id}", JsonOptions);
 
-    public async Task<PayrollRunDto?> CreatePayrollRunAsync(object request)
+    public async Task<(PayrollRunDto? Run, string? Error)> CreatePayrollRunAsync(object request)
     {
         var response = await _http.PostAsJsonAsync("api/payroll-runs", request);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<PayrollRunDto>(JsonOptions);
+        if (!response.IsSuccessStatusCode) return (null, await ReadProblemDetailAsync(response));
+        return (await response.Content.ReadFromJsonAsync<PayrollRunDto>(JsonOptions), null);
     }
 
     public async Task<(bool Ok, string? Error)> ComputePayrollRunAsync(Guid id)

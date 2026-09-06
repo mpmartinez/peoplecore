@@ -86,7 +86,17 @@
     </div>
 
     <div>
-        <Label Required="true">Employees</Label>
+        <div class="flex items-center justify-between">
+            <Label Required="true">Employees</Label>
+            @if (!_loadingEmployees && _activeEmployees.Count > 0)
+            {
+                <div class="flex gap-1">
+                    <Button Variant="link" Size="sm" Class="h-auto p-0 text-xs" OnClick="SelectAllEmployees">Select all</Button>
+                    <span class="text-xs text-muted-foreground">&middot;</span>
+                    <Button Variant="link" Size="sm" Class="h-auto p-0 text-xs" OnClick="ClearAllEmployees">Clear all</Button>
+                </div>
+            }
+        </div>
         @if (_loadingEmployees)
         {
             <div class="p-4 flex justify-center"><Spinner Size="sm" /></div>
@@ -156,11 +166,25 @@
     {
         _form = new CreateRunFormModel();
         _selectedEmployeeIds = [];
+        _activeEmployees = [];
         _createError = null;
         _showCreateDialog = true;
         _loadingEmployees = true;
-        _activeEmployees = await LoadAllActiveEmployeesAsync();
-        _loadingEmployees = false;
+        try
+        {
+            _activeEmployees = await LoadAllActiveEmployeesAsync();
+            // Spec default: the dialog starts with every active employee selected, with the
+            // checklist above offered only to trim - not to build the list from scratch.
+            _selectedEmployeeIds = _activeEmployees.Select(e => e.Id).ToHashSet();
+        }
+        catch (Exception ex)
+        {
+            _createError = ex.Message;
+        }
+        finally
+        {
+            _loadingEmployees = false;
+        }
     }
 
     private void CloseCreateDialog() => _showCreateDialog = false;
@@ -170,6 +194,10 @@
         if (selected) _selectedEmployeeIds.Add(employeeId);
         else _selectedEmployeeIds.Remove(employeeId);
     }
+
+    private void SelectAllEmployees() => _selectedEmployeeIds = _activeEmployees.Select(e => e.Id).ToHashSet();
+
+    private void ClearAllEmployees() => _selectedEmployeeIds.Clear();
 
     // GetEmployeesAsync is paged with a default pageSize of 20. Taking page one alone would
     // silently create a payroll run missing every employee after the twentieth - a payday
@@ -212,7 +240,7 @@
             // approved leave, approved overtime, the holiday calendar and the shift schedule -
             // sending a zero would silently beat the derived figure and unpay overtime and
             // holiday premiums the employee actually earned.
-            var result = await Api.CreatePayrollRunAsync(new
+            var (run, error) = await Api.CreatePayrollRunAsync(new
             {
                 periodStart = _form.PeriodStart.ToString("yyyy-MM-dd"),
                 periodEnd = _form.PeriodEnd.ToString("yyyy-MM-dd"),
@@ -221,14 +249,14 @@
                 employees = _selectedEmployeeIds.Select(id => new { employeeId = id })
             });
 
-            if (result is null)
+            if (run is null)
             {
-                _createError = "Failed to create payroll run. Please try again.";
+                _createError = error ?? "Failed to create payroll run. Please try again.";
                 return;
             }
 
             _showCreateDialog = false;
-            Nav.NavigateTo($"/payroll-runs/{result.Id}");
+            Nav.NavigateTo($"/payroll-runs/{run.Id}");
         }
         catch (Exception ex)
         {
