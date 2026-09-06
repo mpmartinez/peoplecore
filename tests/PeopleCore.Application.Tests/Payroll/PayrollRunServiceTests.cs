@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.Interfaces;
@@ -17,17 +18,29 @@ public class PayrollRunServiceTests
     private readonly Mock<IEmployeeAllowanceRepository> _allowanceRepo = new();
     private readonly Mock<IEmployeeLoanRepository> _loanRepo = new();
     private readonly Mock<IPayrollSettingsRepository> _settingsRepo = new();
+    private readonly Mock<IPayrollAttendanceBridge> _attendanceBridge = new();
     private readonly PayrollRunService _sut;
 
     public PayrollRunServiceTests()
     {
+        // Default: the bridge derives nothing, so every employee accumulates zeros and the
+        // Phase 1 expectations below are unaffected. Tests that care set it up themselves.
+        _attendanceBridge
+            .Setup(b => b.BuildAsync(It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(),
+                                     It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<Guid> ids, DateOnly _, DateOnly _, CancellationToken _) =>
+                new AttendanceBridgeResult(
+                    ids.ToDictionary(id => id, _ => new PayrollAttendanceInput()), []));
+
         _sut = new PayrollRunService(
             _runRepo.Object,
             _compensationRepo.Object,
             _allowanceRepo.Object,
             _loanRepo.Object,
             _settingsRepo.Object,
-            new PayrollComputationService());
+            new PayrollComputationService(),
+            _attendanceBridge.Object,
+            NullLogger<PayrollRunService>.Instance);
     }
 
     // ------------------------------------------------------------------
@@ -392,6 +405,225 @@ public class PayrollRunServiceTests
         var act = () => _sut.CreateAsync(request, CancellationToken.None);
 
         await act.Should().ThrowAsync<DomainException>();
+    }
+
+    // ------------------------------------------------------------------
+    // The attendance bridge - deriving on create, snapshotting, and reproducing on recompute
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Attendance that exercises both halves of every column the entry collapses: ordinary AND
+    /// rest-day overtime, regular AND special holidays.
+    /// </summary>
+    private static PayrollAttendanceInput SplitAttendance() => new()
+    {
+        OvertimeHours      = 4m,   // ordinary overtime, priced at 1.25x
+        RestDayOTHours     = 3m,   // rest-day overtime, priced at 1.69x
+        HolidayRegularDays = 1m,
+        HolidaySpecialDays = 2m,
+        NightDiffHours     = 5m,
+        AbsenceDays        = 1m,
+        LateMinutes        = 30m,
+        UndertimeMinutes   = 15m
+    };
+
+    private void SetupBridge(Guid employeeId, PayrollAttendanceInput attendance,
+                             IReadOnlyList<Guid>? withoutSchedule = null) =>
+        _attendanceBridge
+            .Setup(b => b.BuildAsync(It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(),
+                                     It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AttendanceBridgeResult(
+                new Dictionary<Guid, PayrollAttendanceInput> { [employeeId] = attendance },
+                withoutSchedule ?? []));
+
+    /// <summary>
+    /// Wires the repositories a create-then-recompute round trip needs and returns the run that
+    /// CreateAsync saved, so ComputeAsync can be pointed at it.
+    /// </summary>
+    private Func<PayrollRun?> SetupRoundTripRepositories(EmployeeCompensation compensation)
+    {
+        _settingsRepo.Setup(r => r.GetDefaultAsync(It.IsAny<CancellationToken>())).ReturnsAsync((PayrollSettings?)null);
+        _compensationRepo.Setup(r => r.GetByEmployeeIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+                          .ReturnsAsync([compensation]);
+        _allowanceRepo.Setup(r => r.GetByEmployeeIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+                       .ReturnsAsync([]);
+        _loanRepo.Setup(r => r.GetByEmployeeIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+                 .ReturnsAsync([]);
+        _runRepo.Setup(r => r.CountForYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(0);
+
+        PayrollRun? saved = null;
+        _runRepo.Setup(r => r.AddWithEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()))
+                .Callback<PayrollRun, CancellationToken>((run, _) => saved = run)
+                .Returns(Task.CompletedTask);
+        _runRepo.Setup(r => r.GetWithEntriesAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(() => saved);
+
+        return () => saved;
+    }
+
+    private static CreatePayrollRunRequest RoundTripRequest(Guid employeeId) => new(
+        new DateOnly(2026, 1, 1), new DateOnly(2026, 1, 15), new DateOnly(2026, 1, 20),
+        PayFrequency.SemiMonthly, [new PayrollRunEmployeeInput(employeeId)]);
+
+    [Fact]
+    public async Task ComputeAsync_AfterARecompute_ReproducesEveryMonetaryFigure()
+    {
+        // A run whose entries include BOTH rest-day and ordinary overtime, and BOTH regular and
+        // special holidays - the four values the collapsed columns cannot represent.
+        var employeeId = Guid.NewGuid();
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = employeeId, BasicSalary = 30_000m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "S"
+        };
+
+        SetupBridge(employeeId, SplitAttendance());
+        var savedRun = SetupRoundTripRepositories(compensation);
+
+        List<PayrollRunEmployee>? recomputed = null;
+        _runRepo.Setup(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(),
+                    It.IsAny<IReadOnlyList<PayrollRunEmployee>>(), It.IsAny<CancellationToken>()))
+                .Callback<PayrollRun, IReadOnlyList<PayrollRunEmployee>, CancellationToken>(
+                    (_, entries, _) => recomputed = entries.ToList())
+                .Returns(Task.CompletedTask);
+
+        await _sut.CreateAsync(RoundTripRequest(employeeId), CancellationToken.None);
+
+        var run = savedRun()!;
+        var created = run.Employees.Single();
+
+        // Every figure the run was created with, captured before anything is recomputed.
+        decimal regularPay         = created.RegularPay;
+        decimal overtimePay        = created.OvertimePay;
+        decimal holidayPay         = created.HolidayPay;
+        decimal nightDiffPay       = created.NightDiffPay;
+        decimal grossPay           = created.GrossPay;
+        decimal sssEmployee        = created.SSSEmployee;
+        decimal philHealthEmployee = created.PhilHealthEmployee;
+        decimal pagIbigEmployee    = created.PagIbigEmployee;
+        decimal withholdingTax     = created.WithholdingTax;
+        decimal netPay             = created.NetPay;
+
+        // The premiums the split attendance earned have to actually be in play, or the round
+        // trip below would prove nothing.
+        overtimePay.Should().BeGreaterThan(0m);
+        holidayPay.Should().BeGreaterThan(0m);
+        nightDiffPay.Should().BeGreaterThan(0m);
+
+        await _sut.ComputeAsync(run.Id, CancellationToken.None);
+
+        recomputed.Should().ContainSingle();
+        var after = recomputed!.Single();
+
+        // If this fails on OvertimePay or HolidayPay, FromSnapshot is mapping OvertimeHours
+        // straight across instead of subtracting RestDayOTHours.
+        after.RegularPay.Should().Be(regularPay);
+        after.OvertimePay.Should().Be(overtimePay,
+            "rest-day overtime must still be paid at 1.69x after a recompute, not repriced at 1.25x");
+        after.HolidayPay.Should().Be(holidayPay,
+            "the regular/special holiday split must survive the roll-up into HolidayDays");
+        after.NightDiffPay.Should().Be(nightDiffPay);
+        after.GrossPay.Should().Be(grossPay);
+        after.SSSEmployee.Should().Be(sssEmployee);
+        after.PhilHealthEmployee.Should().Be(philHealthEmployee);
+        after.PagIbigEmployee.Should().Be(pagIbigEmployee);
+        after.WithholdingTax.Should().Be(withholdingTax);
+        after.NetPay.Should().Be(netPay);
+    }
+
+    [Fact]
+    public async Task ComputeAsync_DoesNotReDeriveAttendanceFromTheBridge()
+    {
+        var employeeId = Guid.NewGuid();
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = employeeId, BasicSalary = 30_000m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "S"
+        };
+
+        SetupBridge(employeeId, SplitAttendance());
+        var savedRun = SetupRoundTripRepositories(compensation);
+        _runRepo.Setup(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(),
+                    It.IsAny<IReadOnlyList<PayrollRunEmployee>>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        await _sut.CreateAsync(RoundTripRequest(employeeId), CancellationToken.None);
+        await _sut.ComputeAsync(savedRun()!.Id, CancellationToken.None);
+
+        _attendanceBridge.Verify(b => b.BuildAsync(It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(),
+                                 It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()), Times.Once,
+            "a recompute reads the snapshot; re-deriving would let an edited punch change what someone was paid");
+    }
+
+    [Fact]
+    public async Task CreateAsync_SnapshotsTheDerivedAttendanceOntoTheEntry()
+    {
+        var employeeId = Guid.NewGuid();
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = employeeId, BasicSalary = 30_000m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "S"
+        };
+
+        SetupBridge(employeeId, SplitAttendance());
+        var savedRun = SetupRoundTripRepositories(compensation);
+
+        await _sut.CreateAsync(RoundTripRequest(employeeId), CancellationToken.None);
+
+        var entry = savedRun()!.Employees.Single();
+        entry.AbsenceDays.Should().Be(1m);
+        entry.LateMinutes.Should().Be(30m);
+        entry.UndertimeMinutes.Should().Be(15m);
+        entry.NightDiffHours.Should().Be(5m);
+        entry.RestDayOTHours.Should().Be(3m);
+        entry.HolidayRegularDays.Should().Be(1m);
+        entry.HolidaySpecialDays.Should().Be(2m);
+
+        // The roll-ups Compute writes are the totals, which is exactly why the parts above have
+        // to be stored alongside them.
+        entry.OvertimeHours.Should().Be(7m, "4 ordinary + 3 rest-day hours");
+        entry.HolidayDays.Should().Be(3m, "1 regular + 2 special holidays");
+    }
+
+    [Fact]
+    public async Task CreateAsync_RecordsHowManyEmployeesCouldNotBeScheduled()
+    {
+        var employeeId = Guid.NewGuid();
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = employeeId, BasicSalary = 30_000m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "S"
+        };
+
+        SetupBridge(employeeId, new PayrollAttendanceInput(), withoutSchedule: [employeeId]);
+        var savedRun = SetupRoundTripRepositories(compensation);
+
+        await _sut.CreateAsync(RoundTripRequest(employeeId), CancellationToken.None);
+
+        var run = savedRun()!;
+        run.EmployeesMissingAttendance.Should().Be(1,
+            "an employee with no shift schedule is treated as fully present, which operations has to see");
+        run.Employees.Single().AbsenceDays.Should().Be(0m, "an unscheduled employee is never deducted an absence");
+    }
+
+    [Fact]
+    public async Task CreateAsync_WhenTheCallerSuppliesOvertimeHours_TheOverrideBeatsTheDerivedValue()
+    {
+        var employeeId = Guid.NewGuid();
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = employeeId, BasicSalary = 30_000m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "S"
+        };
+
+        SetupBridge(employeeId, SplitAttendance());
+        var savedRun = SetupRoundTripRepositories(compensation);
+
+        var request = new CreatePayrollRunRequest(
+            new DateOnly(2026, 1, 1), new DateOnly(2026, 1, 15), new DateOnly(2026, 1, 20),
+            PayFrequency.SemiMonthly, [new PayrollRunEmployeeInput(employeeId, OvertimeHours: 2m)]);
+
+        await _sut.CreateAsync(request, CancellationToken.None);
+
+        var entry = savedRun()!.Employees.Single();
+        entry.OvertimeHours.Should().Be(2m, "a stated correction is the whole overtime figure, not an addition to it");
+        entry.RestDayOTHours.Should().Be(0m);
+        entry.HolidaySpecialDays.Should().Be(2m, "overriding overtime must not disturb the derived holidays");
     }
 
     [Fact]

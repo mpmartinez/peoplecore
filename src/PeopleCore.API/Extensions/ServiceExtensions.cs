@@ -181,6 +181,7 @@ public static class ServiceExtensions
         services.AddScoped<IEmployeeLoanRepository, EmployeeLoanRepository>();
         services.AddScoped<IPayrollSettingsRepository, PayrollSettingsRepository>();
         services.AddScoped<PayrollComputationService>();
+        services.AddScoped<IPayrollAttendanceBridge, PayrollAttendanceBridge>();
         services.AddScoped<IPayrollRunService, PayrollRunService>();
         services.AddScoped<IEmployeeCompensationService, EmployeeCompensationService>();
         services.AddScoped<IPayrollSettingsService, PayrollSettingsService>();

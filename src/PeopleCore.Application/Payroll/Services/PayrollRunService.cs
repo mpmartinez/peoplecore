@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Domain.Entities.Payroll;
@@ -15,6 +16,8 @@ public class PayrollRunService : IPayrollRunService
     private readonly IEmployeeLoanRepository _loanRepo;
     private readonly IPayrollSettingsRepository _settingsRepo;
     private readonly PayrollComputationService _computationService;
+    private readonly IPayrollAttendanceBridge _attendanceBridge;
+    private readonly ILogger<PayrollRunService> _logger;
 
     public PayrollRunService(
         IPayrollRunRepository runRepo,
@@ -22,7 +25,9 @@ public class PayrollRunService : IPayrollRunService
         IEmployeeAllowanceRepository allowanceRepo,
         IEmployeeLoanRepository loanRepo,
         IPayrollSettingsRepository settingsRepo,
-        PayrollComputationService computationService)
+        PayrollComputationService computationService,
+        IPayrollAttendanceBridge attendanceBridge,
+        ILogger<PayrollRunService> logger)
     {
         _runRepo = runRepo;
         _compensationRepo = compensationRepo;
@@ -30,6 +35,8 @@ public class PayrollRunService : IPayrollRunService
         _loanRepo = loanRepo;
         _settingsRepo = settingsRepo;
         _computationService = computationService;
+        _attendanceBridge = attendanceBridge;
+        _logger = logger;
     }
 
     public async Task<PayrollRunDto> CreateAsync(CreatePayrollRunRequest request, CancellationToken ct = default)
@@ -51,7 +58,8 @@ public class PayrollRunService : IPayrollRunService
             AttendancePeriodId = request.AttendancePeriodId
         };
 
-        run.Employees = await ComputeEntriesAsync(run, request.Employees, ct);
+        // No snapshots to honour on a brand new run, so the attendance is derived.
+        run.Employees = await ComputeEntriesAsync(run, request.Employees, snapshots: null, ct);
 
         await _runRepo.AddWithEntriesAsync(run, ct);
 
@@ -81,17 +89,24 @@ public class PayrollRunService : IPayrollRunService
         if (run.Employees.Count == 0)
             throw new DomainException("Payroll run has no employees to compute.");
 
-        // Recompute against current rates/settings, but keep the per-employee inputs already on
-        // the run - DaysWorked, OvertimeHours, HolidayDays and IncludeThirteenthMonth are Phase 1
-        // explicit inputs (see PayrollRunEmployeeInput's remarks), not derived from anything a
-        // recompute could re-derive, so re-defaulting them here would silently discard whatever
-        // was recorded when the run was created.
+        // Recompute against current rates/settings, but from the attendance SNAPSHOT taken when
+        // the run was created - never from the bridge. Re-deriving here would let a punch edited
+        // after the fact change what someone was already told they would be paid.
+        //
+        // OvertimeHours and HolidayDays are deliberately passed as null overrides: the snapshot
+        // below already carries them, split into the parts the entry's roll-up columns collapse
+        // (see FromSnapshot). Passing the collapsed roll-ups as overrides would repay every
+        // rest-day hour and special-holiday day at the ordinary rate.
         var employeeInputs = run.Employees
             .Select(e => new PayrollRunEmployeeInput(
-                e.EmployeeId, e.DaysWorked, e.OvertimeHours, e.HolidayDays, e.IncludeThirteenthMonth))
+                e.EmployeeId, e.DaysWorked, OvertimeHours: null, HolidayDays: null, e.IncludeThirteenthMonth))
             .ToList();
 
-        var entries = await ComputeEntriesAsync(run, employeeInputs, ct);
+        var snapshots = new Dictionary<Guid, PayrollAttendanceInput>();
+        foreach (var entry in run.Employees)
+            snapshots[entry.EmployeeId] = FromSnapshot(entry);
+
+        var entries = await ComputeEntriesAsync(run, employeeInputs, snapshots, ct);
 
         // The figures an approver would be asked to sign off on have changed, so any submission
         // no longer stands and the run goes back to draft to be resubmitted.
@@ -151,8 +166,16 @@ public class PayrollRunService : IPayrollRunService
     /// Computes an entry per employee. Shared by CreateAsync and ComputeAsync so the two can
     /// never drift on rates or the rate basis.
     /// </summary>
+    /// <param name="snapshots">
+    /// The attendance to compute from, keyed by employee, when the caller already holds it - a
+    /// recompute, which must reproduce the run rather than re-read attendance. Null asks the
+    /// bridge to derive it, which is what creating a run does.
+    /// </param>
     private async Task<List<PayrollRunEmployee>> ComputeEntriesAsync(
-        PayrollRun run, IReadOnlyList<PayrollRunEmployeeInput> employees, CancellationToken ct)
+        PayrollRun run,
+        IReadOnlyList<PayrollRunEmployeeInput> employees,
+        IReadOnlyDictionary<Guid, PayrollAttendanceInput>? snapshots,
+        CancellationToken ct)
     {
         var settings = await _settingsRepo.GetDefaultAsync(ct);
         var rates = ToRates(settings);
@@ -167,10 +190,12 @@ public class PayrollRunService : IPayrollRunService
             .Where(l => l.IsActive)
             .ToLookup(l => l.EmployeeId);
 
-        // Scheduled days for the period when a caller does not override DaysWorked;
-        // attendance-driven absences are Phase 2 (see PayrollComputationService's own remarks
-        // on PayrollAttendanceInput).
+        // Scheduled days for the period when a caller does not override DaysWorked. Absences are
+        // not taken from here - they come off the derived AbsenceDays below - so this stays the
+        // nominal period length.
         decimal defaultDaysInPeriod = run.Frequency == PayFrequency.SemiMonthly ? 11m : 22m;
+
+        var attendanceByEmployee = snapshots ?? await DeriveAttendanceAsync(run, employeeIds, ct);
 
         var entries = new List<PayrollRunEmployee>();
         foreach (var employee in employees)
@@ -183,17 +208,100 @@ public class PayrollRunService : IPayrollRunService
             compensation.Allowances = allowancesByEmployee[employee.EmployeeId].ToList();
             compensation.Loans = loansByEmployee[employee.EmployeeId].ToList();
 
-            entries.Add(_computationService.Compute(
+            // An employee the bridge never saw simply accumulates zeros; missing attendance is
+            // not an error (see IPayrollAttendanceBridge).
+            var attendance = ApplyOverrides(
+                attendanceByEmployee.TryGetValue(employee.EmployeeId, out var derived)
+                    ? derived
+                    : new PayrollAttendanceInput(),
+                employee);
+
+            // overtimeHours/holidayDays are left at their defaults: Compute reads them only when
+            // attendance is null, and any caller override has already been folded into the
+            // attendance record above so that the snapshot records what was actually paid.
+            var entry = _computationService.Compute(
                 compensation, run,
                 daysWorked: employee.DaysWorked ?? defaultDaysInPeriod,
-                overtimeHours: employee.OvertimeHours,
-                holidayDays: employee.HolidayDays,
                 includeThirteenthMonth: employee.IncludeThirteenthMonth,
-                rates: rates, dailyRateFactor: dailyRateFactor));
+                rates: rates, attendance: attendance, dailyRateFactor: dailyRateFactor);
+
+            // Snapshot the inputs the figures above were struck from. The entry's own
+            // OvertimeHours and HolidayDays are roll-ups Compute wrote; these seven are the
+            // parts, and a recompute is rebuilt from them rather than from today's punches.
+            entry.AbsenceDays        = attendance.AbsenceDays;
+            entry.LateMinutes        = attendance.LateMinutes;
+            entry.UndertimeMinutes   = attendance.UndertimeMinutes;
+            entry.NightDiffHours     = attendance.NightDiffHours;
+            entry.RestDayOTHours     = attendance.RestDayOTHours;
+            entry.HolidayRegularDays = attendance.HolidayRegularDays;
+            entry.HolidaySpecialDays = attendance.HolidaySpecialDays;
+
+            entries.Add(entry);
         }
 
         return entries;
     }
+
+    /// <summary>
+    /// Derives the period's attendance for every employee in the run and records how many of them
+    /// could not be scheduled at all - a condition operations has to see before anyone is paid,
+    /// because those employees are treated as fully present rather than absent.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<Guid, PayrollAttendanceInput>> DeriveAttendanceAsync(
+        PayrollRun run, IReadOnlyList<Guid> employeeIds, CancellationToken ct)
+    {
+        var bridged = await _attendanceBridge.BuildAsync(employeeIds, run.PeriodStart, run.PeriodEnd, ct);
+
+        run.EmployeesMissingAttendance = bridged.EmployeesWithoutSchedule.Count;
+
+        if (bridged.EmployeesWithoutSchedule.Count > 0)
+        {
+            _logger.LogWarning(
+                "Payroll run {RunNumber} for {PeriodStart:yyyy-MM-dd}..{PeriodEnd:yyyy-MM-dd}: " +
+                "{WithoutSchedule} of {EmployeeCount} employees had no shift schedule for the period. " +
+                "They were treated as fully present and deducted no absence.",
+                run.RunNumber, run.PeriodStart, run.PeriodEnd,
+                bridged.EmployeesWithoutSchedule.Count, employeeIds.Count);
+        }
+
+        return bridged.Inputs;
+    }
+
+    /// <summary>
+    /// Folds a caller's manual corrections into the derived attendance, so that one record is
+    /// both what the figures are computed from and what gets snapshotted. Null leaves the derived
+    /// value alone; see <see cref="PayrollRunEmployeeInput"/> for why an override collapses the
+    /// split it cannot express.
+    /// </summary>
+    private static PayrollAttendanceInput ApplyOverrides(
+        PayrollAttendanceInput derived, PayrollRunEmployeeInput input)
+    {
+        if (input.OvertimeHours is decimal overtimeHours)
+            derived = derived with { OvertimeHours = overtimeHours, RestDayOTHours = 0m };
+
+        if (input.HolidayDays is decimal holidayDays)
+            derived = derived with { HolidayRegularDays = holidayDays, HolidaySpecialDays = 0m };
+
+        return derived;
+    }
+
+    /// <summary>
+    /// Rebuilds the attendance a stored entry was computed from, so a recompute reproduces it
+    /// exactly.
+    /// </summary>
+    private static PayrollAttendanceInput FromSnapshot(PayrollRunEmployee entry) => new()
+    {
+        // entry.OvertimeHours is the TOTAL that Compute wrote back; the input wants the
+        // ordinary part only, or every rest-day hour reprices from 1.69x down to 1.25x.
+        OvertimeHours      = entry.OvertimeHours - entry.RestDayOTHours,
+        RestDayOTHours     = entry.RestDayOTHours,
+        AbsenceDays        = entry.AbsenceDays,
+        LateMinutes        = entry.LateMinutes,
+        UndertimeMinutes   = entry.UndertimeMinutes,
+        NightDiffHours     = entry.NightDiffHours,
+        HolidayRegularDays = entry.HolidayRegularDays,
+        HolidaySpecialDays = entry.HolidaySpecialDays
+    };
 
     private static ContributionRates ToRates(PayrollSettings? settings) => settings is null
         ? new ContributionRates()

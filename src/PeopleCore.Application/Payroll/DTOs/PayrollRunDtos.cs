@@ -11,14 +11,28 @@ public record CreatePayrollRunRequest(
     Guid? AttendancePeriodId = null);
 
 /// <summary>
-/// Per-employee inputs for a payroll run. Phase 1 supplies these explicitly; Phase 2's
-/// attendance bridge will derive them from punches, approved leave and approved overtime.
+/// Per-employee inputs for a payroll run. Every quantity is a manual override: null means "use
+/// what the attendance bridge derived from punches, approved leave, approved overtime, the
+/// holiday calendar and the shift schedule".
+/// <para>
+/// They are nullable rather than defaulted to zero on purpose. A request that simply omits
+/// <see cref="OvertimeHours"/> or <see cref="HolidayDays"/> would otherwise send a zero that
+/// beats the derived figure, silently unpaying overtime and holiday premiums the employee
+/// actually earned - the exact failure the bridge exists to prevent.
+/// </para>
+/// <para>
+/// An override is stated in the caller's terms, not the engine's: <see cref="OvertimeHours"/>
+/// is taken as ordinary overtime (priced at 1.25x) and <see cref="HolidayDays"/> as regular
+/// holidays, and supplying either discards the derived rest-day overtime or special-holiday
+/// days respectively. Overriding half of a split the caller cannot see would otherwise leave
+/// the entry paying more hours or days than the caller asked for.
+/// </para>
 /// </summary>
 public record PayrollRunEmployeeInput(
     Guid EmployeeId,
     decimal? DaysWorked = null,
-    decimal OvertimeHours = 0m,
-    decimal HolidayDays = 0m,
+    decimal? OvertimeHours = null,
+    decimal? HolidayDays = null,
     bool IncludeThirteenthMonth = false);
 
 /// <summary>
