@@ -1,3 +1,4 @@
+using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Payroll.DTOs;
 
 namespace PeopleCore.Application.Payroll.Interfaces;
@@ -23,4 +24,7 @@ public interface IPayrollRunService
     Task MarkPaidAsync(Guid runId, CancellationToken ct = default);
 
     Task<PayrollRunDto?> GetAsync(Guid runId, CancellationToken ct = default);
+
+    /// <summary>A page of runs, summarised without their per-employee entries.</summary>
+    Task<PagedResult<PayrollRunSummaryDto>> GetPagedAsync(int page, int pageSize, CancellationToken ct = default);
 }

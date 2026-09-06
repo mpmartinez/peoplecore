@@ -636,4 +636,55 @@ public class PayrollRunServiceTests
 
         result.Should().BeNull();
     }
+
+    // ------------------------------------------------------------------
+    // GetPagedAsync - the runs list, summarised without the Employees collection
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task GetPagedAsync_ProjectsTotalsWithoutCarryingEntries()
+    {
+        var run = new PayrollRun
+        {
+            RunNumber = "PAY-2026-010",
+            PeriodStart = new DateOnly(2026, 1, 1),
+            PeriodEnd = new DateOnly(2026, 1, 15),
+            PayDate = new DateOnly(2026, 1, 20),
+            Frequency = PayFrequency.SemiMonthly,
+            Status = PayrollRunStatus.Draft
+        };
+        // GrossPay/NetPay are computed from these; RegularPay and SSSEmployee alone are enough
+        // to give each entry a distinct, known Gross/Net.
+        run.Employees.Add(new PayrollRunEmployee { EmployeeId = Guid.NewGuid(), RegularPay = 20_000m, SSSEmployee = 2_000m });
+        run.Employees.Add(new PayrollRunEmployee { EmployeeId = Guid.NewGuid(), RegularPay = 15_000m, SSSEmployee = 1_500m });
+
+        _runRepo.Setup(r => r.GetPagedAsync(1, 20, It.IsAny<CancellationToken>()))
+                .ReturnsAsync((new List<PayrollRun> { run }, 1));
+
+        var result = await _sut.GetPagedAsync(1, 20, CancellationToken.None);
+
+        var summary = result.Items.Single();
+        summary.EmployeeCount.Should().Be(2);
+        summary.TotalGrossPay.Should().Be(35_000m);
+        summary.TotalNetPay.Should().Be(31_500m);
+
+        // PayrollRunSummaryDto must have no per-employee collection at all.
+        typeof(PayrollRunSummaryDto).GetProperties()
+            .Should().NotContain(p => typeof(System.Collections.IEnumerable).IsAssignableFrom(p.PropertyType)
+                                       && p.PropertyType != typeof(string));
+    }
+
+    [Fact]
+    public async Task GetPagedAsync_PassesPagingThroughAndReportsTheTotalCount()
+    {
+        _runRepo.Setup(r => r.GetPagedAsync(2, 5, It.IsAny<CancellationToken>()))
+                .ReturnsAsync((new List<PayrollRun>(), 12));
+
+        var result = await _sut.GetPagedAsync(2, 5, CancellationToken.None);
+
+        _runRepo.Verify(r => r.GetPagedAsync(2, 5, It.IsAny<CancellationToken>()), Times.Once);
+        result.TotalCount.Should().Be(12);
+        result.Page.Should().Be(2);
+        result.PageSize.Should().Be(5);
+    }
 }

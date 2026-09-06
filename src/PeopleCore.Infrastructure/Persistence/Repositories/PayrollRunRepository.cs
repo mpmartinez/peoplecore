@@ -19,6 +19,24 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
     public async Task<int> CountForYearAsync(int year, CancellationToken ct = default)
         => await Context.PayrollRuns.CountAsync(r => r.PeriodStart.Year == year, ct);
 
+    public async Task<(IReadOnlyList<PayrollRun> Items, int TotalCount)> GetPagedAsync(
+        int page, int pageSize, CancellationToken ct = default)
+    {
+        var query = Context.PayrollRuns.AsQueryable();
+        var total = await query.CountAsync(ct);
+
+        // Entries are included so the run's computed totals can be evaluated, then projected
+        // away by the service - the totals live on the entity so they cannot drift.
+        var items = await query
+            .Include(r => r.Employees)
+            .OrderByDescending(r => r.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return (items, total);
+    }
+
     public async Task AddWithEntriesAsync(PayrollRun run, CancellationToken ct = default)
     {
         // Added to both DbSets explicitly - see the interface's doc comment for why the

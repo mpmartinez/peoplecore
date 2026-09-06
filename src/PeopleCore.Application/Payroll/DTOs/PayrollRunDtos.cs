@@ -81,3 +81,23 @@ public record PayrollRunDto(
     Guid? AttendancePeriodId,
     int EmployeesMissingAttendance,
     IReadOnlyList<PayrollRunEmployeeDto> Employees);
+
+/// <summary>
+/// A run as it appears in a list. Deliberately omits the Employees collection that
+/// <see cref="PayrollRunDto"/> carries: a page of twelve runs of two hundred employees would
+/// otherwise ship 2,400 nested records to render twelve table rows.
+/// </summary>
+public record PayrollRunSummaryDto(
+    Guid Id,
+    string RunNumber,
+    string PeriodLabel,
+    DateOnly PeriodStart,
+    DateOnly PeriodEnd,
+    DateOnly PayDate,
+    PayFrequency Frequency,
+    PayrollRunStatus Status,
+    int EmployeeCount,
+    decimal TotalGrossPay,
+    decimal TotalNetPay,
+    int EmployeesMissingAttendance,
+    DateTime CreatedAt);

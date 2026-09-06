@@ -15,6 +15,14 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     Task<int> CountForYearAsync(int year, CancellationToken ct = default);
 
     /// <summary>
+    /// A page of runs, newest first, together with entries so EmployeeCount/TotalGrossPay/
+    /// TotalNetPay can be evaluated - see PayrollRunSummaryDto's remarks for why the totals are
+    /// not instead computed in SQL.
+    /// </summary>
+    Task<(IReadOnlyList<PayrollRun> Items, int TotalCount)> GetPagedAsync(
+        int page, int pageSize, CancellationToken ct = default);
+
+    /// <summary>
     /// Persists a brand-new run together with its freshly computed entries. Both DbSets are
     /// added explicitly rather than left to the Employees navigation: PayrollComputationService
     /// assigns each entry's Id before it is added, and an entity with a key already set that is

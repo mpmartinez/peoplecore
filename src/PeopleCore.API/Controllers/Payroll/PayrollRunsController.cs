@@ -17,6 +17,11 @@ public class PayrollRunsController : ControllerBase
         _service = service;
     }
 
+    [HttpGet]
+    public async Task<IActionResult> GetPaged(
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken ct = default)
+        => Ok(await _service.GetPagedAsync(page, pageSize, ct));
+
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetById(Guid id, CancellationToken ct = default)
     {

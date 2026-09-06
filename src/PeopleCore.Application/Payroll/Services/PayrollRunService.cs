@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Domain.Entities.Payroll;
@@ -160,6 +161,14 @@ public class PayrollRunService : IPayrollRunService
     {
         var run = await _runRepo.GetWithEntriesAsync(runId, ct);
         return run is null ? null : ToDto(run);
+    }
+
+    public async Task<PagedResult<PayrollRunSummaryDto>> GetPagedAsync(
+        int page, int pageSize, CancellationToken ct = default)
+    {
+        var (items, total) = await _runRepo.GetPagedAsync(page, pageSize, ct);
+        return PagedResult<PayrollRunSummaryDto>.Create(
+            items.Select(ToSummaryDto).ToList(), total, page, pageSize);
     }
 
     /// <summary>
@@ -326,6 +335,13 @@ public class PayrollRunService : IPayrollRunService
         run.EmployeeCount, run.TotalGrossPay, run.TotalDeductions, run.TotalNetPay,
         run.CreatedAt, run.AttendancePeriodId, run.EmployeesMissingAttendance,
         run.Employees.Select(ToEmployeeDto).ToList());
+
+    private static PayrollRunSummaryDto ToSummaryDto(PayrollRun run) => new(
+        run.Id, run.RunNumber, run.PeriodLabel,
+        run.PeriodStart, run.PeriodEnd, run.PayDate,
+        run.Frequency, run.Status,
+        run.EmployeeCount, run.TotalGrossPay, run.TotalNetPay,
+        run.EmployeesMissingAttendance, run.CreatedAt);
 
     private static PayrollRunEmployeeDto ToEmployeeDto(PayrollRunEmployee e) => new(
         e.Id, e.EmployeeId, e.Employee?.FullName ?? string.Empty,
