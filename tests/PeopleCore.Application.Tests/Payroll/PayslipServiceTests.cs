@@ -74,6 +74,21 @@ public class PayslipServiceTests
     }
 
     [Fact]
+    public async Task GenerateForRunAsync_WhenTheRunHasNoEntries_ReturnsNull()
+    {
+        // QuestPDF's Document.Merge over an empty sequence returns a "successful" empty byte
+        // array rather than throwing - left unguarded, that becomes a 200 OK application/pdf
+        // response the user cannot open. Returning null here instead lets the controller 404.
+        var run = RunWith();
+        _runService.Setup(s => s.GetAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+
+        var result = await _sut.GenerateForRunAsync(run.Id, CancellationToken.None);
+
+        result.Should().BeNull();
+        _renderer.Verify(r => r.RenderMerged(It.IsAny<PayrollRunDto>(), It.IsAny<IReadOnlyList<PayrollRunEmployeeDto>>(), It.IsAny<PayslipCompanyDto>()), Times.Never);
+    }
+
+    [Fact]
     public async Task GenerateForRunAsync_MergesEveryEntryIntoOneDocument()
     {
         var first = Employee(Guid.NewGuid(), employeeName: "Dela Cruz, Juan P.");
@@ -110,7 +125,8 @@ public class PayslipServiceTests
             RunNumber = "PR-2026-001",
             PeriodStart = new DateOnly(2026, 1, 1),
             PeriodEnd = new DateOnly(2026, 1, 15),
-            PayDate = new DateOnly(2026, 1, 20)
+            PayDate = new DateOnly(2026, 1, 20),
+            Status = PayrollRunStatus.Approved
         };
         var targetEntry = RunEmployee(run, targetEmployeeId, netPay: 9_238.75m);
         var otherEntry = RunEmployee(run, otherEmployeeId, netPay: 15_000m);
@@ -127,6 +143,68 @@ public class PayslipServiceTests
         result[0].RunNumber.Should().Be(run.RunNumber);
         result[0].NetPay.Should().Be(targetEntry.NetPay);
         result[0].NetPay.Should().NotBe(otherEntry.NetPay);
+    }
+
+    [Fact]
+    public async Task GetMyPayslipsAsync_ExcludesDraftRuns()
+    {
+        // Approval is what makes a run's figures final (PayrollRunService.ApproveAsync). A
+        // Draft run can still be recomputed to a different net pay, so it must not show up in
+        // the ESS list at all - not even the caller's own line in it.
+        var employeeId = Guid.NewGuid();
+        var draftRun = new PayrollRun
+        {
+            Id = Guid.NewGuid(),
+            RunNumber = "PR-2026-002",
+            PeriodStart = new DateOnly(2026, 2, 1),
+            PeriodEnd = new DateOnly(2026, 2, 15),
+            PayDate = new DateOnly(2026, 2, 20),
+            Status = PayrollRunStatus.Draft
+        };
+        draftRun.Employees = [RunEmployee(draftRun, employeeId, netPay: 9_238.75m)];
+
+        _runRepository
+            .Setup(r => r.GetRunsForEmployeeAsync(employeeId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([draftRun]);
+
+        var result = await _sut.GetMyPayslipsAsync(employeeId, CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GenerateForSelfServiceAsync_WhenTheRunIsDraft_ReturnsNull()
+    {
+        var employeeId = Guid.NewGuid();
+        var run = RunWith(Employee(employeeId)) with { Status = PayrollRunStatus.Draft };
+        _runService.Setup(s => s.GetAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+
+        var result = await _sut.GenerateForSelfServiceAsync(run.Id, employeeId, CancellationToken.None);
+
+        result.Should().BeNull();
+        _renderer.Verify(r => r.Render(It.IsAny<PayrollRunDto>(), It.IsAny<PayrollRunEmployeeDto>(), It.IsAny<PayslipCompanyDto>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_ForADraftRun_StillWorks_OnTheHrPath()
+    {
+        // GenerateAsync is the HR path (ReportsController.GetPayslip calls it directly, with no
+        // status gate) - proofing a run before approving it is legitimate, so this must keep
+        // producing a PDF for a Draft run. The employee-facing gate lives only in
+        // GenerateForSelfServiceAsync above.
+        var employeeId = Guid.NewGuid();
+        var target = Employee(employeeId);
+        var run = RunWith(target) with { Status = PayrollRunStatus.Draft };
+        _runService.Setup(s => s.GetAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+
+        var expectedPdf = "%PDF-draft"u8.ToArray();
+        _renderer
+            .Setup(r => r.Render(run, target, It.IsAny<PayslipCompanyDto>()))
+            .Returns(expectedPdf);
+
+        var result = await _sut.GenerateAsync(run.Id, employeeId, CancellationToken.None);
+
+        result.Should().BeSameAs(expectedPdf);
     }
 
     private static PayrollRunEmployee RunEmployee(PayrollRun run, Guid employeeId, decimal netPay) => new()
@@ -187,6 +265,8 @@ public class PayslipServiceTests
         TaxableAllowances: 0m,
         NonTaxableAllowances: 0m,
         ThirteenthMonth: 0m,
+        AbsenceDeduction: 0m,
+        TardinessDeduction: 0m,
         SSSEmployee: 461.25m,
         SSSEmployer: 978.75m,
         PhilHealthEmployee: 250m,

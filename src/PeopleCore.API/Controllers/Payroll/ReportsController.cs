@@ -80,7 +80,7 @@ public class ReportsController : ControllerBase
         if (employeeId is null)
             return Forbid();
 
-        var pdf = await _payslips.GenerateAsync(runId, employeeId.Value, ct);
+        var pdf = await _payslips.GenerateForSelfServiceAsync(runId, employeeId.Value, ct);
         if (pdf is null)
             return NotFound();
 
