@@ -1,4 +1,5 @@
-using System.Linq;
+using System;
+using System.Collections.Generic;
 
 namespace PeopleCore.Domain.Payroll;
 
@@ -103,12 +104,32 @@ public static class SssContributionSchedule
     /// (newest first). When SSS issues a circular, add an entry here; do not edit an existing
     /// one, or historical runs will silently change value.
     /// </summary>
-    public static readonly SssSchedule[] Schedules =
+    public static readonly IReadOnlyList<SssSchedule> Schedules =
     [
         new(new DateOnly(2025, 1, 1), "SSS Circular No. 2024-006", Sss2025Rows)
     ];
 
-    /// <summary>The schedule in force for <paramref name="asOf"/>, never simply the newest.</summary>
-    public static SssSchedule ForPeriod(DateOnly asOf) =>
-        Schedules.First(s => s.EffectiveFrom <= asOf);
+    /// <summary>
+    /// Resolves the SSS schedule in force for <paramref name="asOf"/>.
+    /// </summary>
+    /// <exception cref="NotSupportedException">
+    /// Thrown when no registered schedule covers the date. This is deliberate: computing an
+    /// old period under a newer circular silently produces wrong statutory amounts, so the
+    /// missing schedule must be added from its circular instead.
+    /// </exception>
+    public static SssSchedule ForPeriod(DateOnly asOf)
+    {
+        foreach (var schedule in Schedules)
+        {
+            if (asOf >= schedule.EffectiveFrom)
+                return schedule;
+        }
+
+        var earliest = Schedules[^1];
+        throw new NotSupportedException(
+            $"No SSS contribution schedule is registered for {asOf:yyyy-MM-dd}. The earliest " +
+            $"registered schedule takes effect {earliest.EffectiveFrom:yyyy-MM-dd} " +
+            $"({earliest.Citation}). Add that period's circular to Schedules rather than " +
+            "computing it under a later schedule.");
+    }
 }
