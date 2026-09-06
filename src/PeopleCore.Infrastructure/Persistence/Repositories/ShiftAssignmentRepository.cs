@@ -41,6 +41,21 @@ public class ShiftAssignmentRepository : IShiftAssignmentRepository
             .OrderByDescending(a => a.EffectiveFrom)
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyList<EmployeeShiftAssignment>> GetActiveForPeriodAsync(
+        IReadOnlyList<Guid> employeeIds, DateOnly from, DateOnly to, CancellationToken ct = default)
+    {
+        return await _context.ShiftAssignments
+            .Include(a => a.ShiftTemplate)
+            .Include(a => a.RotatingPattern)
+                .ThenInclude(p => p!.Slots)
+                    .ThenInclude(s => s.ShiftTemplate)
+            .Where(a => employeeIds.Contains(a.EmployeeId)
+                && a.EffectiveFrom <= to
+                && (a.EffectiveTo == null || a.EffectiveTo >= from))
+            .OrderByDescending(a => a.EffectiveFrom)
+            .ToListAsync(ct);
+    }
+
     public async Task<EmployeeShiftAssignment> AddAsync(EmployeeShiftAssignment entity, CancellationToken ct = default)
     {
         await _context.ShiftAssignments.AddAsync(entity, ct);
