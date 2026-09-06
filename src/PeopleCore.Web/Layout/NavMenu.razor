@@ -76,6 +76,26 @@
         </Authorized>
     </AuthorizeView>
 
+    <AuthorizeView Roles="Admin,HRManager,PayrollService">
+        <Authorized>
+            <div class="mb-2">
+                <button class="nav-section-header" @onclick="() => ToggleSection(6)">
+                    <span>Payroll</span>
+                    <i class="bi @(IsOpen(6) ? "bi-chevron-up" : "bi-chevron-down") text-xs"></i>
+                </button>
+                @if (IsOpen(6))
+                {
+                    <div class="nav-section-items">
+                        <NavLink href="/payroll-runs" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">
+                            <i class="bi bi-cash-stack text-sm shrink-0"></i>
+                            Payroll Runs
+                        </NavLink>
+                    </div>
+                }
+            </div>
+        </Authorized>
+    </AuthorizeView>
+
     <div class="mb-2">
         <button class="nav-section-header" @onclick="() => ToggleSection(4)">
             <span>My HR</span>
@@ -134,7 +154,7 @@
 </nav>
 
 @code {
-    private HashSet<int> openSections = new() { 0, 1, 2, 3, 4, 5 };
+    private HashSet<int> openSections = new() { 0, 1, 2, 3, 4, 5, 6 };
 
     private bool IsOpen(int index) => openSections.Contains(index);
 
