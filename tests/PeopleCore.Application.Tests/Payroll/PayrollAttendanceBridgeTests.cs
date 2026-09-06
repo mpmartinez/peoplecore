@@ -142,6 +142,43 @@ public class PayrollAttendanceBridgeTests
     }
 
     [Fact]
+    public async Task BuildAsync_PaidLeaveStraddlingThePeriodBoundary_SuppressesAbsencesOnTheInPeriodDays()
+    {
+        var employeeId = Guid.NewGuid();
+        var from = new DateOnly(2026, 3, 2);
+        var to = new DateOnly(2026, 3, 3);
+
+        // A fixed day shift, so both in-period dates are scheduled working days, with no
+        // attendance recorded at all - so both would be absences unless the leave suppresses them.
+        _assignments.Setup(r => r.GetActiveForPeriodAsync(
+                        It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync([FixedAssignment(employeeId, from)]);
+
+        // This row starts before `from` and ends after `to` - a leave straddling the period on
+        // both sides. This is exactly the shape LeaveRequestRepository.GetApprovedByPeriodAsync's
+        // overlap predicate returns and its old containment predicate never did. The bridge is
+        // expected to clamp the unclamped StartDate/EndDate to the requested period rather than
+        // require the repository (or this mock) to do it.
+        _leave.Setup(r => r.GetApprovedByPeriodAsync(
+                  It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+              .ReturnsAsync([
+                  new LeaveRequest
+                  {
+                      EmployeeId = employeeId,
+                      StartDate = new DateOnly(2026, 2, 28),
+                      EndDate = new DateOnly(2026, 3, 5),
+                      Status = LeaveStatus.Approved,
+                      LeaveType = new LeaveType { Name = "Vacation", IsPaid = true }
+                  }
+              ]);
+
+        var result = await _sut.BuildAsync([employeeId], from, to, CancellationToken.None);
+
+        // Both in-period days are covered by the straddling leave, so neither is an absence.
+        result.Inputs[employeeId].AbsenceDays.Should().Be(0m);
+    }
+
+    [Fact]
     public async Task BuildAsync_WhenEmployeeHasNoShiftAssignment_DerivesNoAbsencesAndReportsThem()
     {
         var employeeId = Guid.NewGuid();
@@ -307,5 +344,85 @@ public class PayrollAttendanceBridgeTests
 
         // The open-ended record contributes nothing rather than a guess at when it ended.
         result.Inputs[employeeId].NightDiffHours.Should().Be(8m);
+    }
+
+    [Fact]
+    public async Task BuildAsync_OvertimeOnANullScheduleDate_LandsInOrdinaryHours_NotRestDayHours()
+    {
+        var employeeId = Guid.NewGuid();
+        var date = new DateOnly(2026, 3, 2);
+
+        // No assignment at all for this employee, so PickAssignment returns null and
+        // ShiftScheduleResolver.Resolve returns null - null, not IsRestDay: true, because there is
+        // no schedule to say the date is a rest day. Approved overtime is still payable, but at
+        // the ordinary basis rather than the rest-day premium.
+        _overtime.Setup(r => r.GetApprovedByPeriodAsync(
+                     It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                 .ReturnsAsync([new OvertimeRequest
+                 {
+                     EmployeeId = employeeId,
+                     OvertimeDate = date,
+                     TotalMinutes = 120,
+                     Status = OvertimeStatus.Approved
+                 }]);
+
+        var result = await _sut.BuildAsync([employeeId], date, date, CancellationToken.None);
+
+        var input = result.Inputs[employeeId];
+        input.OvertimeHours.Should().Be(2m);
+        input.RestDayOTHours.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task BuildAsync_WhenTwoAssignmentsCoverAnEmployee_TheLaterEffectiveFromGovernsItsDates()
+    {
+        var employeeId = Guid.NewGuid();
+        var from = new DateOnly(2026, 3, 2);
+        var to = new DateOnly(2026, 3, 4);
+
+        // Assignment 1: a plain fixed day shift, open-ended from the start of the period - every
+        // date would be a scheduled working day if this assignment alone governed.
+        var earlier = FixedAssignment(employeeId, from);
+
+        // Assignment 2: a rotating pattern anchored - and effective - on the last date of the
+        // period, whose offset 0 is a rest day. Its EffectiveFrom is later than assignment 1's, so
+        // it should supersede assignment 1 for the one date it covers (Mar 4), leaving assignment 1
+        // to govern the earlier two dates.
+        var lastDate = to;
+        var pattern = new RotatingPattern { Name = "rest-on-effective-date", CycleLengthDays = 3 };
+        pattern.Slots.Add(new RotatingPatternSlot { DayOffset = 0 }); // rest day
+        var later = new EmployeeShiftAssignment
+        {
+            EmployeeId = employeeId,
+            RotatingPatternId = pattern.Id,
+            RotatingPattern = pattern,
+            PatternStartDate = lastDate,
+            EffectiveFrom = lastDate
+        };
+
+        _assignments.Setup(r => r.GetActiveForPeriodAsync(
+                        It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync([earlier, later]);
+
+        // No attendance at all, so every scheduled working day with no paid leave is an absence.
+        var result = await _sut.BuildAsync([employeeId], from, to, CancellationToken.None);
+
+        // Mar 2 and Mar 3: only the earlier assignment covers them -> two absences. Mar 4: the
+        // later assignment's later EffectiveFrom means it - not the earlier, still-open-ended
+        // assignment - governs, and it says Mar 4 is a rest day, so no absence there. If the
+        // earlier assignment wrongly won the tie for Mar 4, this would be 3.
+        result.Inputs[employeeId].AbsenceDays.Should().Be(2m);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ThrowsArgumentException_WhenPeriodEndPrecedesStart()
+    {
+        var employeeId = Guid.NewGuid();
+        var from = new DateOnly(2026, 3, 5);
+        var to = new DateOnly(2026, 3, 1);
+
+        var act = () => _sut.BuildAsync([employeeId], from, to, CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentException>();
     }
 }

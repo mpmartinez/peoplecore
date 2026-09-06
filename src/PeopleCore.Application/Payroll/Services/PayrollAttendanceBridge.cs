@@ -68,7 +68,21 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
         for (var year = from.Year; year <= to.Year; year++)
         {
             foreach (var holiday in await _holidays.GetByYearAsync(year, ct))
-                holidaysByDate[holiday.HolidayDate] = holiday.HolidayType;  // last row for a date wins
+            {
+                // Two holiday rows on the same date is a real DOLE scenario - e.g. a regular
+                // holiday that a local government also declares a special non-working day -
+                // that DolePremiumRates prices explicitly (DoubleRegularHoliday,
+                // DoubleSpecialNonWorking), but that PayrollAttendanceInput's two day-counts
+                // cannot express: a date can only land in one bucket here. Rather than let
+                // whichever row the database returns last win - a coin flip between a 200% and
+                // a 130% day - always keep RegularHoliday, the higher-paying classification, so
+                // a duplicate never underpays.
+                if (holidaysByDate.TryGetValue(holiday.HolidayDate, out var existing)
+                    && existing == HolidayType.RegularHoliday)
+                    continue;
+
+                holidaysByDate[holiday.HolidayDate] = holiday.HolidayType;
+            }
         }
 
         // ---- Index by employee ----------------------------------------------------------------
@@ -86,7 +100,13 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
         foreach (var request in approvedLeave)
         {
             if (!wantedSet.Contains(request.EmployeeId)) continue;
-            if (request.LeaveType is not { IsPaid: true }) continue;
+            // An unloaded LeaveType navigation (null) is treated as paid, not unpaid: only a
+            // LeaveType we can actually see marked IsPaid == false leaves the day absent. Erring
+            // this way is deliberate - over-deducting wages on missing data is a compliance
+            // problem, while under-deducting is a recoverable business one. Unreachable today
+            // because GetApprovedByPeriodAsync always Includes LeaveType, but the guard should
+            // fail safe if that ever changes.
+            if (request.LeaveType is { IsPaid: false }) continue;
 
             var dates = paidLeaveDatesByEmployee.TryGetValue(request.EmployeeId, out var existing)
                 ? existing
@@ -200,7 +220,11 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                 RestDayOTHours = Math.Round(restDayOvertimeHours, 2),
                 HolidayRegularDays = holidayRegularDays,
                 HolidaySpecialDays = holidaySpecialDays,
-                NightDiffHours = Math.Round(nightDiffHours, 2)
+                // NightDifferential.Hours already rounds each record to 2dp before it is summed
+                // above, so the period total here is a sum of already-rounded values - rounding
+                // it again is a no-op, not a "round once on the period total" step, so it is left
+                // out rather than implying behaviour this line does not have.
+                NightDiffHours = nightDiffHours
             };
 
             // No assignment covered any date in the period - or the one that did could not be
@@ -215,7 +239,10 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
     /// <summary>
     /// The assignment in force on <paramref name="date"/>: <c>EffectiveFrom &lt;= date</c> and
     /// <c>EffectiveTo</c> null or <c>&gt;= date</c>, preferring the latest <c>EffectiveFrom</c> so
-    /// a re-assignment supersedes the one it replaced.
+    /// a re-assignment supersedes the one it replaced. When two candidates share the same latest
+    /// <c>EffectiveFrom</c> - the repository provides no tie-break and gives no ordering
+    /// guarantee - the one with the later <c>CreatedAt</c> wins, so the choice depends on which
+    /// row was created more recently rather than on repository/SQL row order.
     /// </summary>
     private static EmployeeShiftAssignment? PickAssignment(
         IReadOnlyList<EmployeeShiftAssignment> candidates, DateOnly date)
@@ -226,7 +253,11 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
         {
             if (candidate.EffectiveFrom > date) continue;
             if (candidate.EffectiveTo is { } end && end < date) continue;
-            if (best is null || candidate.EffectiveFrom > best.EffectiveFrom) best = candidate;
+
+            if (best is null
+                || candidate.EffectiveFrom > best.EffectiveFrom
+                || (candidate.EffectiveFrom == best.EffectiveFrom && candidate.CreatedAt > best.CreatedAt))
+                best = candidate;
         }
 
         return best;
