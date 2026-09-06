@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 
@@ -289,18 +290,26 @@ public class ApiClient
     }
 
     // Employee Compensation
+    //
+    // A 404 here means the employee simply has no compensation row yet - PUT creates one, so the
+    // page should render an empty form rather than an error. Any OTHER failure (expired token,
+    // database error, etc.) must NOT be folded into that same "no row yet" case: doing so would
+    // render a blank form inviting the operator to overwrite real compensation data.
     public async Task<EmployeeCompensationDto?> GetEmployeeCompensationAsync(Guid employeeId)
     {
         var response = await _http.GetAsync($"api/employee-compensation/{employeeId}");
-        if (!response.IsSuccessStatusCode) return null;
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException(await ReadProblemDetailAsync(response)
+                ?? $"Failed to load compensation ({(int)response.StatusCode}).");
         return await response.Content.ReadFromJsonAsync<EmployeeCompensationDto>(JsonOptions);
     }
 
-    public async Task<EmployeeCompensationDto?> UpsertEmployeeCompensationAsync(Guid employeeId, object request)
+    public async Task<(bool Ok, string? Error)> UpsertEmployeeCompensationAsync(Guid employeeId, object request)
     {
         var response = await _http.PutAsJsonAsync($"api/employee-compensation/{employeeId}", request);
-        if (!response.IsSuccessStatusCode) return null;
-        return await response.Content.ReadFromJsonAsync<EmployeeCompensationDto>(JsonOptions);
+        if (response.IsSuccessStatusCode) return (true, null);
+        return (false, await ReadProblemDetailAsync(response));
     }
 
     private static async Task<string?> ReadProblemDetailAsync(HttpResponseMessage response)

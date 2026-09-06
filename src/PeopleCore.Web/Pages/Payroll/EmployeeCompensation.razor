@@ -1,0 +1,148 @@
+@page "/employees/{EmployeeId:guid}/compensation"
+@attribute [Authorize(Roles = "Admin,HRManager,PayrollService")]
+@inject ApiClient Api
+@inject NavigationManager Nav
+
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h2 class="text-2xl font-semibold text-foreground">Compensation</h2>
+        @if (_employee is not null)
+        {
+            <p class="text-sm text-muted-foreground mt-1">@_employee.FullName <span class="text-xs">(@_employee.EmployeeNumber)</span></p>
+        }
+    </div>
+</div>
+
+@if (_loading)
+{
+    <div class="p-6 flex justify-center"><Spinner /></div>
+}
+else if (_loadError is not null)
+{
+    <Alert Variant="destructive">@_loadError</Alert>
+}
+else
+{
+    <Card Class="max-w-xl">
+        <CardContent Class="pt-6 space-y-4">
+            <FormField LabelText="Basic Salary" Id="basicSalary" Required="true">
+                <Input Id="basicSalary" Type="number" Step="0.01"
+                       Value="@_form.BasicSalary.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                       ValueChanged="@(v => _form.BasicSalary = ParseDecimal(v))" />
+            </FormField>
+
+            <div>
+                <Label For="payFrequency" Required="true">Pay Frequency</Label>
+                <Select Id="payFrequency" Value="@_form.PayFrequency" ValueChanged="@(v => _form.PayFrequency = v)" Class="mt-1">
+                    <option value="Monthly">Monthly</option>
+                    <option value="SemiMonthly">Semi-Monthly</option>
+                </Select>
+            </div>
+
+            <FormField LabelText="Tax Code" Id="taxCode" Required="true">
+                <Input Id="taxCode" Type="text" Value="@_form.TaxCode" ValueChanged="@(v => _form.TaxCode = v)" />
+            </FormField>
+
+            <FormField LabelText="Dependents" Id="dependents" Required="true">
+                <Input Id="dependents" Type="number" Step="1"
+                       Value="@_form.Dependents.ToString()"
+                       ValueChanged="@(v => _form.Dependents = ParseInt(v))" />
+            </FormField>
+
+            @if (_saveError is not null)
+            {
+                <Alert Variant="destructive">@_saveError</Alert>
+            }
+        </CardContent>
+        <CardFooter Class="flex justify-end gap-2">
+            <Button Variant="outline" OnClick="Cancel" Disabled="@_saving">Cancel</Button>
+            <Button Variant="primary" OnClick="Save" Loading="@_saving" Disabled="@_saving">Save</Button>
+        </CardFooter>
+    </Card>
+}
+
+@code {
+    [Parameter] public Guid EmployeeId { get; set; }
+
+    private EmployeeListDto? _employee;
+    private bool _loading = true;
+    private string? _loadError;
+    private bool _saving;
+    private string? _saveError;
+    private CompensationFormModel _form = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _loadError = null;
+        try
+        {
+            _employee = await Api.GetEmployeeAsync(EmployeeId);
+
+            // A 404 here means the employee simply has no compensation row yet (GetEmployeeCompensationAsync
+            // returns null for that case, but throws for any other failure) - render an empty form
+            // with defaults so PUT can create the row, rather than treating it as an error.
+            var comp = await Api.GetEmployeeCompensationAsync(EmployeeId);
+            _form = comp is null
+                ? new CompensationFormModel()
+                : new CompensationFormModel
+                {
+                    BasicSalary = comp.BasicSalary,
+                    PayFrequency = comp.PayFrequency,
+                    TaxCode = comp.TaxCode,
+                    Dependents = comp.Dependents
+                };
+        }
+        catch (Exception ex)
+        {
+            _loadError = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void Cancel() => Nav.NavigateTo("/employees");
+
+    private async Task Save()
+    {
+        _saveError = null;
+        _saving = true;
+        try
+        {
+            var (ok, error) = await Api.UpsertEmployeeCompensationAsync(EmployeeId, new
+            {
+                basicSalary = _form.BasicSalary,
+                payFrequency = _form.PayFrequency,
+                taxCode = _form.TaxCode,
+                dependents = _form.Dependents
+            });
+
+            if (!ok)
+            {
+                _saveError = error ?? "Failed to save compensation. Please try again.";
+                return;
+            }
+
+            Nav.NavigateTo("/employees");
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static decimal ParseDecimal(string? v)
+        => decimal.TryParse(v, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : 0m;
+
+    private static int ParseInt(string? v) => int.TryParse(v, out var i) ? i : 0;
+
+    private class CompensationFormModel
+    {
+        public decimal BasicSalary { get; set; }
+        public string PayFrequency { get; set; } = "Monthly";
+        public string TaxCode { get; set; } = "ME";
+        public int Dependents { get; set; }
+    }
+}

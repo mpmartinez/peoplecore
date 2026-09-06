@@ -1,6 +1,7 @@
 @page "/employees"
 @attribute [Authorize(Roles = "Admin,HRManager")]
 @inject ApiClient Api
+@inject NavigationManager Nav
 
 <div class="flex items-center justify-between mb-6">
     <h2 class="text-2xl font-semibold text-foreground">Employees</h2>
@@ -48,6 +49,7 @@
                         <TableHead Class="px-4">Position</TableHead>
                         <TableHead Class="px-4">Status</TableHead>
                         <TableHead Class="px-4">Employment</TableHead>
+                        <TableHead Class="px-4">Actions</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -65,6 +67,11 @@
                                 <Badge Variant="@(emp.IsActive ? "success" : "secondary")">@(emp.IsActive ? "Active" : "Inactive")</Badge>
                             </TableCell>
                             <TableCell Class="px-4 py-3 text-muted-foreground">@emp.EmploymentStatus</TableCell>
+                            <TableCell Class="px-4 py-3">
+                                <AuthorizeView Roles="Admin,HRManager,PayrollService">
+                                    <Button Variant="ghost" Size="sm" OnClick="() => GoToCompensation(emp.Id)">Compensation</Button>
+                                </AuthorizeView>
+                            </TableCell>
                         </TableRow>
                     }
                 </TableBody>
@@ -260,6 +267,8 @@
     }
 
     private void CloseForm() => _showForm = false;
+
+    private void GoToCompensation(Guid employeeId) => Nav.NavigateTo($"/employees/{employeeId}/compensation");
 
     private async Task OnDepartmentChanged()
     {
