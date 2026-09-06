@@ -17,7 +17,13 @@ public class PayrollRun : AuditableEntity
     /// </summary>
     public Guid? AttendancePeriodId { get; set; }
 
-    /// <summary>Employees in this run that had no attendance record, treated as fully present.</summary>
+    /// <summary>
+    /// Employees in this run for whom no shift schedule could be resolved for any date in the
+    /// attendance period, and who therefore had no absences derived for them. This is not the
+    /// same as "had no attendance record": an employee with a schedule but zero punches still
+    /// has absences derived and is not counted here, while an employee with no schedule but full
+    /// punches is counted here regardless.
+    /// </summary>
     public int EmployeesMissingAttendance { get; set; }
 
     public string PeriodLabel =>
