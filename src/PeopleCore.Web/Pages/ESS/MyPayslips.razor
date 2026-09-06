@@ -20,7 +20,13 @@
             @if (_loadError is not null)
             {
                 <div class="p-6">
-                    <Alert Variant="warning" Title="Account not linked">@_loadError</Alert>
+                    <Alert Variant="@(_loadErrorIsForbidden ? "warning" : "destructive")" Title="@(_loadErrorIsForbidden ? "Account not linked" : "Couldn't load payslips")">
+                        @_loadError
+                    </Alert>
+                    @if (!_loadErrorIsForbidden)
+                    {
+                        <Button Variant="outline" Size="sm" Class="mt-3" OnClick="LoadPayslips">Retry</Button>
+                    }
                 </div>
             }
             else
@@ -68,6 +74,7 @@
 @code {
     private IReadOnlyList<MyPayslipSummaryDto>? _payslips;
     private string? _loadError;
+    private bool _loadErrorIsForbidden;
     private string? _actionError;
     private readonly HashSet<Guid> _downloadingRunIds = new();
 
@@ -75,6 +82,9 @@
 
     private async Task LoadPayslips()
     {
+        _loadError = null;
+        _loadErrorIsForbidden = false;
+        _payslips = null;
         try
         {
             _payslips = await Api.GetMyPayslipListAsync();
@@ -83,8 +93,10 @@
         {
             // A 403 here means the signed-in account has no linked employee record - there is no
             // "my payslip" to show, not a transient failure, so this reads as guidance rather
-            // than an error banner.
-            _loadError = ex.Message.Contains("403") || ex.Message.Contains("Forbidden")
+            // than an error banner. Anything else (a 500, a dropped connection) is transient and
+            // gets its own title plus a retry affordance instead of being mislabeled the same way.
+            _loadErrorIsForbidden = ex.Message.Contains("403") || ex.Message.Contains("Forbidden");
+            _loadError = _loadErrorIsForbidden
                 ? "Your account is not linked to an employee record. Payslips are unavailable."
                 : ex.Message;
         }
