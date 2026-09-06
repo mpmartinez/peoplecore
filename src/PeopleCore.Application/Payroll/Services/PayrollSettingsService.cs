@@ -25,6 +25,23 @@ public class PayrollSettingsService : IPayrollSettingsService
 
         if (settings is null)
         {
+            // PayrollRun carries no CompanyId (see IPayrollSettingsRepository.GetDefaultAsync),
+            // so payroll computation cannot tell which company's settings row to use once more
+            // than one exists - it would either throw on every run forever after, or (worse)
+            // silently price every company off whichever row EF happens to return first. Refuse
+            // the write instead of letting a GET-then-PUT for a second company corrupt every
+            // later read.
+            var existing = await _repo.GetDefaultAsync(ct);
+            if (existing is not null)
+            {
+                throw new InvalidOperationException(
+                    $"Payroll settings already exist for company {existing.CompanyId}. " +
+                    "Per-company payroll settings are not yet supported because PayrollRun " +
+                    $"carries no CompanyId, so creating a second row for company {companyId} " +
+                    "would leave payroll computation unable to determine which row applies. " +
+                    "Reuse the existing settings row instead.");
+            }
+
             settings = new PayrollSettings { CompanyId = companyId };
             Apply(settings, dto);
             await _repo.AddAsync(settings, ct);

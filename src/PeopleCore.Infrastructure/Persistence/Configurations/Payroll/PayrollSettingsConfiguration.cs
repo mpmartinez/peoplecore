@@ -25,6 +25,11 @@ public class PayrollSettingsConfiguration : IEntityTypeConfiguration<PayrollSett
         builder.Property(x => x.SSSEmployeeRate).HasColumnType("numeric(8,4)");
         builder.Property(x => x.SSSEmployerRate).HasColumnType("numeric(8,4)");
 
+        // Only one settings row per company - and, until PayrollRun carries a CompanyId (see
+        // IPayrollSettingsRepository.GetDefaultAsync), only one row at all is actually usable.
+        // The database enforces the per-company half of that even if application code does not.
+        builder.HasIndex(x => x.CompanyId).IsUnique();
+
         builder.HasOne(x => x.Company)
                .WithMany()
                .HasForeignKey(x => x.CompanyId);
