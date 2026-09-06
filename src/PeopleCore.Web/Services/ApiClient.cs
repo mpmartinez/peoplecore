@@ -259,6 +259,62 @@ public class ApiClient
         if (reviewCycleId.HasValue) url += $"?reviewCycleId={reviewCycleId}";
         return await _http.GetFromJsonAsync<AnalyticsResponse<PerformanceOverviewDto>>(url, JsonOptions);
     }
+
+    // Payroll
+    public async Task<PagedResult<PayrollRunSummaryDto>?> GetPayrollRunsAsync(int page = 1, int pageSize = 20)
+        => await _http.GetFromJsonAsync<PagedResult<PayrollRunSummaryDto>>($"api/payroll-runs?page={page}&pageSize={pageSize}", JsonOptions);
+
+    public async Task<PayrollRunDto?> GetPayrollRunAsync(Guid id)
+        => await _http.GetFromJsonAsync<PayrollRunDto>($"api/payroll-runs/{id}", JsonOptions);
+
+    public async Task<PayrollRunDto?> CreatePayrollRunAsync(object request)
+    {
+        var response = await _http.PostAsJsonAsync("api/payroll-runs", request);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<PayrollRunDto>(JsonOptions);
+    }
+
+    public async Task<(bool Ok, string? Error)> ComputePayrollRunAsync(Guid id)
+    {
+        var response = await _http.PutAsJsonAsync($"api/payroll-runs/{id}/compute", new { });
+        if (response.IsSuccessStatusCode) return (true, null);
+        return (false, await ReadProblemDetailAsync(response));
+    }
+
+    public async Task<(bool Ok, string? Error)> MarkPayrollRunPaidAsync(Guid id)
+    {
+        var response = await _http.PutAsJsonAsync($"api/payroll-runs/{id}/mark-paid", new { });
+        if (response.IsSuccessStatusCode) return (true, null);
+        return (false, await ReadProblemDetailAsync(response));
+    }
+
+    // Employee Compensation
+    public async Task<EmployeeCompensationDto?> GetEmployeeCompensationAsync(Guid employeeId)
+    {
+        var response = await _http.GetAsync($"api/employee-compensation/{employeeId}");
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadFromJsonAsync<EmployeeCompensationDto>(JsonOptions);
+    }
+
+    public async Task<EmployeeCompensationDto?> UpsertEmployeeCompensationAsync(Guid employeeId, object request)
+    {
+        var response = await _http.PutAsJsonAsync($"api/employee-compensation/{employeeId}", request);
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadFromJsonAsync<EmployeeCompensationDto>(JsonOptions);
+    }
+
+    private static async Task<string?> ReadProblemDetailAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            var problem = await response.Content.ReadFromJsonAsync<ProblemDetailResponse>(JsonOptions);
+            return problem?.Detail;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }
 
 // Client-side DTO copies
@@ -292,3 +348,72 @@ public record HiringTrendDto(string Month, int NewHires);
 public record AttritionDataDto(string Period, decimal AttritionRate, int Separations, int AverageHeadcount);
 public record LeaveSummaryDto(decimal TotalDaysConsumed, decimal AverageDaysPerEmployee, IReadOnlyList<LeaveUtilizationDto> ByType);
 public record PerformanceOverviewDto(string Department, decimal AverageScore, string Cycle);
+
+// Payroll DTOs
+public record PayrollRunEmployeeDto(
+    Guid Id,
+    Guid EmployeeId,
+    string EmployeeName,
+    decimal GrossPay,
+    decimal TotalDeductions,
+    decimal NetPay,
+    decimal RegularPay,
+    decimal OvertimePay,
+    decimal HolidayPay,
+    decimal NightDiffPay,
+    decimal TaxableAllowances,
+    decimal NonTaxableAllowances,
+    decimal ThirteenthMonth,
+    decimal SSSEmployee,
+    decimal SSSEmployer,
+    decimal PhilHealthEmployee,
+    decimal PhilHealthEmployer,
+    decimal PagIbigEmployee,
+    decimal PagIbigEmployer,
+    decimal WithholdingTax,
+    decimal LoanDeductions,
+    decimal OtherDeductions);
+
+public record PayrollRunDto(
+    Guid Id,
+    string RunNumber,
+    string PeriodLabel,
+    string PeriodStart,
+    string PeriodEnd,
+    string PayDate,
+    string Frequency,
+    string Status,
+    int EmployeeCount,
+    decimal TotalGrossPay,
+    decimal TotalDeductions,
+    decimal TotalNetPay,
+    DateTime CreatedAt,
+    Guid? AttendancePeriodId,
+    int EmployeesMissingAttendance,
+    IReadOnlyList<PayrollRunEmployeeDto> Employees);
+
+public record PayrollRunSummaryDto(
+    Guid Id,
+    string RunNumber,
+    string PeriodLabel,
+    string PeriodStart,
+    string PeriodEnd,
+    string PayDate,
+    string Frequency,
+    string Status,
+    int EmployeeCount,
+    decimal TotalGrossPay,
+    decimal TotalNetPay,
+    int EmployeesMissingAttendance,
+    DateTime CreatedAt);
+
+public record EmployeeCompensationDto(
+    Guid Id,
+    Guid EmployeeId,
+    decimal BasicSalary,
+    string PayFrequency,
+    string TaxCode,
+    int Dependents);
+
+// Problem-detail body from ExceptionHandlingMiddleware (400 responses for DomainException)
+public record ProblemDetailResponse(string? Title, string? Detail, int? Status);
