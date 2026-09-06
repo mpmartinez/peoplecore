@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Security.Claims;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using PeopleCore.API;
 using PeopleCore.API.Extensions;
 using PeopleCore.API.Middleware;
@@ -13,7 +14,15 @@ using PeopleCore.Infrastructure.Identity;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
+// The Blazor client's DTOs (see PeopleCore.Web/Services/ApiClient.cs) declare enum-valued
+// fields such as EmploymentStatus, EmploymentType, PayFrequency, and PayrollRunStatus as
+// `string`, not as their underlying numeric enum. Serializing enums as strings aligns the
+// server with what every client DTO already expects. It's also more resilient over time:
+// a numeric enum value silently changes meaning if a new member is ever inserted in the
+// middle of the enum, whereas a string value keeps its meaning regardless of member order.
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddResponseCaching();
