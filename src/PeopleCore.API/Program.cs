@@ -114,6 +114,20 @@ using (var scope = app.Services.CreateScope())
         dbContext.Companies.Add(new PeopleCore.Domain.Entities.Organization.Company { Name = "My Company" });
         await dbContext.SaveChangesAsync();
     }
+
+    // Payroll cannot compute without statutory rates. Exactly one settings row is seeded:
+    // PayrollRun carries no CompanyId yet, so the engine resolves a single row, and
+    // PayrollSettingsRepository throws if it ever finds more than one. Per-company settings
+    // arrive with the CompanyId that a later phase adds to PayrollRun.
+    if (!await dbContext.PayrollSettings.AnyAsync())
+    {
+        var company = await dbContext.Companies.OrderBy(c => c.Name).FirstOrDefaultAsync();
+        if (company is not null)
+        {
+            dbContext.PayrollSettings.Add(new PeopleCore.Domain.Entities.Payroll.PayrollSettings { CompanyId = company.Id });
+            await dbContext.SaveChangesAsync();
+        }
+    }
 }
 
 app.Run();
