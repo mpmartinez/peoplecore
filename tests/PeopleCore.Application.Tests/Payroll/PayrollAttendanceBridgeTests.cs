@@ -415,6 +415,47 @@ public class PayrollAttendanceBridgeTests
     }
 
     [Fact]
+    public async Task BuildAsync_WhenTwoAssignmentsShareAnEffectiveFrom_TheLaterCreatedAtGoverns()
+    {
+        var employeeId = Guid.NewGuid();
+        var from = new DateOnly(2026, 3, 2);
+        var to = new DateOnly(2026, 3, 6);
+
+        // Without a tie-break on CreatedAt, the repository's row order (or SQL order) decides which
+        // assignment's schedule governs an employee's daily hours - two assignments effective the
+        // same day can differ by days of pay. This test pins that tie-break: it returns both
+        // assignments in the wrong order (earlier CreatedAt first) and verifies the later one wins.
+
+        // Assignment 1: a plain fixed day shift, effective Mar 2 with an earlier CreatedAt.
+        // All five days in the period (Mar 2-6) are scheduled working days, so no attendance
+        // would mean 5 absences.
+        var earlier = FixedAssignment(employeeId, from);
+        earlier.CreatedAt = new DateTime(2026, 3, 1, 9, 0, 0);
+
+        // Assignment 2: a 2-on-1-off rotating pattern, effective the same date (Mar 2) with a
+        // later CreatedAt, anchored so Mar 4 (Friday) is a rest day (offset 2).
+        // Only four days in the period are scheduled working days, so no attendance would mean
+        // 4 absences: Mar 2, 3, 5, 6 are working days; Mar 4 is rest.
+        var later = RotatingAssignment(employeeId, from);
+        later.CreatedAt = new DateTime(2026, 3, 1, 10, 0, 0);
+
+        // Return them in the order that would give the WRONG answer if the tie-break were absent:
+        // the earlier-CreatedAt assignment first. Without the tie-break, it would be selected,
+        // yielding 5 absences. With the tie-break, the later-CreatedAt assignment wins, yielding 4.
+        _assignments.Setup(r => r.GetActiveForPeriodAsync(
+                        It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync([earlier, later]);
+
+        var result = await _sut.BuildAsync([employeeId], from, to, CancellationToken.None);
+
+        // Only the later-CreatedAt (rotating) assignment can produce this outcome: four absences
+        // (Mar 2, 3, 5, 6 are working days; Mar 4 is a rest day with no attendance, which is not
+        // an absence). If the earlier-CreatedAt (fixed) assignment were selected, all five would
+        // be absences. This assertion fails if the CreatedAt tie-break clause is deleted.
+        result.Inputs[employeeId].AbsenceDays.Should().Be(4m);
+    }
+
+    [Fact]
     public async Task BuildAsync_ThrowsArgumentException_WhenPeriodEndPrecedesStart()
     {
         var employeeId = Guid.NewGuid();
