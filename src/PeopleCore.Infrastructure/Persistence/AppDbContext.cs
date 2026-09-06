@@ -6,6 +6,7 @@ using PeopleCore.Domain.Entities.Attendance;
 using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Leave;
 using PeopleCore.Domain.Entities.Organization;
+using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Entities.Performance;
 using PeopleCore.Domain.Entities.Recruitment;
 using PeopleCore.Domain.Entities.Scheduling;
@@ -49,6 +50,15 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<LeaveRequest> LeaveRequests => Set<LeaveRequest>();
     public DbSet<LeaveAccrualPolicy> LeaveAccrualPolicies => Set<LeaveAccrualPolicy>();
     public DbSet<LeaveAccrualTransaction> LeaveAccrualTransactions => Set<LeaveAccrualTransaction>();
+
+    // Payroll
+    public DbSet<EmployeeCompensation> EmployeeCompensations => Set<EmployeeCompensation>();
+    public DbSet<EmployeeAllowance> EmployeeAllowances => Set<EmployeeAllowance>();
+    public DbSet<EmployeeLoan> EmployeeLoans => Set<EmployeeLoan>();
+    public DbSet<PayrollRun> PayrollRuns => Set<PayrollRun>();
+    public DbSet<PayrollRunEmployee> PayrollRunEmployees => Set<PayrollRunEmployee>();
+    public DbSet<PayrollLoanDeduction> PayrollLoanDeductions => Set<PayrollLoanDeduction>();
+    public DbSet<PayrollSettings> PayrollSettings => Set<PayrollSettings>();
 
     // Recruitment
     public DbSet<JobPosting> JobPostings => Set<JobPosting>();
