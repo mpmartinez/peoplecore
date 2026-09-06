@@ -14,6 +14,8 @@ using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Application.Leave.Services;
 using PeopleCore.Application.Organization.Interfaces;
 using PeopleCore.Application.Organization.Services;
+using PeopleCore.Application.Payroll.Interfaces;
+using PeopleCore.Application.Payroll.Services;
 using PeopleCore.Application.PayrollIntegration.Interfaces;
 using PeopleCore.Application.PayrollIntegration.Services;
 using PeopleCore.Application.Performance.Interfaces;
@@ -171,6 +173,17 @@ public static class ServiceExtensions
         // Analytics
         services.AddScoped<IHRAnalyticsService, HRAnalyticsService>();
         services.AddScoped<IExecutiveAnalyticsService, ExecutiveAnalyticsService>();
+
+        // Payroll
+        services.AddScoped<IPayrollRunRepository, PayrollRunRepository>();
+        services.AddScoped<IEmployeeCompensationRepository, EmployeeCompensationRepository>();
+        services.AddScoped<IEmployeeAllowanceRepository, EmployeeAllowanceRepository>();
+        services.AddScoped<IEmployeeLoanRepository, EmployeeLoanRepository>();
+        services.AddScoped<IPayrollSettingsRepository, PayrollSettingsRepository>();
+        services.AddScoped<PayrollComputationService>();
+        services.AddScoped<IPayrollRunService, PayrollRunService>();
+        services.AddScoped<IEmployeeCompensationService, EmployeeCompensationService>();
+        services.AddScoped<IPayrollSettingsService, PayrollSettingsService>();
 
         // Payroll Export
         services.AddScoped<IPayrollExportService, PayrollExportService>();
