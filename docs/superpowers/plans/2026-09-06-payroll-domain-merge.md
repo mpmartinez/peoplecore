@@ -392,17 +392,14 @@ public class PayrollSettings : AuditableEntity
 
 - [ ] **Step 5: Add identity fields to `Company`**
 
-Add these properties to the existing `Company` entity, leaving its current members alone:
+`Company` already carries `Name`, `Address`, `ContactEmail`, `ContactPhone` and `Departments`. Add ONLY the statutory fields it lacks, and reuse the existing `Address` / `ContactEmail` / `ContactPhone` rather than introducing parallel names:
 
 ```csharp
     public string TIN { get; set; } = "";
     public string SSSNumber { get; set; } = "";
     public string PhilHealthNumber { get; set; } = "";
     public string PagIbigNumber { get; set; } = "";
-    public string Address { get; set; } = "";
     public string City { get; set; } = "";
-    public string ContactNumber { get; set; } = "";
-    public string Email { get; set; } = "";
     public byte[]? Logo { get; set; }
 ```
 
