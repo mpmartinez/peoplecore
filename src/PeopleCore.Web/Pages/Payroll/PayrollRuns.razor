@@ -1,0 +1,257 @@
+@page "/payroll-runs"
+@attribute [Authorize(Roles = "Admin,HRManager,PayrollService")]
+@inject ApiClient Api
+@inject NavigationManager Nav
+
+<div class="flex items-center justify-between mb-6">
+    <h2 class="text-2xl font-semibold text-foreground">Payroll Runs</h2>
+    <Button Variant="primary" OnClick="OpenCreateDialog">Create Run</Button>
+</div>
+
+<Card>
+    <CardContent Class="p-0">
+        @if (_runs is null)
+        {
+            <div class="p-6 flex justify-center"><Spinner /></div>
+        }
+        else if (!_runs.Items.Any())
+        {
+            <div class="p-6 text-center text-muted-foreground text-sm">No payroll runs yet.</div>
+        }
+        else
+        {
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead Class="px-4">Run Number</TableHead>
+                        <TableHead Class="px-4">Period</TableHead>
+                        <TableHead Class="px-4">Pay Date</TableHead>
+                        <TableHead Class="px-4">Status</TableHead>
+                        <TableHead Class="px-4">Employees</TableHead>
+                        <TableHead Class="px-4">Total Net Pay</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    @foreach (var r in _runs.Items)
+                    {
+                        <TableRow @onclick="() => GoToRun(r.Id)">
+                            <TableCell Class="px-4 py-3 font-medium cursor-pointer">@r.RunNumber</TableCell>
+                            <TableCell Class="px-4 py-3 cursor-pointer">@r.PeriodLabel</TableCell>
+                            <TableCell Class="px-4 py-3 cursor-pointer">@r.PayDate</TableCell>
+                            <TableCell Class="px-4 py-3 cursor-pointer">
+                                <Badge Variant="@RunStatusVariant(r.Status)">@r.Status</Badge>
+                            </TableCell>
+                            <TableCell Class="px-4 py-3 cursor-pointer">@r.EmployeeCount</TableCell>
+                            <TableCell Class="px-4 py-3 cursor-pointer">&#8369;@r.TotalNetPay.ToString("N2")</TableCell>
+                        </TableRow>
+                    }
+                </TableBody>
+            </Table>
+        }
+    </CardContent>
+</Card>
+
+@if (_error is not null)
+{
+    <Alert Variant="destructive" Class="mt-4">@_error</Alert>
+}
+
+<Dialog IsOpen="@_showCreateDialog" Title="Create Payroll Run"
+        Description="Period dates, pay date and the employees to include. Days worked, overtime and holiday pay are always derived from attendance."
+        OnClose="CloseCreateDialog" Size="lg" BodyClass="space-y-4">
+    <ChildContent>
+    <div class="grid grid-cols-2 gap-3">
+        <div>
+            <Label For="periodStart" Required="true">Period Start</Label>
+            <input id="periodStart" type="date" @bind="_form.PeriodStart"
+                   class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1" />
+        </div>
+        <div>
+            <Label For="periodEnd" Required="true">Period End</Label>
+            <input id="periodEnd" type="date" @bind="_form.PeriodEnd"
+                   class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1" />
+        </div>
+        <div>
+            <Label For="payDate" Required="true">Pay Date</Label>
+            <input id="payDate" type="date" @bind="_form.PayDate"
+                   class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1" />
+        </div>
+        <div>
+            <Label For="frequency" Required="true">Frequency</Label>
+            <Select Id="frequency" Value="@_form.Frequency" ValueChanged="@(v => _form.Frequency = v)" Class="mt-1">
+                <option value="Monthly">Monthly</option>
+                <option value="SemiMonthly">Semi-Monthly</option>
+            </Select>
+        </div>
+    </div>
+
+    <div>
+        <Label Required="true">Employees</Label>
+        @if (_loadingEmployees)
+        {
+            <div class="p-4 flex justify-center"><Spinner Size="sm" /></div>
+        }
+        else if (_activeEmployees.Count == 0)
+        {
+            <div class="p-4 text-sm text-muted-foreground">No active employees found.</div>
+        }
+        else
+        {
+            <div class="border rounded-md max-h-64 overflow-y-auto p-2 space-y-1 mt-1">
+                @foreach (var e in _activeEmployees)
+                {
+                    <Checkbox Value="@_selectedEmployeeIds.Contains(e.Id)"
+                              ValueChanged="@(v => ToggleEmployee(e.Id, v))">
+                        @e.FullName <span class="text-muted-foreground text-xs">(@e.EmployeeNumber)</span>
+                    </Checkbox>
+                }
+            </div>
+            <div class="text-xs text-muted-foreground mt-1">@_selectedEmployeeIds.Count selected of @_activeEmployees.Count active employees</div>
+        }
+    </div>
+
+    @if (_createError is not null)
+    {
+        <Alert Variant="destructive">@_createError</Alert>
+    }
+    </ChildContent>
+
+    <FooterContent>
+        <div class="flex justify-end gap-2">
+            <Button Variant="outline" OnClick="CloseCreateDialog">Cancel</Button>
+            <Button Variant="primary" OnClick="CreateRun" Loading="@_creating" Disabled="@_creating">Create</Button>
+        </div>
+    </FooterContent>
+</Dialog>
+
+@code {
+    private PagedResult<PayrollRunSummaryDto>? _runs;
+    private string? _error;
+
+    private bool _showCreateDialog;
+    private bool _loadingEmployees;
+    private bool _creating;
+    private string? _createError;
+    private List<EmployeeListDto> _activeEmployees = [];
+    private HashSet<Guid> _selectedEmployeeIds = [];
+    private CreateRunFormModel _form = new();
+
+    protected override async Task OnInitializedAsync() => await LoadRuns();
+
+    private void GoToRun(Guid id) => Nav.NavigateTo($"/payroll-runs/{id}");
+
+    private async Task LoadRuns()
+    {
+        try
+        {
+            _runs = await Api.GetPayrollRunsAsync(page: 1, pageSize: 50);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        _form = new CreateRunFormModel();
+        _selectedEmployeeIds = [];
+        _createError = null;
+        _showCreateDialog = true;
+        _loadingEmployees = true;
+        _activeEmployees = await LoadAllActiveEmployeesAsync();
+        _loadingEmployees = false;
+    }
+
+    private void CloseCreateDialog() => _showCreateDialog = false;
+
+    private void ToggleEmployee(Guid employeeId, bool selected)
+    {
+        if (selected) _selectedEmployeeIds.Add(employeeId);
+        else _selectedEmployeeIds.Remove(employeeId);
+    }
+
+    // GetEmployeesAsync is paged with a default pageSize of 20. Taking page one alone would
+    // silently create a payroll run missing every employee after the twentieth - a payday
+    // nobody gets paid on, with no error anywhere - so page through to exhaustion instead.
+    private async Task<List<EmployeeListDto>> LoadAllActiveEmployeesAsync()
+    {
+        var all = new List<EmployeeListDto>();
+        var page = 1;
+        while (true)
+        {
+            var result = await Api.GetEmployeesAsync(page, 100);
+            if (result is null || result.Items.Count == 0) break;
+            all.AddRange(result.Items.Where(e => e.IsActive));
+            if (page >= result.TotalPages) break;
+            page++;
+        }
+        return all;
+    }
+
+    private async Task CreateRun()
+    {
+        _createError = null;
+
+        if (_form.PeriodEnd < _form.PeriodStart)
+        {
+            _createError = "Period end must be on or after period start.";
+            return;
+        }
+        if (_selectedEmployeeIds.Count == 0)
+        {
+            _createError = "Select at least one employee.";
+            return;
+        }
+
+        _creating = true;
+        try
+        {
+            // DaysWorked, OvertimeHours and HolidayDays are deliberately omitted here (left null
+            // on the server). Null tells the attendance bridge to derive them from punches,
+            // approved leave, approved overtime, the holiday calendar and the shift schedule -
+            // sending a zero would silently beat the derived figure and unpay overtime and
+            // holiday premiums the employee actually earned.
+            var result = await Api.CreatePayrollRunAsync(new
+            {
+                periodStart = _form.PeriodStart.ToString("yyyy-MM-dd"),
+                periodEnd = _form.PeriodEnd.ToString("yyyy-MM-dd"),
+                payDate = _form.PayDate.ToString("yyyy-MM-dd"),
+                frequency = _form.Frequency,
+                employees = _selectedEmployeeIds.Select(id => new { employeeId = id })
+            });
+
+            if (result is null)
+            {
+                _createError = "Failed to create payroll run. Please try again.";
+                return;
+            }
+
+            _showCreateDialog = false;
+            Nav.NavigateTo($"/payroll-runs/{result.Id}");
+        }
+        catch (Exception ex)
+        {
+            _createError = ex.Message;
+        }
+        finally
+        {
+            _creating = false;
+        }
+    }
+
+    private static string RunStatusVariant(string status) => status switch
+    {
+        "Approved" or "Paid" => "success",
+        "Processing" or "ForApproval" => "warning",
+        _ => "secondary"
+    };
+
+    private class CreateRunFormModel
+    {
+        public DateOnly PeriodStart { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+        public DateOnly PeriodEnd { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+        public DateOnly PayDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+        public string Frequency { get; set; } = "Monthly";
+    }
+}
