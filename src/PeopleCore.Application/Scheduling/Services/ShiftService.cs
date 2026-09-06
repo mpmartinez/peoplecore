@@ -134,32 +134,7 @@ public class ShiftService : IShiftService
         Guid employeeId, DateOnly date, CancellationToken ct = default)
     {
         var assignment = await _assignments.GetActiveAssignmentAsync(employeeId, date, ct);
-        if (assignment is null) return null;
-
-        // Fixed shift
-        if (assignment.ShiftTemplateId.HasValue && assignment.ShiftTemplate is not null)
-        {
-            var s = assignment.ShiftTemplate;
-            return new DailyScheduleDto(date, s.Name, s.StartTime, s.EndTime, false, s.IsNightShift);
-        }
-
-        // Rotating pattern
-        if (assignment.RotatingPatternId.HasValue && assignment.RotatingPattern is not null)
-        {
-            var pattern = assignment.RotatingPattern;
-            var anchorDate = assignment.PatternStartDate ?? assignment.EffectiveFrom;
-            var rawOffset = (date.DayNumber - anchorDate.DayNumber) % pattern.CycleLengthDays;
-            var dayOffset = rawOffset < 0 ? rawOffset + pattern.CycleLengthDays : rawOffset;
-            var slot = pattern.Slots.FirstOrDefault(s => s.DayOffset == dayOffset);
-
-            if (slot is null || slot.ShiftTemplateId is null || slot.ShiftTemplate is null)
-                return new DailyScheduleDto(date, null, null, null, true, false); // rest day
-
-            var st = slot.ShiftTemplate;
-            return new DailyScheduleDto(date, st.Name, st.StartTime, st.EndTime, false, st.IsNightShift);
-        }
-
-        return null;
+        return ShiftScheduleResolver.Resolve(assignment, date);
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
