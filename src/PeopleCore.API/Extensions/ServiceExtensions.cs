@@ -35,6 +35,7 @@ using PeopleCore.Infrastructure.BackgroundJobs;
 using PeopleCore.Infrastructure.Persistence;
 using PeopleCore.Infrastructure.Persistence.Repositories;
 using PeopleCore.Infrastructure.Storage;
+using PeopleCore.Reports;
 
 namespace PeopleCore.API.Extensions;
 
@@ -89,6 +90,7 @@ public static class ServiceExtensions
         services.AddScoped<IPositionService, PositionService>();
         services.AddScoped<ITeamRepository, TeamRepository>();
         services.AddScoped<ITeamService, TeamService>();
+        services.AddScoped<ICompanyRepository, CompanyRepository>();
 
         // Storage (provider-selectable via Storage:Provider in appsettings.json)
         var storageProvider = configuration["Storage:Provider"] ?? "Minio";
@@ -185,6 +187,8 @@ public static class ServiceExtensions
         services.AddScoped<IPayrollRunService, PayrollRunService>();
         services.AddScoped<IEmployeeCompensationService, EmployeeCompensationService>();
         services.AddScoped<IPayrollSettingsService, PayrollSettingsService>();
+        services.AddScoped<IPayslipRenderer, PayslipRenderer>();
+        services.AddScoped<IPayslipService, PayslipService>();
 
         // Payroll Export
         services.AddScoped<IPayrollExportService, PayrollExportService>();
