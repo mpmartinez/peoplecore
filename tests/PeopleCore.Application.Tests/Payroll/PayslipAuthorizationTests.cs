@@ -11,16 +11,38 @@ public class PayslipAuthorizationTests
         typeof(ReportsController).GetMethod(name, BindingFlags.Public | BindingFlags.Instance)
             ?? throw new InvalidOperationException($"ReportsController has no public action '{name}'.");
 
+    [Fact]
+    public void GetMyPayslip_TakesExactlyRunIdAndCancellationToken()
+    {
+        // Asserting no parameter NAME contains "employee" is defeatable by a future
+        // [FromQuery] Guid targetId (or similar) that adds a second identifier under a
+        // different name without ever saying "employee". Pinning the exact parameter SET closes
+        // that gap: nothing beyond {runId, ct} can be added without this test failing.
+        var parameters = Action("GetMyPayslip").GetParameters().Select(p => p.Name).ToList();
+
+        parameters.Should().BeEquivalentTo(["runId", "ct"]);
+    }
+
+    [Fact]
+    public void GetMyPayslips_TakesOnlyCancellationToken()
+    {
+        var parameters = Action("GetMyPayslips").GetParameters().Select(p => p.Name).ToList();
+
+        parameters.Should().BeEquivalentTo(["ct"]);
+    }
+
     [Theory]
     [InlineData("GetMyPayslip")]
     [InlineData("GetMyPayslips")]
-    public void SelfServiceActions_AcceptNoEmployeeId(string actionName)
+    public void SelfServiceActions_CarryAuthorize(string actionName)
     {
-        // The route cannot be made to serve someone else's payslip because it has nowhere to
-        // put an employee id. The caller is resolved from the employee_id claim instead.
-        var parameters = Action(actionName).GetParameters().Select(p => p.Name!.ToLowerInvariant());
+        // ReportsController has no class-level [Authorize] and there is no fallback policy
+        // configured, so an action with no attribute of its own is anonymous. Nothing else
+        // guards that - dropping [Authorize] from one of these would make it reachable by
+        // anyone, and no other test would notice.
+        var attribute = Action(actionName).GetCustomAttribute<AuthorizeAttribute>();
 
-        parameters.Should().NotContain(p => p.Contains("employee"));
+        attribute.Should().NotBeNull($"{actionName} must require an authenticated caller");
     }
 
     [Theory]
