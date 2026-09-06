@@ -5,6 +5,7 @@ using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Application.Payroll.Services;
 using PeopleCore.Domain.Entities.Organization;
+using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Enums;
 using Xunit;
 
@@ -13,6 +14,7 @@ namespace PeopleCore.Application.Tests.Payroll;
 public class PayslipServiceTests
 {
     private readonly Mock<IPayrollRunService> _runService = new();
+    private readonly Mock<IPayrollRunRepository> _runRepository = new();
     private readonly Mock<ICompanyRepository> _companyRepo = new();
     private readonly Mock<IPayslipRenderer> _renderer = new();
     private readonly PayslipService _sut;
@@ -21,7 +23,7 @@ public class PayslipServiceTests
     {
         _companyRepo.Setup(r => r.GetDefaultAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Company());
 
-        _sut = new PayslipService(_runService.Object, _companyRepo.Object, _renderer.Object);
+        _sut = new PayslipService(_runService.Object, _runRepository.Object, _companyRepo.Object, _renderer.Object);
     }
 
     [Fact]
@@ -93,6 +95,54 @@ public class PayslipServiceTests
             list => list.Count == 2 && list.Contains(first) && list.Contains(second)),
             It.IsAny<PayslipCompanyDto>()), Times.Once);
     }
+
+    [Fact]
+    public async Task GetMyPayslipsAsync_ReturnsOnlyTheCallersOwnRows()
+    {
+        var targetEmployeeId = Guid.NewGuid();
+        var otherEmployeeId = Guid.NewGuid();
+
+        // One run containing two employees' entries - the security property under test is that
+        // the service picks out only the caller's own line and never projects the other one.
+        var run = new PayrollRun
+        {
+            Id = Guid.NewGuid(),
+            RunNumber = "PR-2026-001",
+            PeriodStart = new DateOnly(2026, 1, 1),
+            PeriodEnd = new DateOnly(2026, 1, 15),
+            PayDate = new DateOnly(2026, 1, 20)
+        };
+        var targetEntry = RunEmployee(run, targetEmployeeId, netPay: 9_238.75m);
+        var otherEntry = RunEmployee(run, otherEmployeeId, netPay: 15_000m);
+        run.Employees = [targetEntry, otherEntry];
+
+        _runRepository
+            .Setup(r => r.GetRunsForEmployeeAsync(targetEmployeeId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([run]);
+
+        var result = await _sut.GetMyPayslipsAsync(targetEmployeeId, CancellationToken.None);
+
+        result.Should().ContainSingle();
+        result[0].RunId.Should().Be(run.Id);
+        result[0].RunNumber.Should().Be(run.RunNumber);
+        result[0].NetPay.Should().Be(targetEntry.NetPay);
+        result[0].NetPay.Should().NotBe(otherEntry.NetPay);
+    }
+
+    private static PayrollRunEmployee RunEmployee(PayrollRun run, Guid employeeId, decimal netPay) => new()
+    {
+        Id = Guid.NewGuid(),
+        PayrollRunId = run.Id,
+        PayrollRun = run,
+        EmployeeId = employeeId,
+        RegularPay = netPay,
+        SSSEmployee = 0m,
+        PhilHealthEmployee = 0m,
+        PagIbigEmployee = 0m,
+        WithholdingTax = 0m,
+        LoanDeductions = 0m,
+        OtherDeductions = 0m
+    };
 
     private static Company Company() => new()
     {

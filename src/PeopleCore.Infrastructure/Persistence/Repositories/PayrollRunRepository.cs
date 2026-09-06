@@ -19,6 +19,13 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
     public async Task<int> CountForYearAsync(int year, CancellationToken ct = default)
         => await Context.PayrollRuns.CountAsync(r => r.PeriodStart.Year == year, ct);
 
+    public async Task<IReadOnlyList<PayrollRun>> GetRunsForEmployeeAsync(Guid employeeId, CancellationToken ct = default)
+        => await Context.PayrollRuns
+            .Where(r => r.Employees.Any(e => e.EmployeeId == employeeId))
+            .Include(r => r.Employees)
+            .OrderByDescending(r => r.PayDate)
+            .ToListAsync(ct);
+
     public async Task<(IReadOnlyList<PayrollRun> Items, int TotalCount)> GetPagedAsync(
         int page, int pageSize, CancellationToken ct = default)
     {

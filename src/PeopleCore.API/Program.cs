@@ -28,6 +28,11 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddResponseCaching();
 builder.Services.AddInfrastructure(builder.Configuration);
 
+// Set once at boot rather than per request. PayZen set it inside three separate controller
+// actions; three copies of a global setting is three places to forget one, and the failure
+// surfaces at PDF generation rather than at start-up.
+QuestPDF.Settings.License = QuestPDF.Infrastructure.LicenseType.Community;
+
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>

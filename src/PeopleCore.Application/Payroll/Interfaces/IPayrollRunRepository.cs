@@ -38,4 +38,14 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     /// leave the run with no entries at all.
     /// </summary>
     Task ReplaceEntriesAsync(PayrollRun run, IReadOnlyList<PayrollRunEmployee> newEntries, CancellationToken ct = default);
+
+    /// <summary>
+    /// Every run the given employee appears in, newest pay date first, each loaded with its full
+    /// <see cref="PayrollRun.Employees"/> list rather than a pre-filtered single entry. The
+    /// caller is expected to pick out just its own entry from each run - the same thing
+    /// PayslipService.GenerateAsync already does for a single run - so a run object is never
+    /// itself a channel for another employee's figures to leak out, even if this query were
+    /// ever widened to eager-load more per entry.
+    /// </summary>
+    Task<IReadOnlyList<PayrollRun>> GetRunsForEmployeeAsync(Guid employeeId, CancellationToken ct = default);
 }

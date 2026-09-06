@@ -12,19 +12,28 @@ namespace PeopleCore.Application.Payroll.Services;
 /// / <see cref="PayrollRunEmployeeDto"/> itself: PayrollRunService already owns that mapping, a
 /// payslip is not a hot path, and duplicating the mapping here would let the two drift onto two
 /// different views of the same run.
+/// <para>
+/// <see cref="GetMyPayslipsAsync"/> is the one exception - it needs every run a single employee
+/// appears in, which IPayrollRunService has no query for, so it goes to
+/// <see cref="IPayrollRunRepository"/> directly rather than growing that interface for a
+/// single-employee lookup only this method needs.
+/// </para>
 /// </summary>
 public class PayslipService : IPayslipService
 {
     private readonly IPayrollRunService _runService;
+    private readonly IPayrollRunRepository _runRepository;
     private readonly ICompanyRepository _companyRepo;
     private readonly IPayslipRenderer _renderer;
 
     public PayslipService(
         IPayrollRunService runService,
+        IPayrollRunRepository runRepository,
         ICompanyRepository companyRepo,
         IPayslipRenderer renderer)
     {
         _runService = runService;
+        _runRepository = runRepository;
         _companyRepo = companyRepo;
         _renderer = renderer;
     }
@@ -51,6 +60,25 @@ public class PayslipService : IPayslipService
 
         var company = await GetCompanyAsync(ct);
         return _renderer.RenderMerged(run, run.Employees, company);
+    }
+
+    public async Task<IReadOnlyList<MyPayslipSummaryDto>> GetMyPayslipsAsync(Guid employeeId, CancellationToken ct = default)
+    {
+        var runs = await _runRepository.GetRunsForEmployeeAsync(employeeId, ct);
+
+        // Each run comes back with every employee's entry (see GetRunsForEmployeeAsync's
+        // remarks) - pick out only the caller's own line, exactly as GenerateAsync does for a
+        // single run above. Never project anything off the OTHER entries in run.Employees.
+        return runs
+            .Select(run => (Run: run, Entry: run.Employees.FirstOrDefault(e => e.EmployeeId == employeeId)))
+            .Where(x => x.Entry is not null)
+            .Select(x => new MyPayslipSummaryDto(
+                RunId: x.Run.Id,
+                RunNumber: x.Run.RunNumber,
+                PeriodLabel: x.Run.PeriodLabel,
+                PayDate: x.Run.PayDate,
+                NetPay: x.Entry!.NetPay))
+            .ToList();
     }
 
     /// <summary>
