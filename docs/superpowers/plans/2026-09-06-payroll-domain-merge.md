@@ -898,7 +898,7 @@ git commit -m "feat(payroll): seed default payroll settings per company"
 
 ## Phase exit criteria
 
-1. Ported statutory tests pass with unchanged expected values: `DolePremiumRates` 7, `BirWithholdingTax` 6, `PayrollComputationService` 24, `PayrollLineBuilder` 6.
+1. Ported statutory tests pass with unchanged expected values: `DolePremiumRates` 7, `BirWithholdingTax` 1, `PayrollComputationService` 24, `PayrollLineBuilder` 6. Test-method counts expand under `[Theory]`/`[InlineData]`; assert the values, not a total.
 2. `dotnet test PeopleCore.slnx` is green with 0 failures.
 3. A payroll run can be created, computed and marked paid through the API, with loan balances retiring from `LoanDeductionLines`.
 4. `grep -rn "BasicSalary" src/PeopleCore.Application/Employees/` returns nothing, and `Manager` / `Employee` receive 403 from compensation endpoints.
