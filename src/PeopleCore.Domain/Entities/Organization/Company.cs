@@ -7,4 +7,13 @@ public class Company : AuditableEntity
     public string? ContactEmail { get; set; }
     public string? ContactPhone { get; set; }
     public ICollection<Department> Departments { get; set; } = [];
+
+    public string TIN { get; set; } = "";
+    public string SSSNumber { get; set; } = "";
+    public string PhilHealthNumber { get; set; } = "";
+    public string PagIbigNumber { get; set; } = "";
+    public string City { get; set; } = "";
+    public string ContactNumber { get; set; } = "";
+    public string Email { get; set; } = "";
+    public byte[]? Logo { get; set; }
 }
