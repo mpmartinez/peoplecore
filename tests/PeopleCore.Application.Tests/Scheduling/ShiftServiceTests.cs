@@ -24,7 +24,7 @@ public class ShiftServiceTests
     {
         // Arrange
         var employeeId = Guid.NewGuid();
-        var date = new DateOnly(2026, 3, 14);
+        var date = new DateOnly(2026, 3, 11); // Wednesday - a fixed shift's default work week is Mon-Fri
         var shiftTemplate = new ShiftTemplate
         {
             Id = Guid.NewGuid(),

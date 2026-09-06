@@ -161,21 +161,9 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                 var schedule = ShiftScheduleResolver.Resolve(assignment, date);
                 if (schedule is not null) anyDateScheduled = true;
 
-                // ShiftTemplate has no day-of-week concept (only StartTime/EndTime/BreakMinutes),
-                // so ShiftScheduleResolver reports every date as a working day for a fixed-template
-                // assignment - including Saturdays and Sundays. Second-guessing that here, rather
-                // than in the resolver, keeps the resolver's UI-facing null/rest-day distinction
-                // intact (ShiftServiceTests depends on it) while stopping payroll from deducting a
-                // weekend as an absence. This falls back to the same Mon-Fri convention already
-                // used by AttendanceService.TotalWorkingDays and LeaveRequestService's working-day
-                // count. A rotating pattern is NOT touched here: its own slots (including empty,
-                // rest-day slots) are authoritative about which days it schedules, weekend or not.
-                if (schedule is { IsRestDay: false }
-                    && assignment?.ShiftTemplateId is not null
-                    && (date.DayOfWeek == DayOfWeek.Saturday || date.DayOfWeek == DayOfWeek.Sunday))
-                {
-                    schedule = schedule with { IsRestDay = true };
-                }
+                // ShiftScheduleResolver is now authoritative about which dates a fixed template
+                // schedules (via ShiftTemplate.WorkDays), so no Mon-Fri second-guessing is needed
+                // here any more.
 
                 // Nothing in the schema enforces one record per employee per day: a date counts as
                 // present if ANY record for it is marked IsPresent, and late, undertime and night

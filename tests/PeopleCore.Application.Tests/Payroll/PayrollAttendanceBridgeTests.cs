@@ -574,6 +574,36 @@ public class PayrollAttendanceBridgeTests
     }
 
     [Fact]
+    public async Task BuildAsync_SixDayFixedTemplateAssignment_AccruesAnAbsenceForAnUnattendedSaturday()
+    {
+        var employeeId = Guid.NewGuid();
+        var saturday = new DateOnly(2026, 3, 7);
+
+        // A six-day (Mon-Sat) fixed template. Under the old hardcoded Mon-Fri fallback this
+        // Saturday would have been silently forgiven; the resolver now knows this employee's
+        // work week actually includes it.
+        var template = DayShift();
+        template.WorkDays = WorkDays.MondayToSaturday;
+        var assignment = new EmployeeShiftAssignment
+        {
+            EmployeeId = employeeId,
+            ShiftTemplateId = template.Id,
+            ShiftTemplate = template,
+            EffectiveFrom = saturday
+        };
+
+        _assignments.Setup(r => r.GetActiveForPeriodAsync(
+                        It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync([assignment]);
+
+        var result = await _sut.BuildAsync([employeeId], saturday, saturday, CancellationToken.None);
+
+        // No attendance recorded on this Saturday, and it is a scheduled working day for this
+        // six-day employee, so it accrues an absence.
+        result.Inputs[employeeId].AbsenceDays.Should().Be(1m);
+    }
+
+    [Fact]
     public async Task BuildAsync_ThrowsArgumentException_WhenPeriodEndPrecedesStart()
     {
         var employeeId = Guid.NewGuid();

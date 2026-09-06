@@ -1,5 +1,6 @@
 using PeopleCore.Application.Scheduling.DTOs;
 using PeopleCore.Domain.Entities.Scheduling;
+using PeopleCore.Domain.Enums;
 
 namespace PeopleCore.Application.Scheduling.Services;
 
@@ -20,9 +21,13 @@ public static class ShiftScheduleResolver
         if (assignment.ShiftTemplateId.HasValue && assignment.ShiftTemplate is not null)
         {
             var s = assignment.ShiftTemplate;
-            return new DailyScheduleDto(date, s.Name, s.StartTime, s.EndTime, false, s.IsNightShift);
+            var isRestDay = !s.WorkDays.IncludesDay(date.DayOfWeek);
+            return new DailyScheduleDto(date, s.Name, s.StartTime, s.EndTime, isRestDay, s.IsNightShift);
         }
 
+        // A rotating pattern's slots - including empty, rest-day slots - are already authoritative
+        // about which days it schedules. A pattern deliberately scheduling a Saturday (or any other
+        // day) must keep doing so, so the WorkDays check above is never applied here.
         if (assignment.RotatingPatternId.HasValue && assignment.RotatingPattern is not null)
         {
             var pattern = assignment.RotatingPattern;

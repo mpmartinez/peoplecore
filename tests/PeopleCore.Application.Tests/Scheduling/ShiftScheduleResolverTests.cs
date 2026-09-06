@@ -1,6 +1,7 @@
 using FluentAssertions;
 using PeopleCore.Application.Scheduling.Services;
 using PeopleCore.Domain.Entities.Scheduling;
+using PeopleCore.Domain.Enums;
 
 namespace PeopleCore.Application.Tests.Scheduling;
 
@@ -79,5 +80,69 @@ public class ShiftScheduleResolverTests
         // 2026-02-28 is one day before the anchor: (date - anchor) % cycle is -1 in C#, which must
         // be normalized to a non-negative offset (2, here) rather than left negative or truncated.
         ShiftScheduleResolver.Resolve(assignment, new DateOnly(2026, 2, 28))!.IsRestDay.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Resolve_WithMondayToFridayFixedShift_ReportsWeekendAsRestDaysAndWednesdayAsWorking()
+    {
+        // Day() defaults to WorkDays.MondayToFriday - the same fallback the old hardcoded Mon-Fri
+        // convention used, now expressed on the template rather than assumed by payroll.
+        var template = Day();
+        var assignment = new EmployeeShiftAssignment
+        {
+            ShiftTemplateId = template.Id,
+            ShiftTemplate = template,
+            EffectiveFrom = new DateOnly(2026, 1, 1)
+        };
+
+        var saturday = new DateOnly(2026, 3, 7);
+        var sunday = new DateOnly(2026, 3, 8);
+        var wednesday = new DateOnly(2026, 3, 4);
+
+        ShiftScheduleResolver.Resolve(assignment, saturday)!.IsRestDay.Should().BeTrue();
+        ShiftScheduleResolver.Resolve(assignment, sunday)!.IsRestDay.Should().BeTrue();
+        ShiftScheduleResolver.Resolve(assignment, wednesday)!.IsRestDay.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Resolve_WithMondayToSaturdayFixedShift_ReportsSaturdayAsAWorkingDay()
+    {
+        // This is the case the old hardcoded Mon-Fri fallback got wrong: a six-day employee on a
+        // fixed template was still judged against Mon-Fri and forgiven for a Saturday they were
+        // actually scheduled to work.
+        var template = Day();
+        template.WorkDays = WorkDays.MondayToSaturday;
+        var assignment = new EmployeeShiftAssignment
+        {
+            ShiftTemplateId = template.Id,
+            ShiftTemplate = template,
+            EffectiveFrom = new DateOnly(2026, 1, 1)
+        };
+
+        var saturday = new DateOnly(2026, 3, 7);
+
+        ShiftScheduleResolver.Resolve(assignment, saturday)!.IsRestDay.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Resolve_WithRotatingPatternSchedulingSaturday_StillReportsItAsAWorkingDay()
+    {
+        // Proves the fixed-template WorkDays check does not leak into the rotating-pattern branch:
+        // a pattern that deliberately schedules a Saturday must keep reporting it as working,
+        // regardless of any Mon-Fri-shaped convention.
+        var template = Day();
+        var pattern = new RotatingPattern { Name = "always-on", CycleLengthDays = 1 };
+        var saturday = new DateOnly(2026, 3, 7);
+        pattern.Slots.Add(new RotatingPatternSlot { DayOffset = 0, ShiftTemplateId = template.Id, ShiftTemplate = template });
+
+        var assignment = new EmployeeShiftAssignment
+        {
+            RotatingPatternId = pattern.Id,
+            RotatingPattern = pattern,
+            PatternStartDate = saturday,
+            EffectiveFrom = saturday
+        };
+
+        ShiftScheduleResolver.Resolve(assignment, saturday)!.IsRestDay.Should().BeFalse();
     }
 }
