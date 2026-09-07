@@ -375,10 +375,17 @@ public class ApiClient
         return await response.Content.ReadAsByteArrayAsync();
     }
 
+    // Mirrors GetBir2316PreviewAsync: a 404 here means no employee had a paid run in that year
+    // (Bir2316Service.BuildAllAsync returned an empty list) - a legitimate empty result, not a
+    // failure, so the page should say so rather than report an error. Any OTHER failure still
+    // throws, same as GenerateBir2316Async's sibling above would if it distinguished status codes.
     public async Task<byte[]?> GenerateAllBir2316Async(int year)
     {
         var response = await _http.PostAsync($"api/reports/2316/generate-all?year={year}", null);
-        if (!response.IsSuccessStatusCode) return null;
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException(await ReadProblemDetailAsync(response)
+                ?? $"Failed to generate 2316s ({(int)response.StatusCode}).");
         return await response.Content.ReadAsByteArrayAsync();
     }
 

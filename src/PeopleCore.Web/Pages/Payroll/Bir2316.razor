@@ -351,7 +351,10 @@ else if (_selectedYear.HasValue)
             var pdf = await Api.GenerateAllBir2316Async(_selectedYear.Value);
             if (pdf is null)
             {
-                _pageError = $"Failed to generate 2316s for {_selectedYear}. Please try again.";
+                // A 404 here is a legitimate empty result (no employee had a paid run in this
+                // year), not a failure - see ApiClient.GenerateAllBir2316Async's remarks. Word it
+                // that way rather than telling the user to retry something that will not change.
+                _pageError = $"No employee had a paid run in {_selectedYear}. Nothing to download.";
                 return;
             }
 
