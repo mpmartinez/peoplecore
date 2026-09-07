@@ -1,6 +1,4 @@
 using System.Reflection;
-using System.Text;
-using System.Text.RegularExpressions;
 using PdfSharp.Drawing;
 using PdfSharp.Pdf;
 using PdfSharp.Pdf.Internal;
@@ -26,43 +24,23 @@ public sealed class Bir2316Stamper
     private const string EmbeddedFormResourceName = "PeopleCore.Reports.Forms.bir-2316-2021-encs.pdf";
 
     /// <summary>
-    /// Fixed so <see cref="Stamp"/> is byte-for-byte deterministic for the same input, rather than
-    /// varying with the wall clock of whichever machine happens to render it.
+    /// Pinned to a fixed instant rather than the wall clock so that generating the same
+    /// certificate twice produces the same <c>/CreationDate</c> and <c>/ModificationDate</c>.
+    /// This is a legitimate reproducibility property of a generated document — unlike the
+    /// per-save subset-font and XMP identifiers PDFsharp also varies, <see cref="PdfDocumentInformation.CreationDate"/>
+    /// and <see cref="PdfDocumentInformation.ModificationDate"/> are public, documented API with
+    /// no structural role in the file, so pinning them carries no risk of producing a malformed PDF.
     /// </summary>
     private static readonly DateTime FixedTimestamp = new(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
     /// <summary>
     /// PDFsharp writes a 16-byte "second" document identifier into the trailer's <c>/ID</c> array
     /// on every <c>Modify</c>-mode open, generated from <c>Guid.NewGuid()</c>. Overwritten with
-    /// this fixed value before <c>Save</c> so the trailer does not vary between renders.
+    /// this fixed value before <c>Save</c> so the trailer does not vary between renders. Like the
+    /// timestamps above, this is a public, documented PDFsharp API — it does not touch the saved
+    /// bytes after the fact the way the font-subset-tag and XMP-UUID rewriting used to.
     /// </summary>
     private static readonly byte[] FixedSecondDocumentId = new byte[16];
-
-    /// <summary>
-    /// Two more sources of non-determinism that PDFsharp does not expose a setting for, so they
-    /// are normalized after <c>Save</c> by rewriting the output bytes in place. Both replacements
-    /// are exactly as long as the text they replace, so no byte offset elsewhere in the file
-    /// (cross-reference table, stream <c>/Length</c> entries) is invalidated by the rewrite:
-    /// <list type="bullet">
-    /// <item>
-    /// Every embedded font is renamed with a 6-uppercase-letter "subset tag" prefix per the PDF
-    /// spec (e.g. <c>ABCDEF+Arial</c>), and PDFsharp generates that tag from
-    /// <c>Guid.NewGuid()</c> with no way to override it — see
-    /// <c>PdfFontDescriptor.CreateEmbeddedFontSubsetName</c>.
-    /// </item>
-    /// <item>
-    /// The XMP metadata packet PDFsharp writes into every saved document embeds a fresh
-    /// <c>DocumentID</c>/<c>InstanceID</c> UUID pair from <c>Guid.NewGuid()</c> on every save —
-    /// see <c>PdfMetadata.GenerateXmp</c> — independent of the trailer <c>/ID</c> above.
-    /// </item>
-    /// </list>
-    /// </summary>
-    private static readonly Regex FontSubsetTagPattern =
-        new(@"(?<=/(?:FontName|BaseFont)/)[A-Z]{6}(?=\+[A-Za-z0-9]+)", RegexOptions.Compiled);
-
-    private static readonly Regex XmpUuidPattern =
-        new(@"(?<=uuid:)[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
-            RegexOptions.Compiled);
 
     public Bir2316Stamper()
     {
@@ -90,18 +68,7 @@ public sealed class Bir2316Stamper
 
         using var output = new MemoryStream();
         document.Save(output, closeStream: false);
-        return NormalizeNonDeterministicBytes(output.ToArray());
-    }
-
-    private static byte[] NormalizeNonDeterministicBytes(byte[] pdfBytes)
-    {
-        // Latin1 maps every byte to exactly one char and back, so this round-trips binary
-        // (compressed stream) content untouched while still letting us regex the readable
-        // dictionary text and XMP packet that the two patterns above target.
-        var text = Encoding.Latin1.GetString(pdfBytes);
-        text = FontSubsetTagPattern.Replace(text, "PCRPTS");
-        text = XmpUuidPattern.Replace(text, "00000000-0000-0000-0000-000000000000");
-        return Encoding.Latin1.GetBytes(text);
+        return output.ToArray();
     }
 
     private static Stream OpenEmbeddedForm()
