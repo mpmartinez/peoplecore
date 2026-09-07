@@ -1,12 +1,10 @@
 using FluentAssertions;
+using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Domain.Payroll;
 using Xunit;
 
 namespace PeopleCore.Application.Tests.Payroll;
 
-// The five BIR Form 2316 Item 24 tests from the source suite are deferred to Phase 4, where
-// BIR2316Dto and BIR2316Document are ported. They assert Form 2316 semantics, not the bracket
-// table this file covers.
 public class BirWithholdingTaxTests
 {
     // Expectations derived from the BIR TRAIN Law annual bracket table (2023 onwards):
@@ -28,5 +26,75 @@ public class BirWithholdingTaxTests
     public void ComputeAnnualTaxDue_applies_the_bracket_base_and_rate(decimal annualTaxable, decimal expected)
     {
         BirWithholdingTax.ComputeAnnualTaxDue(annualTaxable).Should().Be(expected);
+    }
+
+    [Fact]
+    public void Item24_is_the_liability_on_item_23_not_the_amount_withheld()
+    {
+        // Gross taxable of 500,000 for the year: 22,500 + 20% of 100,000 = 42,500 due.
+        var dto = new Bir2316Dto
+        {
+            Item39_BasicSalary = 500_000m,
+            Item25A_PresentTaxWithheld = 1_000m   // deliberately under-withheld
+        };
+
+        dto.Item23_GrossTaxable.Should().Be(500_000m);
+        dto.Item24_TaxDue.Should().Be(42_500m);
+        dto.Item26_TotalTaxWithheld.Should().Be(1_000m);
+
+        dto.Item24_TaxDue.Should().NotBe(dto.Item26_TotalTaxWithheld,
+            "under-withholding must stay visible on the certificate - the employee attests " +
+            "under substituted filing that tax due equals tax withheld");
+    }
+
+    [Fact]
+    public void Item24_matches_item_26_when_withholding_was_correct()
+    {
+        var dto = new Bir2316Dto
+        {
+            Item39_BasicSalary = 500_000m,
+            Item25A_PresentTaxWithheld = 42_500m
+        };
+
+        dto.Item24_TaxDue.Should().Be(dto.Item26_TotalTaxWithheld,
+            "this equality is what qualifies the employee for substituted filing");
+    }
+
+    [Fact]
+    public void Item24_includes_taxable_compensation_from_a_previous_employer()
+    {
+        // Item 23 sums the present (Item 21) and previous (Item 22) employer's taxable income,
+        // so tax due must be computed on the combined figure, not the present employer alone.
+        var dto = new Bir2316Dto
+        {
+            Item39_BasicSalary = 300_000m,
+            Item22_PrevTaxableCompensation = 200_000m
+        };
+
+        dto.Item23_GrossTaxable.Should().Be(500_000m);
+        dto.Item24_TaxDue.Should().Be(42_500m);
+    }
+
+    [Fact]
+    public void Item24_is_zero_when_annual_taxable_income_is_within_the_exempt_threshold()
+    {
+        var dto = new Bir2316Dto { Item39_BasicSalary = 250_000m };
+
+        dto.Item24_TaxDue.Should().Be(0m);
+    }
+
+    [Fact]
+    public void Non_taxable_income_does_not_raise_the_tax_due()
+    {
+        // Item 36 (mandatory contributions) is non-taxable and feeds Item 38, never Item 23.
+        var dto = new Bir2316Dto
+        {
+            Item39_BasicSalary = 250_000m,
+            Item36_SssPhicPagibigContributions = 50_000m,
+            Item34_ThirteenthMonthAndBenefits = 90_000m
+        };
+
+        dto.Item23_GrossTaxable.Should().Be(250_000m);
+        dto.Item24_TaxDue.Should().Be(0m);
     }
 }
