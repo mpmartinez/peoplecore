@@ -244,6 +244,9 @@ else if (_selectedYear.HasValue)
         _preview = null;
         _years = [];
         _generateError = null;
+        // A failure loading the PREVIOUS employee's years or preview must not linger under the
+        // next employee's, or a stale error sits on screen above a perfectly good preview.
+        _pageError = null;
 
         if (!Guid.TryParse(value, out var employeeId))
         {
@@ -273,6 +276,9 @@ else if (_selectedYear.HasValue)
     {
         _preview = null;
         _generateError = null;
+        // Same reasoning as OnEmployeeChanged: a failure loading the previous year's preview must
+        // not stay on screen once a different year is selected.
+        _pageError = null;
         _manual = new ManualInputsFormModel();
 
         if (!int.TryParse(value, out var year) || _selectedEmployeeId is null)
