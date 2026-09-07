@@ -199,7 +199,54 @@ public class Bir2316StamperTests
         var run = runs.Should().ContainSingle(r => r.Text == formatted).Subject;
 
         run.X.Should().BeInRange(483.8, 585.6, "the value should sit inside Item 42's amount box, not spill into a neighboring one");
-        run.Y.Should().BeApproximately(514, 1, "it should sit on Item 42's own baseline");
+        AssertVerticallyCentred(run.Y, boxBottom: 508.4, boxTop: 523.6, "Item 42");
+    }
+
+    [Theory]
+    // The four amounts whose captions wrap to two lines. An earlier field map took each value's
+    // baseline from its caption, so these printed ~4pt high - hard against the box's top rule -
+    // because a wrapped caption's first line sits well above the box centre. They are the fields
+    // that visibly broke, so they are the ones pinned here; boxes are from Bir2316FieldMap's own
+    // comments.
+    [InlineData(29, 779.4, 794.6)]
+    [InlineData(34, 681.0, 695.9)]
+    [InlineData(36, 642.9, 657.5)]
+    [InlineData(38, 604.1, 619.3)]
+    public void Stamp_CentresAmountsVerticallyInTheirBox(int item, double boxBottom, double boxTop)
+    {
+        var dto = FullSampleDto();
+        var amount = item switch
+        {
+            29 => dto.Item29_NonTaxableBasicSalary,
+            34 => dto.Item34_ThirteenthMonthAndBenefits,
+            36 => dto.Item36_SssPhicPagibigContributions,
+            _ => dto.Item38_TotalNonTaxable,
+        };
+
+        var pdf = new Bir2316Stamper().Stamp(dto);
+        var runs = ExtractPositionedTextRuns(pdf);
+
+        // Matched on X as well as text: Item 38 is by definition the same figure as Item 20 (the
+        // summary restates the Part IV-B total), so the amount appears twice on the page - once in
+        // each column. All four items here live in the right-hand column, whose boxes end at 585.6.
+        var formatted = amount.ToString("N2", CultureInfo.InvariantCulture);
+        var run = runs.Should().ContainSingle(r => r.Text == formatted && r.X > 483.8 && r.X <= 585.6).Subject;
+
+        AssertVerticallyCentred(run.Y, boxBottom, boxTop, $"Item {item}");
+    }
+
+    /// <summary>
+    /// Asserts a stamped amount's digit ink is centred in its box. The ink runs from the baseline
+    /// up by the cap height - 5.73pt for 8pt Liberation Sans digits, which have no descender - so
+    /// centring means equal clearance below the baseline and above the ink. The 1pt tolerance is
+    /// the rounding the field map does when it stores whole-point coordinates.
+    /// </summary>
+    private static void AssertVerticallyCentred(double baselineY, double boxBottom, double boxTop, string item)
+    {
+        const double CapHeight = 5.73;
+        var expected = boxBottom + ((boxTop - boxBottom) - CapHeight) / 2;
+        baselineY.Should().BeApproximately(expected, 1,
+            $"{item}'s digits should be centred in its box, not aligned to its caption's baseline");
     }
 
     [Fact]
