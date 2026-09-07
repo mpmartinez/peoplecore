@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.Interfaces;
+using PeopleCore.Application.Payroll.Validation;
 using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
@@ -42,8 +43,7 @@ public class PayrollRunService : IPayrollRunService
 
     public async Task<PayrollRunDto> CreateAsync(CreatePayrollRunRequest request, CancellationToken ct = default)
     {
-        if (request.Employees is not { Count: > 0 })
-            throw new DomainException("A payroll run must include at least one employee.");
+        PayrollRunRequestValidator.Validate(request);
 
         var year = request.PeriodStart.Year;
         var sequence = await _runRepo.CountForYearAsync(year, ct) + 1;

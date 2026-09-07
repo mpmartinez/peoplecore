@@ -580,12 +580,15 @@ public class PayrollRunRequestValidatorTests
     }
 
     [Theory]
+    // Every literal must be written as a double. The parameters are double?, and xUnit boxes a
+    // bare integer literal as Int32, which cannot be unboxed to Nullable<Double> - the test then
+    // fails on invocation rather than on the rule it is meant to exercise.
     [InlineData(-0.5, null, null, "Days worked")]
-    [InlineData(32, null, null, "Days worked")]
-    [InlineData(null, -1, null, "Overtime hours")]
-    [InlineData(null, 745, null, "Overtime hours")]
-    [InlineData(null, null, -1, "Holiday days")]
-    [InlineData(null, null, 32, "Holiday days")]
+    [InlineData(32.0, null, null, "Days worked")]
+    [InlineData(null, -1.0, null, "Overtime hours")]
+    [InlineData(null, 745.0, null, "Overtime hours")]
+    [InlineData(null, null, -1.0, "Holiday days")]
+    [InlineData(null, null, 32.0, "Holiday days")]
     public void Validate_RejectsOutOfRangeOverrides(
         double? daysWorked, double? overtimeHours, double? holidayDays, string expected)
     {
