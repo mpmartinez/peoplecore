@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 using FluentAssertions;
+using PdfSharp.Drawing;
+using PdfSharp.Pdf;
 using PdfSharp.Pdf.Content;
 using PdfSharp.Pdf.Content.Objects;
 using PdfSharp.Pdf.IO;
@@ -53,18 +55,22 @@ public class Bir2316StamperTests
     /// Walks the page's content stream operators and records every shown text run together with
     /// the text position in effect when it was shown. This is a simplified reader — it handles
     /// only the operators <see cref="Bir2316Stamper"/> (via <c>XGraphics.DrawString</c>) actually
-    /// emits (<c>Tm</c>/<c>Td</c>/<c>TD</c> to position, <c>Tj</c>/<c>TJ</c> to show text) — not a
-    /// general-purpose PDF text extractor.
+    /// emits (<c>Tf</c> to set the font size, <c>Tm</c>/<c>Td</c>/<c>TD</c> to position,
+    /// <c>Tj</c>/<c>TJ</c> to show text) — not a general-purpose PDF text extractor.
+    /// <c>FontSize</c> is tracked (whole-branch review Fix 1's test) because
+    /// <see cref="Bir2316Stamper"/>'s new shrink-to-fit logic changes the font size per field, so
+    /// a test that wants to independently verify a drawn run's actual rendered width needs to
+    /// know what size it was drawn at, not just where it starts.
     /// </summary>
-    private static List<(string Text, double X, double Y)> ExtractPositionedTextRuns(byte[] pdfBytes)
+    private static List<(string Text, double X, double Y, double FontSize)> ExtractPositionedTextRuns(byte[] pdfBytes)
     {
         using var doc = PdfReader.Open(new MemoryStream(pdfBytes), PdfDocumentOpenMode.ReadOnly);
-        var runs = new List<(string Text, double X, double Y)>();
+        var runs = new List<(string Text, double X, double Y, double FontSize)>();
 
         foreach (var page in doc.Pages)
         {
             var content = ContentReader.ReadContent(page);
-            double x = 0, y = 0;
+            double x = 0, y = 0, fontSize = 0;
 
             foreach (var obj in content)
             {
@@ -75,6 +81,10 @@ public class Bir2316StamperTests
                     case OpCodeName.BT:
                         x = 0;
                         y = 0;
+                        break;
+
+                    case OpCodeName.Tf when op.Operands.Count == 2:
+                        fontSize = NumberValue(op.Operands[1]);
                         break;
 
                     case OpCodeName.Tm when op.Operands.Count == 6:
@@ -88,7 +98,7 @@ public class Bir2316StamperTests
                         break;
 
                     case OpCodeName.Tj when op.Operands.Count == 1 && op.Operands[0] is CString s:
-                        runs.Add((s.Value, x, y));
+                        runs.Add((s.Value, x, y, fontSize));
                         break;
 
                     case OpCodeName.TJ when op.Operands.Count == 1 && op.Operands[0] is CSequence array:
@@ -97,7 +107,7 @@ public class Bir2316StamperTests
                         {
                             if (element is CString elementString) text.Append(elementString.Value);
                         }
-                        runs.Add((text.ToString(), x, y));
+                        runs.Add((text.ToString(), x, y, fontSize));
                         break;
                 }
             }
@@ -223,6 +233,113 @@ public class Bir2316StamperTests
             (digitRuns[i].X - digitRuns[i - 1].X).Should().BeApproximately(12.005, 0.01,
                 "consecutive digits should be spaced by the cell's own advance width, not drawn touching one another");
         }
+    }
+
+    [Fact]
+    public void Stamp_ShrinksOrEllipsizesALongAddressToStayInsideItsBox()
+    {
+        // Whole-branch review Fix 1 (CRITICAL): the pre-fix stamper drew every string as one
+        // unclipped run at a fixed 8pt, so a real Philippine address - unit, building, street,
+        // barangay, city - reliably ran clear across the 6A ZIP cells and into items 30/31's
+        // captions (measured at 464pt wide against a ~206pt box). This uses a realistic long
+        // address, not the short one-line sample the other tests use, and proves the fix by
+        // measuring the ACTUAL drawn text at its ACTUAL drawn font size (both captured by
+        // ExtractPositionedTextRuns) rather than assuming a particular font size or truncation
+        // point - the fix is free to shrink, ellipsize, or both, as long as the result stays in
+        // the box.
+        const string LongAddress =
+            "Unit 2504, Tower 1, The Enterprise Center, 6766 Ayala Avenue corner Paseo de Roxas, " +
+            "Barangay San Lorenzo, Makati City, Metro Manila";
+
+        var dto = SampleDto();
+        dto.RegisteredAddress = LongAddress;
+
+        var pdf = new Bir2316Stamper().Stamp(dto);
+        var runs = ExtractPositionedTextRuns(pdf);
+
+        // Item 6's own baseline/left margin (see Bir2316FieldMap.RegisteredAddress's comment) -
+        // the same row the ZIP digit test above locates item 6A's cells on.
+        var run = runs.Should().ContainSingle(r => r.Y > 748 && r.Y < 750 && r.X > 40 && r.X < 60).Subject;
+
+        run.Text.Should().NotBeEmpty();
+        run.FontSize.Should().BeLessThanOrEqualTo(8, "shrinking should never enlarge a value past the form's normal size");
+        run.FontSize.Should().BeGreaterThanOrEqualTo(6, "the fix should not shrink past its documented font floor");
+
+        using var measureDocument = new PdfDocument();
+        var measurePage = measureDocument.AddPage();
+        using var gfx = XGraphics.FromPdfPage(measurePage);
+        EmbeddedFontResolver.EnsureRegistered();
+        var drawnWidth = gfx.MeasureString(run.Text, new XFont("Arial", run.FontSize)).Width;
+
+        (run.X + drawnWidth).Should().BeLessThanOrEqualTo(253.7,
+            "the drawn text's right edge should stay inside item 6's box (right edge ~253.6pt), " +
+            "not run into the 6A ZIP cells the way the unclipped pre-fix output did");
+    }
+
+    [Fact]
+    public void Stamp_KeepsItem25APresentTaxWithheldInsideItsBox()
+    {
+        // Whole-branch review Fix 2: Item 25A's caption baseline (291.7) sat BELOW the box's own
+        // floor (292.1), so the pre-fix Y drew digit ink astride the box's bottom rule instead of
+        // inside it - the worst instance of the Y-from-caption bug this fix corrects across
+        // several boxes. This asserts the fix directly: the drawn baseline for Item 25A's value
+        // must sit inside the box (292.1-307.5, per Bir2316FieldMap.Item25A_PresentTaxWithheld's
+        // comment) with room for a digit's ~5.7pt cap height (8pt Arial-metrics) below the top
+        // rule and the baseline itself above the bottom rule.
+        var dto = FullSampleDto();
+
+        var pdf = new Bir2316Stamper().Stamp(dto);
+        var runs = ExtractPositionedTextRuns(pdf);
+
+        var formatted = dto.Item25A_PresentTaxWithheld.ToString("N2", CultureInfo.InvariantCulture);
+        var run = runs.Should().ContainSingle(r => r.Text == formatted).Subject;
+
+        run.Y.Should().BeGreaterThan(292.1, "the baseline must sit above the box's own bottom rule, not below it");
+        (run.Y + 5.8).Should().BeLessThan(307.5, "digit ink (baseline + cap height) must clear the box's top rule");
+    }
+
+    [Fact]
+    public void Stamp_PrintsNothingRatherThanATruncatedContactNumber()
+    {
+        // Whole-branch review Fix 4: ContactNumber comes from free-text Employee.MobileNumber, so
+        // a stored value can carry more digits than the form's 11 printed cells (a "+63" country
+        // code prefix, for instance). The pre-fix DrawDigits silently drew the first 11 digits and
+        // dropped the rest - not an overflow onto the page, but a different, shorter number that
+        // still read as a complete, correct one. This asserts the fix: an over-length contact
+        // number prints no digits at all rather than a wrong-but-plausible-looking one.
+        var dto = SampleDto();
+        dto.ContactNumber = "+639171234567"; // 12 digits after stripping the "+" - one over the 11 cells
+
+        var pdf = new Bir2316Stamper().Stamp(dto);
+        var runs = ExtractPositionedTextRuns(pdf);
+
+        var contactNumberRuns = runs
+            .Where(r => r.Text.Length == 1 && char.IsDigit(r.Text[0]) && r.Y is > 670 and < 672 && r.X is > 165 and < 310)
+            .ToList();
+
+        contactNumberRuns.Should().BeEmpty(
+            "an over-length contact number should print nothing rather than a truncated, wrong-but-plausible number");
+    }
+
+    [Fact]
+    public void Stamp_StillDrawsAContactNumberThatFitsExactly()
+    {
+        // Companion to the over-length test above: an 11-digit number (the normal PH mobile
+        // format) still fills all 11 cells - the Fix 4 rejection is specifically for overflow,
+        // not a blanket "never draw a contact number" regression.
+        var dto = SampleDto();
+        dto.ContactNumber = "09171234567"; // exactly 11 digits
+
+        var pdf = new Bir2316Stamper().Stamp(dto);
+        var runs = ExtractPositionedTextRuns(pdf);
+
+        var digitRuns = runs
+            .Where(r => r.Text.Length == 1 && char.IsDigit(r.Text[0]) && r.Y is > 670 and < 672 && r.X is > 165 and < 310)
+            .OrderBy(r => r.X)
+            .ToList();
+
+        digitRuns.Select(r => r.Text).Should().Equal(
+            ["0", "9", "1", "7", "1", "2", "3", "4", "5", "6", "7"]);
     }
 
     private static double NumberValue(CObject obj) => obj switch

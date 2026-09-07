@@ -30,7 +30,17 @@ internal static class Bir2316FieldMap
 {
     internal enum Align { Left, Right }
 
-    internal readonly record struct Field(double X, double Y, Align Align = Align.Left);
+    /// <summary>
+    /// <paramref name="MaxWidth"/> is the printed box's own width available to free text starting
+    /// at <paramref name="X"/> (box right edge minus <c>X</c> minus a small clearance from the
+    /// right rule), set only on fields whose value is free text that can run arbitrarily long -
+    /// a name, an address, an "Others (specify)" label. Money and short coded fields (RDO code
+    /// aside) leave it <c>null</c>: <see cref="Bir2316Stamper"/> only measures and shrinks/
+    /// ellipsizes a value when <c>MaxWidth</c> is set, so a <c>null</c> here is a deliberate
+    /// statement that the field's value is already bounded (formatted money, a fixed-length code)
+    /// and never needs clipping. See <see cref="Bir2316Stamper"/>'s <c>Draw</c> for how it is used.
+    /// </summary>
+    internal readonly record struct Field(double X, double Y, Align Align = Align.Left, double? MaxWidth = null);
 
     /// <summary>
     /// One run of individual digit cells: <c>Count</c> boxes of equal width <c>Advance</c>,
@@ -58,20 +68,33 @@ internal static class Bir2316FieldMap
     // ── Part I - Employee Information ──────────────────────────────────────────────────────
 
     // "3 TIN" at x=39.8 y=807.2 - the digit-cell group (identical layout reused for items 12 and
-    // 16) starts at x=86.2, same baseline. See TinGroups' own comment for how the four cell
+    // 16) starts at x=86.2. Baseline 802 = this row's digit-cell box bottom (798.2, pdfplumber)
+    // + 4, the same box-derived offset ZIP/DOB/Contact Number use below - not the caption's own
+    // baseline (807.2), which sits 5.2pt above the box and pushed digit ink 0.4pt over the box's
+    // top rule (whole-branch review Fix 2). See TinGroups' own comment for how the four cell
     // groups (3-3-3-5, pdfplumber-derived) were measured.
-    internal static readonly DigitField[] EmployeeTinDigits = TinGroups(807);
+    internal static readonly DigitField[] EmployeeTinDigits = TinGroups(802);
 
     // "4 Employee's Name (Last Name, First Name, Middle Name)" at y=788.6 - written on the ruled
     // line below it (box 42.2-253.6, 772.5-787.5), not beside it. LastName/FirstName/MiddleName
     // combine into one "Last, First Middle" line, same as the QuestPDF renderer this replaces.
-    internal static readonly Field EmployeeName = new(45, 777);
+    // MaxWidth 206.6 = box right edge 253.61 minus X minus a 2pt clearance from the right rule -
+    // a long name shrinks (and, past the font floor, ellipsizes) rather than running into the RDO
+    // Code box the way an unclipped "Dela Cruz-Santos Maria, Juan Miguel Bartolome" did before
+    // this fix (whole-branch review Fix 1).
+    internal static readonly Field EmployeeName = new(45, 777, MaxWidth: 206.6);
 
     // "5 RDO Code" at y=788.6, same row as item 4 - line below, box 264.5-302.5, 772.5-787.5.
-    internal static readonly Field RdoCode = new(268, 777);
+    // MaxWidth 32.5 = box right edge 302.47 minus X minus a 2pt clearance - defensive: RDO codes
+    // are short (3 digits) in practice, but the field carries free text, not a validated enum.
+    internal static readonly Field RdoCode = new(268, 777, MaxWidth: 32.5);
 
-    // "6 Registered Address" at y=761.1 - line below, box 42.6-253.6, 744.6-759.4.
-    internal static readonly Field RegisteredAddress = new(46, 749);
+    // "6 Registered Address" at y=761.1 - line below, box 42.6-253.6, 744.6-759.4. MaxWidth 205.6
+    // = box right edge 253.61 minus X minus a 2pt clearance - a real Philippine address (unit,
+    // building, street, barangay, city) measured 464pt wide unclipped, spilling past the 6A ZIP
+    // cells into items 30/31's captions (whole-branch review Fix 1); this shrinks first, then
+    // ellipsizes only if it still would not fit at the font floor.
+    internal static readonly Field RegisteredAddress = new(46, 749, MaxWidth: 205.6);
 
     // "6A ZIP Code" at y=761.1, same row - line below, box 261.42-309.44, 744.53-759.29. Like
     // TIN/DOB/Contact Number, this box is printed as 4 equal digit cells (3 internal ticks at
@@ -79,15 +102,17 @@ internal static class Bir2316FieldMap
     // see RegisteredZipCodeDigits below.
     internal static readonly DigitField[] RegisteredZipCodeDigits = [new(265.20, 749, 12.005, 4)];
 
-    // "6B Local Home Address" at y=735.4 - line below, box 42.6-253.6, 719.3-734.1.
-    internal static readonly Field LocalHomeAddress = new(46, 723);
+    // "6B Local Home Address" at y=735.4 - line below, box 42.6-253.6, 719.3-734.1. MaxWidth
+    // 205.6, same box width/margin as item 6 (whole-branch review Fix 1).
+    internal static readonly Field LocalHomeAddress = new(46, 723, MaxWidth: 205.6);
 
     // "6C ZIP Code" at y=735.4, same row - line below, box 261.51-309.44, 719.45-734.24, 3
     // internal ticks -> 4 equal digit cells. See LocalZipCodeDigits below.
     internal static readonly DigitField[] LocalZipCodeDigits = [new(265.28, 723, 11.982, 4)];
 
-    // "6D Foreign Address" at y=709.8 - line below, box 42.6-309.4, 693.6-708.6.
-    internal static readonly Field ForeignAddress = new(46, 698);
+    // "6D Foreign Address" at y=709.8 - line below, box 42.6-309.4, 693.6-708.6. MaxWidth 261.4 =
+    // box right edge 309.43 minus X minus a 2pt clearance (whole-branch review Fix 1).
+    internal static readonly Field ForeignAddress = new(46, 698, MaxWidth: 261.4);
 
     // "7 Date of Birth (MM/DD/YYYY)" at y=682.5 - line below; digit cells 46.9-147.6, 667.3-681.9,
     // pdfplumber's page.lines shows 8 equal-width cells (three full-height dividers, one short
@@ -117,14 +142,20 @@ internal static class Bir2316FieldMap
 
     // ── Part II - Employer Information (Present) ───────────────────────────────────────────
 
-    // "12 TIN" at y=594.7 - same TIN digit-cell layout as item 3, starting at x=86.2.
-    internal static readonly DigitField[] EmployerTinDigits = TinGroups(595);
+    // "12 TIN" at y=594.7 - same TIN digit-cell layout as item 3, starting at x=86.2. Baseline
+    // 590 = this row's digit-cell box bottom (585.7, pdfplumber) + 4 - see EmployeeTinDigits'
+    // comment for why this is measured from the box rather than the caption (Fix 2).
+    internal static readonly DigitField[] EmployerTinDigits = TinGroups(590);
 
-    // "13 Employer's Name" at y=575.8 - line below, box 42.2-308.4, 560.0-575.0.
-    internal static readonly Field EmployerName = new(45, 564);
+    // "13 Employer's Name" at y=575.8 - line below, box 42.2-308.4, 560.0-575.0. MaxWidth 261.4 =
+    // box right edge 308.36 minus X minus a 2pt clearance - unclipped, this measured 324pt wide
+    // for a real company name, spilling past the box (whole-branch review Fix 1).
+    internal static readonly Field EmployerName = new(45, 564, MaxWidth: 261.4);
 
-    // "14 Registered Address" at y=550.0 - line below, box 42.6-253.6, 533.9-548.8.
-    internal static readonly Field EmployerAddress = new(46, 538);
+    // "14 Registered Address" at y=550.0 - line below, box 42.6-253.6, 533.9-548.8. MaxWidth
+    // 205.6 = box right edge 253.61 minus X minus a 2pt clearance - unclipped, this measured
+    // 328.8pt wide for a real address, spilling past the 14A ZIP cells (whole-branch review Fix 1).
+    internal static readonly Field EmployerAddress = new(46, 538, MaxWidth: 205.6);
 
     // "14A ZIP Code" at y=550.0, same row - line below, box 259.33-307.35, 533.80-547.94, 3
     // internal ticks -> 4 equal digit cells. See EmployerZipCodeDigits below.
@@ -139,14 +170,17 @@ internal static class Bir2316FieldMap
 
     // ── Part III - Employer Information (Previous) ─────────────────────────────────────────
 
-    // "16 TIN" at y=498.5 - same TIN digit-cell layout, starting at x=86.2.
-    internal static readonly DigitField[] PrevEmployerTinDigits = TinGroups(499);
+    // "16 TIN" at y=498.5 - same TIN digit-cell layout, starting at x=86.2. Baseline 494 = this
+    // row's digit-cell box bottom (489.5, pdfplumber) + 4 - see EmployeeTinDigits' comment (Fix 2).
+    internal static readonly DigitField[] PrevEmployerTinDigits = TinGroups(494);
 
-    // "17 Employer's Name" at y=479.7 - line below, box 42.2-308.4, 463.9-478.9.
-    internal static readonly Field PrevEmployerName = new(45, 468);
+    // "17 Employer's Name" at y=479.7 - line below, box 42.2-308.4, 463.9-478.9. MaxWidth 261.4,
+    // same box width/margin as item 13 (whole-branch review Fix 1).
+    internal static readonly Field PrevEmployerName = new(45, 468, MaxWidth: 261.4);
 
-    // "18 Registered Address" at y=453.2 - line below, box 43.0-254.1, 437.1-452.1.
-    internal static readonly Field PrevEmployerAddress = new(46, 441);
+    // "18 Registered Address" at y=453.2 - line below, box 43.0-254.1, 437.1-452.1. MaxWidth
+    // 206.1 = box right edge 254.09 minus X minus a 2pt clearance (whole-branch review Fix 1).
+    internal static readonly Field PrevEmployerAddress = new(46, 441, MaxWidth: 206.1);
 
     // "18A ZIP Code" at y=453.2, same row - line below, box 259.81-307.72, 436.98-452.00, 3
     // internal ticks -> 4 equal digit cells. This is the box Task 3's by-eye pass caught the
@@ -157,24 +191,28 @@ internal static class Bir2316FieldMap
     // ── Part IVA - Summary (left amount column; every box's right edge is ~309, so every
     //    right-aligned X below is 303 = edge minus a ~6pt margin) ───────────────────────────
 
-    // "19 Gross Compensation Income from Present Employer..." baseline y=418.1; box 207.4-309.2,
-    // 408.4-423.8.
-    internal static readonly Field Item19_GrossCompensation = new(303, 418, Align.Right);
+    // "19 Gross Compensation Income from Present Employer..." caption baseline y=418.1; box
+    // 207.4-309.2, 408.4-423.8. Value baseline 412 = box bottom (408.39, pdfplumber) + 4 - the
+    // same box-derived offset ZIP/DOB/Contact Number use, not the caption's own baseline, which
+    // sits close enough to the box's top rule that digit ink (baseline + ~5.7pt cap height at
+    // 8pt) printed 0.1-0.4pt over it (whole-branch review Fix 2).
+    internal static readonly Field Item19_GrossCompensation = new(303, 412, Align.Right);
 
-    // "20 Less: Total Non-Taxable/Exempt Compensation Income..." baseline y=398.7; box
-    // 207.4-309.2, 388.9-404.4.
-    internal static readonly Field Item20_LessNonTaxable = new(303, 399, Align.Right);
+    // "20 Less: Total Non-Taxable/Exempt Compensation Income..." caption baseline y=398.7; box
+    // 207.4-309.2, 388.9-404.4. Value baseline 393 = box bottom (388.95) + 4 (Fix 2).
+    internal static readonly Field Item20_LessNonTaxable = new(303, 393, Align.Right);
 
-    // "21 Taxable Compensation Income from Present Employer..." baseline y=379.2; box
-    // 207.4-309.2, 369.5-384.9.
-    internal static readonly Field Item21_TaxableFromPresent = new(303, 379, Align.Right);
+    // "21 Taxable Compensation Income from Present Employer..." caption baseline y=379.2; box
+    // 207.4-309.2, 369.5-384.9. Value baseline 374 = box bottom (369.51) + 4 (Fix 2).
+    internal static readonly Field Item21_TaxableFromPresent = new(303, 374, Align.Right);
 
-    // "22 Add: Taxable Compensation Income from Previous Employer..." baseline y=359.8; box
-    // 207.4-309.2, 350.1-365.5.
-    internal static readonly Field Item22_PrevTaxableCompensation = new(303, 360, Align.Right);
+    // "22 Add: Taxable Compensation Income from Previous Employer..." caption baseline y=359.8;
+    // box 207.4-309.2, 350.1-365.5. Value baseline 354 = box bottom (350.07) + 4 (Fix 2).
+    internal static readonly Field Item22_PrevTaxableCompensation = new(303, 354, Align.Right);
 
-    // "23 Gross Taxable Compensation Income..." baseline y=340.3; box 207.8-309.7, 331.0-346.4.
-    internal static readonly Field Item23_GrossTaxable = new(303, 340, Align.Right);
+    // "23 Gross Taxable Compensation Income..." caption baseline y=340.3; box 207.8-309.7,
+    // 331.0-346.4. Value baseline 335 = box bottom (331.03) + 4 (Fix 2).
+    internal static readonly Field Item23_GrossTaxable = new(303, 335, Align.Right);
 
     // "24 Tax Due" baseline y=316.5; box 207.8-309.7, 311.6-327.0. Item 24 is always printed,
     // even ₱0.00 - see Bir2316Stamper.Stamp - because a zero tax due is a real, meaningful
@@ -182,15 +220,21 @@ internal static class Bir2316FieldMap
     // legitimately blank when nothing was computed for them.
     internal static readonly Field Item24_TaxDue = new(303, 317, Align.Right);
 
-    // "25A Present Employer" baseline y=291.7; box 207.4-309.2, 292.1-307.5.
-    internal static readonly Field Item25A_PresentTaxWithheld = new(303, 292, Align.Right);
+    // "25A Present Employer" caption baseline y=291.7; box 207.4-309.2, 292.1-307.5. The caption
+    // baseline (291.7) is itself BELOW the box's own floor (292.1) - using it put digit ink
+    // astride the box's bottom rule instead of inside the box (whole-branch review Fix 2, the
+    // worst instance of this bug). Value baseline 296 = box bottom (292.15) + 4, matching every
+    // other box-derived field on this form.
+    internal static readonly Field Item25A_PresentTaxWithheld = new(303, 296, Align.Right);
 
-    // "25B Previous Employer, if applicable" baseline y=277.7; box 207.4-309.2, 272.3-287.7.
+    // "25B Previous Employer, if applicable" baseline y=277.7; box 207.4-309.2, 272.3-287.7. Not
+    // flagged by Fix 2 - box bottom 272.3 + 4 = 276.3, close enough to the existing 278 that ink
+    // already cleared both rules; left as-is rather than churned for a sub-point difference.
     internal static readonly Field Item25B_PrevTaxWithheld = new(303, 278, Align.Right);
 
-    // "26 Total Amount of Taxes Withheld as adjusted..." baseline y=262.6; box 207.4-309.2,
-    // 252.4-268.3.
-    internal static readonly Field Item26_TotalTaxWithheld = new(303, 263, Align.Right);
+    // "26 Total Amount of Taxes Withheld as adjusted..." caption baseline y=262.6; box
+    // 207.4-309.2, 252.4-268.3. Value baseline 256 = box bottom (252.44) + 4 (Fix 2).
+    internal static readonly Field Item26_TotalTaxWithheld = new(303, 256, Align.Right);
 
     // "27 5% Tax Credit (PERA Act of 2008)" baseline y=239.2; box 207.4-309.1, 232.6-248.4.
     internal static readonly Field Item27_PeraTaxCredit = new(303, 239, Align.Right);
@@ -258,13 +302,17 @@ internal static class Bir2316FieldMap
     internal static readonly Field Item44A_OtherAmount = new(579, 467, Align.Right);
 
     // "44A" description box (the "(specify)" text field) 341.9-474.9, 461.8-477.2, same row.
-    internal static readonly Field Item44A_OtherLabel = new(345, 467);
+    // MaxWidth 127.9 = box right edge 474.87 minus X minus a 2pt clearance - a free-text label can
+    // run long ("Rice Subsidy" today, but nothing constrains it), so it shrinks/ellipsizes the
+    // same as the name and address fields (whole-branch review Fix 1).
+    internal static readonly Field Item44A_OtherLabel = new(345, 467, MaxWidth: 127.9);
 
     // "44B" amount box 483.8-585.6, 443.8-459.2; baseline y=448.7.
     internal static readonly Field Item44B_OtherAmount = new(579, 449, Align.Right);
 
-    // "44B" description box 342.4-475.2, 443.4-458.8, same row.
-    internal static readonly Field Item44B_OtherLabel = new(345, 449);
+    // "44B" description box 342.4-475.2, 443.4-458.8, same row. MaxWidth 128.3, same reasoning as
+    // Item44A_OtherLabel (whole-branch review Fix 1).
+    internal static readonly Field Item44B_OtherLabel = new(345, 449, MaxWidth: 128.3);
 
     // ── SUPPLEMENTARY ───────────────────────────────────────────────────────────────────────
 
@@ -289,18 +337,21 @@ internal static class Bir2316FieldMap
     // "51 Others (specify)" / "51A" amount box 483.8-585.6, 291.8-307.2; baseline y=297.0.
     internal static readonly Field Item51A_OtherAmount = new(579, 297, Align.Right);
 
-    // "51A" description box 341.4-477.0, 291.8-307.2, same row.
-    internal static readonly Field Item51A_OtherLabel = new(344, 297);
+    // "51A" description box 341.4-477.0, 291.8-307.2, same row. MaxWidth 131.0 = box right edge
+    // 477.04 minus X minus a 2pt clearance (whole-branch review Fix 1).
+    internal static readonly Field Item51A_OtherLabel = new(344, 297, MaxWidth: 131.0);
 
     // "51B" amount box 483.8-585.6, 272.3-287.7; baseline y=277.6.
     internal static readonly Field Item51B_OtherAmount = new(579, 278, Align.Right);
 
-    // "51B" description box 342.4-477.5, 272.3-287.7, same row.
-    internal static readonly Field Item51B_OtherLabel = new(345, 278);
+    // "51B" description box 342.4-477.5, 272.3-287.7, same row. MaxWidth 130.5 = box right edge
+    // 477.53 minus X minus a 2pt clearance (whole-branch review Fix 1).
+    internal static readonly Field Item51B_OtherLabel = new(345, 278, MaxWidth: 130.5);
 
-    // "52 Total Taxable Compensation Income (Sum of Items 39 to 51B)" baseline y=262.6; box
-    // 483.8-585.6, 254.3-268.6.
-    internal static readonly Field Item52_TotalTaxableCompensation = new(579, 263, Align.Right);
+    // "52 Total Taxable Compensation Income (Sum of Items 39 to 51B)" caption baseline y=262.6;
+    // box 483.8-585.6, 254.3-268.6. Value baseline 258 = box bottom (254.29) + 4 - the caption
+    // baseline sat close enough to the top rule that digit ink printed ~0.4pt over it (Fix 2).
+    internal static readonly Field Item52_TotalTaxableCompensation = new(579, 258, Align.Right);
 
     // ── TIN digit-cell layout (items 3, 12, 16 - Task 3's per-digit fix) ───────────────────────
 
@@ -310,6 +361,9 @@ internal static class Bir2316FieldMap
     /// baseline <paramref name="y"/>. Read from pdfplumber's <c>page.rects</c>/<c>page.lines</c>
     /// against the item 3 row (see the Task 3 report for the full readings) and reused as-is for
     /// items 12 and 16, which share the identical box layout at a different row.
+    /// <paramref name="y"/> is each row's own digit-cell box bottom + 4 (see the three call
+    /// sites' comments), not the item's caption baseline - using the caption baseline put digit
+    /// ink 0.4pt over the box's top rule (whole-branch review Fix 2).
     /// <para>
     /// Group boxes: 86.24-124.15, 135.90-173.80, 185.60-223.50 (three 3-digit groups, each 37.91
     /// wide / 3 = 12.637 per cell - confirmed by two internal tick marks evenly splitting each);

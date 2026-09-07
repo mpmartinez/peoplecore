@@ -68,19 +68,28 @@ public sealed class Bir2316Stamper
         var page = document.Pages[0];
         var pageHeight = page.Height.Point;
         using var gfx = XGraphics.FromPdfPage(page);
-        var font = new XFont("Arial", 8);
+        const string FontFamily = "Arial";
+        const double BaseFontSize = 8;
+        var font = new XFont(FontFamily, BaseFontSize);
 
         void Draw(Bir2316FieldMap.Field field, string? text)
         {
             if (string.IsNullOrEmpty(text)) return;
 
+            var drawFont = font;
+            var drawText = text;
+            if (field.MaxWidth is { } maxWidth)
+            {
+                (drawFont, drawText) = FitToWidth(gfx, text, font, FontFamily, maxWidth);
+            }
+
             var x = field.X;
             if (field.Align == Bir2316FieldMap.Align.Right)
             {
-                x -= gfx.MeasureString(text, font).Width;
+                x -= gfx.MeasureString(drawText, drawFont).Width;
             }
 
-            gfx.DrawString(text, font, XBrushes.Black, new XPoint(x, pageHeight - field.Y));
+            gfx.DrawString(drawText, drawFont, XBrushes.Black, new XPoint(x, pageHeight - field.Y));
         }
 
         // Draws only the digit characters of `raw` into a run of per-digit cells (see
@@ -91,17 +100,29 @@ public sealed class Bir2316Stamper
         // one 4-digit cell group each): the pre-fix stamper drew those as one string, which
         // visually collided with the form's own printed cell dividers. Non-digit characters (TIN's
         // dashes, DOB's slashes) are stripped before laying out cells - the form already prints
-        // its own separators between the digit cells, so nothing needs to be drawn there. If `raw`
-        // has fewer digits than the cells provide, the trailing cells are simply left blank; if it
-        // has more, the excess is silently dropped rather than overflowing into the next field - a
-        // TIN, phone number, or ZIP code longer than the form's boxes is a data problem this
-        // stamper cannot fix by drawing off the box.
+        // its own separators between the digit cells, so nothing needs to be drawn there.
+        //
+        // Whole-branch review Fix 4: if `raw` has MORE digits than the cells can hold, nothing is
+        // drawn for this field at all, rather than the pre-fix behaviour of silently drawing the
+        // first N digits and dropping the rest. Dropping trailing digits does not overflow the
+        // box, but it is not "safe" the way it looked - it prints a different, shorter number
+        // that still looks like a complete, confidently-stated value. ContactNumber is free text
+        // (Employee.MobileNumber): a stored "+639171234567" has 12 digits after stripping the
+        // "+", so truncating to the 11-digit cell run prints "63917123456" - a wrong phone number
+        // with no visual sign anything was cut. TIN and ZIP are effectively bounded by how they
+        // are entered elsewhere, so this all-or-nothing rule costs them nothing in practice; for
+        // ContactNumber it is the actual fix. If `raw` has fewer digits than the cells provide,
+        // the trailing cells are still simply left blank - that is a genuinely incomplete value,
+        // not a wrong one, and printing what was actually given is correct.
         void DrawDigits(IReadOnlyList<Bir2316FieldMap.DigitField> groups, string? raw)
         {
             if (string.IsNullOrEmpty(raw)) return;
 
             var digits = new string(raw.Where(char.IsDigit).ToArray());
             if (digits.Length == 0) return;
+
+            var capacity = groups.Sum(g => g.Count);
+            if (digits.Length > capacity) return;
 
             var pos = 0;
             foreach (var group in groups)
@@ -221,6 +242,50 @@ public sealed class Bir2316Stamper
     /// </summary>
     private static string Money(decimal value, bool alwaysPrint = false) =>
         value == 0 && !alwaysPrint ? "" : value.ToString("N2", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// The smallest font size <see cref="FitToWidth"/> will shrink to before it starts
+    /// ellipsizing instead. 6pt (three-quarters of the form's normal 8pt) is still legibly
+    /// printed at the form's actual size - smaller than that reads as an apology rather than a
+    /// value on an official tax certificate, so a value that still would not fit at 6pt is
+    /// ellipsized instead of shrunk further.
+    /// </summary>
+    private const double MinFontSize = 6.0;
+
+    /// <summary>
+    /// Whole-branch review Fix 1 (CRITICAL): every field was previously drawn as one unclipped
+    /// run at a fixed 8pt, so a long name or address did not just get cut off - it ran across
+    /// whatever the next box over happened to be (a registered address measured 464pt wide,
+    /// spilling through the 6A ZIP cells and into items 30/31's captions). This shrinks the font
+    /// down to <see cref="MinFontSize"/> first, in 0.5pt steps, re-measuring at each step - most
+    /// real names and addresses fit well before the floor and print at a size a reader would not
+    /// even notice was reduced. Only a value that still overflows its box at the floor size loses
+    /// characters, and even then it is marked with "..." rather than silently and invisibly cut
+    /// off, so nobody mistakes a truncated address for a complete one.
+    /// </summary>
+    private static (XFont Font, string Text) FitToWidth(
+        XGraphics gfx, string text, XFont baseFont, string fontFamily, double maxWidth)
+    {
+        var font = baseFont;
+        if (gfx.MeasureString(text, font).Width <= maxWidth) return (font, text);
+
+        var size = baseFont.Size;
+        while (size > MinFontSize)
+        {
+            size = Math.Max(MinFontSize, size - 0.5);
+            font = new XFont(fontFamily, size);
+            if (gfx.MeasureString(text, font).Width <= maxWidth) return (font, text);
+        }
+
+        const string Ellipsis = "...";
+        var truncated = text;
+        while (truncated.Length > 0 && gfx.MeasureString(truncated + Ellipsis, font).Width > maxWidth)
+        {
+            truncated = truncated[..^1];
+        }
+
+        return (font, truncated.Length == 0 ? Ellipsis : truncated + Ellipsis);
+    }
 
     private static Stream OpenEmbeddedForm()
     {
