@@ -240,7 +240,6 @@ public class Bir2316ServiceTests
             Item35_DeMinimis = 7_000m,
             Item33_HazardPayMwe = 3_000m,
             Item27_PeraTaxCredit = 5_000m,
-            IsMinimumWageEarner = true,
             StatutoryMinWagePerDay = 610m,
             StatutoryMinWagePerMonth = 15_910m
         };
@@ -264,8 +263,12 @@ public class Bir2316ServiceTests
         result.Item33_HazardPayMwe.Should().Be(3_000m);
         result.Item27_PeraTaxCredit.Should().Be(5_000m);
         result.PrevEmployerName.Should().Be("Former Employer Inc.");
-        result.IsMinimumWageEarner.Should().BeTrue();
         result.StatutoryMinWagePerDay.Should().Be(610m);
+
+        // IsMinimumWageEarner has no manual input to overlay - see the doc comment on
+        // Bir2316Dto.IsMinimumWageEarner - so it stays at its default even though nothing here
+        // requests it explicitly. It is not derived and must not silently become true.
+        result.IsMinimumWageEarner.Should().BeFalse();
 
         // Item 24 is the liability computed on Item 23, never the withheld total. Item 23 here is
         // 30,000 + 1,000 + 10,000 taxable 13th month + 500,000 previous = 541,000, so tax due is
@@ -292,7 +295,6 @@ public class Bir2316ServiceTests
                 nameof(Bir2316ManualInputs.Item27_PeraTaxCredit),
                 nameof(Bir2316ManualInputs.Item33_HazardPayMwe),
                 nameof(Bir2316ManualInputs.Item35_DeMinimis),
-                nameof(Bir2316ManualInputs.IsMinimumWageEarner),
                 nameof(Bir2316ManualInputs.StatutoryMinWagePerDay),
                 nameof(Bir2316ManualInputs.StatutoryMinWagePerMonth)
             ]);

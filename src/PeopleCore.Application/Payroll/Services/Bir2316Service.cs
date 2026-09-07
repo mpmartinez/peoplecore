@@ -127,7 +127,9 @@ public class Bir2316Service : IBir2316Service
             PrevEmployerName = manual.PrevEmployerName ?? "",
             PrevEmployerAddress = manual.PrevEmployerAddress ?? "",
             PrevEmployerZipCode = manual.PrevEmployerZipCode ?? "",
-            IsMinimumWageEarner = manual.IsMinimumWageEarner,
+            // IsMinimumWageEarner is intentionally not overlaid from manual: see the doc comment
+            // on Bir2316Dto.IsMinimumWageEarner. It stays at its default (false) until Items
+            // 29-32 are derived.
             StatutoryMinWagePerDay = manual.StatutoryMinWagePerDay,
             StatutoryMinWagePerMonth = manual.StatutoryMinWagePerMonth,
 

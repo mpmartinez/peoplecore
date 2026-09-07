@@ -158,25 +158,14 @@ else if (_preview is not null)
                     </FormField>
                 </div>
 
-                <Checkbox Value="@_manual.IsMinimumWageEarner" ValueChanged="@(v => _manual.IsMinimumWageEarner = v)">
-                    Minimum wage earner
-                </Checkbox>
-
-                @if (_manual.IsMinimumWageEarner)
-                {
-                    <div class="grid grid-cols-2 gap-3">
-                        <FormField LabelText="Statutory min. wage / day" Id="minWageDay">
-                            <Input Id="minWageDay" Type="number" Step="0.01" Min="0"
-                                   Value="@Dec(_manual.StatutoryMinWagePerDay)"
-                                   ValueChanged="@(v => _manual.StatutoryMinWagePerDay = ParseDecimal(v))" />
-                        </FormField>
-                        <FormField LabelText="Statutory min. wage / month" Id="minWageMonth">
-                            <Input Id="minWageMonth" Type="number" Step="0.01" Min="0"
-                                   Value="@Dec(_manual.StatutoryMinWagePerMonth)"
-                                   ValueChanged="@(v => _manual.StatutoryMinWagePerMonth = ParseDecimal(v))" />
-                        </FormField>
-                    </div>
-                }
+                <!--
+                    No "Minimum wage earner" control here. Ticking it without also deriving Items
+                    29-32 (the MWE non-taxable boxes for basic/holiday/overtime/night-diff pay)
+                    would produce a certificate declaring the employee an MWE while still taxing
+                    all of their income on Items 39/44A/44B/48/50/51A - an invalid, self-
+                    contradictory form. Offering the checkbox before that derivation exists is
+                    worse than omitting it. See the doc comment on Bir2316Dto.IsMinimumWageEarner.
+                -->
 
                 @if (_generateError is not null)
                 {
@@ -326,10 +315,10 @@ else if (_selectedYear.HasValue)
                 item25B_PrevTaxWithheld = _manual.Item25B_PrevTaxWithheld,
                 item27_PeraTaxCredit = _manual.Item27_PeraTaxCredit,
                 item35_DeMinimis = _manual.Item35_DeMinimis,
-                item33_HazardPayMwe = _manual.Item33_HazardPayMwe,
-                isMinimumWageEarner = _manual.IsMinimumWageEarner,
-                statutoryMinWagePerDay = _manual.StatutoryMinWagePerDay,
-                statutoryMinWagePerMonth = _manual.StatutoryMinWagePerMonth
+                item33_HazardPayMwe = _manual.Item33_HazardPayMwe
+                // No isMinimumWageEarner / statutoryMinWagePerDay / statutoryMinWagePerMonth:
+                // there is no control on this page for them - see the comment above the manual-
+                // inputs card for why.
             });
 
             if (pdf is null)
@@ -400,8 +389,8 @@ else if (_selectedYear.HasValue)
         public decimal Item27_PeraTaxCredit { get; set; }
         public decimal Item35_DeMinimis { get; set; }
         public decimal Item33_HazardPayMwe { get; set; }
-        public bool IsMinimumWageEarner { get; set; }
-        public decimal StatutoryMinWagePerDay { get; set; }
-        public decimal StatutoryMinWagePerMonth { get; set; }
+
+        // No IsMinimumWageEarner / StatutoryMinWagePerDay / StatutoryMinWagePerMonth: this page
+        // offers no minimum-wage-earner control (see the comment above the manual-inputs card).
     }
 }

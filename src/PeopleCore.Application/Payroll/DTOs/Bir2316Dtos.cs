@@ -38,6 +38,19 @@ public record Bir2316Dto
     public string ContactNumber { get; set; } = "";
     public decimal StatutoryMinWagePerDay { get; set; }
     public decimal StatutoryMinWagePerMonth { get; set; }
+
+    /// <summary>
+    /// NOT YET DERIVED. Nothing populates Items 29-32 (the MWE non-taxable boxes for basic,
+    /// holiday, overtime and night-differential pay), so setting this flag without also
+    /// apportioning those boxes produces a certificate that declares the employee a minimum-wage
+    /// earner while every taxable box (39/44A/44B/48/50/51A) still carries their full income and
+    /// tax is still computed on it - an invalid, self-contradictory form. There is deliberately no
+    /// UI control and no <c>Bir2316ManualInputs</c> field for this flag right now (see
+    /// <c>Bir2316.razor</c> and <c>Bir2316ManualInputs</c>): offering the checkbox before Items
+    /// 29-32 are implemented would let a caller produce that invalid certificate. Deciding when an
+    /// employee qualifies as an MWE and how their pay is apportioned across 29-32 is a tax
+    /// question that needs its own design before this flag is reintroduced.
+    /// </summary>
     public bool IsMinimumWageEarner { get; set; }
 
     // Part II — Employer Info (Present)
@@ -162,7 +175,11 @@ public record Bir2316ManualInputs
 
     public decimal Item35_DeMinimis { get; init; }
     public decimal Item33_HazardPayMwe { get; init; }
-    public bool IsMinimumWageEarner { get; init; }
+
+    // IsMinimumWageEarner is deliberately NOT a field here. Ticking it without also deriving
+    // Items 29-32 (the MWE non-taxable boxes) produces a certificate that declares the employee a
+    // minimum-wage earner while still taxing all of their income - see the doc comment on
+    // Bir2316Dto.IsMinimumWageEarner. Do not add it back until Items 29-32 are populated.
     public decimal StatutoryMinWagePerDay { get; init; }
     public decimal StatutoryMinWagePerMonth { get; init; }
 }
