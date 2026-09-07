@@ -137,11 +137,42 @@ public class Bir2316Service : IBir2316Service
             Item35_DeMinimis = manual.Item35_DeMinimis,
             Item36_SssPhicPagibigContributions =
                 entries.Sum(e => e.SSSEmployee + e.PhilHealthEmployee + e.PagIbigEmployee),
+            // NonTaxableAllowances is non-taxable compensation that is not de minimis, not a
+            // contribution and not 13th-month pay - Item 37 ("Salaries and Other Forms of
+            // Compensation") is Section A's catch-all for exactly that: everything non-taxable
+            // that lacks its own numbered box. Putting it here, rather than skipping it, is what
+            // keeps Item 19 (gross compensation) from understating what the employee was actually
+            // paid.
+            Item37_SalariesOtherForms = entries.Sum(e => e.NonTaxableAllowances),
 
             // Part IV-B Section B and the supplementary block — taxable.
+            //
+            // PayrollComputationService's withholding base is
+            // regularPay + overtimePay + holidayPay + nightDiffPay + taxableAllowances, so every
+            // one of those five components has to land in a taxable box here or Item 21/23 (the
+            // certificate's taxable compensation) understates what tax was actually withheld
+            // against - silently manufacturing a false "tax due < tax withheld" result for any
+            // employee who worked a holiday, drew night differential, or received a taxable
+            // allowance. Item39/50 already carry RegularPay/OvertimePay; HolidayPay,
+            // NightDiffPay and TaxableAllowances have no dedicated taxable box on the form (their
+            // only numbered boxes - Items 30-32 - are the Section A exemption for minimum-wage
+            // earners), so they go into the "Others (specify)" boxes Section B provides for
+            // exactly this: compensation that is real and taxable but has no line of its own.
+            // Holiday pay and night differential are placed in 44A/44B (alongside the regular
+            // per-period allowances 40-43); taxable allowances go in 51A (alongside the other
+            // supplemental, ad hoc pay in 45-49) since a fixed "allowance" bucket does not fit
+            // Section B's first group of named, per-period pay items as cleanly as it does the
+            // supplemental group. All four boxes are summed identically into Item 52, so this is
+            // a labeling choice, not a computation one.
             Item39_BasicSalary = entries.Sum(e => e.RegularPay),
+            Item44A_OtherAmount = entries.Sum(e => e.HolidayPay),
+            Item44A_OtherLabel = "Holiday Pay",
+            Item44B_OtherAmount = entries.Sum(e => e.NightDiffPay),
+            Item44B_OtherLabel = "Night Shift Differential",
             Item48_TaxableThirteenthMonth = thirteenthMonthTaxable,
             Item50_OvertimePay = entries.Sum(e => e.OvertimePay),
+            Item51A_OtherAmount = entries.Sum(e => e.TaxableAllowances),
+            Item51A_OtherLabel = "Taxable Allowances",
 
             // Part IVA. Item 25A is this employer's withholding, summed from the runs; 22, 25B and
             // 27 concern another employer or another account and can only come from a human.

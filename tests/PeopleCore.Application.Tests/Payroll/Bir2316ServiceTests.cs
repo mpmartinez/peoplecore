@@ -79,6 +79,61 @@ public class Bir2316ServiceTests
     }
 
     [Fact]
+    public async Task GetPreviewAsync_CertifiesHolidayNightDiffAndTaxableAllowances()
+    {
+        // PayrollComputationService withholds against
+        // regularPay + overtimePay + holidayPay + nightDiffPay + taxableAllowances. Every one of
+        // those five components has to reach the certificate's taxable total, or Item 21/23
+        // understates what tax was actually withheld against - manufacturing a false
+        // "tax due < tax withheld" result for any employee who worked a holiday, drew night
+        // differential, or received a taxable allowance.
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+            [
+                Entry(_employeeId,
+                    regularPay: 20_000m, overtimePay: 1_000m,
+                    holidayPay: 800m, nightDiffPay: 300m, taxableAllowances: 1_500m)
+            ]));
+
+        var result = await _sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None);
+
+        result.Should().NotBeNull();
+
+        // All three components are reflected somewhere in Section B's taxable items.
+        result!.Item44A_OtherAmount.Should().Be(800m);
+        result.Item44B_OtherAmount.Should().Be(300m);
+        result.Item51A_OtherAmount.Should().Be(1_500m);
+
+        // The acceptance test: the sum of the taxable Section B items the service populates must
+        // equal exactly what PayrollComputationService treats as the taxable base, so Item 24 and
+        // Item 25A can only diverge because withholding was genuinely wrong - never because the
+        // certificate omitted income.
+        result.Item52_TotalTaxableCompensation.Should().Be(
+            20_000m + 1_000m + 800m + 300m + 1_500m);
+    }
+
+    [Fact]
+    public async Task GetPreviewAsync_PutsNonTaxableAllowancesInTheNonTaxableSectionOnly()
+    {
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+            [
+                Entry(_employeeId, regularPay: 20_000m, nonTaxableAllowances: 2_000m)
+            ]));
+
+        var result = await _sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None);
+
+        result.Should().NotBeNull();
+
+        // Lands in Section A (non-taxable) ...
+        result!.Item37_SalariesOtherForms.Should().Be(2_000m);
+        result.Item38_TotalNonTaxable.Should().Be(2_000m);
+
+        // ... and does NOT inflate taxable compensation.
+        result.Item52_TotalTaxableCompensation.Should().Be(20_000m);
+    }
+
+    [Fact]
     public async Task GetPreviewAsync_ExcludesRunsThatAreNotPaid()
     {
         // Only Paid counts. ComputeAsync resets a run to Draft on every recompute, and Approved
@@ -332,7 +387,11 @@ public class Bir2316ServiceTests
         decimal sss = 0m,
         decimal philHealth = 0m,
         decimal pagIbig = 0m,
-        decimal thirteenthMonth = 0m)
+        decimal thirteenthMonth = 0m,
+        decimal holidayPay = 0m,
+        decimal nightDiffPay = 0m,
+        decimal taxableAllowances = 0m,
+        decimal nonTaxableAllowances = 0m)
         => new()
         {
             EmployeeId = employeeId,
@@ -342,7 +401,11 @@ public class Bir2316ServiceTests
             SSSEmployee = sss,
             PhilHealthEmployee = philHealth,
             PagIbigEmployee = pagIbig,
-            ThirteenthMonth = thirteenthMonth
+            ThirteenthMonth = thirteenthMonth,
+            HolidayPay = holidayPay,
+            NightDiffPay = nightDiffPay,
+            TaxableAllowances = taxableAllowances,
+            NonTaxableAllowances = nonTaxableAllowances
         };
 
     private Employee TheEmployee()
