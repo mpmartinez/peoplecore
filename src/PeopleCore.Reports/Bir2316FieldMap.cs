@@ -32,6 +32,17 @@ internal static class Bir2316FieldMap
 
     internal readonly record struct Field(double X, double Y, Align Align = Align.Left);
 
+    /// <summary>
+    /// One run of individual digit cells: <c>Count</c> boxes of equal width <c>Advance</c>,
+    /// starting at box-left edge <c>X</c>, all on baseline <c>Y</c>. <see cref="Bir2316Stamper"/>
+    /// draws digit <c>i</c> at <c>X + i * Advance</c> rather than drawing the whole string as one
+    /// run, so each character lands inside its own printed cell instead of straddling the cell
+    /// dividers. Only digit characters are drawn - separators (TIN's printed dashes, DOB's/
+    /// Contact Number's slashes) are stripped from the source string before laying out cells, not
+    /// drawn as their own cell, because the form prints those separators itself.
+    /// </summary>
+    internal readonly record struct DigitField(double X, double Y, double Advance, int Count);
+
     // ── Header ──────────────────────────────────────────────────────────────────────────────
 
     // "1 For the Year" at x=39.8 y=835.8; the year box (124.8-195.7, 826.6-841.7) brackets that
@@ -46,9 +57,10 @@ internal static class Bir2316FieldMap
 
     // ── Part I - Employee Information ──────────────────────────────────────────────────────
 
-    // "3 TIN" at x=39.8 y=807.2 - same baseline, right of the caption. The TIN digit-cell group
-    // (identical layout is reused for items 12 and 16) starts at x=86.2; 95 clears the caption.
-    internal static readonly Field EmployeeTin = new(95, 807);
+    // "3 TIN" at x=39.8 y=807.2 - the digit-cell group (identical layout reused for items 12 and
+    // 16) starts at x=86.2, same baseline. See TinGroups' own comment for how the four cell
+    // groups (3-3-3-5, pdfplumber-derived) were measured.
+    internal static readonly DigitField[] EmployeeTinDigits = TinGroups(807);
 
     // "4 Employee's Name (Last Name, First Name, Middle Name)" at y=788.6 - written on the ruled
     // line below it (box 42.2-253.6, 772.5-787.5), not beside it. LastName/FirstName/MiddleName
@@ -73,11 +85,18 @@ internal static class Bir2316FieldMap
     // "6D Foreign Address" at y=709.8 - line below, box 42.6-309.4, 693.6-708.6.
     internal static readonly Field ForeignAddress = new(46, 698);
 
-    // "7 Date of Birth (MM/DD/YYYY)" at y=682.5 - line below, digit cells 46.9-147.6, 667.3-681.9.
-    internal static readonly Field DateOfBirth = new(50, 671);
+    // "7 Date of Birth (MM/DD/YYYY)" at y=682.5 - line below; digit cells 46.9-147.6, 667.3-681.9,
+    // pdfplumber's page.lines shows 8 equal-width cells (three full-height dividers, one short
+    // tick per half - decorative alternation, not a MM/DD/YYYY grouping boundary: the dividers do
+    // not fall at the 2/2/4 split a literal MM|DD|YYYY grouping would need). Cell width
+    // (147.59-46.89)/8 = 12.5875. The slashes in the label are not printed again inside the box,
+    // so all 8 digits of "01151990" (slashes stripped) fill the 8 cells contiguously.
+    internal static readonly DigitField[] DateOfBirthDigits = [new(50.96, 671, 12.5875, 8)];
 
-    // "8 Contact Number" at y=682.5, same row - line below, box 167.2-309.4, 666.9-681.8.
-    internal static readonly Field ContactNumber = new(170, 671);
+    // "8 Contact Number" at y=682.5, same row - line below; box 167.2-309.4, 666.9-681.8, 10
+    // internal ticks -> 11 equal digit cells, width 142.19/11 = 12.9264. Matches an 11-digit PH
+    // mobile number ("09171234567") filling every cell with no separator to skip.
+    internal static readonly DigitField[] ContactNumberDigits = [new(171.47, 671, 12.9264, 11)];
 
     // "9 Statutory Minimum Wage rate per day" at y=653.7 - the box (209.9-308.6, 648.9-663.7)
     // brackets that baseline, so this sits beside the caption on the same line, like the money
@@ -95,7 +114,7 @@ internal static class Bir2316FieldMap
     // ── Part II - Employer Information (Present) ───────────────────────────────────────────
 
     // "12 TIN" at y=594.7 - same TIN digit-cell layout as item 3, starting at x=86.2.
-    internal static readonly Field EmployerTin = new(95, 595);
+    internal static readonly DigitField[] EmployerTinDigits = TinGroups(595);
 
     // "13 Employer's Name" at y=575.8 - line below, box 42.2-308.4, 560.0-575.0.
     internal static readonly Field EmployerName = new(45, 564);
@@ -116,7 +135,7 @@ internal static class Bir2316FieldMap
     // ── Part III - Employer Information (Previous) ─────────────────────────────────────────
 
     // "16 TIN" at y=498.5 - same TIN digit-cell layout, starting at x=86.2.
-    internal static readonly Field PrevEmployerTin = new(95, 499);
+    internal static readonly DigitField[] PrevEmployerTinDigits = TinGroups(499);
 
     // "17 Employer's Name" at y=479.7 - line below, box 42.2-308.4, 463.9-478.9.
     internal static readonly Field PrevEmployerName = new(45, 468);
@@ -274,4 +293,34 @@ internal static class Bir2316FieldMap
     // "52 Total Taxable Compensation Income (Sum of Items 39 to 51B)" baseline y=262.6; box
     // 483.8-585.6, 254.3-268.6.
     internal static readonly Field Item52_TotalTaxableCompensation = new(579, 263, Align.Right);
+
+    // ── TIN digit-cell layout (items 3, 12, 16 - Task 3's per-digit fix) ───────────────────────
+
+    /// <summary>
+    /// The TIN row's four digit-cell groups ("___-___-___-_____" as printed, 3+3+3+5=14 digit
+    /// cells separated by three printed dashes that this map does not draw over), at the given
+    /// baseline <paramref name="y"/>. Read from pdfplumber's <c>page.rects</c>/<c>page.lines</c>
+    /// against the item 3 row (see the Task 3 report for the full readings) and reused as-is for
+    /// items 12 and 16, which share the identical box layout at a different row.
+    /// <para>
+    /// Group boxes: 86.24-124.15, 135.90-173.80, 185.60-223.50 (three 3-digit groups, each 37.91
+    /// wide / 3 = 12.637 per cell - confirmed by two internal tick marks evenly splitting each);
+    /// 235.22-306.07 (one 5-digit group, 70.85 wide / 5 = 14.17 per cell - confirmed by four
+    /// internal ticks). The dash cells between groups (124.15-135.88 etc.) are excluded entirely:
+    /// nothing is ever drawn there, since the form already prints the dash.
+    /// </para>
+    /// <para>
+    /// Each group's starting X is its box's left edge plus a fixed margin
+    /// (<c>(cellWidth - digitWidth) / 2</c>, using Arial's 0.556em digit advance width at 8pt
+    /// ≈ 4.45pt) so a single digit centers in its cell rather than hugging the left divider -
+    /// verified against the rendered output in Task 3's by-eye pass.
+    /// </para>
+    /// </summary>
+    internal static DigitField[] TinGroups(double y) =>
+    [
+        new(90.33, y, 12.637, 3),
+        new(139.99, y, 12.637, 3),
+        new(189.69, y, 12.637, 3),
+        new(240.08, y, 14.17, 5),
+    ];
 }

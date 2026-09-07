@@ -10,14 +10,14 @@ namespace PeopleCore.Reports;
 
 /// <summary>
 /// Stamps a <see cref="Bir2316Dto"/> onto the Bureau's own BIR Form 2316 PDF rather than
-/// redrawing the form from scratch, as <see cref="Bir2316Document"/> (QuestPDF) does today.
+/// redrawing the form from scratch, the way the retired QuestPDF <c>Bir2316Document</c> used to.
 /// <para>
 /// The official form ships with no AcroForm fields — <c>get_fields()</c> on the source PDF
 /// returns none — so it cannot be filled the way a normal PDF form is; every value has to be
 /// drawn onto the page at an absolute coordinate with <see cref="XGraphics"/>, the same way you'd
 /// line up a typewriter over pre-printed stock. <see cref="Bir2316FieldMap"/> supplies every one
-/// of those coordinates, derived from the blank form itself; Task 3 retires
-/// <see cref="Bir2316Renderer"/> and <see cref="Bir2316Document"/> in favor of this class.
+/// of those coordinates, derived from the blank form itself; <see cref="Bir2316Renderer"/> calls
+/// into this class rather than QuestPDF.
 /// </para>
 /// <para>
 /// <see cref="XGraphics.FromPdfPage(PdfPage)"/> uses a top-left, Y-down coordinate space (the same
@@ -83,13 +83,50 @@ public sealed class Bir2316Stamper
             gfx.DrawString(text, font, XBrushes.Black, new XPoint(x, pageHeight - field.Y));
         }
 
+        // Draws only the digit characters of `raw` into a run of per-digit cells (see
+        // Bir2316FieldMap.DigitField), one character per cell at `X + i * Advance`, instead of
+        // one continuous string across the whole row. This is the Task 3 fix for TIN (items 3,
+        // 12, 16 - four cell groups, taken in order) and Date of Birth / Contact Number (a single
+        // group each): the pre-Task-3 stamper drew those as one string, which visually collided
+        // with the form's own printed cell dividers. Non-digit characters (TIN's dashes, DOB's
+        // slashes) are stripped before laying out cells - the form already prints its own
+        // separators between the digit cells, so nothing needs to be drawn there. If `raw` has
+        // fewer digits than the cells provide, the trailing cells are simply left blank; if it has
+        // more, the excess is silently dropped rather than overflowing into the next field - a
+        // TIN or phone number longer than the form's boxes is a data problem this stamper cannot
+        // fix by drawing off the box.
+        void DrawDigits(IReadOnlyList<Bir2316FieldMap.DigitField> groups, string? raw)
+        {
+            if (string.IsNullOrEmpty(raw)) return;
+
+            var digits = new string(raw.Where(char.IsDigit).ToArray());
+            if (digits.Length == 0) return;
+
+            var pos = 0;
+            foreach (var group in groups)
+            {
+                var remaining = digits.Length - pos;
+                if (remaining <= 0) break;
+
+                var take = Math.Min(remaining, group.Count);
+                for (var i = 0; i < take; i++)
+                {
+                    var x = group.X + i * group.Advance;
+                    gfx.DrawString(digits[pos + i].ToString(), font, XBrushes.Black,
+                        new XPoint(x, pageHeight - group.Y));
+                }
+
+                pos += take;
+            }
+        }
+
         // Header
         Draw(Bir2316FieldMap.Year, dto.Year.ToString(CultureInfo.InvariantCulture));
         Draw(Bir2316FieldMap.PeriodFrom, dto.PeriodFrom);
         Draw(Bir2316FieldMap.PeriodTo, dto.PeriodTo);
 
         // Part I - Employee Information
-        Draw(Bir2316FieldMap.EmployeeTin, dto.EmployeeTin);
+        DrawDigits(Bir2316FieldMap.EmployeeTinDigits, dto.EmployeeTin);
         Draw(Bir2316FieldMap.EmployeeName,
             $"{dto.EmployeeLastName}, {dto.EmployeeFirstName} {dto.EmployeeMiddleName}".TrimEnd());
         Draw(Bir2316FieldMap.RdoCode, dto.RdoCode);
@@ -98,21 +135,21 @@ public sealed class Bir2316Stamper
         Draw(Bir2316FieldMap.LocalHomeAddress, dto.LocalHomeAddress);
         Draw(Bir2316FieldMap.LocalZipCode, dto.LocalZipCode);
         Draw(Bir2316FieldMap.ForeignAddress, dto.ForeignAddress);
-        Draw(Bir2316FieldMap.DateOfBirth, dto.DateOfBirth);
-        Draw(Bir2316FieldMap.ContactNumber, dto.ContactNumber);
+        DrawDigits(Bir2316FieldMap.DateOfBirthDigits, dto.DateOfBirth);
+        DrawDigits(Bir2316FieldMap.ContactNumberDigits, dto.ContactNumber);
         Draw(Bir2316FieldMap.StatutoryMinWagePerDay, Money(dto.StatutoryMinWagePerDay));
         Draw(Bir2316FieldMap.StatutoryMinWagePerMonth, Money(dto.StatutoryMinWagePerMonth));
         if (dto.IsMinimumWageEarner) Draw(Bir2316FieldMap.MinimumWageEarnerCheckbox, "X");
 
         // Part II - Employer Information (Present)
-        Draw(Bir2316FieldMap.EmployerTin, dto.EmployerTin);
+        DrawDigits(Bir2316FieldMap.EmployerTinDigits, dto.EmployerTin);
         Draw(Bir2316FieldMap.EmployerName, dto.EmployerName);
         Draw(Bir2316FieldMap.EmployerAddress, dto.EmployerAddress);
         Draw(Bir2316FieldMap.EmployerZipCode, dto.EmployerZipCode);
         Draw(dto.IsMainEmployer ? Bir2316FieldMap.MainEmployerCheckbox : Bir2316FieldMap.SecondaryEmployerCheckbox, "X");
 
         // Part III - Employer Information (Previous)
-        Draw(Bir2316FieldMap.PrevEmployerTin, dto.PrevEmployerTin);
+        DrawDigits(Bir2316FieldMap.PrevEmployerTinDigits, dto.PrevEmployerTin);
         Draw(Bir2316FieldMap.PrevEmployerName, dto.PrevEmployerName);
         Draw(Bir2316FieldMap.PrevEmployerAddress, dto.PrevEmployerAddress);
         Draw(Bir2316FieldMap.PrevEmployerZipCode, dto.PrevEmployerZipCode);
