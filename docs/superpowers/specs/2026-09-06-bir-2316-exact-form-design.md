@@ -83,8 +83,16 @@ byte count:
 - A money figure lands in the right column — assert the extracted text run's x-coordinate falls
   within the amount column's bounds, so a value stamped into the wrong box fails.
 - The output page is 612 × 936, guarding the size defect that prompted this work.
-- Output is deterministic: rendering the same DTO twice yields identical bytes, proving font
-  resolution is not machine-dependent.
+- Rendering the same DTO twice produces identical *content*: the same positioned text runs,
+  extracted from the content stream, in the same order at the same coordinates. Byte identity is
+  deliberately NOT required — PDFsharp legitimately varies the embedded font's subset tag and the
+  XMP metadata's DocumentID/InstanceID UUIDs on every `Save`, and font subset tags are required by
+  the PDF spec to be unique per subset, so forcing them to a fixed value would make the file
+  technically malformed. An earlier attempt at byte identity papered over this by rewriting the
+  saved PDF bytes after the fact (regex surgery on a tax certificate's raw bytes to normalize the
+  varying fields) — that rewriting has been removed; what is asserted instead is what actually
+  matters, that font resolution is not machine-dependent and produces the same glyphs at the same
+  positions.
 - The existing `Bir2316ServiceTests` are untouched — this changes rendering, not aggregation.
 
 Visual confirmation is still required once, against the official form, because no automated test
@@ -107,7 +115,10 @@ year being certified — out of scope here, but the naming leaves room for it.
 1. Generated output is the official form with values on it, at 612 × 936 points.
 2. Every figure the service computes appears in the output, asserted by test.
 3. Money figures land in the amount column, asserted by coordinate.
-4. Rendering the same certificate twice produces identical bytes.
+4. Rendering the same certificate twice produces identical *content* — the same positioned text
+   runs — not identical bytes; PDFsharp legitimately varies the embedded font's subset tag and
+   the XMP metadata's UUIDs on every `Save`, so byte identity was rejected as a goal (an earlier
+   attempt at it drove regex surgery over a tax certificate's saved bytes, which has been removed).
 5. `Bir2316Document` and its QuestPDF test are gone; `PayslipDocument` still renders.
 6. `Bir2316Service`, the controller, the client and the page are unchanged.
 7. `dotnet build` is clean and the full suite is green.
