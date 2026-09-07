@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Domain.Entities.Payroll;
+using PeopleCore.Domain.Enums;
 using PeopleCore.Infrastructure.Persistence;
 
 namespace PeopleCore.Infrastructure.Persistence.Repositories;
@@ -24,6 +25,24 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
             .Where(r => r.Employees.Any(e => e.EmployeeId == employeeId))
             .Include(r => r.Employees)
             .OrderByDescending(r => r.PayDate)
+            .ToListAsync(ct);
+
+    public async Task<IReadOnlyList<int>> GetPaidYearsForEmployeeAsync(Guid employeeId, CancellationToken ct = default)
+        => await Context.PayrollRuns
+            .Where(r => r.Status == PayrollRunStatus.Paid && r.Employees.Any(e => e.EmployeeId == employeeId))
+            .Select(r => r.PayDate.Year)
+            .Distinct()
+            .OrderByDescending(y => y)
+            .ToListAsync(ct);
+
+    public async Task<IReadOnlyList<PayrollRun>> GetPaidRunsForEmployeeInYearAsync(
+        Guid employeeId, int year, CancellationToken ct = default)
+        => await Context.PayrollRuns
+            .Where(r => r.Status == PayrollRunStatus.Paid
+                        && r.PayDate.Year == year
+                        && r.Employees.Any(e => e.EmployeeId == employeeId))
+            .Include(r => r.Employees)
+            .OrderBy(r => r.PayDate)
             .ToListAsync(ct);
 
     public async Task<(IReadOnlyList<PayrollRun> Items, int TotalCount)> GetPagedAsync(

@@ -48,4 +48,28 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     /// ever widened to eager-load more per entry.
     /// </summary>
     Task<IReadOnlyList<PayrollRun>> GetRunsForEmployeeAsync(Guid employeeId, CancellationToken ct = default);
+
+    /// <summary>
+    /// The calendar years in which the employee appears in at least one <see cref="Domain.Enums.PayrollRunStatus.Paid"/>
+    /// run, newest first, keyed on <see cref="PayrollRun.PayDate"/> rather than
+    /// <see cref="PayrollRun.PeriodStart"/>. BIR taxes compensation in the year it is PAID, so a
+    /// December-into-January period paid on 15 January is the later year's income - and in a
+    /// semi-monthly cycle that is the ordinary case, not an edge case.
+    /// </summary>
+    Task<IReadOnlyList<int>> GetPaidYearsForEmployeeAsync(Guid employeeId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Every <see cref="Domain.Enums.PayrollRunStatus.Paid"/> run the employee appears in whose
+    /// <see cref="PayrollRun.PayDate"/> falls in <paramref name="year"/>, oldest pay date first,
+    /// each loaded with its full <see cref="PayrollRun.Employees"/> list - the same shape, and for
+    /// the same reason, as <see cref="GetRunsForEmployeeAsync"/>: the caller picks out its own
+    /// entry, so a run object is never itself a channel for another employee's figures.
+    /// <para>
+    /// Only Paid runs are returned. A computed-but-unapproved run is not income yet, and
+    /// <c>PayrollRunService.ComputeAsync</c> resets a run to Draft on every recompute, so
+    /// admitting anything earlier would let a tax certificate move after it was issued.
+    /// </para>
+    /// </summary>
+    Task<IReadOnlyList<PayrollRun>> GetPaidRunsForEmployeeInYearAsync(
+        Guid employeeId, int year, CancellationToken ct = default);
 }

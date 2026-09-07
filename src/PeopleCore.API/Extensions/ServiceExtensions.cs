@@ -189,6 +189,7 @@ public static class ServiceExtensions
         services.AddScoped<IPayrollSettingsService, PayrollSettingsService>();
         services.AddScoped<IPayslipRenderer, PayslipRenderer>();
         services.AddScoped<IPayslipService, PayslipService>();
+        services.AddScoped<IBir2316Service, Bir2316Service>();
 
         // Payroll Export
         services.AddScoped<IPayrollExportService, PayrollExportService>();
