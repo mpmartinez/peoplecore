@@ -26,4 +26,14 @@ public interface IBir2316Service
     /// data - the same layering every other controller in this codebase already follows.
     /// </summary>
     Task<IReadOnlyList<Guid>> GetEmployeeIdsWithPaidRunsAsync(int year, CancellationToken ct = default);
+
+    /// <summary>
+    /// Every employee with at least one PAID run whose pay date falls in <paramref name="year"/>,
+    /// built with an empty <see cref="Bir2316ManualInputs"/> - the bulk equivalent of
+    /// <see cref="BuildAsync"/> for the "generate all" action. Fetches the year's paid runs once
+    /// and batches the employee lookup, rather than calling <see cref="BuildAsync"/> once per
+    /// employee, which would re-query and re-materialise every OTHER employee's entries on every
+    /// call.
+    /// </summary>
+    Task<IReadOnlyList<Bir2316Dto>> BuildAllAsync(int year, CancellationToken ct = default);
 }

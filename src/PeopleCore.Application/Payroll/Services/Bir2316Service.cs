@@ -4,6 +4,8 @@ using PeopleCore.Application.Organization.Interfaces;
 using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Domain.Entities.Employees;
+using PeopleCore.Domain.Entities.Organization;
+using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
 using PeopleCore.Domain.Payroll;
@@ -90,6 +92,89 @@ public class Bir2316Service : IBir2316Service
                 "No Company record is configured. The database seeder always creates one, so " +
                 "its absence means the database is misconfigured.");
 
+        return BuildDto(employee, company, runs, entries, year, manual);
+    }
+
+    /// <summary>
+    /// Every employee with a paid run in <paramref name="year"/>, built with an empty
+    /// <see cref="Bir2316ManualInputs"/> - the bulk equivalent of <see cref="BuildAsync"/> for
+    /// GenerateAll.
+    /// <para>
+    /// <see cref="BuildAsync"/> re-queries this employee's paid runs (with the same predicate
+    /// re-applied, plus a full 6-<c>Include</c> employee load and a company lookup) on every call,
+    /// which is fine once but is O(headcount) work when called in a loop: at real headcount that
+    /// is hundreds of queries, each materialising and discarding every OTHER employee's entries
+    /// out of the run. This method instead fetches the year's paid runs ONCE, groups their entries
+    /// by employee, batch-loads the employees that actually have one, and looks the company up
+    /// once - four queries regardless of headcount instead of roughly three times the employee
+    /// count.
+    /// </para>
+    /// </summary>
+    public async Task<IReadOnlyList<Bir2316Dto>> BuildAllAsync(int year, CancellationToken ct = default)
+    {
+        // Ordered by last name then first name (GetEmployeeIdsWithPaidRunsInYearAsync's remarks)
+        // so a merged PDF's page order is deterministic and two exports for the same year are
+        // comparable. This also fixes the set and the order of who gets built; the runs query
+        // below only supplies each employee's entries.
+        var employeeIds = await _runRepo.GetEmployeeIdsWithPaidRunsInYearAsync(year, ct);
+        if (employeeIds.Count == 0)
+            return [];
+
+        // Same Paid/PayDate.Year predicate as BuildAsync, re-applied for the same reason: it is
+        // what makes the certificate right, so it belongs somewhere that cannot be silently
+        // widened by a future change to the repository query.
+        var runs = (await _runRepo.GetPaidRunsInYearAsync(year, ct))
+            .Where(r => r.Status == PayrollRunStatus.Paid && r.PayDate.Year == year)
+            .ToList();
+
+        var runsAndEntriesByEmployee = runs
+            .SelectMany(r => r.Employees.Select(e => (Run: r, Entry: e)))
+            .GroupBy(x => x.Entry.EmployeeId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var employeesById = (await _employeeRepo.GetByIdsAsync(employeeIds, ct))
+            .ToDictionary(e => e.Id);
+
+        var company = await _companyRepo.GetDefaultAsync(ct)
+            ?? throw new DomainException(
+                "No Company record is configured. The database seeder always creates one, so " +
+                "its absence means the database is misconfigured.");
+
+        var forms = new List<Bir2316Dto>(employeeIds.Count);
+        foreach (var employeeId in employeeIds)
+        {
+            // Both come from the same Paid/PayDate.Year query that produced employeeIds, so a
+            // miss here would mean the two repository calls disagree - it should not happen, but
+            // skipping rather than throwing keeps one inconsistent record from failing everyone
+            // else's certificate in the same bulk run.
+            if (!runsAndEntriesByEmployee.TryGetValue(employeeId, out var runsAndEntries)
+                || !employeesById.TryGetValue(employeeId, out var employee))
+                continue;
+
+            var employeeRuns = runsAndEntries.Select(x => x.Run).Distinct().ToList();
+            var employeeEntries = runsAndEntries.Select(x => x.Entry).ToList();
+
+            forms.Add(BuildDto(employee, company, employeeRuns, employeeEntries, year, new Bir2316ManualInputs()));
+        }
+
+        return forms;
+    }
+
+    /// <summary>
+    /// Builds the DTO from an employee's already-fetched runs and entries for the year - the
+    /// aggregation shared by <see cref="BuildAsync"/> (one employee, its own queries) and
+    /// <see cref="BuildAllAsync"/> (every employee, one shared query). Neither queries nor the
+    /// "no entries" / "no company" checks belong here: both callers already did those before this
+    /// point, for reasons specific to how each one fetches its data.
+    /// </summary>
+    private static Bir2316Dto BuildDto(
+        Employee employee,
+        Company company,
+        IReadOnlyList<PayrollRun> runs,
+        IReadOnlyList<PayrollRunEmployee> entries,
+        int year,
+        Bir2316ManualInputs manual)
+    {
         decimal thirteenthMonthTotal = entries.Sum(e => e.ThirteenthMonth);
         decimal thirteenthMonthNonTaxable = Math.Min(thirteenthMonthTotal, StatutoryCaps.ThirteenthMonthExemption);
         decimal thirteenthMonthTaxable = Math.Max(0m, thirteenthMonthTotal - StatutoryCaps.ThirteenthMonthExemption);

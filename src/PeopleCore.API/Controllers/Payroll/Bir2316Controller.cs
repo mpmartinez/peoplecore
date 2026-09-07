@@ -87,19 +87,18 @@ public class Bir2316Controller : ControllerBase
     /// manual fields (a previous employer, a PERA credit) are per-employee facts nobody has
     /// supplied yet in a bulk run, so they come back blank here exactly as they do from
     /// <see cref="GetPreview"/> - not omitted, not guessed.
+    /// <para>
+    /// Delegates the whole build to <see cref="IBir2316Service.BuildAllAsync"/> rather than
+    /// looping <see cref="Generate"/>'s per-employee <c>BuildAsync</c> here: that loop would
+    /// re-query and re-materialise every OTHER employee's entries out of the year's runs once per
+    /// employee, which is fine at demo headcount and a timeout at real headcount. The controller
+    /// stays a thin dispatch to Application either way.
+    /// </para>
     /// </summary>
     [HttpPost("generate-all")]
     public async Task<IActionResult> GenerateAll([FromQuery] int year, CancellationToken ct = default)
     {
-        var employeeIds = await _service.GetEmployeeIdsWithPaidRunsAsync(year, ct);
-
-        var forms = new List<Bir2316Dto>();
-        foreach (var employeeId in employeeIds)
-        {
-            var dto = await _service.BuildAsync(employeeId, year, new Bir2316ManualInputs(), ct);
-            if (dto is not null)
-                forms.Add(dto);
-        }
+        var forms = await _service.BuildAllAsync(year, ct);
 
         // Mirrors PayslipService.GenerateForRunAsync's reasoning: QuestPDF's Document.Merge over
         // an empty sequence still "succeeds" with an empty byte array rather than throwing, which

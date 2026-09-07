@@ -75,13 +75,28 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
 
     /// <summary>
     /// Every distinct employee id appearing in a <see cref="Domain.Enums.PayrollRunStatus.Paid"/>
-    /// run whose <see cref="PayrollRun.PayDate"/> falls in <paramref name="year"/>. Backs
-    /// GenerateAll's "every employee's 2316 for the year" bulk action - the mirror image of
-    /// <see cref="GetPaidYearsForEmployeeAsync"/> (years for one employee) and
-    /// <see cref="GetPaidRunsForEmployeeInYearAsync"/> (runs for one employee in one year): this
-    /// one runs across employees instead of across years, but keeps the same Paid-only,
-    /// pay-date-year rule so a certificate can never be generated for an unapproved run's figures
-    /// or attributed to the wrong tax year.
+    /// run whose <see cref="PayrollRun.PayDate"/> falls in <paramref name="year"/>, ordered by the
+    /// employee's last name then first name. Backs GenerateAll's "every employee's 2316 for the
+    /// year" bulk action - the mirror image of <see cref="GetPaidYearsForEmployeeAsync"/> (years
+    /// for one employee) and <see cref="GetPaidRunsForEmployeeInYearAsync"/> (runs for one
+    /// employee in one year): this one runs across employees instead of across years, but keeps
+    /// the same Paid-only, pay-date-year rule so a certificate can never be generated for an
+    /// unapproved run's figures or attributed to the wrong tax year.
+    /// <para>
+    /// The name ordering is deliberate, not incidental: without it, a merged PDF's page order is
+    /// whatever order the database happens to return, and two exports of the same year are not
+    /// comparable page-for-page.
+    /// </para>
     /// </summary>
     Task<IReadOnlyList<Guid>> GetEmployeeIdsWithPaidRunsInYearAsync(int year, CancellationToken ct = default);
+
+    /// <summary>
+    /// Every <see cref="Domain.Enums.PayrollRunStatus.Paid"/> run whose <see cref="PayrollRun.PayDate"/>
+    /// falls in <paramref name="year"/>, across ALL employees, each loaded with its full
+    /// <see cref="PayrollRun.Employees"/> list. Backs <c>Bir2316Service.BuildAllAsync</c>: fetching
+    /// every employee's runs in one query and grouping the entries in memory is what lets a bulk
+    /// "generate all" run avoid re-querying (and re-materialising every OTHER employee's entries
+    /// out of) the same year's runs once per employee.
+    /// </summary>
+    Task<IReadOnlyList<PayrollRun>> GetPaidRunsInYearAsync(int year, CancellationToken ct = default);
 }

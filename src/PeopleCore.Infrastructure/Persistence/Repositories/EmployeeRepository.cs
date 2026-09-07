@@ -19,6 +19,18 @@ public class EmployeeRepository : Repository<Employee>, IEmployeeRepository
             .Include(e => e.Documents)
             .FirstOrDefaultAsync(e => e.Id == id, ct);
 
+    public async Task<IReadOnlyList<Employee>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default)
+    {
+        var idList = ids as ICollection<Guid> ?? ids.ToList();
+        if (idList.Count == 0)
+            return [];
+
+        return await Context.Employees
+            .Include(e => e.GovernmentIds)
+            .Where(e => idList.Contains(e.Id))
+            .ToListAsync(ct);
+    }
+
     public async Task<(IReadOnlyList<Employee> Items, int TotalCount)> GetPagedAsync(
         EmployeeFilterDto filter, CancellationToken ct = default)
     {

@@ -301,6 +301,60 @@ public class Bir2316ServiceTests
     }
 
     // ------------------------------------------------------------------
+    // BuildAllAsync — the bulk path behind GenerateAll
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task BuildAllAsync_BuildsOneCertificatePerEmployeeInTheOrderGiven()
+    {
+        // One run carries both employees' entries, the shape GetPaidRunsInYearAsync actually
+        // returns - BuildAllAsync has to split it back out per employee itself, the same as
+        // BuildAsync already does for a single employee's runs.
+        var run = Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+        [
+            Entry(_otherEmployeeId, regularPay: 15_000m, withholdingTax: 800m),
+            Entry(_employeeId, regularPay: 30_000m, withholdingTax: 2_000m)
+        ]);
+
+        // GetEmployeeIdsWithPaidRunsInYearAsync is ordered by last name then first name; put the
+        // "other" employee first here to prove BuildAllAsync preserves that order rather than,
+        // say, the order entries happen to appear inside the run.
+        PaidRunsInYearAre([_otherEmployeeId, _employeeId], run);
+        EmployeesAre(
+            AnEmployee(_otherEmployeeId, "Reyes", "Ana"),
+            TheEmployee());
+
+        var result = await _sut.BuildAllAsync(2026, CancellationToken.None);
+
+        result.Should().HaveCount(2);
+        result[0].EmployeeLastName.Should().Be("Reyes");
+        result[0].Item39_BasicSalary.Should().Be(15_000m);
+        result[0].Item25A_PresentTaxWithheld.Should().Be(800m);
+        result[1].EmployeeLastName.Should().Be("Dela Cruz");
+        result[1].Item39_BasicSalary.Should().Be(30_000m);
+
+        // Every certificate is built with an empty manual overlay, same as GetPreviewAsync -
+        // nobody has supplied per-employee facts yet in a bulk run.
+        result[0].PrevEmployerName.Should().BeEmpty();
+        result[0].Item27_PeraTaxCredit.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task BuildAllAsync_WhenNoEmployeeHasAPaidRunInTheYear_ReturnsEmptyWithoutFurtherQueries()
+    {
+        PaidRunsInYearAre([]);
+
+        var result = await _sut.BuildAllAsync(2026, CancellationToken.None);
+
+        result.Should().BeEmpty();
+
+        // Nothing else needed querying once the employee-id set came back empty - the whole
+        // point of fetching it first.
+        _runRepo.Verify(r => r.GetPaidRunsInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _employeeRepo.Verify(r => r.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ------------------------------------------------------------------
     // Identity
     // ------------------------------------------------------------------
 
@@ -360,6 +414,32 @@ public class Bir2316ServiceTests
             .Setup(r => r.GetPaidRunsForEmployeeInYearAsync(
                 _employeeId, It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(runs);
+
+    /// <summary>
+    /// Stubs the two repository calls BuildAllAsync makes for the bulk path: the ordered
+    /// employee-id set, and the year's paid runs (for ANY year, for the same reason as
+    /// <see cref="PaidRunsAre"/>).
+    /// </summary>
+    private void PaidRunsInYearAre(IReadOnlyList<Guid> employeeIds, params PayrollRun[] runs)
+    {
+        _runRepo.Setup(r => r.GetEmployeeIdsWithPaidRunsInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(employeeIds);
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(runs);
+    }
+
+    private void EmployeesAre(params Employee[] employees)
+        => _employeeRepo.Setup(r => r.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+                        .ReturnsAsync(employees);
+
+    private static Employee AnEmployee(Guid id, string lastName, string firstName) => new()
+    {
+        Id = id,
+        EmployeeNumber = $"EMP-{id:N}"[..10],
+        FirstName = firstName,
+        LastName = lastName,
+        DateOfBirth = new DateOnly(1990, 1, 1)
+    };
 
     private static PayrollRun Run(
         DateOnly payDate,
