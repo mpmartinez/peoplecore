@@ -3,6 +3,7 @@ using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Organization.Interfaces;
 using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.Interfaces;
+using PeopleCore.Application.Payroll.Validation;
 using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Organization;
 using PeopleCore.Domain.Entities.Payroll;
@@ -63,6 +64,10 @@ public class Bir2316Service : IBir2316Service
     public async Task<Bir2316Dto?> BuildAsync(
         Guid employeeId, int year, Bir2316ManualInputs manual, CancellationToken ct = default)
     {
+        // Before the employee lookup on purpose: a malformed overlay is the caller's error either
+        // way, and rejecting it without a database round trip keeps the failure cheap.
+        Bir2316ManualInputsValidator.Validate(manual);
+
         var employee = await _employeeRepo.GetByIdAsync(employeeId, ct);
         if (employee is null)
             return null;

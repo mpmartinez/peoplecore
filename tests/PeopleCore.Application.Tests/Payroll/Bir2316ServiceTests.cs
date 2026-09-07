@@ -236,7 +236,7 @@ public class Bir2316ServiceTests
             PrevEmployerAddress = "1 Old Street, Makati City",
             PrevEmployerZipCode = "1200",
             Item22_PrevTaxableCompensation = 500_000m,
-            Item25B_PrevTaxWithheld = 999_999m,
+            Item25B_PrevTaxWithheld = 75_000m,
             Item35_DeMinimis = 7_000m,
             Item33_HazardPayMwe = 3_000m,
             Item27_PeraTaxCredit = 5_000m,
@@ -258,7 +258,7 @@ public class Bir2316ServiceTests
 
         // The manual half is overlaid exactly as supplied - that is what it is for.
         result.Item22_PrevTaxableCompensation.Should().Be(500_000m);
-        result.Item25B_PrevTaxWithheld.Should().Be(999_999m);
+        result.Item25B_PrevTaxWithheld.Should().Be(75_000m);
         result.Item35_DeMinimis.Should().Be(7_000m);
         result.Item33_HazardPayMwe.Should().Be(3_000m);
         result.Item27_PeraTaxCredit.Should().Be(5_000m);
@@ -272,11 +272,18 @@ public class Bir2316ServiceTests
 
         // Item 24 is the liability computed on Item 23, never the withheld total. Item 23 here is
         // 30,000 + 1,000 + 10,000 taxable 13th month + 500,000 previous = 541,000, so tax due is
-        // 22,500 + 20% of the 141,000 over 400,000 = 50,700 - nothing like the 1,004,320 withheld.
+        // 22,500 + 20% of the 141,000 over 400,000 = 50,700 - nothing like the 79,321 withheld.
+        //
+        // Item 25B was 999,999 when this test was written, to dramatise a caller stating an
+        // outlandish figure. That pair is impossible rather than merely large - no tax withheld
+        // can exceed the compensation it came from, and Bir2316ManualInputsValidator now rejects
+        // it - so the figure is a realistic 15% of Item 22. Nothing this test proves depended on
+        // the old value: Item 25B is a legitimately caller-supplied field and is overlaid as
+        // given, while the derived figure under test is Item 25A, which still comes off payroll.
         result.Item23_GrossTaxable.Should().Be(541_000m);
         result.Item24_TaxDue.Should().Be(50_700m);
         result.Item24_TaxDue.Should().Be(BirWithholdingTax.ComputeAnnualTaxDue(result.Item23_GrossTaxable));
-        result.Item26_TotalTaxWithheld.Should().Be(1_004_320m);
+        result.Item26_TotalTaxWithheld.Should().Be(79_321m);
         result.Item24_TaxDue.Should().NotBe(result.Item26_TotalTaxWithheld);
 
         // The type is the enforcement. Bir2316ManualInputs carries only what a human legitimately
