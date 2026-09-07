@@ -39,7 +39,7 @@ controllers.
 
 ## Approach
 
-**A real PostgreSQL instance per test run, via Testcontainers.**
+**A real PostgreSQL instance: the existing `m2net-postgres` container, on its own database.**
 
 The alternatives were considered and rejected for the same reason. The **EF Core InMemory
 provider** is not a relational database — no foreign keys, no constraints, and LINQ evaluated in
@@ -52,6 +52,31 @@ convention all behave differently, so a green test would not mean the production
 Since the value of these tests is almost entirely "does this query translate and return the right
 rows against the database we actually ship on", anything less than the real engine defeats the
 exercise.
+
+### The tests get their own database, not `peoplecore`
+
+`m2net-postgres` is a shared development server. It hosts **33 databases** — this project's
+`peoplecore`, and other projects' `spms_pg`, `maritimeone`, `ias_db`, `keycloak`,
+`arctic_document_management` and more. `peoplecore` itself holds live development data.
+
+This suite empties every mapped table before every test. Run against `peoplecore`, it would destroy
+that data on its first execution, silently and completely.
+
+So the harness creates its own database, `peoplecore_repotests`, migrates it, and drops it when the
+run ends. `ResetAsync` additionally reads the database name off the live connection and **refuses
+to truncate anything else** — a guard rather than a comment, because the cost of getting this wrong
+is somebody's afternoon and the failure would be invisible until they went looking for data that
+was no longer there.
+
+Connection details default to the local container and can be overridden with the
+`PEOPLECORE_TEST_POSTGRES` environment variable, so CI can point at its own server without an edit.
+
+### Why not Testcontainers
+
+An earlier draft of this design used Testcontainers to start a throwaway container per run. Using
+the container that already exists is simpler — no image pull, no package, no Docker API dependency
+in the test project — and it removes the open question that draft could not answer, because the
+version is no longer a guess.
 
 ### Schema comes from the migrations
 
@@ -94,8 +119,9 @@ and every test class in the collection shares it. `DatabaseTestBase` truncates b
 hands the test a fresh `AppDbContext`, because a context reused across a truncation would serve
 stale tracked entities.
 
-One new package: `Testcontainers.PostgreSql` 4.15.0. Entity Framework, Npgsql and
-`EFCore.NamingConventions` all arrive transitively from `PeopleCore.Infrastructure`.
+**No new package.** Entity Framework, Npgsql and `EFCore.NamingConventions` all arrive
+transitively from the `PeopleCore.Infrastructure` project reference, and Npgsql is what creates and
+drops the test database.
 
 The project must be added to `PeopleCore.slnx` under the existing `/tests/` folder, or
 `dotnet test` will not discover it.
@@ -134,27 +160,27 @@ the timestamps stamped and the user columns null rather than throwing.
 
 ## Risks
 
-**CI needs Docker.** These tests cannot run without a container runtime. A CI environment without
-Docker will fail the whole suite rather than skip these — which is the correct behaviour, since
-silently skipping the only tests that touch the database would be worse, but it must be a
-deliberate decision rather than a surprise.
+**The tests need a reachable PostgreSQL.** They fail rather than skip when one is absent, which is
+the correct behaviour — silently skipping the only tests that touch a database would be worse — but
+it must be a deliberate decision rather than a surprise. CI points at its own server through
+`PEOPLECORE_TEST_POSTGRES`.
+
+**The suite is destructive by design.** It truncates every table in whatever database it connects
+to. That is why it creates its own, and why `ResetAsync` verifies the database name before issuing
+a single `TRUNCATE`. Anyone changing the connection string should read that guard first.
 
 **A full solution run gets slower** by roughly the container's startup. The separate project is the
 mitigation: the 359-test Application suite still runs on its own in about a second.
 
-**Testcontainers pulls a Postgres image.** The first run on a new machine downloads it.
-
-The image tag is pinned to `postgres:17-alpine`, and this is a choice rather than a match: the
-repository records no production PostgreSQL version anywhere - no compose file, no Dockerfile, and
-a connection string pointing at `Host=localhost`. So the tests pin a current stable major and say
-so, rather than claiming a fidelity that cannot be checked. If production runs a different major,
-change the tag here - that is the point of pinning it in one place, and it is worth confirming
-before these tests are trusted as a deployment gate.
+**The PostgreSQL version is now known rather than assumed.** An earlier draft had to pin a guessed
+image tag, because nothing in this repository records a version. Running against `m2net-postgres`
+settles it: **PostgreSQL 18.1**, the same server the application develops against.
 
 ## Acceptance criteria
 
 1. `tests/PeopleCore.Infrastructure.Tests` exists, is listed in `PeopleCore.slnx`, and runs against
-   a Testcontainers PostgreSQL instance.
+   the `m2net-postgres` server on its own `peoplecore_repotests` database.
+1a. `ResetAsync` refuses to truncate any database other than `peoplecore_repotests`.
 2. The schema is created by `Database.MigrateAsync()`, so the migration chain is proven to apply.
 3. Each test starts from an empty database, with the truncation list derived from the model.
 4. Every `PayrollRunRepository` member has at least one test, including `ReplaceEntriesAsync`'s

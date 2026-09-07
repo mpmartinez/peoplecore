@@ -4,13 +4,14 @@
 
 **Goal:** Prove the payroll and 2316 repositories return the right rows from a real PostgreSQL database.
 
-**Architecture:** A new `tests/PeopleCore.Infrastructure.Tests` project. A Testcontainers PostgreSQL container starts once per run, the migration chain builds the schema, and every test truncates first so it starts from an empty database. All database test classes share one xUnit collection, which serialises them — they share one database and must not run concurrently.
+**Architecture:** A new `tests/PeopleCore.Infrastructure.Tests` project. It connects to the existing `m2net-postgres` server, creates its own `peoplecore_repotests` database, builds the schema by running the migration chain, and truncates before every test. The database is dropped when the run ends. All database test classes share one xUnit collection, which serialises them — they share one database and must not run concurrently.
 
-**Tech Stack:** .NET 10, xUnit 2.9.3, FluentAssertions 8.8.0, `Testcontainers.PostgreSql` 4.15.0, PostgreSQL 17 (alpine image), EF Core 10 + Npgsql.
+**Tech Stack:** .NET 10, xUnit 2.9.3, FluentAssertions 8.8.0, Moq 4.20.72, PostgreSQL 18.1 (the `m2net-postgres` container), EF Core 10 + Npgsql.
 
 ## Global Constraints
 
-- **One new package, in the new project only:** `Testcontainers.PostgreSql` 4.15.0. EF Core, Npgsql and `EFCore.NamingConventions` arrive transitively from the `PeopleCore.Infrastructure` project reference — do not add them explicitly.
+- **THE SUITE IS DESTRUCTIVE. It must only ever connect to `peoplecore_repotests`.** `m2net-postgres` hosts 33 databases — this project's own `peoplecore` (which holds live development data), plus `spms_pg`, `maritimeone`, `ias_db`, `keycloak` and others. Every test truncates every mapped table. Pointing this at `peoplecore` destroys that data silently. The harness creates and drops its own database, and `ResetAsync` verifies the connected database's name before issuing a `TRUNCATE`. Do not weaken that guard, and do not repoint the connection string at an existing database.
+- **No new package.** EF Core, Npgsql and `EFCore.NamingConventions` arrive transitively from the `PeopleCore.Infrastructure` project reference — do not add them explicitly. Moq is the one exception and is added in Task 4.
 - **xUnit 2, not 3.** `Xunit.IAsyncLifetime` here declares `Task InitializeAsync()` and `Task DisposeAsync()`. Writing `ValueTask` (the xUnit v3 signature) will not compile.
 - **Schema comes from `Database.MigrateAsync()`**, never `EnsureCreated()`. The tests must run against the schema the migrations produce, not one rebuilt from the model.
 - **The truncation list is derived from `Context.Model`**, never hardcoded. A hardcoded list silently stops truncating a table the day someone adds an entity.
@@ -52,7 +53,7 @@ Create `tests/PeopleCore.Infrastructure.Tests/PeopleCore.Infrastructure.Tests.cs
   <ItemGroup>
     <PackageReference Include="FluentAssertions" Version="8.8.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
-    <PackageReference Include="Testcontainers.PostgreSql" Version="4.15.0" />
+    <PackageReference Include="Moq" Version="4.20.72" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
@@ -85,35 +86,54 @@ Create `tests/PeopleCore.Infrastructure.Tests/PostgresFixture.cs`:
 
 ```csharp
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Infrastructure.Persistence;
-using Testcontainers.PostgreSql;
 
 namespace PeopleCore.Infrastructure.Tests;
 
 /// <summary>
-/// One PostgreSQL container for the whole test run.
+/// A dedicated database on the shared m2net-postgres server, created for the run and dropped after.
+/// <para>
+/// <b>This suite is destructive.</b> It truncates every mapped table before every test. The server
+/// it runs on hosts 33 databases - this project's own <c>peoplecore</c>, which holds live
+/// development data, alongside other projects' <c>spms_pg</c>, <c>maritimeone</c>, <c>ias_db</c> and
+/// <c>keycloak</c>. So the tests get their own database and never touch any of those, and
+/// <see cref="ResetAsync"/> checks the connected database's name before issuing a single TRUNCATE.
+/// A comment would not have been enough.
+/// </para>
 /// <para>
 /// The schema is built by running the migrations rather than by <c>EnsureCreated</c>, so the tests
 /// execute against the schema a deployment actually produces - and the migration chain gets its
 /// first automated proof that it applies to an empty database.
 /// </para>
-/// <para>
-/// The image tag is a choice, not a match: nothing in this repository records which PostgreSQL
-/// version production runs. Confirm that before these tests are trusted as a deployment gate.
-/// </para>
 /// </summary>
 public sealed class PostgresFixture : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _container = new PostgreSqlBuilder()
-        .WithImage("postgres:17-alpine")
-        .Build();
+    /// <summary>The only database this suite may ever connect to.</summary>
+    private const string TestDatabase = "peoplecore_repotests";
+
+    /// <summary>
+    /// Defaults to the local m2net-postgres container. CI overrides the host and credentials with
+    /// PEOPLECORE_TEST_POSTGRES, whose value is a connection string WITHOUT a Database - the
+    /// database name is this class's to choose, and letting it be configured is how the guard
+    /// above gets bypassed by accident.
+    /// </summary>
+    private static string ServerConnection =>
+        Environment.GetEnvironmentVariable("PEOPLECORE_TEST_POSTGRES")
+        ?? "Host=localhost;Port=5432;Username=postgres;Password=postgres";
 
     private string _truncateStatement = string.Empty;
 
+    private static string ConnectionFor(string database) =>
+        new NpgsqlConnectionStringBuilder(ServerConnection) { Database = database }.ConnectionString;
+
     public async Task InitializeAsync()
     {
-        await _container.StartAsync();
+        // Dropped first as well as last: an aborted run leaves the database behind, and starting
+        // from someone else's half-migrated schema is worse than starting from nothing.
+        await DropTestDatabaseAsync();
+        await ExecuteOnServerAsync($"CREATE DATABASE \"{TestDatabase}\";");
 
         await using var context = CreateContext();
         await context.Database.MigrateAsync();
@@ -126,7 +146,7 @@ public sealed class PostgresFixture : IAsyncLifetime
     public AppDbContext CreateContext(ICurrentUserService? currentUser)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(_container.GetConnectionString())
+            .UseNpgsql(ConnectionFor(TestDatabase))
             .UseSnakeCaseNamingConvention()
             .Options;
 
@@ -141,6 +161,17 @@ public sealed class PostgresFixture : IAsyncLifetime
     public async Task ResetAsync()
     {
         await using var context = CreateContext();
+
+        // Read off the live connection, not off a constant, so that repointing the connection
+        // string at a real database fails loudly here instead of emptying it.
+        var connected = context.Database.GetDbConnection().Database;
+        if (connected != TestDatabase)
+        {
+            throw new InvalidOperationException(
+                $"Refusing to truncate '{connected}'. This suite empties every table in the "
+                + $"database it connects to and must only ever run against '{TestDatabase}'.");
+        }
+
         await context.Database.ExecuteSqlRawAsync(_truncateStatement);
     }
 
@@ -161,7 +192,27 @@ public sealed class PostgresFixture : IAsyncLifetime
         return $"TRUNCATE TABLE {string.Join(", ", tables)} RESTART IDENTITY CASCADE;";
     }
 
-    public async Task DisposeAsync() => await _container.DisposeAsync();
+    // WITH (FORCE) terminates any session still holding the database open - without it, a leaked
+    // connection from a failed test makes the drop hang. Requires PostgreSQL 13 or later; the
+    // server is 18.1.
+    private static Task DropTestDatabaseAsync()
+        => ExecuteOnServerAsync($"DROP DATABASE IF EXISTS \"{TestDatabase}\" WITH (FORCE);");
+
+    private static async Task ExecuteOnServerAsync(string sql)
+    {
+        // CREATE DATABASE and DROP DATABASE cannot run inside a transaction, and EF opens one for
+        // ExecuteSqlRaw, so these go through Npgsql directly against the maintenance database.
+        await using var connection = new NpgsqlConnection(ConnectionFor("postgres"));
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    public async Task DisposeAsync()
+    {
+        NpgsqlConnection.ClearAllPools();
+        await DropTestDatabaseAsync();
+    }
 }
 
 /// <summary>
@@ -316,9 +367,20 @@ public class HarnessTests : DatabaseTestBase
 dotnet test tests/PeopleCore.Infrastructure.Tests/PeopleCore.Infrastructure.Tests.csproj
 ```
 
-Expected: `Passed! - Failed: 0, Passed: 3`. The first run pulls the `postgres:17-alpine` image, so allow several minutes; later runs start the container in seconds.
+Expected: `Passed! - Failed: 0, Passed: 3`.
 
-If this reports that Docker is unreachable, stop and report it — the harness cannot work without a container runtime, and there is no fallback that would still be testing what this exists to test.
+Before running, confirm the server is up and that the test database does not already exist:
+
+```bash
+docker exec m2net-postgres psql -U postgres -c "SELECT datname FROM pg_database WHERE datname IN ('peoplecore','peoplecore_repotests');"
+```
+
+That should list `peoplecore` and NOT `peoplecore_repotests`. If it lists the test database, a
+previous run aborted before dropping it — the fixture drops it on startup anyway, but seeing it
+there is worth a moment's attention.
+
+If the connection fails, stop and report it. There is no fallback that would still be testing what
+this exists to test.
 
 - [ ] **Step 7: Run the whole solution**
 
@@ -1134,6 +1196,9 @@ git commit -m "test(payroll): cover compensation, settings and audit stamping ag
 - [ ] `dotnet test PeopleCore.slnx` discovers two test projects and reports `Failed: 0`.
 - [ ] The Application project still reports 359 tests, and no existing test file was edited.
 - [ ] No file under `src/` was modified.
-- [ ] `Testcontainers.PostgreSql` and `Moq` are referenced only by the new test project.
+- [ ] `Moq` is the only package added, and only to the new test project.
+- [ ] `ResetAsync` reads the database name off the live connection and throws for anything other than `peoplecore_repotests`.
+- [ ] After a full run, `peoplecore` still holds its development rows — confirm with:
+      `docker exec m2net-postgres psql -U postgres -d peoplecore -t -c "SELECT count(*) FROM employees;"`
 - [ ] The schema is created by `MigrateAsync`; the string `EnsureCreated` appears nowhere.
 - [ ] The truncation list is built from `Context.Model`, with no table name written by hand.
