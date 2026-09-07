@@ -7,11 +7,17 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="PDFsharp" Version="6.2.4" />
     <PackageReference Include="QuestPDF" Version="2026.2.3" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\PeopleCore.Application\PeopleCore.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Forms\bir-2316-2021-encs.pdf" />
+    <EmbeddedResource Include="Fonts\*.ttf" />
   </ItemGroup>
 
 </Project>
