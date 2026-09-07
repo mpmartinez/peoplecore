@@ -1,5 +1,6 @@
 using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.Interfaces;
+using PeopleCore.Application.Payroll.Validation;
 using PeopleCore.Domain.Entities.Payroll;
 
 namespace PeopleCore.Application.Payroll.Services;
@@ -22,6 +23,8 @@ public class EmployeeCompensationService : IEmployeeCompensationService
     public async Task<EmployeeCompensationDto> UpsertAsync(
         Guid employeeId, UpsertCompensationRequest request, CancellationToken ct = default)
     {
+        CompensationValidator.Validate(request);
+
         var compensation = await _repo.GetByEmployeeIdAsync(employeeId, ct);
 
         if (compensation is null)
