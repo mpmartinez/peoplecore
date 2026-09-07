@@ -12,4 +12,11 @@ namespace PeopleCore.Application.Payroll.Interfaces;
 public interface IBir2316Renderer
 {
     byte[] Render(Bir2316Dto dto);
+
+    /// <summary>
+    /// Every form merged into one document, in the order given - the 2316 equivalent of
+    /// <see cref="IPayslipRenderer.RenderMerged"/>, for GenerateAll's "every employee's 2316 for
+    /// the year, in one PDF" use case.
+    /// </summary>
+    byte[] RenderMerged(IReadOnlyList<Bir2316Dto> forms);
 }

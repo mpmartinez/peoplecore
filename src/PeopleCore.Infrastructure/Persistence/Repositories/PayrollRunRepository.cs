@@ -45,6 +45,13 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
             .OrderBy(r => r.PayDate)
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyList<Guid>> GetEmployeeIdsWithPaidRunsInYearAsync(int year, CancellationToken ct = default)
+        => await Context.PayrollRuns
+            .Where(r => r.Status == PayrollRunStatus.Paid && r.PayDate.Year == year)
+            .SelectMany(r => r.Employees.Select(e => e.EmployeeId))
+            .Distinct()
+            .ToListAsync(ct);
+
     public async Task<(IReadOnlyList<PayrollRun> Items, int TotalCount)> GetPagedAsync(
         int page, int pageSize, CancellationToken ct = default)
     {

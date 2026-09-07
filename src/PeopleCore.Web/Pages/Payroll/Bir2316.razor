@@ -1,0 +1,407 @@
+@page "/bir-2316"
+@attribute [Authorize(Roles = "Admin,HRManager,PayrollService")]
+@inject ApiClient Api
+@inject IJSRuntime JS
+
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h2 class="text-2xl font-semibold text-foreground">BIR Form 2316</h2>
+        <p class="text-sm text-muted-foreground mt-1">Certificate of Compensation Payment / Tax Withheld</p>
+    </div>
+    @if (_selectedYear.HasValue)
+    {
+        <Button Variant="outline" OnClick="DownloadAll" Loading="@_downloadingAll" Disabled="@_downloadingAll">
+            <i class="bi bi-download mr-1"></i> Download all for @_selectedYear
+        </Button>
+    }
+</div>
+
+@if (_pageError is not null)
+{
+    <Alert Variant="destructive" Class="mb-4">@_pageError</Alert>
+}
+
+<Card Class="mb-6">
+    <CardContent Class="pt-6">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+                <Label For="employee" Required="true">Employee</Label>
+                @if (_loadingEmployees)
+                {
+                    <div class="mt-1"><Spinner Size="sm" /></div>
+                }
+                else
+                {
+                    <Select Id="employee" Value="@(_selectedEmployeeId?.ToString() ?? "")"
+                            ValueChanged="OnEmployeeChanged" Placeholder="Select an employee" Class="mt-1">
+                        @foreach (var e in _employees)
+                        {
+                            <option value="@e.Id">@e.FullName (@e.EmployeeNumber)</option>
+                        }
+                    </Select>
+                }
+            </div>
+            <div>
+                <Label For="year" Required="true">Year</Label>
+                @if (_loadingYears)
+                {
+                    <div class="mt-1"><Spinner Size="sm" /></div>
+                }
+                else if (_selectedEmployeeId is null)
+                {
+                    <div class="mt-1 text-sm text-muted-foreground py-2">Select an employee first.</div>
+                }
+                else if (_years.Count == 0)
+                {
+                    <div class="mt-1 text-sm text-muted-foreground py-2">No paid runs for this employee.</div>
+                }
+                else
+                {
+                    <Select Id="year" Value="@(_selectedYear?.ToString() ?? "")"
+                            ValueChanged="OnYearChanged" Class="mt-1">
+                        @foreach (var y in _years)
+                        {
+                            <option value="@y">@y</option>
+                        }
+                    </Select>
+                }
+            </div>
+        </div>
+    </CardContent>
+</Card>
+
+@if (_loadingPreview)
+{
+    <div class="p-6 flex justify-center"><Spinner /></div>
+}
+else if (_preview is not null)
+{
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+            <CardHeader>
+                <CardTitle>Derived figures</CardTitle>
+                <CardDescription>Computed from this employee's paid runs for @_preview.Year. Read-only: the server recomputes these at generation time and ignores anything submitted here.</CardDescription>
+            </CardHeader>
+            <CardContent Class="space-y-4">
+                <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                    <ReadOnlyField Label="Period" Value="@($"{_preview.PeriodFrom} - {_preview.PeriodTo}")" />
+                    <ReadOnlyField Label="TIN" Value="@_preview.EmployeeTin" />
+                    <ReadOnlyField Label="Employee" Value="@($"{_preview.EmployeeLastName}, {_preview.EmployeeFirstName} {_preview.EmployeeMiddleName}")" />
+                    <ReadOnlyField Label="RDO Code" Value="@_preview.RdoCode" />
+                </div>
+
+                <hr />
+
+                <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                    <ReadOnlyField Label="Item 39 - Basic Salary" Value="@Peso(_preview.Item39_BasicSalary)" />
+                    <ReadOnlyField Label="Item 50 - Overtime Pay" Value="@Peso(_preview.Item50_OvertimePay)" />
+                    <ReadOnlyField Label="Item 36 - SSS/PhilHealth/Pag-IBIG" Value="@Peso(_preview.Item36_SssPhicPagibigContributions)" />
+                    <ReadOnlyField Label="Item 34 - 13th Month (non-taxable)" Value="@Peso(_preview.Item34_ThirteenthMonthAndBenefits)" />
+                    <ReadOnlyField Label="Item 48 - 13th Month (taxable)" Value="@Peso(_preview.Item48_TaxableThirteenthMonth)" />
+                    <ReadOnlyField Label="Item 25A - Present Tax Withheld" Value="@Peso(_preview.Item25A_PresentTaxWithheld)" />
+                </div>
+
+                <hr />
+
+                <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                    <ReadOnlyField Label="Item 19 - Gross Compensation" Value="@Peso(_preview.Item19_GrossCompensation)" Bold="true" />
+                    <ReadOnlyField Label="Item 23 - Gross Taxable" Value="@Peso(_preview.Item23_GrossTaxable)" Bold="true" />
+                    <ReadOnlyField Label="Item 24 - Tax Due" Value="@Peso(_preview.Item24_TaxDue)" Bold="true" />
+                    <ReadOnlyField Label="Item 26 - Total Tax Withheld" Value="@Peso(_preview.Item26_TotalTaxWithheld)" Bold="true" />
+                </div>
+            </CardContent>
+        </Card>
+
+        <Card>
+            <CardHeader>
+                <CardTitle>Manual inputs</CardTitle>
+                <CardDescription>Facts payroll cannot derive: a previous employer this year, or a PERA tax credit. Everything else on the form comes from payroll and cannot be edited here.</CardDescription>
+            </CardHeader>
+            <CardContent Class="space-y-4">
+                <FormField LabelText="Previous employer TIN" Id="prevTin">
+                    <Input Id="prevTin" Type="text" Value="@_manual.PrevEmployerTin" ValueChanged="@(v => _manual.PrevEmployerTin = v)" />
+                </FormField>
+                <FormField LabelText="Previous employer name" Id="prevName">
+                    <Input Id="prevName" Type="text" Value="@_manual.PrevEmployerName" ValueChanged="@(v => _manual.PrevEmployerName = v)" />
+                </FormField>
+                <FormField LabelText="Previous employer address" Id="prevAddress">
+                    <Input Id="prevAddress" Type="text" Value="@_manual.PrevEmployerAddress" ValueChanged="@(v => _manual.PrevEmployerAddress = v)" />
+                </FormField>
+                <FormField LabelText="Previous employer zip code" Id="prevZip">
+                    <Input Id="prevZip" Type="text" Value="@_manual.PrevEmployerZipCode" ValueChanged="@(v => _manual.PrevEmployerZipCode = v)" />
+                </FormField>
+                <div class="grid grid-cols-2 gap-3">
+                    <FormField LabelText="Item 22 - Prev. taxable compensation" Id="item22">
+                        <Input Id="item22" Type="number" Step="0.01" Min="0"
+                               Value="@Dec(_manual.Item22_PrevTaxableCompensation)"
+                               ValueChanged="@(v => _manual.Item22_PrevTaxableCompensation = ParseDecimal(v))" />
+                    </FormField>
+                    <FormField LabelText="Item 25B - Prev. tax withheld" Id="item25b">
+                        <Input Id="item25b" Type="number" Step="0.01" Min="0"
+                               Value="@Dec(_manual.Item25B_PrevTaxWithheld)"
+                               ValueChanged="@(v => _manual.Item25B_PrevTaxWithheld = ParseDecimal(v))" />
+                    </FormField>
+                    <FormField LabelText="Item 27 - PERA tax credit" Id="item27">
+                        <Input Id="item27" Type="number" Step="0.01" Min="0"
+                               Value="@Dec(_manual.Item27_PeraTaxCredit)"
+                               ValueChanged="@(v => _manual.Item27_PeraTaxCredit = ParseDecimal(v))" />
+                    </FormField>
+                    <FormField LabelText="Item 35 - De minimis" Id="item35">
+                        <Input Id="item35" Type="number" Step="0.01" Min="0"
+                               Value="@Dec(_manual.Item35_DeMinimis)"
+                               ValueChanged="@(v => _manual.Item35_DeMinimis = ParseDecimal(v))" />
+                    </FormField>
+                    <FormField LabelText="Item 33 - Hazard pay (MWE)" Id="item33">
+                        <Input Id="item33" Type="number" Step="0.01" Min="0"
+                               Value="@Dec(_manual.Item33_HazardPayMwe)"
+                               ValueChanged="@(v => _manual.Item33_HazardPayMwe = ParseDecimal(v))" />
+                    </FormField>
+                </div>
+
+                <Checkbox Value="@_manual.IsMinimumWageEarner" ValueChanged="@(v => _manual.IsMinimumWageEarner = v)">
+                    Minimum wage earner
+                </Checkbox>
+
+                @if (_manual.IsMinimumWageEarner)
+                {
+                    <div class="grid grid-cols-2 gap-3">
+                        <FormField LabelText="Statutory min. wage / day" Id="minWageDay">
+                            <Input Id="minWageDay" Type="number" Step="0.01" Min="0"
+                                   Value="@Dec(_manual.StatutoryMinWagePerDay)"
+                                   ValueChanged="@(v => _manual.StatutoryMinWagePerDay = ParseDecimal(v))" />
+                        </FormField>
+                        <FormField LabelText="Statutory min. wage / month" Id="minWageMonth">
+                            <Input Id="minWageMonth" Type="number" Step="0.01" Min="0"
+                                   Value="@Dec(_manual.StatutoryMinWagePerMonth)"
+                                   ValueChanged="@(v => _manual.StatutoryMinWagePerMonth = ParseDecimal(v))" />
+                        </FormField>
+                    </div>
+                }
+
+                @if (_generateError is not null)
+                {
+                    <Alert Variant="destructive">@_generateError</Alert>
+                }
+            </CardContent>
+            <CardFooter Class="flex justify-end">
+                <Button Variant="primary" OnClick="Generate" Loading="@_generating" Disabled="@_generating">
+                    <i class="bi bi-file-earmark-pdf mr-1"></i> Generate
+                </Button>
+            </CardFooter>
+        </Card>
+    </div>
+}
+else if (_selectedYear.HasValue)
+{
+    <div class="p-6 text-center text-muted-foreground text-sm">No paid runs found for this employee in @_selectedYear.</div>
+}
+
+@code {
+    private List<EmployeeListDto> _employees = [];
+    private bool _loadingEmployees = true;
+    private string? _pageError;
+
+    private Guid? _selectedEmployeeId;
+    private IReadOnlyList<int> _years = [];
+    private bool _loadingYears;
+
+    private int? _selectedYear;
+    private Bir2316Dto? _preview;
+    private bool _loadingPreview;
+
+    private ManualInputsFormModel _manual = new();
+    private bool _generating;
+    private string? _generateError;
+    private bool _downloadingAll;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _loadingEmployees = true;
+        try
+        {
+            _employees = await LoadAllEmployeesAsync();
+        }
+        catch (Exception ex)
+        {
+            _pageError = ex.Message;
+        }
+        finally
+        {
+            _loadingEmployees = false;
+        }
+    }
+
+    // GetEmployeesAsync is paged with a default pageSize of 20 - page through to exhaustion so
+    // the picker offers every employee, not just the first page (same reasoning as
+    // PayrollRuns.razor's LoadAllActiveEmployeesAsync).
+    private async Task<List<EmployeeListDto>> LoadAllEmployeesAsync()
+    {
+        var all = new List<EmployeeListDto>();
+        var page = 1;
+        while (true)
+        {
+            var result = await Api.GetEmployeesAsync(page, 100);
+            if (result is null || result.Items.Count == 0) break;
+            all.AddRange(result.Items);
+            if (page >= result.TotalPages) break;
+            page++;
+        }
+        return all.OrderBy(e => e.LastName).ThenBy(e => e.FirstName).ToList();
+    }
+
+    private async Task OnEmployeeChanged(string value)
+    {
+        _selectedYear = null;
+        _preview = null;
+        _years = [];
+        _generateError = null;
+
+        if (!Guid.TryParse(value, out var employeeId))
+        {
+            _selectedEmployeeId = null;
+            return;
+        }
+
+        _selectedEmployeeId = employeeId;
+        _loadingYears = true;
+        try
+        {
+            _years = await Api.GetBir2316YearsAsync(employeeId) ?? [];
+            if (_years.Count > 0)
+                await OnYearChanged(_years[0].ToString());
+        }
+        catch (Exception ex)
+        {
+            _pageError = ex.Message;
+        }
+        finally
+        {
+            _loadingYears = false;
+        }
+    }
+
+    private async Task OnYearChanged(string value)
+    {
+        _preview = null;
+        _generateError = null;
+        _manual = new ManualInputsFormModel();
+
+        if (!int.TryParse(value, out var year) || _selectedEmployeeId is null)
+        {
+            _selectedYear = null;
+            return;
+        }
+
+        _selectedYear = year;
+        _loadingPreview = true;
+        try
+        {
+            _preview = await Api.GetBir2316PreviewAsync(_selectedEmployeeId.Value, year);
+        }
+        catch (Exception ex)
+        {
+            _pageError = ex.Message;
+        }
+        finally
+        {
+            _loadingPreview = false;
+        }
+    }
+
+    private async Task Generate()
+    {
+        if (_selectedEmployeeId is null || _selectedYear is null || _preview is null) return;
+
+        _generateError = null;
+        _generating = true;
+        try
+        {
+            var pdf = await Api.GenerateBir2316Async(_selectedEmployeeId.Value, _selectedYear.Value, new
+            {
+                prevEmployerTin = _manual.PrevEmployerTin,
+                prevEmployerName = _manual.PrevEmployerName,
+                prevEmployerAddress = _manual.PrevEmployerAddress,
+                prevEmployerZipCode = _manual.PrevEmployerZipCode,
+                item22_PrevTaxableCompensation = _manual.Item22_PrevTaxableCompensation,
+                item25B_PrevTaxWithheld = _manual.Item25B_PrevTaxWithheld,
+                item27_PeraTaxCredit = _manual.Item27_PeraTaxCredit,
+                item35_DeMinimis = _manual.Item35_DeMinimis,
+                item33_HazardPayMwe = _manual.Item33_HazardPayMwe,
+                isMinimumWageEarner = _manual.IsMinimumWageEarner,
+                statutoryMinWagePerDay = _manual.StatutoryMinWagePerDay,
+                statutoryMinWagePerMonth = _manual.StatutoryMinWagePerMonth
+            });
+
+            if (pdf is null)
+            {
+                _generateError = "Failed to generate the 2316. Please try again.";
+                return;
+            }
+
+            var fileName = $"BIR2316-{_selectedYear}-{_preview.EmployeeLastName}{_preview.EmployeeFirstName}.pdf";
+            await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(pdf), fileName, "application/pdf");
+        }
+        catch (Exception ex)
+        {
+            _generateError = ex.Message;
+        }
+        finally
+        {
+            _generating = false;
+        }
+    }
+
+    private async Task DownloadAll()
+    {
+        if (_selectedYear is null) return;
+
+        _pageError = null;
+        _downloadingAll = true;
+        try
+        {
+            var pdf = await Api.GenerateAllBir2316Async(_selectedYear.Value);
+            if (pdf is null)
+            {
+                _pageError = $"Failed to generate 2316s for {_selectedYear}. Please try again.";
+                return;
+            }
+
+            var fileName = $"BIR2316-{_selectedYear}-All.pdf";
+            await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(pdf), fileName, "application/pdf");
+        }
+        catch (Exception ex)
+        {
+            _pageError = ex.Message;
+        }
+        finally
+        {
+            _downloadingAll = false;
+        }
+    }
+
+    private static string Peso(decimal amount) => $"₱{amount:N2}";
+
+    private static string Dec(decimal amount) => amount.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private static decimal ParseDecimal(string? v)
+        => decimal.TryParse(v, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : 0m;
+
+    // The Bir2316ManualInputs fields this page can legitimately set. Deliberately does not
+    // include a single derived figure (basic salary, withheld tax, gross taxable, ...) - those
+    // are shown read-only above from _preview and are never part of what Generate submits.
+    private class ManualInputsFormModel
+    {
+        public string? PrevEmployerTin { get; set; }
+        public string? PrevEmployerName { get; set; }
+        public string? PrevEmployerAddress { get; set; }
+        public string? PrevEmployerZipCode { get; set; }
+        public decimal Item22_PrevTaxableCompensation { get; set; }
+        public decimal Item25B_PrevTaxWithheld { get; set; }
+        public decimal Item27_PeraTaxCredit { get; set; }
+        public decimal Item35_DeMinimis { get; set; }
+        public decimal Item33_HazardPayMwe { get; set; }
+        public bool IsMinimumWageEarner { get; set; }
+        public decimal StatutoryMinWagePerDay { get; set; }
+        public decimal StatutoryMinWagePerMonth { get; set; }
+    }
+}

@@ -52,6 +52,9 @@ public class Bir2316Service : IBir2316Service
     public async Task<IReadOnlyList<int>> GetAvailableYearsAsync(Guid employeeId, CancellationToken ct = default)
         => await _runRepo.GetPaidYearsForEmployeeAsync(employeeId, ct);
 
+    public async Task<IReadOnlyList<Guid>> GetEmployeeIdsWithPaidRunsAsync(int year, CancellationToken ct = default)
+        => await _runRepo.GetEmployeeIdsWithPaidRunsInYearAsync(year, ct);
+
     public Task<Bir2316Dto?> GetPreviewAsync(Guid employeeId, int year, CancellationToken ct = default)
         => BuildAsync(employeeId, year, new Bir2316ManualInputs(), ct);
 

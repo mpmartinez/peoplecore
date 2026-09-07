@@ -72,4 +72,16 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     /// </summary>
     Task<IReadOnlyList<PayrollRun>> GetPaidRunsForEmployeeInYearAsync(
         Guid employeeId, int year, CancellationToken ct = default);
+
+    /// <summary>
+    /// Every distinct employee id appearing in a <see cref="Domain.Enums.PayrollRunStatus.Paid"/>
+    /// run whose <see cref="PayrollRun.PayDate"/> falls in <paramref name="year"/>. Backs
+    /// GenerateAll's "every employee's 2316 for the year" bulk action - the mirror image of
+    /// <see cref="GetPaidYearsForEmployeeAsync"/> (years for one employee) and
+    /// <see cref="GetPaidRunsForEmployeeInYearAsync"/> (runs for one employee in one year): this
+    /// one runs across employees instead of across years, but keeps the same Paid-only,
+    /// pay-date-year rule so a certificate can never be generated for an unapproved run's figures
+    /// or attributed to the wrong tax year.
+    /// </summary>
+    Task<IReadOnlyList<Guid>> GetEmployeeIdsWithPaidRunsInYearAsync(int year, CancellationToken ct = default);
 }

@@ -18,4 +18,12 @@ public interface IBir2316Service
     /// <paramref name="manual"/>. Derived figures are never read from caller input.
     /// </summary>
     Task<Bir2316Dto?> BuildAsync(Guid employeeId, int year, Bir2316ManualInputs manual, CancellationToken ct = default);
+
+    /// <summary>
+    /// Every employee with at least one PAID run whose pay date falls in <paramref name="year"/>,
+    /// for the "generate all" bulk action. Kept here rather than left for the controller to query
+    /// the repository directly, so a controller never has to reach past Application for payroll
+    /// data - the same layering every other controller in this codebase already follows.
+    /// </summary>
+    Task<IReadOnlyList<Guid>> GetEmployeeIdsWithPaidRunsAsync(int year, CancellationToken ct = default);
 }

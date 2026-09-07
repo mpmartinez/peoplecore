@@ -349,6 +349,39 @@ public class ApiClient
     public async Task<IReadOnlyList<MyPayslipSummaryDto>?> GetMyPayslipListAsync()
         => await _http.GetFromJsonAsync<IReadOnlyList<MyPayslipSummaryDto>>("api/reports/my-payslips", JsonOptions);
 
+    // BIR Form 2316
+    public async Task<IReadOnlyList<int>?> GetBir2316YearsAsync(Guid employeeId)
+        => await _http.GetFromJsonAsync<IReadOnlyList<int>>($"api/reports/2316/years/{employeeId}", JsonOptions);
+
+    // Mirrors GetEmployeeCompensationAsync: a 404 here means the employee has no paid runs in
+    // that year (Bir2316Service.GetPreviewAsync returns null), which the page should treat as
+    // "nothing to show yet", not as an error - any OTHER failure still throws.
+    public async Task<Bir2316Dto?> GetBir2316PreviewAsync(Guid employeeId, int year)
+    {
+        var response = await _http.GetAsync($"api/reports/2316/preview/{employeeId}?year={year}");
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException(await ReadProblemDetailAsync(response)
+                ?? $"Failed to load 2316 preview ({(int)response.StatusCode}).");
+        return await response.Content.ReadFromJsonAsync<Bir2316Dto>(JsonOptions);
+    }
+
+    // The PDF pair below mirrors the payslip PDF methods above: bytes, not JSON, and null (rather
+    // than throwing) on failure so the page can show an inline error the same way.
+    public async Task<byte[]?> GenerateBir2316Async(Guid employeeId, int year, object manualInputs)
+    {
+        var response = await _http.PostAsJsonAsync($"api/reports/2316/generate/{employeeId}?year={year}", manualInputs);
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadAsByteArrayAsync();
+    }
+
+    public async Task<byte[]?> GenerateAllBir2316Async(int year)
+    {
+        var response = await _http.PostAsync($"api/reports/2316/generate-all?year={year}", null);
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadAsByteArrayAsync();
+    }
+
     private static async Task<string?> ReadProblemDetailAsync(HttpResponseMessage response)
     {
         try
@@ -471,6 +504,107 @@ public record MyPayslipSummaryDto(
     string PeriodLabel,
     string PayDate,
     decimal NetPay);
+
+// BIR Form 2316
+//
+// Mirrors PeopleCore.Application.Payroll.DTOs.Bir2316Dto field-for-field, INCLUDING the
+// server's computed ItemNN properties (Item19, Item20, Item21, Item23, Item24, Item26, Item28,
+// Item38, Item52): the client never recomputes them, it only displays what the server sent, so
+// every one of them needs a settable property here to receive its value off the wire. The
+// ItemNN names are kept exactly as-is for the same reason the server keeps them: the number IS
+// the link to the numbered box on the form, and a name mismatch here - unlike almost anywhere
+// else in this client - would not throw. System.Text.Json's PropertyNameCaseInsensitive option
+// silently leaves an unmatched property at its default, so a mistyped field prints a blank or a
+// zero on a tax certificate instead of failing to compile or failing at runtime.
+public class Bir2316Dto
+{
+    // Header
+    public int Year { get; set; }
+    public string PeriodFrom { get; set; } = "";
+    public string PeriodTo { get; set; } = "";
+
+    // Part I — Employee Info
+    public string EmployeeTin { get; set; } = "";
+    public string EmployeeLastName { get; set; } = "";
+    public string EmployeeFirstName { get; set; } = "";
+    public string EmployeeMiddleName { get; set; } = "";
+    public string RdoCode { get; set; } = "";
+    public string RegisteredAddress { get; set; } = "";
+    public string RegisteredZipCode { get; set; } = "";
+    public string LocalHomeAddress { get; set; } = "";
+    public string LocalZipCode { get; set; } = "";
+    public string ForeignAddress { get; set; } = "";
+    public string DateOfBirth { get; set; } = "";
+    public string ContactNumber { get; set; } = "";
+    public decimal StatutoryMinWagePerDay { get; set; }
+    public decimal StatutoryMinWagePerMonth { get; set; }
+    public bool IsMinimumWageEarner { get; set; }
+
+    // Part II — Employer Info (Present)
+    public string EmployerTin { get; set; } = "";
+    public string EmployerName { get; set; } = "";
+    public string EmployerAddress { get; set; } = "";
+    public string EmployerZipCode { get; set; } = "";
+    public string EmployerRdoCode { get; set; } = "";
+    public bool IsMainEmployer { get; set; } = true;
+
+    // Part III — Employer Info (Previous)
+    public string PrevEmployerTin { get; set; } = "";
+    public string PrevEmployerName { get; set; } = "";
+    public string PrevEmployerAddress { get; set; } = "";
+    public string PrevEmployerZipCode { get; set; } = "";
+
+    // Part IV-B Section A — Non-Taxable/Exempt
+    public decimal Item29_NonTaxableBasicSalary { get; set; }
+    public decimal Item30_HolidayPayMwe { get; set; }
+    public decimal Item31_OvertimePayMwe { get; set; }
+    public decimal Item32_NightShiftDiffMwe { get; set; }
+    public decimal Item33_HazardPayMwe { get; set; }
+    public decimal Item34_ThirteenthMonthAndBenefits { get; set; }
+    public decimal Item35_DeMinimis { get; set; }
+    public decimal Item36_SssPhicPagibigContributions { get; set; }
+    public decimal Item37_SalariesOtherForms { get; set; }
+
+    // Part IV-B Section B — Taxable Regular
+    public decimal Item39_BasicSalary { get; set; }
+    public decimal Item40_Representation { get; set; }
+    public decimal Item41_Transportation { get; set; }
+    public decimal Item42_Cola { get; set; }
+    public decimal Item43_FixedHousing { get; set; }
+    public decimal Item44A_OtherAmount { get; set; }
+    public string Item44A_OtherLabel { get; set; } = "";
+    public decimal Item44B_OtherAmount { get; set; }
+    public string Item44B_OtherLabel { get; set; } = "";
+
+    // Supplementary
+    public decimal Item45_Commission { get; set; }
+    public decimal Item46_ProfitSharing { get; set; }
+    public decimal Item47_Fees { get; set; }
+    public decimal Item48_TaxableThirteenthMonth { get; set; }
+    public decimal Item49_HazardPay { get; set; }
+    public decimal Item50_OvertimePay { get; set; }
+    public decimal Item51A_OtherAmount { get; set; }
+    public string Item51A_OtherLabel { get; set; } = "";
+    public decimal Item51B_OtherAmount { get; set; }
+    public string Item51B_OtherLabel { get; set; } = "";
+
+    // Part IVA — Summary inputs
+    public decimal Item22_PrevTaxableCompensation { get; set; }
+    public decimal Item25B_PrevTaxWithheld { get; set; }
+    public decimal Item25A_PresentTaxWithheld { get; set; }
+    public decimal Item27_PeraTaxCredit { get; set; }
+
+    // Computed server-side - see this record's remarks for why these still need setters here.
+    public decimal Item38_TotalNonTaxable { get; set; }
+    public decimal Item52_TotalTaxableCompensation { get; set; }
+    public decimal Item19_GrossCompensation { get; set; }
+    public decimal Item20_LessNonTaxable { get; set; }
+    public decimal Item21_TaxableFromPresent { get; set; }
+    public decimal Item23_GrossTaxable { get; set; }
+    public decimal Item24_TaxDue { get; set; }
+    public decimal Item26_TotalTaxWithheld { get; set; }
+    public decimal Item28_TotalTaxes { get; set; }
+}
 
 // Problem-detail body from ExceptionHandlingMiddleware (400 responses for DomainException)
 public record ProblemDetailResponse(string? Title, string? Detail, int? Status);

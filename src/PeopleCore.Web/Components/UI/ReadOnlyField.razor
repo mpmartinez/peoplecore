@@ -1,0 +1,19 @@
+@namespace IAS.Client.Components.UI
+
+@*
+    A labeled, non-editable value - for figures a server derives and a form must display but
+    never let the user submit back (see Bir2316.razor's "Derived figures" panel). Deliberately
+    not an Input with Disabled="true": a disabled input still submits with a form post and still
+    looks editable at a glance, both of which are exactly the impressions this component exists
+    to avoid.
+*@
+<div>
+    <div class="text-xs text-muted-foreground">@Label</div>
+    <div class="@(Bold ? "font-semibold" : "")">@Value</div>
+</div>
+
+@code {
+    [Parameter] public string? Label { get; set; }
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public bool Bold { get; set; }
+}

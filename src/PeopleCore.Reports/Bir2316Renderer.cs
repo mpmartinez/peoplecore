@@ -12,4 +12,7 @@ namespace PeopleCore.Reports;
 public class Bir2316Renderer : IBir2316Renderer
 {
     public byte[] Render(Bir2316Dto dto) => new Bir2316Document(dto).GeneratePdf();
+
+    public byte[] RenderMerged(IReadOnlyList<Bir2316Dto> forms)
+        => Document.Merge(forms.Select(dto => new Bir2316Document(dto))).GeneratePdf();
 }
