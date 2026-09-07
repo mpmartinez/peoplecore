@@ -73,14 +73,18 @@ internal static class Bir2316FieldMap
     // "6 Registered Address" at y=761.1 - line below, box 42.6-253.6, 744.6-759.4.
     internal static readonly Field RegisteredAddress = new(46, 749);
 
-    // "6A ZIP Code" at y=761.1, same row - line below, box 261.4-309.4, 744.5-759.3.
-    internal static readonly Field RegisteredZipCode = new(264, 749);
+    // "6A ZIP Code" at y=761.1, same row - line below, box 261.42-309.44, 744.53-759.29. Like
+    // TIN/DOB/Contact Number, this box is printed as 4 equal digit cells (3 internal ticks at
+    // 272.98/285.88/298.58 - see the Task 4 report for the pdfplumber reading), not a single run;
+    // see RegisteredZipCodeDigits below.
+    internal static readonly DigitField[] RegisteredZipCodeDigits = [new(265.20, 749, 12.005, 4)];
 
     // "6B Local Home Address" at y=735.4 - line below, box 42.6-253.6, 719.3-734.1.
     internal static readonly Field LocalHomeAddress = new(46, 723);
 
-    // "6C ZIP Code" at y=735.4, same row - line below, box 261.5-309.4, 719.5-734.2.
-    internal static readonly Field LocalZipCode = new(265, 723);
+    // "6C ZIP Code" at y=735.4, same row - line below, box 261.51-309.44, 719.45-734.24, 3
+    // internal ticks -> 4 equal digit cells. See LocalZipCodeDigits below.
+    internal static readonly DigitField[] LocalZipCodeDigits = [new(265.28, 723, 11.982, 4)];
 
     // "6D Foreign Address" at y=709.8 - line below, box 42.6-309.4, 693.6-708.6.
     internal static readonly Field ForeignAddress = new(46, 698);
@@ -122,8 +126,9 @@ internal static class Bir2316FieldMap
     // "14 Registered Address" at y=550.0 - line below, box 42.6-253.6, 533.9-548.8.
     internal static readonly Field EmployerAddress = new(46, 538);
 
-    // "14A ZIP Code" at y=550.0, same row - line below, box 259.3-307.3, 533.8-547.9.
-    internal static readonly Field EmployerZipCode = new(262, 538);
+    // "14A ZIP Code" at y=550.0, same row - line below, box 259.33-307.35, 533.80-547.94, 3
+    // internal ticks -> 4 equal digit cells. See EmployerZipCodeDigits below.
+    internal static readonly DigitField[] EmployerZipCodeDigits = [new(263.11, 538, 12.005, 4)];
 
     // "15 Type of Employer" / "Main Employer" caption at y=524.0/521.1; checkbox 115.9-129.6,
     // 517.3-529.8.
@@ -143,8 +148,11 @@ internal static class Bir2316FieldMap
     // "18 Registered Address" at y=453.2 - line below, box 43.0-254.1, 437.1-452.1.
     internal static readonly Field PrevEmployerAddress = new(46, 441);
 
-    // "18A ZIP Code" at y=453.2, same row - line below, box 259.8-307.7, 437.0-452.0.
-    internal static readonly Field PrevEmployerZipCode = new(263, 441);
+    // "18A ZIP Code" at y=453.2, same row - line below, box 259.81-307.72, 436.98-452.00, 3
+    // internal ticks -> 4 equal digit cells. This is the box Task 3's by-eye pass caught the
+    // collision on ("1600" overlapping the tick between the "6" and the first "0" - see the
+    // Task 3 report). See PrevEmployerZipCodeDigits below.
+    internal static readonly DigitField[] PrevEmployerZipCodeDigits = [new(263.57, 441, 11.978, 4)];
 
     // ── Part IVA - Summary (left amount column; every box's right edge is ~309, so every
     //    right-aligned X below is 303 = edge minus a ~6pt margin) ───────────────────────────

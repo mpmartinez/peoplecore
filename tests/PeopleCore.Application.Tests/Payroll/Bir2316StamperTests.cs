@@ -192,6 +192,39 @@ public class Bir2316StamperTests
         run.Y.Should().BeApproximately(514, 1, "it should sit on Item 42's own baseline");
     }
 
+    [Fact]
+    public void Stamp_DrawsZipCodeDigitsAsSeparatePositionedRunsOnePerCell()
+    {
+        // Items 6A, 6C, 14A and 18A print four individual digit-cells with dividers, exactly like
+        // TIN/DOB/Contact Number - drawing "1200" as one continuous string would collide with
+        // those dividers the same way the pre-fix stamper's TIN/DOB/Contact Number output did (see
+        // the Task 3 report). This proves the fix landed by reusing the same content-stream run
+        // extraction the other stamper tests use: a value stamped through DrawDigits shows up as
+        // one single-character Tj/TJ run per digit, each at its own X, rather than one run holding
+        // the whole string.
+        var dto = SampleDto(); // RegisteredZipCode is "1200"
+
+        var pdf = new Bir2316Stamper().Stamp(dto);
+        var runs = ExtractPositionedTextRuns(pdf);
+
+        runs.Should().NotContain(r => r.Text == "1200",
+            "the ZIP code should not be drawn as a single continuous run across the printed cell dividers");
+
+        var digitRuns = runs
+            .Where(r => r.Text.Length == 1 && char.IsDigit(r.Text[0]) && r.Y is > 748 and < 750)
+            .OrderBy(r => r.X)
+            .ToList();
+
+        digitRuns.Select(r => r.Text).Should().Equal(["1", "2", "0", "0"],
+            "each digit of the ZIP code should be its own run, in order, on item 6A's baseline");
+
+        for (var i = 1; i < digitRuns.Count; i++)
+        {
+            (digitRuns[i].X - digitRuns[i - 1].X).Should().BeApproximately(12.005, 0.01,
+                "consecutive digits should be spaced by the cell's own advance width, not drawn touching one another");
+        }
+    }
+
     private static double NumberValue(CObject obj) => obj switch
     {
         CInteger i => i.Value,

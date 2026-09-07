@@ -87,14 +87,15 @@ public sealed class Bir2316Stamper
         // Bir2316FieldMap.DigitField), one character per cell at `X + i * Advance`, instead of
         // one continuous string across the whole row. This is the Task 3 fix for TIN (items 3,
         // 12, 16 - four cell groups, taken in order) and Date of Birth / Contact Number (a single
-        // group each): the pre-Task-3 stamper drew those as one string, which visually collided
-        // with the form's own printed cell dividers. Non-digit characters (TIN's dashes, DOB's
-        // slashes) are stripped before laying out cells - the form already prints its own
-        // separators between the digit cells, so nothing needs to be drawn there. If `raw` has
-        // fewer digits than the cells provide, the trailing cells are simply left blank; if it has
-        // more, the excess is silently dropped rather than overflowing into the next field - a
-        // TIN or phone number longer than the form's boxes is a data problem this stamper cannot
-        // fix by drawing off the box.
+        // group each), extended in Task 4 to the four ZIP Code fields (items 6A, 6C, 14A, 18A -
+        // one 4-digit cell group each): the pre-fix stamper drew those as one string, which
+        // visually collided with the form's own printed cell dividers. Non-digit characters (TIN's
+        // dashes, DOB's slashes) are stripped before laying out cells - the form already prints
+        // its own separators between the digit cells, so nothing needs to be drawn there. If `raw`
+        // has fewer digits than the cells provide, the trailing cells are simply left blank; if it
+        // has more, the excess is silently dropped rather than overflowing into the next field - a
+        // TIN, phone number, or ZIP code longer than the form's boxes is a data problem this
+        // stamper cannot fix by drawing off the box.
         void DrawDigits(IReadOnlyList<Bir2316FieldMap.DigitField> groups, string? raw)
         {
             if (string.IsNullOrEmpty(raw)) return;
@@ -131,9 +132,9 @@ public sealed class Bir2316Stamper
             $"{dto.EmployeeLastName}, {dto.EmployeeFirstName} {dto.EmployeeMiddleName}".TrimEnd());
         Draw(Bir2316FieldMap.RdoCode, dto.RdoCode);
         Draw(Bir2316FieldMap.RegisteredAddress, dto.RegisteredAddress);
-        Draw(Bir2316FieldMap.RegisteredZipCode, dto.RegisteredZipCode);
+        DrawDigits(Bir2316FieldMap.RegisteredZipCodeDigits, dto.RegisteredZipCode);
         Draw(Bir2316FieldMap.LocalHomeAddress, dto.LocalHomeAddress);
-        Draw(Bir2316FieldMap.LocalZipCode, dto.LocalZipCode);
+        DrawDigits(Bir2316FieldMap.LocalZipCodeDigits, dto.LocalZipCode);
         Draw(Bir2316FieldMap.ForeignAddress, dto.ForeignAddress);
         DrawDigits(Bir2316FieldMap.DateOfBirthDigits, dto.DateOfBirth);
         DrawDigits(Bir2316FieldMap.ContactNumberDigits, dto.ContactNumber);
@@ -145,14 +146,14 @@ public sealed class Bir2316Stamper
         DrawDigits(Bir2316FieldMap.EmployerTinDigits, dto.EmployerTin);
         Draw(Bir2316FieldMap.EmployerName, dto.EmployerName);
         Draw(Bir2316FieldMap.EmployerAddress, dto.EmployerAddress);
-        Draw(Bir2316FieldMap.EmployerZipCode, dto.EmployerZipCode);
+        DrawDigits(Bir2316FieldMap.EmployerZipCodeDigits, dto.EmployerZipCode);
         Draw(dto.IsMainEmployer ? Bir2316FieldMap.MainEmployerCheckbox : Bir2316FieldMap.SecondaryEmployerCheckbox, "X");
 
         // Part III - Employer Information (Previous)
         DrawDigits(Bir2316FieldMap.PrevEmployerTinDigits, dto.PrevEmployerTin);
         Draw(Bir2316FieldMap.PrevEmployerName, dto.PrevEmployerName);
         Draw(Bir2316FieldMap.PrevEmployerAddress, dto.PrevEmployerAddress);
-        Draw(Bir2316FieldMap.PrevEmployerZipCode, dto.PrevEmployerZipCode);
+        DrawDigits(Bir2316FieldMap.PrevEmployerZipCodeDigits, dto.PrevEmployerZipCode);
 
         // Part IVA - Summary
         Draw(Bir2316FieldMap.Item19_GrossCompensation, Money(dto.Item19_GrossCompensation));
