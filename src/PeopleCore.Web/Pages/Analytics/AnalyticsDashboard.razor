@@ -5,42 +5,26 @@
 
 <PageTitle>Analytics Dashboard</PageTitle>
 
-<h2 class="text-2xl font-semibold text-foreground mb-6">Analytics Dashboard</h2>
+<PageHeader Title="Analytics Dashboard" Section="Analytics"
+            Description="Headcount, attendance and leave trends across the organization." />
 
-<!-- Date Range Picker -->
 <Card Class="mb-6">
-    <CardContent>
-        <div class="flex flex-wrap items-end gap-4 pt-4">
-            <div>
-                <label class="text-sm font-medium text-foreground">From</label>
-                <InputDate @bind-Value="fromDate" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
-            </div>
-            <div>
-                <label class="text-sm font-medium text-foreground">To</label>
-                <InputDate @bind-Value="toDate" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
-            </div>
-            <div>
-                <button class="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-                        @onclick="LoadData" disabled="@isLoading">
-                    @if (isLoading)
-                    {
-                        <span>Loading...</span>
-                    }
-                    else
-                    {
-                        <span>Apply</span>
-                    }
-                </button>
-            </div>
+    <CardContent Class="pt-4">
+        <div class="flex flex-wrap items-end gap-4">
+            <FormField LabelText="From" Id="analytics-from">
+                <Input TValue="DateOnly" Id="analytics-from" Type="date" @bind-Value="fromDate" />
+            </FormField>
+            <FormField LabelText="To" Id="analytics-to">
+                <Input TValue="DateOnly" Id="analytics-to" Type="date" @bind-Value="toDate" />
+            </FormField>
+            <Button Variant="primary" OnClick="LoadData" Disabled="@isLoading" Loading="@isLoading">Apply</Button>
         </div>
     </CardContent>
 </Card>
 
 @if (errorMessage is not null)
 {
-    <div class="rounded-md border border-destructive bg-destructive/10 p-4 mb-6">
-        <p class="text-sm text-destructive">@errorMessage</p>
-    </div>
+    <Alert Variant="destructive" Class="mb-6">@errorMessage</Alert>
 }
 
 <!-- HR Analytics Section -->

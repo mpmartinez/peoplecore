@@ -2,7 +2,9 @@
 @attribute [Authorize(Roles = "Admin,HRManager,Manager")]
 @inject ApiClient Api
 
-<h2 class="text-2xl font-semibold mb-6">Performance</h2>
+<PageTitle>Performance</PageTitle>
+
+<PageHeader Title="Performance" Section="Management" Description="Review cycles and the appraisals running inside them." />
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     <div>
@@ -19,21 +21,17 @@
                 <CardContent>
                     <div class="grid grid-cols-2 gap-3 mb-3">
                         <FormField LabelText="Name *" Id="cycle-name">
-                            <Input Value="@_cycleName" ValueChanged="@(v => _cycleName = v)" Placeholder="e.g. Q1 2026" />
+                            <Input TValue="string" Value="@_cycleName" ValueChanged="@(v => _cycleName = v)" Placeholder="e.g. Q1 2026" />
                         </FormField>
                         <FormField LabelText="Year" Id="cycle-year">
-                            <Input Value="@_cycleYear.ToString()" ValueChanged="@(v => { if (int.TryParse(v, out var yr)) _cycleYear = yr; })" Type="number" />
+                            <Input TValue="string" Value="@_cycleYear.ToString()" ValueChanged="@(v => { if (int.TryParse(v, out var yr)) _cycleYear = yr; })" Type="number" />
                         </FormField>
-                        <div>
-                            <Label>Start Date</Label>
-                            <input type="date" @bind="_cycleStart"
-                                   class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50" />
-                        </div>
-                        <div>
-                            <Label>End Date</Label>
-                            <input type="date" @bind="_cycleEnd"
-                                   class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50" />
-                        </div>
+                        <FormField LabelText="Start Date" Id="cycle-start">
+                            <Input TValue="DateOnly" Id="cycle-start" Type="date" @bind-Value="_cycleStart" />
+                        </FormField>
+                        <FormField LabelText="End Date" Id="cycle-end">
+                            <Input TValue="DateOnly" Id="cycle-end" Type="date" @bind-Value="_cycleEnd" />
+                        </FormField>
                     </div>
                     <div class="flex gap-2 mt-2">
                         <Button Variant="primary" Size="sm" OnClick="CreateCycle" Loading="@_savingCycle" Disabled="@_savingCycle">Save</Button>

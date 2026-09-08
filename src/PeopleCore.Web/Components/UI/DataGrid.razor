@@ -8,7 +8,7 @@
             @if (ShowSearch)
             {
                 <div class="w-64">
-                    <Input @bind-Value="_searchTerm" Placeholder="Search..." @bind-Value:after="OnSearchChanged" />
+                    <Input TValue="string" @bind-Value="_searchTerm" Placeholder="Search..." @bind-Value:after="OnSearchChanged" />
                 </div>
             }
             @ToolbarContent

@@ -3,7 +3,9 @@
 @inject ApiClient Api
 @inject AuthenticationStateProvider AuthStateProvider
 
-<h2 class="text-2xl font-semibold text-foreground mb-6">My Leave</h2>
+<PageTitle>My Leave</PageTitle>
+
+<PageHeader Title="My Leave" Section="My HR" Description="Your balances, and the requests you have filed." />
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
     <Card>
@@ -60,10 +62,8 @@
                 <Alert Variant="destructive" Class="mb-3">@_error</Alert>
             }
             <div class="space-y-3">
-                <div>
-                    <label class="text-sm font-medium block mb-1">Leave Type</label>
-                    <select @bind="_leaveTypeId" class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-                        <option value="">-- Select leave type --</option>
+                <FormField LabelText="Leave Type" Id="leaveType">
+                    <Select TValue="string" Id="leaveType" @bind-Value="_leaveTypeId" Placeholder="-- Select leave type --">
                         @if (_balances is not null)
                         {
                             @foreach (var b in _balances)
@@ -71,22 +71,19 @@
                                 <option value="@b.LeaveTypeId">@b.LeaveTypeName (@b.RemainingDays days left)</option>
                             }
                         }
-                    </select>
-                </div>
+                    </Select>
+                </FormField>
                 <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="text-sm font-medium block mb-1">From</label>
-                        <input type="date" @bind="_startDate" class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
-                    </div>
-                    <div>
-                        <label class="text-sm font-medium block mb-1">To</label>
-                        <input type="date" @bind="_endDate" class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
-                    </div>
+                    <FormField LabelText="From" Id="leaveFrom">
+                        <Input TValue="DateTime" Id="leaveFrom" Type="date" @bind-Value="_startDate" />
+                    </FormField>
+                    <FormField LabelText="To" Id="leaveTo">
+                        <Input TValue="DateTime" Id="leaveTo" Type="date" @bind-Value="_endDate" />
+                    </FormField>
                 </div>
-                <div>
-                    <label class="text-sm font-medium block mb-1">Reason (optional)</label>
-                    <textarea @bind="_reason" rows="2" class="flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"></textarea>
-                </div>
+                <FormField LabelText="Reason" Id="leaveReason" Description="Optional.">
+                    <Textarea TValue="string" Id="leaveReason" Rows="2" Value="@_reason" ValueChanged="@(v => _reason = string.IsNullOrWhiteSpace(v) ? null : v)" />
+                </FormField>
                 <Button Variant="primary" Class="w-full" OnClick="SubmitLeave" Loading="@_submitting">Submit Request</Button>
             </div>
         </CardContent>

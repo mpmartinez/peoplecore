@@ -3,16 +3,19 @@
 @inject ApiClient Api
 @inject AuthenticationStateProvider AuthStateProvider
 
-<div class="flex items-center justify-between mb-6">
-    <h2 class="text-2xl font-semibold">Overtime Approvals</h2>
-    <select @bind="_statusFilter" @bind:after="Load"
-            class="flex h-9 w-48 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50">
-        <option value="Pending">Pending</option>
-        <option value="">All</option>
-        <option value="Approved">Approved</option>
-        <option value="Rejected">Rejected</option>
-    </select>
-</div>
+<PageTitle>Overtime Approvals</PageTitle>
+
+<PageHeader Title="Overtime Approvals" Section="Management" Description="Overtime filings waiting on your decision.">
+    <Actions>
+        <Select TValue="string" Value="@_statusFilter" Class="w-48"
+                ValueChanged="@(async v => { _statusFilter = v; await Load(); })">
+            <option value="Pending">Pending</option>
+            <option value="">All</option>
+            <option value="Approved">Approved</option>
+            <option value="Rejected">Rejected</option>
+        </Select>
+    </Actions>
+</PageHeader>
 
 @if (_error is not null)
 {

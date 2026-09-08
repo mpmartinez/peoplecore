@@ -2,7 +2,9 @@
 @attribute [Authorize(Roles = "Admin,HRManager")]
 @inject ApiClient Api
 
-<h2 class="text-2xl font-semibold mb-6">Positions</h2>
+<PageTitle>Positions</PageTitle>
+
+<PageHeader Title="Positions" Section="Organization" Description="Job titles available within each department." />
 
 @if (_error is not null)
 {
@@ -12,24 +14,22 @@
 <Card Class="mb-4">
     <CardContent>
         <div class="flex items-end gap-3 flex-wrap">
-            <div>
-                <Label>Department</Label>
-                <select @bind="_newDeptId"
-                        class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50">
-                    <option value="">-- Select --</option>
+            <div class="min-w-[180px]">
+                <Label For="newDept">Department</Label>
+                <Select TValue="string" Id="newDept" @bind-Value="_newDeptId" Placeholder="-- Select --" Class="mt-1">
                     @foreach (var d in _allDepts?.Items ?? [])
                     {
                         <option value="@d.Id">@d.Name</option>
                     }
-                </select>
+                </Select>
             </div>
             <div class="flex-1 min-w-[160px]">
                 <Label>Title</Label>
-                <Input Value="@_newTitle" ValueChanged="@(v => _newTitle = v)" Placeholder="Position title" />
+                <Input TValue="string" Value="@_newTitle" ValueChanged="@(v => _newTitle = v)" Placeholder="Position title" />
             </div>
             <div class="flex-1 min-w-[140px]">
                 <Label>Level</Label>
-                <Input Value="@(_newLevel ?? "")" ValueChanged="@(v => _newLevel = string.IsNullOrEmpty(v) ? null : v)" Placeholder="e.g. Junior, Senior" />
+                <Input TValue="string" Value="@(_newLevel ?? "")" ValueChanged="@(v => _newLevel = string.IsNullOrEmpty(v) ? null : v)" Placeholder="e.g. Junior, Senior" />
             </div>
             <Button Variant="primary" OnClick="Create" Disabled="@(_creating || string.IsNullOrWhiteSpace(_newTitle) || string.IsNullOrWhiteSpace(_newDeptId))" Loading="@_creating">
                 + Add

@@ -3,18 +3,19 @@
 @inject ApiClient Api
 @inject IJSRuntime JS
 
-<div class="flex items-center justify-between mb-6">
-    <div>
-        <h2 class="text-2xl font-semibold text-foreground">BIR Form 2316</h2>
-        <p class="text-sm text-muted-foreground mt-1">Certificate of Compensation Payment / Tax Withheld</p>
-    </div>
-    @if (_selectedYear.HasValue)
-    {
-        <Button Variant="outline" OnClick="DownloadAll" Loading="@_downloadingAll" Disabled="@_downloadingAll">
-            <i class="bi bi-download mr-1"></i> Download all for @_selectedYear
-        </Button>
-    }
-</div>
+<PageTitle>BIR Form 2316</PageTitle>
+
+<PageHeader Title="BIR Form 2316" Section="Payroll"
+            Description="Certificate of Compensation Payment / Tax Withheld.">
+    <Actions>
+        @if (_selectedYear.HasValue)
+        {
+            <Button Variant="outline" OnClick="DownloadAll" Loading="@_downloadingAll" Disabled="@_downloadingAll">
+                <i class="bi bi-download mr-1"></i> Download all for @_selectedYear
+            </Button>
+        }
+    </Actions>
+</PageHeader>
 
 @if (_pageError is not null)
 {
@@ -32,7 +33,7 @@
                 }
                 else
                 {
-                    <Select Id="employee" Value="@(_selectedEmployeeId?.ToString() ?? "")"
+                    <Select TValue="string" Id="employee" Value="@(_selectedEmployeeId?.ToString() ?? "")"
                             ValueChanged="OnEmployeeChanged" Placeholder="Select an employee" Class="mt-1">
                         @foreach (var e in _employees)
                         {
@@ -57,7 +58,7 @@
                 }
                 else
                 {
-                    <Select Id="year" Value="@(_selectedYear?.ToString() ?? "")"
+                    <Select TValue="string" Id="year" Value="@(_selectedYear?.ToString() ?? "")"
                             ValueChanged="OnYearChanged" Class="mt-1">
                         @foreach (var y in _years)
                         {
@@ -119,40 +120,40 @@ else if (_preview is not null)
             </CardHeader>
             <CardContent Class="space-y-4">
                 <FormField LabelText="Previous employer TIN" Id="prevTin">
-                    <Input Id="prevTin" Type="text" Value="@_manual.PrevEmployerTin" ValueChanged="@(v => _manual.PrevEmployerTin = v)" />
+                    <Input TValue="string" Id="prevTin" Type="text" Value="@_manual.PrevEmployerTin" ValueChanged="@(v => _manual.PrevEmployerTin = v)" />
                 </FormField>
                 <FormField LabelText="Previous employer name" Id="prevName">
-                    <Input Id="prevName" Type="text" Value="@_manual.PrevEmployerName" ValueChanged="@(v => _manual.PrevEmployerName = v)" />
+                    <Input TValue="string" Id="prevName" Type="text" Value="@_manual.PrevEmployerName" ValueChanged="@(v => _manual.PrevEmployerName = v)" />
                 </FormField>
                 <FormField LabelText="Previous employer address" Id="prevAddress">
-                    <Input Id="prevAddress" Type="text" Value="@_manual.PrevEmployerAddress" ValueChanged="@(v => _manual.PrevEmployerAddress = v)" />
+                    <Input TValue="string" Id="prevAddress" Type="text" Value="@_manual.PrevEmployerAddress" ValueChanged="@(v => _manual.PrevEmployerAddress = v)" />
                 </FormField>
                 <FormField LabelText="Previous employer zip code" Id="prevZip">
-                    <Input Id="prevZip" Type="text" Value="@_manual.PrevEmployerZipCode" ValueChanged="@(v => _manual.PrevEmployerZipCode = v)" />
+                    <Input TValue="string" Id="prevZip" Type="text" Value="@_manual.PrevEmployerZipCode" ValueChanged="@(v => _manual.PrevEmployerZipCode = v)" />
                 </FormField>
                 <div class="grid grid-cols-2 gap-3">
                     <FormField LabelText="Item 22 - Prev. taxable compensation" Id="item22">
-                        <Input Id="item22" Type="number" Step="0.01" Min="0"
+                        <Input TValue="string" Id="item22" Type="number" Step="0.01" Min="0"
                                Value="@Dec(_manual.Item22_PrevTaxableCompensation)"
                                ValueChanged="@(v => _manual.Item22_PrevTaxableCompensation = ParseDecimal(v))" />
                     </FormField>
                     <FormField LabelText="Item 25B - Prev. tax withheld" Id="item25b">
-                        <Input Id="item25b" Type="number" Step="0.01" Min="0"
+                        <Input TValue="string" Id="item25b" Type="number" Step="0.01" Min="0"
                                Value="@Dec(_manual.Item25B_PrevTaxWithheld)"
                                ValueChanged="@(v => _manual.Item25B_PrevTaxWithheld = ParseDecimal(v))" />
                     </FormField>
                     <FormField LabelText="Item 27 - PERA tax credit" Id="item27">
-                        <Input Id="item27" Type="number" Step="0.01" Min="0"
+                        <Input TValue="string" Id="item27" Type="number" Step="0.01" Min="0"
                                Value="@Dec(_manual.Item27_PeraTaxCredit)"
                                ValueChanged="@(v => _manual.Item27_PeraTaxCredit = ParseDecimal(v))" />
                     </FormField>
                     <FormField LabelText="Item 35 - De minimis" Id="item35">
-                        <Input Id="item35" Type="number" Step="0.01" Min="0"
+                        <Input TValue="string" Id="item35" Type="number" Step="0.01" Min="0"
                                Value="@Dec(_manual.Item35_DeMinimis)"
                                ValueChanged="@(v => _manual.Item35_DeMinimis = ParseDecimal(v))" />
                     </FormField>
                     <FormField LabelText="Item 33 - Hazard pay (MWE)" Id="item33">
-                        <Input Id="item33" Type="number" Step="0.01" Min="0"
+                        <Input TValue="string" Id="item33" Type="number" Step="0.01" Min="0"
                                Value="@Dec(_manual.Item33_HazardPayMwe)"
                                ValueChanged="@(v => _manual.Item33_HazardPayMwe = ParseDecimal(v))" />
                     </FormField>

@@ -4,21 +4,17 @@
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 
-<div class="flex items-start justify-between mb-6 gap-4 flex-wrap">
-    <div>
-        <div class="flex items-center gap-3">
-            <h2 class="text-2xl font-semibold text-foreground">@(_run?.RunNumber ?? "Payroll Run")</h2>
-            @if (_run is not null)
-            {
-                <Badge Variant="@RunStatusVariant(_run.Status)">@_run.Status</Badge>
-            }
-        </div>
+<PageTitle>@(_run?.RunNumber ?? "Payroll Run")</PageTitle>
+
+<PageHeader Title="@(_run?.RunNumber ?? "Payroll Run")" Section="Payroll" SectionHref="/payroll-runs"
+            Description="@(_run is null ? null : $"{_run.PeriodLabel} \u00b7 Pay date {_run.PayDate}")">
+    <ChildContent>
         @if (_run is not null)
         {
-            <p class="text-sm text-muted-foreground mt-1">@_run.PeriodLabel &middot; Pay date @_run.PayDate</p>
+            <Badge Variant="@RunStatusVariant(_run.Status)" Class="mt-1">@_run.Status</Badge>
         }
-    </div>
-    <div class="flex gap-2">
+    </ChildContent>
+    <Actions>
         <Button Variant="outline" OnClick="GoBack">Back to Runs</Button>
         @if (_run is not null)
         {
@@ -41,8 +37,8 @@
                 </Button>
             }
         }
-    </div>
-</div>
+    </Actions>
+</PageHeader>
 
 @if (_run is null)
 {

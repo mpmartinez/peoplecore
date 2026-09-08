@@ -3,15 +3,22 @@
 @inject ApiClient Api
 @inject NavigationManager Nav
 
-<div class="flex items-center justify-between mb-6">
-    <div>
-        <h2 class="text-2xl font-semibold text-foreground">Compensation</h2>
-        @if (_employee is not null)
-        {
-            <p class="text-sm text-muted-foreground mt-1">@_employee.FullName <span class="text-xs">(@_employee.EmployeeNumber)</span></p>
-        }
-    </div>
-</div>
+<PageTitle>Compensation</PageTitle>
+
+<PageHeader Title="Compensation" Section="Organization" SectionHref="/employees"
+            Description="@(_employee is null ? null : $"{_employee.FullName} ({_employee.EmployeeNumber})")">
+    <Breadcrumbs>
+        <BreadcrumbSeparator />
+        <BreadcrumbItem>
+            <BreadcrumbLink Href="/employees">Employees</BreadcrumbLink>
+        </BreadcrumbItem>
+    </Breadcrumbs>
+    <Actions>
+        <Button Variant="outline" OnClick="@(() => Nav.NavigateTo("/employees"))">
+            <i class="bi bi-arrow-left mr-1"></i> Back to Employees
+        </Button>
+    </Actions>
+</PageHeader>
 
 @if (_loading)
 {
@@ -26,25 +33,25 @@ else
     <Card Class="max-w-xl">
         <CardContent Class="pt-6 space-y-4">
             <FormField LabelText="Basic Salary" Id="basicSalary" Required="true">
-                <Input Id="basicSalary" Type="number" Step="0.01" Min="0"
+                <Input TValue="string" Id="basicSalary" Type="number" Step="0.01" Min="0"
                        Value="@_form.BasicSalary.ToString(System.Globalization.CultureInfo.InvariantCulture)"
                        ValueChanged="@(v => _form.BasicSalary = ParseDecimal(v))" />
             </FormField>
 
             <div>
                 <Label For="payFrequency" Required="true">Pay Frequency</Label>
-                <Select Id="payFrequency" Value="@_form.PayFrequency" ValueChanged="@(v => _form.PayFrequency = v)" Class="mt-1">
+                <Select TValue="string" Id="payFrequency" Value="@_form.PayFrequency" ValueChanged="@(v => _form.PayFrequency = v)" Class="mt-1">
                     <option value="Monthly">Monthly</option>
                     <option value="SemiMonthly">Semi-Monthly</option>
                 </Select>
             </div>
 
             <FormField LabelText="Tax Code" Id="taxCode" Required="true">
-                <Input Id="taxCode" Type="text" Value="@_form.TaxCode" ValueChanged="@(v => _form.TaxCode = v)" />
+                <Input TValue="string" Id="taxCode" Type="text" Value="@_form.TaxCode" ValueChanged="@(v => _form.TaxCode = v)" />
             </FormField>
 
             <FormField LabelText="Dependents" Id="dependents" Required="true">
-                <Input Id="dependents" Type="number" Step="1"
+                <Input TValue="string" Id="dependents" Type="number" Step="1"
                        Value="@_form.Dependents.ToString()"
                        ValueChanged="@(v => _form.Dependents = ParseInt(v))" />
             </FormField>

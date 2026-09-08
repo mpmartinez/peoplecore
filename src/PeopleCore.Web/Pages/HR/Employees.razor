@@ -3,27 +3,30 @@
 @inject ApiClient Api
 @inject NavigationManager Nav
 
-<div class="flex items-center justify-between mb-6">
-    <h2 class="text-2xl font-semibold text-foreground">Employees</h2>
-    <Button Variant="primary" OnClick="OpenAddForm">
-        <i class="bi bi-plus-lg mr-1"></i> Add Employee
-    </Button>
-</div>
+<PageTitle>Employees</PageTitle>
+
+<PageHeader Title="Employees" Section="Organization" Description="Everyone on the payroll, active and inactive.">
+    <Actions>
+        <Button Variant="primary" OnClick="OpenAddForm">
+            <i class="bi bi-plus-lg mr-1"></i> Add Employee
+        </Button>
+    </Actions>
+</PageHeader>
 
 <Card Class="mb-4">
     <CardContent Class="pt-4">
         <div class="flex gap-3 flex-wrap">
-            <Input Value="@_search"
+            <Input TValue="string" Value="@_search"
                    ValueChanged="@(async v => { _search = v; await OnSearch(); })"
                    Placeholder="Search by name or number..."
                    Type="text"
                    Class="flex-1 max-w-xs" />
-            <select @bind="_statusFilter" @bind:after="LoadEmployees"
-                    class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 max-w-[160px]">
+            <Select TValue="string" Value="@_statusFilter" Class="max-w-[160px]"
+                    ValueChanged="@(async v => { _statusFilter = v; await LoadEmployees(); })">
                 <option value="">All Status</option>
                 <option value="true">Active</option>
                 <option value="false">Inactive</option>
-            </select>
+            </Select>
         </div>
     </CardContent>
 </Card>
@@ -101,7 +104,7 @@
         <div class="grid grid-cols-2 gap-4">
             <div class="col-span-2">
                 <FormField LabelText="Employee Number *" Id="empNumber" Class="mb-4">
-                    <Input Value="@_form.EmployeeNumber"
+                    <Input TValue="string" Value="@_form.EmployeeNumber"
                            ValueChanged="@(v => _form.EmployeeNumber = v)"
                            Placeholder="e.g. EMP-001"
                            Type="text" />
@@ -109,102 +112,98 @@
             </div>
             <div>
                 <FormField LabelText="First Name *" Id="firstName" Class="mb-4">
-                    <Input Value="@_form.FirstName"
+                    <Input TValue="string" Value="@_form.FirstName"
                            ValueChanged="@(v => _form.FirstName = v)"
                            Type="text" />
                 </FormField>
             </div>
             <div>
                 <FormField LabelText="Middle Name" Id="middleName" Class="mb-4">
-                    <Input Value="@_form.MiddleName"
+                    <Input TValue="string" Value="@_form.MiddleName"
                            ValueChanged="@(v => _form.MiddleName = v)"
                            Type="text" />
                 </FormField>
             </div>
             <div class="col-span-2">
                 <FormField LabelText="Last Name *" Id="lastName" Class="mb-4">
-                    <Input Value="@_form.LastName"
+                    <Input TValue="string" Value="@_form.LastName"
                            ValueChanged="@(v => _form.LastName = v)"
                            Type="text" />
                 </FormField>
             </div>
             <div>
-                <Label For="dob">Date of Birth *</Label>
-                <input id="dob" type="date" @bind="_form.DateOfBirth"
-                       class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1" />
+                <FormField LabelText="Date of Birth" Id="dob" Required="true" Class="mb-4">
+                    <Input TValue="DateOnly" Id="dob" Type="date" @bind-Value="_form.DateOfBirth" />
+                </FormField>
             </div>
             <div>
-                <Label For="gender">Gender *</Label>
-                <select id="gender" @bind="_form.Gender"
-                        class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1">
-                    <option value="">Select...</option>
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                </select>
+                <FormField LabelText="Gender" Id="gender" Required="true" Class="mb-4">
+                    <Select TValue="string" Id="gender" @bind-Value="_form.Gender" Placeholder="Select...">
+                        <option value="Male">Male</option>
+                        <option value="Female">Female</option>
+                    </Select>
+                </FormField>
             </div>
             <div class="col-span-2">
                 <FormField LabelText="Work Email *" Id="workEmail" Class="mb-4">
-                    <Input Value="@_form.WorkEmail"
+                    <Input TValue="string" Value="@_form.WorkEmail"
                            ValueChanged="@(v => _form.WorkEmail = v)"
                            Type="email" />
                 </FormField>
             </div>
             <div class="col-span-2">
                 <FormField LabelText="Mobile Number" Id="mobileNumber" Class="mb-4">
-                    <Input Value="@_form.MobileNumber"
+                    <Input TValue="string" Value="@_form.MobileNumber"
                            ValueChanged="@(v => _form.MobileNumber = v)"
                            Placeholder="+63..."
                            Type="text" />
                 </FormField>
             </div>
             <div>
-                <Label For="department">Department</Label>
-                <select id="department" @bind="_form.DepartmentId" @bind:after="OnDepartmentChanged"
-                        class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1">
-                    <option value="">None</option>
-                    @foreach (var dept in _departments)
-                    {
-                        <option value="@dept.Id">@dept.Name</option>
-                    }
-                </select>
+                <FormField LabelText="Department" Id="department" Class="mb-4">
+                    <Select TValue="Guid?" Id="department" Value="@_form.DepartmentId" Placeholder="None"
+                            ValueChanged="@(async v => { _form.DepartmentId = v; await OnDepartmentChanged(); })">
+                        @foreach (var dept in _departments)
+                        {
+                            <option value="@dept.Id">@dept.Name</option>
+                        }
+                    </Select>
+                </FormField>
             </div>
             <div>
-                <Label For="position">Position</Label>
-                <select id="position" @bind="_form.PositionId"
-                        class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1">
-                    <option value="">None</option>
-                    @foreach (var pos in _positions)
-                    {
-                        <option value="@pos.Id">@pos.Title</option>
-                    }
-                </select>
+                <FormField LabelText="Position" Id="position" Class="mb-4">
+                    <Select TValue="Guid?" Id="position" @bind-Value="_form.PositionId" Placeholder="None">
+                        @foreach (var pos in _positions)
+                        {
+                            <option value="@pos.Id">@pos.Title</option>
+                        }
+                    </Select>
+                </FormField>
             </div>
             <div>
-                <Label For="empStatus">Employment Status *</Label>
-                <select id="empStatus" @bind="_form.EmploymentStatus"
-                        class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1">
-                    <option value="">Select...</option>
-                    <option value="Probationary">Probationary</option>
-                    <option value="Regular">Regular</option>
-                    <option value="Contractual">Contractual</option>
-                </select>
+                <FormField LabelText="Employment Status" Id="empStatus" Required="true" Class="mb-4">
+                    <Select TValue="string" Id="empStatus" @bind-Value="_form.EmploymentStatus" Placeholder="Select...">
+                        <option value="Probationary">Probationary</option>
+                        <option value="Regular">Regular</option>
+                        <option value="Contractual">Contractual</option>
+                    </Select>
+                </FormField>
             </div>
             <div>
-                <Label For="empType">Employment Type *</Label>
-                <select id="empType" @bind="_form.EmploymentType"
-                        class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1">
-                    <option value="">Select...</option>
-                    <option value="Regular">Regular</option>
-                    <option value="Probationary">Probationary</option>
-                    <option value="Contractual">Contractual</option>
-                    <option value="PartTime">Part-Time</option>
-                    <option value="Casual">Casual</option>
-                </select>
+                <FormField LabelText="Employment Type" Id="empType" Required="true" Class="mb-4">
+                    <Select TValue="string" Id="empType" @bind-Value="_form.EmploymentType" Placeholder="Select...">
+                        <option value="Regular">Regular</option>
+                        <option value="Probationary">Probationary</option>
+                        <option value="Contractual">Contractual</option>
+                        <option value="PartTime">Part-Time</option>
+                        <option value="Casual">Casual</option>
+                    </Select>
+                </FormField>
             </div>
             <div class="col-span-2">
-                <Label For="hireDate">Hire Date *</Label>
-                <input id="hireDate" type="date" @bind="_form.HireDate"
-                       class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1" />
+                <FormField LabelText="Hire Date" Id="hireDate" Required="true" Class="mb-4">
+                    <Input TValue="DateOnly" Id="hireDate" Type="date" @bind-Value="_form.HireDate" />
+                </FormField>
             </div>
         </div>
     </ChildContent>

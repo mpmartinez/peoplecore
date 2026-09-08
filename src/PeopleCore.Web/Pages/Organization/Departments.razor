@@ -2,7 +2,9 @@
 @attribute [Authorize(Roles = "Admin,HRManager")]
 @inject ApiClient Api
 
-<h2 class="text-2xl font-semibold mb-6">Departments</h2>
+<PageTitle>Departments</PageTitle>
+
+<PageHeader Title="Departments" Section="Organization" Description="The organizational units employees and positions belong to." />
 
 @if (_error is not null)
 {
@@ -14,11 +16,11 @@
         <div class="flex items-end gap-3 flex-wrap">
             <div class="flex-1 min-w-[160px]">
                 <Label>Name</Label>
-                <Input Value="@_newName" ValueChanged="@(v => _newName = v)" Placeholder="Department name" />
+                <Input TValue="string" Value="@_newName" ValueChanged="@(v => _newName = v)" Placeholder="Department name" />
             </div>
             <div class="flex-1 min-w-[120px]">
                 <Label>Code</Label>
-                <Input Value="@(_newCode ?? "")" ValueChanged="@(v => _newCode = string.IsNullOrEmpty(v) ? null : v)" Placeholder="e.g. HR, FIN" />
+                <Input TValue="string" Value="@(_newCode ?? "")" ValueChanged="@(v => _newCode = string.IsNullOrEmpty(v) ? null : v)" Placeholder="e.g. HR, FIN" />
             </div>
             <Button Variant="primary" OnClick="Create" Disabled="@(_creating || string.IsNullOrWhiteSpace(_newName))" Loading="@_creating">
                 + Add

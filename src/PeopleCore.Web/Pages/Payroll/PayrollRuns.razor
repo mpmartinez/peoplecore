@@ -3,10 +3,15 @@
 @inject ApiClient Api
 @inject NavigationManager Nav
 
-<div class="flex items-center justify-between mb-6">
-    <h2 class="text-2xl font-semibold text-foreground">Payroll Runs</h2>
-    <Button Variant="primary" OnClick="OpenCreateDialog">Create Run</Button>
-</div>
+<PageTitle>Payroll Runs</PageTitle>
+
+<PageHeader Title="Payroll Runs" Section="Payroll" Description="Every pay period, from draft through to posting.">
+    <Actions>
+        <Button Variant="primary" OnClick="OpenCreateDialog">
+            <i class="bi bi-plus-lg mr-1"></i> Create Run
+        </Button>
+    </Actions>
+</PageHeader>
 
 <Card>
     <CardContent Class="p-0">
@@ -61,28 +66,21 @@
         OnClose="CloseCreateDialog" Size="lg" BodyClass="space-y-4">
     <ChildContent>
     <div class="grid grid-cols-2 gap-3">
-        <div>
-            <Label For="periodStart" Required="true">Period Start</Label>
-            <input id="periodStart" type="date" @bind="_form.PeriodStart"
-                   class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1" />
-        </div>
-        <div>
-            <Label For="periodEnd" Required="true">Period End</Label>
-            <input id="periodEnd" type="date" @bind="_form.PeriodEnd"
-                   class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1" />
-        </div>
-        <div>
-            <Label For="payDate" Required="true">Pay Date</Label>
-            <input id="payDate" type="date" @bind="_form.PayDate"
-                   class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 mt-1" />
-        </div>
-        <div>
-            <Label For="frequency" Required="true">Frequency</Label>
-            <Select Id="frequency" Value="@_form.Frequency" ValueChanged="@(v => _form.Frequency = v)" Class="mt-1">
+        <FormField LabelText="Period Start" Id="periodStart" Required="true">
+            <Input TValue="DateOnly" Id="periodStart" Type="date" @bind-Value="_form.PeriodStart" />
+        </FormField>
+        <FormField LabelText="Period End" Id="periodEnd" Required="true">
+            <Input TValue="DateOnly" Id="periodEnd" Type="date" @bind-Value="_form.PeriodEnd" />
+        </FormField>
+        <FormField LabelText="Pay Date" Id="payDate" Required="true">
+            <Input TValue="DateOnly" Id="payDate" Type="date" @bind-Value="_form.PayDate" />
+        </FormField>
+        <FormField LabelText="Frequency" Id="frequency" Required="true">
+            <Select TValue="string" Id="frequency" @bind-Value="_form.Frequency">
                 <option value="Monthly">Monthly</option>
                 <option value="SemiMonthly">Semi-Monthly</option>
             </Select>
-        </div>
+        </FormField>
     </div>
 
     <div>

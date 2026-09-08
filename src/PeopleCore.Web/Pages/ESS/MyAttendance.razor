@@ -3,7 +3,9 @@
 @inject ApiClient Api
 @inject AuthenticationStateProvider AuthStateProvider
 
-<h2 class="text-2xl font-semibold text-foreground mb-6">My Attendance</h2>
+<PageTitle>My Attendance</PageTitle>
+
+<PageHeader Title="My Attendance" Section="My HR" Description="Clock in and out, and review your attendance history." />
 
 <Card Class="mb-6">
     <CardContent Class="pt-4">
@@ -15,14 +17,15 @@
         }
         else
         {
-            <div class="flex gap-3 items-center flex-wrap">
-                <Button Variant="primary" Class="btn-time-action" OnClick="TimeIn" Disabled="@(_clockedIn || _processing)" Loading="@(_processing && !_clockedIn)">
+            <div class="flex flex-wrap items-center gap-3">
+                @* Full-width, large targets on a phone; ordinary buttons once there is room. *@
+                <Button Variant="primary" Size="lg" Class="w-full sm:w-auto" OnClick="TimeIn" Disabled="@(_clockedIn || _processing)" Loading="@(_processing && !_clockedIn)">
                     <i class="bi bi-clock-history mr-1"></i> Time In
                 </Button>
-                <Button Variant="destructive" Class="btn-time-action" OnClick="TimeOut" Disabled="@(!_clockedIn || _processing)" Loading="@(_processing && _clockedIn)">
+                <Button Variant="destructive" Size="lg" Class="w-full sm:w-auto" OnClick="TimeOut" Disabled="@(!_clockedIn || _processing)" Loading="@(_processing && _clockedIn)">
                     <i class="bi bi-clock mr-1"></i> Time Out
                 </Button>
-                <Separator Orientation="vertical" Class="h-6" />
+                <Separator Orientation="vertical" Class="hidden h-6 sm:block" />
                 <span class="text-sm text-muted-foreground">@DateTime.Now.ToString("hh:mm tt, MMMM dd yyyy")</span>
                 @if (_message is not null)
                 {
@@ -66,7 +69,7 @@
                             <TableCell Class="px-4 py-3">@(r.TimeIn ?? "--")</TableCell>
                             <TableCell Class="px-4 py-3">@(r.TimeOut ?? "--")</TableCell>
                             <TableCell Class="@("px-4 py-3 text-right " + (r.LateMinutes > 0 ? "text-destructive font-medium" : ""))">@r.LateMinutes</TableCell>
-                            <TableCell Class="@("px-4 py-3 text-right " + (r.UndertimeMinutes > 0 ? "text-orange-600 font-medium" : ""))">@r.UndertimeMinutes</TableCell>
+                            <TableCell Class="@("px-4 py-3 text-right " + (r.UndertimeMinutes > 0 ? "text-warning font-medium" : ""))">@r.UndertimeMinutes</TableCell>
                         </TableRow>
                     }
                 </TableBody>

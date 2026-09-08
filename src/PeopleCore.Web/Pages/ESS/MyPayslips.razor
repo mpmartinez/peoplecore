@@ -3,7 +3,9 @@
 @inject ApiClient Api
 @inject IJSRuntime JS
 
-<h2 class="text-2xl font-semibold text-foreground mb-6">My Payslips</h2>
+<PageTitle>My Payslips</PageTitle>
+
+<PageHeader Title="My Payslips" Section="My HR" Description="Download payslips from past payroll runs." />
 
 @if (_actionError is not null)
 {

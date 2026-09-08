@@ -3,16 +3,19 @@
 @inject ApiClient Api
 @inject AuthenticationStateProvider AuthStateProvider
 
-<div class="flex items-center justify-between mb-6">
-    <h2 class="text-2xl font-semibold text-foreground">Leave Approvals</h2>
-    <select @bind="_statusFilter" @bind:after="LoadRequests"
-            class="flex h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 min-w-[160px]">
-        <option value="">All Statuses</option>
-        <option value="Pending">Pending</option>
-        <option value="Approved">Approved</option>
-        <option value="Rejected">Rejected</option>
-    </select>
-</div>
+<PageTitle>Leave Approvals</PageTitle>
+
+<PageHeader Title="Leave Approvals" Section="Management" Description="Leave requests waiting on your decision.">
+    <Actions>
+        <Select TValue="string" Value="@_statusFilter" Class="w-[160px]"
+                ValueChanged="@(async v => { _statusFilter = v; await LoadRequests(); })">
+            <option value="">All Statuses</option>
+            <option value="Pending">Pending</option>
+            <option value="Approved">Approved</option>
+            <option value="Rejected">Rejected</option>
+        </Select>
+    </Actions>
+</PageHeader>
 
 <Card>
     <CardContent Class="p-0">

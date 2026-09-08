@@ -1,11 +1,12 @@
 @namespace IAS.Client.Components.UI
+@typeparam TValue
 
 <input type="@Type"
        id="@Id"
        name="@Name"
        class="@GetClasses()"
        placeholder="@Placeholder"
-       value="@Value"
+       value="@BindValue.Format(Value, Type)"
        disabled="@Disabled"
        readonly="@ReadOnly"
        required="@Required"
@@ -26,7 +27,7 @@
     [Parameter] public string? Id { get; set; }
     [Parameter] public string? Name { get; set; }
     [Parameter] public string Type { get; set; } = "text";
-    [Parameter] public string? Value { get; set; }
+    [Parameter] public TValue? Value { get; set; }
     [Parameter] public string? Placeholder { get; set; }
     [Parameter] public bool Disabled { get; set; }
     [Parameter] public bool ReadOnly { get; set; }
@@ -38,7 +39,7 @@
     [Parameter] public int? MaxLength { get; set; }
     [Parameter] public string? Pattern { get; set; }
     [Parameter] public string? AutoComplete { get; set; }
-    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public EventCallback<TValue> ValueChanged { get; set; }
     [Parameter] public EventCallback OnBlur { get; set; }
     [Parameter] public EventCallback OnFocus { get; set; }
     [Parameter] public EventCallback<KeyboardEventArgs> OnKeyDown { get; set; }
@@ -56,8 +57,13 @@
 
     private async Task HandleInput(ChangeEventArgs e)
     {
-        Value = e.Value?.ToString();
-        await ValueChanged.InvokeAsync(Value);
+        // A half-typed date or number does not parse. Leave the bound value alone until it does,
+        // so the model never sees a value the user did not finish entering.
+        if (BindValue.TryParse<TValue>(e.Value?.ToString(), out var parsed))
+        {
+            Value = parsed;
+            await ValueChanged.InvokeAsync(parsed!);
+        }
     }
 
     private async Task HandleBlur()

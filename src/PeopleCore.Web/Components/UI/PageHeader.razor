@@ -1,0 +1,73 @@
+@namespace IAS.Client.Components.UI
+
+@*
+    The banner every page opens with: where you are, what the page is, and the actions
+    that apply to the whole page. Using it everywhere keeps the title type scale, the
+    breadcrumb trail and the action alignment identical across the app.
+*@
+
+<div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+    <div class="min-w-0 space-y-1">
+        @if (!string.IsNullOrEmpty(Section) || Breadcrumbs != null)
+        {
+            <Breadcrumb Class="mb-2">
+                <BreadcrumbItem>
+                    <BreadcrumbLink Href="/">Home</BreadcrumbLink>
+                </BreadcrumbItem>
+                @if (!string.IsNullOrEmpty(Section))
+                {
+                    <BreadcrumbSeparator />
+                    <BreadcrumbItem>
+                        @if (!string.IsNullOrEmpty(SectionHref))
+                        {
+                            <BreadcrumbLink Href="@SectionHref">@Section</BreadcrumbLink>
+                        }
+                        else
+                        {
+                            <span>@Section</span>
+                        }
+                    </BreadcrumbItem>
+                }
+                @Breadcrumbs
+                <BreadcrumbSeparator />
+                <BreadcrumbItem>
+                    <BreadcrumbPage>@Title</BreadcrumbPage>
+                </BreadcrumbItem>
+            </Breadcrumb>
+        }
+        <h1 class="truncate text-2xl font-semibold tracking-tight text-foreground">@Title</h1>
+        @if (!string.IsNullOrEmpty(Description))
+        {
+            <p class="text-sm text-muted-foreground">@Description</p>
+        }
+        @ChildContent
+    </div>
+    @if (Actions != null)
+    {
+        <div class="flex shrink-0 flex-wrap items-center gap-2">
+            @Actions
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>The page's name, rendered as the h1 and as the final breadcrumb.</summary>
+    [Parameter, EditorRequired] public string Title { get; set; } = string.Empty;
+
+    /// <summary>The navigation group this page sits under, e.g. "Payroll".</summary>
+    [Parameter] public string? Section { get; set; }
+
+    /// <summary>Makes <see cref="Section"/> a link when the group has a landing page.</summary>
+    [Parameter] public string? SectionHref { get; set; }
+
+    /// <summary>One line explaining what the page is for.</summary>
+    [Parameter] public string? Description { get; set; }
+
+    /// <summary>Extra breadcrumb items between the section and the page, for nested routes.</summary>
+    [Parameter] public RenderFragment? Breadcrumbs { get; set; }
+
+    /// <summary>Page-level actions, right-aligned on wide screens and wrapped below on narrow ones.</summary>
+    [Parameter] public RenderFragment? Actions { get; set; }
+
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

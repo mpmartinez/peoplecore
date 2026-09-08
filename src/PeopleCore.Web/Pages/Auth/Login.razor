@@ -18,14 +18,13 @@
 
             <div class="space-y-4">
                 <FormField LabelText="Email" Id="email">
-                    <input id="email" type="email" @bind="_email" @bind:event="oninput"
-                           class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                           placeholder="you@company.com" />
+                    <Input TValue="string" Id="email" Type="email" @bind-Value="_email"
+                           AutoComplete="username" Placeholder="you@company.com" />
                 </FormField>
                 <FormField LabelText="Password" Id="password" Class="mb-6">
-                    <input id="password" type="password" @bind="_password" @bind:event="oninput"
-                           @onkeydown="@(async e => { if (e.Key == "Enter") await HandleLogin(); })"
-                           class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
+                    <Input TValue="string" Id="password" Type="password" @bind-Value="_password"
+                           AutoComplete="current-password"
+                           OnKeyDown="@(async e => { if (e.Key == "Enter") await HandleLogin(); })" />
                 </FormField>
                 <Button Variant="primary" Class="w-full" OnClick="HandleLogin" Loading="@_loading">
                     Sign In

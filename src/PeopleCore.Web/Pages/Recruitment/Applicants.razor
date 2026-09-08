@@ -2,19 +2,22 @@
 @attribute [Authorize(Roles = "Admin,HRManager")]
 @inject ApiClient Api
 
-<div class="flex items-center justify-between mb-6">
-    <h2 class="text-2xl font-semibold">Applicants</h2>
-    <select @bind="_statusFilter" @bind:after="Load"
-            class="flex h-9 w-48 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50">
-        <option value="">All Status</option>
-        <option value="Applied">Applied</option>
-        <option value="Screening">Screening</option>
-        <option value="Interviewing">Interviewing</option>
-        <option value="Offered">Offered</option>
-        <option value="Hired">Hired</option>
-        <option value="Rejected">Rejected</option>
-    </select>
-</div>
+<PageTitle>Applicants</PageTitle>
+
+<PageHeader Title="Applicants" Section="Recruitment" Description="Everyone who has applied, and where they are in the pipeline.">
+    <Actions>
+        <Select TValue="string" Value="@_statusFilter" Class="w-48"
+                ValueChanged="@(async v => { _statusFilter = v; await Load(); })">
+            <option value="">All Status</option>
+            <option value="Applied">Applied</option>
+            <option value="Screening">Screening</option>
+            <option value="Interviewing">Interviewing</option>
+            <option value="Offered">Offered</option>
+            <option value="Hired">Hired</option>
+            <option value="Rejected">Rejected</option>
+        </Select>
+    </Actions>
+</PageHeader>
 
 <Card>
     <CardContent Class="p-0">

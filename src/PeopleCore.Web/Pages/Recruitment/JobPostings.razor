@@ -2,19 +2,22 @@
 @attribute [Authorize(Roles = "Admin,HRManager")]
 @inject ApiClient Api
 
-<div class="flex items-center justify-between mb-6">
-    <h2 class="text-2xl font-semibold">Job Postings</h2>
-    <div class="flex items-center gap-3">
-        <select @bind="_statusFilter" @bind:after="Load"
-                class="flex h-9 w-40 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50">
+<PageTitle>Job Postings</PageTitle>
+
+<PageHeader Title="Job Postings" Section="Recruitment" Description="Open roles and the vacancies behind them.">
+    <Actions>
+        <Select TValue="string" Value="@_statusFilter" Class="w-40"
+                ValueChanged="@(async v => { _statusFilter = v; await Load(); })">
             <option value="">All Status</option>
             <option value="Draft">Draft</option>
             <option value="Open">Open</option>
             <option value="Closed">Closed</option>
-        </select>
-        <Button Variant="primary" OnClick="() => _showForm = !_showForm">+ New Posting</Button>
-    </div>
-</div>
+        </Select>
+        <Button Variant="primary" OnClick="() => _showForm = !_showForm">
+            <i class="bi bi-plus-lg mr-1"></i> New Posting
+        </Button>
+    </Actions>
+</PageHeader>
 
 @if (_showForm)
 {
@@ -25,17 +28,16 @@
         <CardContent>
             <div class="grid grid-cols-2 gap-3 mb-3">
                 <FormField LabelText="Title *" Id="posting-title">
-                    <Input Value="@_form.Title" ValueChanged="@(v => _form.Title = v)" Placeholder="Position title" />
+                    <Input TValue="string" Value="@_form.Title" ValueChanged="@(v => _form.Title = v)" Placeholder="Position title" />
                 </FormField>
                 <FormField LabelText="Vacancies" Id="posting-vacancies">
-                    <Input Value="@_form.Vacancies.ToString()" ValueChanged="@(v => { if (int.TryParse(v, out var n)) _form.Vacancies = n; })" Type="number" />
+                    <Input TValue="string" Value="@_form.Vacancies.ToString()" ValueChanged="@(v => { if (int.TryParse(v, out var n)) _form.Vacancies = n; })" Type="number" />
                 </FormField>
             </div>
-            <div class="mb-3">
-                <Label>Description</Label>
-                <textarea @bind="_form.Description" rows="3"
-                          class="flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"></textarea>
-            </div>
+            <FormField LabelText="Description" Id="posting-description" Class="mb-3">
+                <Textarea TValue="string" Id="posting-description" Rows="3" Value="@_form.Description"
+                          ValueChanged="@(v => _form.Description = string.IsNullOrWhiteSpace(v) ? null : v)" />
+            </FormField>
             <div class="flex gap-2">
                 <Button Variant="primary" Size="sm" OnClick="CreatePosting" Disabled="@(_saving || string.IsNullOrWhiteSpace(_form.Title))" Loading="@_saving">
                     Save Draft
