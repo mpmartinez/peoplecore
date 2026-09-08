@@ -13,7 +13,10 @@
 
         <!-- Menu Content -->
         <div class="@GetContentClasses()" role="menu" aria-orientation="vertical">
-            @ChildContent
+            @* Items pick this up to close the menu once they have run their handler. *@
+            <CascadingValue Value="this" IsFixed="true">
+                @ChildContent
+            </CascadingValue>
         </div>
     }
 </div>

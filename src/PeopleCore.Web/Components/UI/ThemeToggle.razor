@@ -1,0 +1,58 @@
+@namespace IAS.Client.Components.UI
+@inject IJSRuntime JS
+
+<DropdownMenu Align="end">
+    <Trigger>
+        <Button Variant="ghost" Size="icon-sm" Title="Change theme">
+            <i class="bi @CurrentIcon text-base"></i>
+            <span class="sr-only">Change theme</span>
+        </Button>
+    </Trigger>
+    <ChildContent>
+        <DropdownMenuLabel>Theme</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        @foreach (var (value, label, icon) in Options)
+        {
+            <DropdownMenuItem OnClick="@(() => SetTheme(value))">
+                <i class="bi @icon mr-2"></i>
+                <span>@label</span>
+                @if (_theme == value)
+                {
+                    <i class="bi bi-check2 ml-auto"></i>
+                }
+            </DropdownMenuItem>
+        }
+    </ChildContent>
+</DropdownMenu>
+
+@code {
+    private static readonly (string Value, string Label, string Icon)[] Options =
+    [
+        ("light", "Light", "bi-sun"),
+        ("dark", "Dark", "bi-moon-stars"),
+        ("system", "System", "bi-circle-half")
+    ];
+
+    private string _theme = "system";
+
+    private string CurrentIcon => Options.First(o => o.Value == _theme).Icon;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        // The stored theme is applied by a script in index.html before Blazor boots, so this
+        // only syncs the control's own state with what the page is already showing.
+        _theme = await JS.InvokeAsync<string>("peopleCoreTheme.getTheme");
+        StateHasChanged();
+    }
+
+    private async Task SetTheme(string theme)
+    {
+        _theme = theme;
+        await JS.InvokeVoidAsync("peopleCoreTheme.setTheme", theme);
+    }
+}

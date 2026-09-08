@@ -1,55 +1,97 @@
 @using Microsoft.AspNetCore.Components.Authorization
-@inject AuthenticationStateProvider AuthStateProvider
-@inject NavigationManager Nav
 
-<div class="mobile-footer-nav">
-    <NavLink class="footer-tab" href="" Match="NavLinkMatch.All">
-        <span class="bi bi-house-door"></span>
-        <span class="footer-label">Home</span>
-    </NavLink>
-    <NavLink class="footer-tab" href="my-attendance" Match="NavLinkMatch.All">
-        <span class="bi bi-clock"></span>
-        <span class="footer-label">Attendance</span>
-    </NavLink>
-    <NavLink class="footer-tab" href="my-leave" Match="NavLinkMatch.All">
-        <span class="bi bi-calendar-event"></span>
-        <span class="footer-label">Leave</span>
-    </NavLink>
-    <NavLink class="footer-tab" href="my-profile" Match="NavLinkMatch.All">
-        <span class="bi bi-person"></span>
-        <span class="footer-label">Profile</span>
-    </NavLink>
-    <button class="footer-tab" @onclick="ToggleMore">
-        <span class="bi bi-three-dots"></span>
-        <span class="footer-label">More</span>
+@*
+    The phone tab bar. `mobile-footer-nav` only carries the media query that shows it
+    below the md breakpoint; everything visual comes from the shadcn tokens.
+*@
+
+<nav class="mobile-footer-nav fixed inset-x-0 bottom-0 z-40 items-stretch justify-around border-t border-border bg-background pb-[env(safe-area-inset-bottom)]">
+    @foreach (var tab in Tabs)
+    {
+        <NavLink href="@tab.Href" Match="NavLinkMatch.All"
+                 class="flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[0.65rem] text-muted-foreground transition-colors hover:text-foreground"
+                 ActiveClass="text-primary">
+            <i class="bi @tab.Icon text-xl"></i>
+            <span>@tab.Label</span>
+        </NavLink>
+    }
+    <button type="button"
+            class="flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[0.65rem] transition-colors @(_showMore ? "text-primary" : "text-muted-foreground hover:text-foreground")"
+            @onclick="ToggleMore">
+        <i class="bi bi-three-dots text-xl"></i>
+        <span>More</span>
     </button>
-</div>
+</nav>
 
-@if (showMore)
+@if (_showMore)
 {
-    <div class="mobile-more-panel" @onclick="ToggleMore">
-        <div class="mobile-more-content" @onclick:stopPropagation>
-            <!-- Role-based additional links -->
-            <AuthorizeView Roles="Admin,HRManager">
-                <NavLink class="more-link" href="employees">Employees</NavLink>
-                <NavLink class="more-link" href="departments">Departments</NavLink>
-                <NavLink class="more-link" href="positions">Positions</NavLink>
-                <NavLink class="more-link" href="leave-approvals">Leave Approvals</NavLink>
-                <NavLink class="more-link" href="analytics">Analytics</NavLink>
-            </AuthorizeView>
-            <AuthorizeView Roles="Admin,HRManager,Manager">
-                <NavLink class="more-link" href="overtime-approvals">OT Approvals</NavLink>
-                <NavLink class="more-link" href="performance">Performance</NavLink>
-            </AuthorizeView>
-            <AuthorizeView Roles="Admin,HRManager">
-                <NavLink class="more-link" href="job-postings">Recruitment</NavLink>
-                <NavLink class="more-link" href="applicants">Applicants</NavLink>
-            </AuthorizeView>
+    <div class="fixed inset-0 z-40 bg-black/50 md:hidden" @onclick="ToggleMore">
+        <div class="absolute inset-x-0 bottom-16 max-h-[60vh] overflow-y-auto rounded-t-2xl border-t border-border bg-popover p-3 text-popover-foreground shadow-lg"
+             @onclick:stopPropagation>
+            <div class="mx-auto mb-3 h-1 w-10 rounded-full bg-border"></div>
+            @foreach (var group in MoreGroups)
+            {
+                <AuthorizeView Roles="@group.Roles" Context="moreContext">
+                    <Authorized>
+                        <p class="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">@group.Label</p>
+                        @foreach (var link in group.Links)
+                        {
+                            <NavLink href="@link.Href"
+                                     class="block rounded-md px-3 py-2.5 text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                                     ActiveClass="bg-accent text-accent-foreground">
+                                @link.Label
+                            </NavLink>
+                        }
+                    </Authorized>
+                </AuthorizeView>
+            }
         </div>
     </div>
 }
 
 @code {
-    private bool showMore;
-    private void ToggleMore() => showMore = !showMore;
+    private sealed record Tab(string Href, string Label, string Icon);
+
+    private sealed record MoreLink(string Href, string Label);
+
+    private sealed record MoreGroup(string Label, string Roles, MoreLink[] Links);
+
+    private static readonly Tab[] Tabs =
+    [
+        new("", "Home", "bi-house-door"),
+        new("my-attendance", "Attendance", "bi-clock"),
+        new("my-leave", "Leave", "bi-calendar-event"),
+        new("my-profile", "Profile", "bi-person")
+    ];
+
+    private static readonly MoreGroup[] MoreGroups =
+    [
+        new("Organization", "Admin,HRManager",
+        [
+            new("employees", "Employees"),
+            new("departments", "Departments"),
+            new("positions", "Positions"),
+            new("analytics", "Analytics")
+        ]),
+        new("Management", "Admin,HRManager,Manager",
+        [
+            new("leave-approvals", "Leave Approvals"),
+            new("overtime-approvals", "OT Approvals"),
+            new("performance", "Performance")
+        ]),
+        new("Payroll", "Admin,HRManager,PayrollService",
+        [
+            new("payroll-runs", "Payroll Runs"),
+            new("bir-2316", "BIR Form 2316")
+        ]),
+        new("Recruitment", "Admin,HRManager",
+        [
+            new("job-postings", "Job Postings"),
+            new("applicants", "Applicants")
+        ])
+    ];
+
+    private bool _showMore;
+
+    private void ToggleMore() => _showMore = !_showMore;
 }

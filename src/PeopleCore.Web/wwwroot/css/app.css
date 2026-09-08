@@ -1,46 +1,38 @@
-html, body {
-    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+/* Everything visual is driven by the shadcn token set declared in index.html and
+   consumed through Tailwind utilities. This file only carries what utilities
+   cannot express: the pre-boot loading screen, the Blazor error strip, and the
+   few bespoke chrome pieces (mobile tab bar, sidebar scrollbar). */
+
+html,
+body {
+    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 
 h1:focus {
     outline: none;
 }
 
-a, .btn-link {
-    color: #0071c1;
-}
-
-.btn-primary {
-    color: #fff;
-    background-color: #1b6ec2;
-    border-color: #1861ac;
-}
-
-.btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus {
-  box-shadow: 0 0 0 0.1rem white, 0 0 0 0.25rem #258cfb;
-}
-
-.content {
-    padding-top: 1.1rem;
-}
+/* Validation ------------------------------------------------------------- */
 
 .valid.modified:not([type=checkbox]) {
-    outline: 1px solid #26b050;
+    outline: 1px solid hsl(var(--success));
 }
 
 .invalid {
-    outline: 1px solid red;
+    outline: 1px solid hsl(var(--destructive));
 }
 
 .validation-message {
-    color: red;
+    color: hsl(var(--destructive));
 }
 
+/* Blazor error strip ----------------------------------------------------- */
+
 #blazor-error-ui {
-    color-scheme: light only;
-    background: lightyellow;
+    background: hsl(var(--destructive));
+    color: hsl(var(--destructive-foreground));
     bottom: 0;
-    box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 -1px 2px rgb(0 0 0 / 0.2);
     box-sizing: border-box;
     display: none;
     left: 0;
@@ -50,22 +42,32 @@ a, .btn-link {
     z-index: 1000;
 }
 
-    #blazor-error-ui .dismiss {
-        cursor: pointer;
-        position: absolute;
-        right: 0.75rem;
-        top: 0.5rem;
-    }
-
-.blazor-error-boundary {
-    background: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNTYiIGhlaWdodD0iNDkiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgeG1sbnM6eGxpbms9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkveGxpbmsiIG92ZXJmbG93PSJoaWRkZW4iPjxkZWZzPjxjbGlwUGF0aCBpZD0iY2xpcDAiPjxyZWN0IHg9IjIzNSIgeT0iNTEiIHdpZHRoPSI1NiIgaGVpZ2h0PSI0OSIvPjwvY2xpcFBhdGg+PC9kZWZzPjxnIGNsaXAtcGF0aD0idXJsKCNjbGlwMCkiIHRyYW5zZm9ybT0idHJhbnNsYXRlKC0yMzUgLTUxKSI+PHBhdGggZD0iTTI2My41MDYgNTFDMjY0LjcxNyA1MSAyNjUuODEzIDUxLjQ4MzcgMjY2LjYwNiA1Mi4yNjU4TDI2Ny4wNTIgNTIuNzk4NyAyNjcuNTM5IDUzLjYyODMgMjkwLjE4NSA5Mi4xODMxIDI5MC41NDUgOTIuNzk1IDI5MC42NTYgOTIuOTk2QzI5MC44NzcgOTMuNTEzIDI5MSA5NC4wODE1IDI5MSA5NC42NzgyIDI5MSA5Ny4wNjUxIDI4OS4wMzggOTkgMjg2LjYxNyA5OUwyNDAuMzgzIDk5QzIzNy45NjMgOTkgMjM2IDk3LjA2NTEgMjM2IDk0LjY3ODIgMjM2IDk0LjM3OTkgMjM2LjAzMSA5NC4wODg2IDIzNi4wODkgOTMuODA3MkwyMzYuMzM4IDkzLjAxNjIgMjM2Ljg1OCA5Mi4xMzE0IDI1OS40NzMgNTMuNjI5NCAyNTkuOTYxIDUyLjc5ODUgMjYwLjQwNyA1Mi4yNjU4QzI2MS4yIDUxLjQ4MzcgMjYyLjI5NiA1MSAyNjMuNTA2IDUxWk0yNjMuNTg2IDY2LjAxODNDMjYwLjczNyA2Ni4wMTgzIDI1OS4zMTMgNjcuMTI0NSAyNTkuMzEzIDY5LjMzNyAyNTkuMzEzIDY5LjYxMDIgMjU5LjMzMiA2OS44NjA4IDI1OS4zNzEgNzAuMDg4N0wyNjEuNzk1IDg0LjAxNjEgMjY1LjM4IDg0LjAxNjEgMjY3LjgyMSA2OS43NDc1QzI2Ny44NiA2OS43MzA5IDI2Ny44NzkgNjkuNTg3NyAyNjcuODc5IDY5LjMxNzkgMjY3Ljg3OSA2Ny4xMTgyIDI2Ni40NDggNjYuMDE4MyAyNjMuNTg2IDY2LjAxODNaTTI2My41NzYgODYuMDU0N0MyNjEuMDQ5IDg2LjA1NDcgMjU5Ljc4NiA4Ny4zMDA1IDI1OS43ODYgODkuNzkyMSAyNTkuNzg2IDkyLjI4MzcgMjYxLjA0OSA5My41Mjk1IDI2My41NzYgOTMuNTI5NSAyNjYuMTE2IDkzLjUyOTUgMjY3LjM4NyA5Mi4yODM3IDI2Ny4zODcgODkuNzkyMSAyNjcuMzg3IDg3LjMwMDUgMjY2LjExNiA4Ni4wNTQ3IDI2My41NzYgODYuMDU0N1oiIGZpbGw9IiNGRkU1MDAiIGZpbGwtcnVsZT0iZXZlbm9kZCIvPjwvZz48L3N2Zz4=) no-repeat 1rem/1.8rem, #b32121;
-    padding: 1rem 1rem 1rem 3.7rem;
-    color: white;
+#blazor-error-ui .reload,
+#blazor-error-ui .dismiss {
+    color: inherit;
+    text-decoration: underline;
 }
 
-    .blazor-error-boundary::after {
-        content: "An error has occurred."
-    }
+#blazor-error-ui .dismiss {
+    cursor: pointer;
+    position: absolute;
+    right: 0.75rem;
+    top: 0.5rem;
+    text-decoration: none;
+}
+
+.blazor-error-boundary {
+    background: hsl(var(--destructive));
+    padding: 1rem;
+    color: hsl(var(--destructive-foreground));
+    border-radius: var(--radius);
+}
+
+.blazor-error-boundary::after {
+    content: "An error has occurred."
+}
+
+/* Pre-boot loading screen ------------------------------------------------ */
 
 .loading-progress {
     position: absolute;
@@ -76,252 +78,69 @@ a, .btn-link {
     margin: 0 auto 0 auto;
 }
 
-    .loading-progress circle {
-        fill: none;
-        stroke: #e0e0e0;
-        stroke-width: 0.6rem;
-        transform-origin: 50% 50%;
-        transform: rotate(-90deg);
-    }
+.loading-progress circle {
+    fill: none;
+    stroke: hsl(var(--muted));
+    stroke-width: 0.6rem;
+    transform-origin: 50% 50%;
+    transform: rotate(-90deg);
+}
 
-        .loading-progress circle:last-child {
-            stroke: #1b6ec2;
-            stroke-dasharray: calc(3.141 * var(--blazor-load-percentage, 0%) * 0.8), 500%;
-            transition: stroke-dasharray 0.05s ease-in-out;
-        }
+.loading-progress circle:last-child {
+    stroke: hsl(var(--primary));
+    stroke-dasharray: calc(3.141 * var(--blazor-load-percentage, 0%) * 0.8), 500%;
+    transition: stroke-dasharray 0.05s ease-in-out;
+}
 
 .loading-progress-text {
     position: absolute;
     text-align: center;
     font-weight: bold;
+    color: hsl(var(--foreground));
     inset: calc(20vh + 3.25rem) 0 auto 0.2rem;
 }
 
-    .loading-progress-text:after {
-        content: var(--blazor-load-percentage-text, "Loading");
-    }
+.loading-progress-text:after {
+    content: var(--blazor-load-percentage-text, "Loading");
+}
 
 code {
-    color: #c02d76;
+    color: hsl(var(--primary));
 }
 
-/* Mobile Footer Navigation */
+/* Sidebar scroll area ---------------------------------------------------- */
+
+.scrollbar-hide {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--sidebar-border)) transparent;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+    width: 6px;
+}
+
+.scrollbar-hide::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--sidebar-border));
+    border-radius: 3px;
+}
+
+.scrollbar-hide::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* Mobile tab bar --------------------------------------------------------- */
+
 .mobile-footer-nav {
     display: none;
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 64px;
-    background: #ffffff;
-    border-top: 1px solid #e5e7eb;
-    z-index: 1000;
-    justify-content: space-around;
-    align-items: center;
-    padding-bottom: env(safe-area-inset-bottom);
 }
 
-.footer-tab {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-decoration: none;
-    color: #6b7280;
-    font-size: 0.7rem;
-    padding: 8px 0;
-    border: none;
-    background: none;
-    cursor: pointer;
-    flex: 1;
-}
-
-.footer-tab span.bi {
-    font-size: 1.25rem;
-    margin-bottom: 2px;
-}
-
-.footer-tab.active, .footer-tab:hover {
-    color: #1e40af;
-}
-
-.footer-label {
-    font-size: 0.65rem;
-}
-
-/* More Panel */
-.mobile-more-panel {
-    display: none;
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: 999;
-}
-
-.mobile-more-content {
-    position: absolute;
-    bottom: 64px;
-    left: 0;
-    right: 0;
-    background: #ffffff;
-    border-radius: 16px 16px 0 0;
-    padding: 16px;
-    max-height: 60vh;
-    overflow-y: auto;
-}
-
-.more-link {
-    display: block;
-    padding: 12px 16px;
-    color: #374151;
-    text-decoration: none;
-    border-radius: 8px;
-    font-size: 0.95rem;
-}
-
-.more-link:hover, .more-link.active {
-    background: #f3f4f6;
-    color: #1e40af;
-}
-
-/* Nav section collapsible headers */
-.nav-section-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    padding: 6px 8px;
-    border: none;
-    background: none;
-    color: #93c5fd;
-    font-size: 0.7rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    cursor: pointer;
-    border-radius: 4px;
-    transition: background 0.15s;
-}
-
-.nav-section-header:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #ffffff;
-}
-
-.nav-section-items {
-    margin-top: 2px;
-}
-
-/* Sidebar panel */
-.sidebar-panel {
-    width: 16rem;
-    shrink: 0;
-    transition: width 0.2s ease, min-width 0.2s ease;
-    overflow: hidden;
-}
-
-.sidebar-open {
-    width: 16rem;
-    min-width: 16rem;
-}
-
-.sidebar-closed {
-    width: 0;
-    min-width: 0;
-}
-
-/* Mobile media query */
 @media (max-width: 767.98px) {
-    .sidebar-panel.sidebar-open {
-        position: fixed;
-        top: 0;
-        left: 0;
-        bottom: 0;
-        width: 16rem;
-        min-width: 16rem;
-        z-index: 40;
-    }
-
-    .sidebar-panel.sidebar-closed {
-        display: none;
-    }
-
     .mobile-footer-nav {
         display: flex;
     }
 
-    .mobile-more-panel {
-        display: block;
-    }
-
-    main.flex-1 {
-        padding-bottom: 80px !important;
-    }
-
-    /* Responsive forms — full-width inputs on mobile */
-    .form-control, .form-select, select, input[type="text"], input[type="email"],
-    input[type="password"], input[type="date"], input[type="number"], textarea {
-        width: 100% !important;
-        min-width: 0 !important;
-        max-width: 100% !important;
-    }
-
-    .row .col-md-3, .row .col-md-4, .row .col-md-6 {
-        margin-bottom: 0.5rem;
-    }
-
-    /* Stack flex filter bars vertically on mobile */
-    .flex.gap-3.flex-wrap,
-    .flex.flex-wrap.items-end.gap-3,
-    .flex.flex-wrap.items-end.gap-4,
-    .flex.items-center.gap-3 {
-        flex-direction: column;
-        align-items: stretch !important;
-    }
-
-    .flex.gap-3.flex-wrap > *,
-    .flex.flex-wrap.items-end.gap-3 > *,
-    .flex.flex-wrap.items-end.gap-4 > *,
-    .flex.items-center.gap-3 > * {
-        width: 100% !important;
-        max-width: 100% !important;
-        min-width: 0 !important;
-    }
-
-    /* Page header — stack title and actions vertically */
-    .flex.items-center.justify-between {
-        flex-wrap: wrap;
-        gap: 0.75rem;
-    }
-
-    /* MyAttendance — prominent time in/out buttons on mobile */
-    .btn-time-action {
-        width: 100%;
-        padding: 16px;
-        font-size: 1.25rem;
-        margin-bottom: 8px;
-    }
-
-    /* Login page — full width card with padding on mobile */
-    .max-w-sm {
-        max-width: 100% !important;
-        margin: 0 1rem;
-    }
-
-    /* Cards grid — ensure cards stack vertically */
-    .grid.grid-cols-2 {
-        grid-template-columns: 1fr !important;
-    }
-
-    /* Table text sizing for readability on small screens */
-    table {
-        font-size: 0.8rem;
-    }
-
-    /* Fix fixed-width selects */
-    select.w-48, select.w-40, .max-w-\\[160px\\] {
-        width: 100% !important;
-        max-width: 100% !important;
+    /* Keep page content clear of the fixed tab bar. */
+    .app-scroll-region {
+        padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
     }
 }
-

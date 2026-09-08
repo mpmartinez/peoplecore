@@ -4,7 +4,7 @@
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
-  "theme_color": "#1e40af",
+  "theme_color": "#3b82f6",
   "description": "PeopleCore HR Management System",
   "icons": [
     {

@@ -1,51 +1,175 @@
 @inherits LayoutComponentBase
+@implements IAsyncDisposable
+@using IAS.Client.Components.UI.Sidebar
 @inject PeopleCore.Web.Auth.JwtAuthStateProvider AuthProvider
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
-<div class="flex h-screen bg-background">
-    @if (sidebarOpen)
-    {
-        <div class="fixed inset-0 bg-black/50 z-30 md:hidden" @onclick="ToggleSidebar"></div>
-    }
-    <div class="@SidebarCss">
-        <NavMenu />
-    </div>
-    <div class="flex-1 flex flex-col overflow-hidden">
-        <header class="bg-card border-b border-border px-6 py-3 flex justify-between items-center shadow-sm">
-            <div class="flex items-center gap-3">
-                <button class="text-muted-foreground hover:text-foreground" @onclick="ToggleSidebar">
-                    <i class="bi @(sidebarOpen ? "bi-x-lg" : "bi-list") text-xl"></i>
-                </button>
-                <h1 class="text-lg font-semibold text-foreground">PeopleCore HRMS</h1>
-            </div>
+@*
+    The application shell: a shadcn sidebar that collapses to an icon rail on desktop and
+    slides in as a drawer on mobile, alongside a sticky header carrying the sidebar trigger,
+    the theme control and the signed-in user's menu.
+*@
+
+<div class="min-h-svh bg-background">
+    <ShadcnSidebar @bind-IsOpen="_sidebarOpen"
+                   IsMobile="@_isMobile"
+                   Collapsible="@(_isMobile ? "offcanvas" : "icon")">
+        <ShadcnSidebarHeader Class="border-b border-sidebar-border">
+            <a href="/" class="flex h-10 items-center gap-2 rounded-md px-2 text-sidebar-foreground hover:bg-sidebar-accent">
+                <span class="flex size-7 shrink-0 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
+                    <i class="bi bi-people-fill text-sm"></i>
+                </span>
+                @if (!_sidebarCollapsed)
+                {
+                    <span class="truncate text-sm font-semibold">PeopleCore</span>
+                }
+            </a>
+        </ShadcnSidebarHeader>
+
+        <ShadcnSidebarContent>
+            <NavMenu />
+        </ShadcnSidebarContent>
+
+        <ShadcnSidebarFooter Class="border-t border-sidebar-border">
             <AuthorizeView>
                 <Authorized>
-                    <div class="flex items-center gap-4">
-                        <span class="text-sm text-muted-foreground">@context.User.Identity?.Name</span>
-                        <Button Variant="ghost" Size="sm" OnClick="Logout"><i class="bi bi-box-arrow-right mr-1"></i>Logout</Button>
+                    <div class="flex items-center gap-2 rounded-md px-1 py-1">
+                        <Avatar Size="sm" Fallback="@DisplayName(context)" />
+                        @if (!_sidebarCollapsed)
+                        {
+                            <div class="min-w-0 flex-1 leading-tight">
+                                <p class="truncate text-sm font-medium text-sidebar-foreground">@DisplayName(context)</p>
+                                @if (RoleLabel(context) is { Length: > 0 } roles)
+                                {
+                                    <p class="truncate text-xs text-sidebar-foreground/70">@roles</p>
+                                }
+                            </div>
+                        }
                     </div>
                 </Authorized>
             </AuthorizeView>
+        </ShadcnSidebarFooter>
+    </ShadcnSidebar>
+
+    <div class="flex min-h-svh flex-col transition-[margin-left] duration-300 ease-in-out @InsetOffset">
+        <header class="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+            <ShadcnSidebarTrigger OnClick="ToggleSidebar" />
+            <Separator Orientation="vertical" Class="mx-1 h-5" />
+            <span class="text-sm font-semibold text-foreground">PeopleCore HRMS</span>
+
+            <div class="ml-auto flex items-center gap-1">
+                <ThemeToggle />
+                <AuthorizeView>
+                    <Authorized>
+                        <DropdownMenu Align="end">
+                            <Trigger>
+                                <Button Variant="ghost" Size="icon-sm" Title="Account">
+                                    <Avatar Size="sm" Class="h-7 w-7" Fallback="@DisplayName(context)" />
+                                </Button>
+                            </Trigger>
+                            <ChildContent>
+                                <DropdownMenuLabel>@DisplayName(context)</DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem OnClick="@(() => Nav.NavigateTo("/my-profile"))">
+                                    <i class="bi bi-person-circle mr-2"></i>My Profile
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem Destructive="true" OnClick="Logout">
+                                    <i class="bi bi-box-arrow-right mr-2"></i>Log out
+                                </DropdownMenuItem>
+                            </ChildContent>
+                        </DropdownMenu>
+                    </Authorized>
+                </AuthorizeView>
+            </div>
         </header>
-        <main class="flex-1 overflow-auto p-6 bg-muted/30">
+
+        <main class="app-scroll-region flex-1 p-4 md:p-6">
             @Body
         </main>
     </div>
+
     <MobileFooterNav />
 </div>
 
 @code {
-    private bool sidebarOpen = true;
+    private const string MobileQuery = "(max-width: 767.98px)";
 
-    private string SidebarCss => sidebarOpen
-        ? "sidebar-panel sidebar-open"
-        : "sidebar-panel sidebar-closed";
+    private bool _sidebarOpen = true;
+    private bool _isMobile;
+    private DotNetObjectReference<MainLayout>? _selfRef;
 
-    private void ToggleSidebar() => sidebarOpen = !sidebarOpen;
+    /// <summary>True only for the desktop icon rail; on mobile a closed sidebar is hidden, not narrowed.</summary>
+    private bool _sidebarCollapsed => !_isMobile && !_sidebarOpen;
+
+    private string InsetOffset => _isMobile
+        ? "ml-0"
+        : _sidebarOpen ? "ml-[var(--sidebar-width)]" : "ml-[var(--sidebar-width-icon)]";
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Resolved before the first render so the shell paints at the right width straight
+        // away, rather than flashing a desktop sidebar on a phone.
+        _selfRef = DotNetObjectReference.Create(this);
+        _isMobile = await JS.InvokeAsync<bool>("peopleCoreLayout.watchBreakpoint", nameof(MainLayout), MobileQuery, _selfRef);
+        _sidebarOpen = !_isMobile;
+
+        Nav.LocationChanged += OnLocationChanged;
+    }
+
+    [JSInvokable]
+    public Task OnBreakpointChanged(bool isMobile)
+    {
+        _isMobile = isMobile;
+        _sidebarOpen = !isMobile;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        // The drawer covers the page on mobile, so navigating away has to dismiss it.
+        if (_isMobile && _sidebarOpen)
+        {
+            _sidebarOpen = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleSidebar() => _sidebarOpen = !_sidebarOpen;
+
+    /// <summary>
+    /// The label for the signed-in user. The API's token carries no name claim, so the email
+    /// address stands in for one rather than leaving the account menu blank.
+    /// </summary>
+    private static string DisplayName(AuthenticationState state) =>
+        state.User.Identity?.Name
+        ?? state.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+        ?? "Account";
+
+    private static string RoleLabel(AuthenticationState state) =>
+        string.Join(", ", state.User.FindAll(System.Security.Claims.ClaimTypes.Role).Select(c => c.Value));
 
     private async Task Logout()
     {
         await AuthProvider.LogoutAsync();
         Nav.NavigateTo("/login");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Nav.LocationChanged -= OnLocationChanged;
+
+        try
+        {
+            await JS.InvokeVoidAsync("peopleCoreLayout.unwatchBreakpoint", nameof(MainLayout));
+        }
+        catch (JSDisconnectedException)
+        {
+            // The page is going away; the listener goes with it.
+        }
+
+        _selfRef?.Dispose();
     }
 }

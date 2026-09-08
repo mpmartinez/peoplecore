@@ -6,7 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>PeopleCore HRMS</title>
     <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#1e40af" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -16,9 +17,12 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
     <link rel="stylesheet" href="css/app.css" />
     <link rel="icon" type="image/png" href="favicon.png" />
-    <link href="PeopleCore.Web.styles.css" rel="stylesheet" />
+    <script src="js/theme.js"></script>
+    <script>peopleCoreTheme.applyStoredTheme();</script>
     <style>
       :root {
+        color-scheme: light;
+
         --background: 0 0% 100%;
         --foreground: 222.2 84% 4.9%;
         --card: 0 0% 100%;
@@ -35,15 +39,68 @@
         --accent-foreground: 222.2 47.4% 11.2%;
         --destructive: 0 84.2% 60.2%;
         --destructive-foreground: 210 40% 98%;
+        --success: 142.1 76.2% 36.3%;
+        --success-foreground: 355.7 100% 97.3%;
+        --warning: 37.7 92.1% 50.2%;
+        --warning-foreground: 26 83.3% 14.1%;
         --border: 214.3 31.8% 91.4%;
         --input: 214.3 31.8% 91.4%;
         --ring: 221.2 83.2% 53.3%;
         --radius: 0.5rem;
+
+        --sidebar: 210 40% 98%;
+        --sidebar-foreground: 222.2 47.4% 11.2%;
+        --sidebar-primary: 221.2 83.2% 53.3%;
+        --sidebar-primary-foreground: 210 40% 98%;
+        --sidebar-accent: 214.3 31.8% 91.4%;
+        --sidebar-accent-foreground: 222.2 47.4% 11.2%;
+        --sidebar-border: 214.3 31.8% 91.4%;
+        --sidebar-ring: 221.2 83.2% 53.3%;
+        --sidebar-width: 16rem;
+        --sidebar-width-icon: 3.25rem;
+      }
+
+      .dark {
+        color-scheme: dark;
+
+        --background: 222.2 84% 4.9%;
+        --foreground: 210 40% 98%;
+        --card: 222.2 84% 4.9%;
+        --card-foreground: 210 40% 98%;
+        --popover: 222.2 84% 4.9%;
+        --popover-foreground: 210 40% 98%;
+        --primary: 217.2 91.2% 59.8%;
+        --primary-foreground: 222.2 47.4% 11.2%;
+        --secondary: 217.2 32.6% 17.5%;
+        --secondary-foreground: 210 40% 98%;
+        --muted: 217.2 32.6% 17.5%;
+        --muted-foreground: 215 20.2% 65.1%;
+        --accent: 217.2 32.6% 17.5%;
+        --accent-foreground: 210 40% 98%;
+        --destructive: 0 62.8% 50.6%;
+        --destructive-foreground: 210 40% 98%;
+        --success: 142.1 70.6% 45.3%;
+        --success-foreground: 144.9 80.4% 10%;
+        --warning: 47.9 95.8% 53.1%;
+        --warning-foreground: 26 83.3% 14.1%;
+        --border: 217.2 32.6% 17.5%;
+        --input: 217.2 32.6% 17.5%;
+        --ring: 224.3 76.3% 48%;
+
+        --sidebar: 222.2 47.4% 11.2%;
+        --sidebar-foreground: 210 40% 98%;
+        --sidebar-primary: 217.2 91.2% 59.8%;
+        --sidebar-primary-foreground: 222.2 47.4% 11.2%;
+        --sidebar-accent: 217.2 32.6% 17.5%;
+        --sidebar-accent-foreground: 210 40% 98%;
+        --sidebar-border: 217.2 32.6% 17.5%;
+        --sidebar-ring: 224.3 76.3% 48%;
       }
     </style>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
+        darkMode: 'class',
         theme: {
           extend: {
             colors: {
@@ -55,10 +112,22 @@
               primary: { DEFAULT: 'hsl(var(--primary))', foreground: 'hsl(var(--primary-foreground))' },
               secondary: { DEFAULT: 'hsl(var(--secondary))', foreground: 'hsl(var(--secondary-foreground))' },
               destructive: { DEFAULT: 'hsl(var(--destructive))', foreground: 'hsl(var(--destructive-foreground))' },
+              success: { DEFAULT: 'hsl(var(--success))', foreground: 'hsl(var(--success-foreground))' },
+              warning: { DEFAULT: 'hsl(var(--warning))', foreground: 'hsl(var(--warning-foreground))' },
               muted: { DEFAULT: 'hsl(var(--muted))', foreground: 'hsl(var(--muted-foreground))' },
               accent: { DEFAULT: 'hsl(var(--accent))', foreground: 'hsl(var(--accent-foreground))' },
               card: { DEFAULT: 'hsl(var(--card))', foreground: 'hsl(var(--card-foreground))' },
               popover: { DEFAULT: 'hsl(var(--popover))', foreground: 'hsl(var(--popover-foreground))' },
+              sidebar: {
+                DEFAULT: 'hsl(var(--sidebar))',
+                foreground: 'hsl(var(--sidebar-foreground))',
+                primary: 'hsl(var(--sidebar-primary))',
+                'primary-foreground': 'hsl(var(--sidebar-primary-foreground))',
+                accent: 'hsl(var(--sidebar-accent))',
+                'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
+                border: 'hsl(var(--sidebar-border))',
+                ring: 'hsl(var(--sidebar-ring))',
+              },
             },
             borderRadius: {
               lg: 'var(--radius)',
@@ -72,7 +141,7 @@
     <script type="importmap"></script>
 </head>
 
-<body>
+<body class="bg-background text-foreground">
     <div id="app">
         <svg class="loading-progress">
             <circle r="40%" cx="50%" cy="50%" />
@@ -88,6 +157,7 @@
     </div>
     <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
     <script src="js/downloads.js"></script>
+    <script src="js/layout.js"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/sw.js');

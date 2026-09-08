@@ -1,174 +1,109 @@
 @using Microsoft.AspNetCore.Components.Authorization
+@using IAS.Client.Components.UI.Sidebar
+@implements IDisposable
+@inject NavigationManager Nav
 
-<nav class="w-full h-full bg-blue-800 text-white flex flex-col p-4 overflow-y-auto">
-    <div class="text-xl font-bold mb-8 px-2">PeopleCore</div>
+@*
+    The application's navigation, described once as data and rendered through the shadcn
+    sidebar primitives. Adding a destination means adding a row to Sections below — the
+    markup, the active state and the collapsed-rail behaviour come for free.
+*@
 
-    <AuthorizeView Roles="Admin,HRManager">
-        <Authorized>
-            <div class="mb-2">
-                <button class="nav-section-header" @onclick="() => ToggleSection(0)">
-                    <span>Organization</span>
-                    <i class="bi @(IsOpen(0) ? "bi-chevron-up" : "bi-chevron-down") text-xs"></i>
-                </button>
-                @if (IsOpen(0))
-                {
-                    <div class="nav-section-items">
-                        <NavLink href="/departments" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">
-                            <i class="bi bi-building text-sm shrink-0"></i>
-                            Departments
-                        </NavLink>
-                        <NavLink href="/positions" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">
-                            <i class="bi bi-briefcase text-sm shrink-0"></i>
-                            Positions
-                        </NavLink>
-                    </div>
-                }
-            </div>
-            <div class="mb-2">
-                <button class="nav-section-header" @onclick="() => ToggleSection(1)">
-                    <span>Employees</span>
-                    <i class="bi @(IsOpen(1) ? "bi-chevron-up" : "bi-chevron-down") text-xs"></i>
-                </button>
-                @if (IsOpen(1))
-                {
-                    <div class="nav-section-items">
-                        <NavLink href="/employees" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">
-                            <i class="bi bi-people text-sm shrink-0"></i>
-                            All Employees
-                        </NavLink>
-                    </div>
-                }
-            </div>
-            <div class="mb-2">
-                <button class="nav-section-header" @onclick="() => ToggleSection(2)">
-                    <span>Recruitment</span>
-                    <i class="bi @(IsOpen(2) ? "bi-chevron-up" : "bi-chevron-down") text-xs"></i>
-                </button>
-                @if (IsOpen(2))
-                {
-                    <div class="nav-section-items">
-                        <NavLink href="/job-postings" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">
-                            <i class="bi bi-file-text text-sm shrink-0"></i>
-                            Job Postings
-                        </NavLink>
-                        <NavLink href="/applicants" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">
-                            <i class="bi bi-person-plus text-sm shrink-0"></i>
-                            Applicants
-                        </NavLink>
-                    </div>
-                }
-            </div>
-            <div class="mb-2">
-                <button class="nav-section-header" @onclick="() => ToggleSection(3)">
-                    <span>Analytics</span>
-                    <i class="bi @(IsOpen(3) ? "bi-chevron-up" : "bi-chevron-down") text-xs"></i>
-                </button>
-                @if (IsOpen(3))
-                {
-                    <div class="nav-section-items">
-                        <NavLink href="/analytics" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900" Match="NavLinkMatch.All">
-                            <i class="bi bi-graph-up text-sm shrink-0"></i>
-                            Analytics
-                        </NavLink>
-                    </div>
-                }
-            </div>
-        </Authorized>
-    </AuthorizeView>
-
-    <AuthorizeView Roles="Admin,HRManager,PayrollService">
-        <Authorized>
-            <div class="mb-2">
-                <button class="nav-section-header" @onclick="() => ToggleSection(6)">
-                    <span>Payroll</span>
-                    <i class="bi @(IsOpen(6) ? "bi-chevron-up" : "bi-chevron-down") text-xs"></i>
-                </button>
-                @if (IsOpen(6))
-                {
-                    <div class="nav-section-items">
-                        <NavLink href="/payroll-runs" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">
-                            <i class="bi bi-cash-stack text-sm shrink-0"></i>
-                            Payroll Runs
-                        </NavLink>
-                        <NavLink href="/bir-2316" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">
-                            <i class="bi bi-file-earmark-text text-sm shrink-0"></i>
-                            BIR Form 2316
-                        </NavLink>
-                    </div>
-                }
-            </div>
-        </Authorized>
-    </AuthorizeView>
-
-    <div class="mb-2">
-        <button class="nav-section-header" @onclick="() => ToggleSection(4)">
-            <span>My HR</span>
-            <i class="bi @(IsOpen(4) ? "bi-chevron-up" : "bi-chevron-down") text-xs"></i>
-        </button>
-        @if (IsOpen(4))
-        {
-            <div class="nav-section-items">
-                <NavLink href="/" Match="NavLinkMatch.All" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">
-                    <i class="bi bi-house text-sm shrink-0"></i>
-                    Dashboard
-                </NavLink>
-                <NavLink href="/my-profile" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">
-                    <i class="bi bi-person-circle text-sm shrink-0"></i>
-                    My Profile
-                </NavLink>
-                <NavLink href="/my-attendance" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">
-                    <i class="bi bi-clock text-sm shrink-0"></i>
-                    Attendance
-                </NavLink>
-                <NavLink href="/my-leave" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">
-                    <i class="bi bi-calendar-check text-sm shrink-0"></i>
-                    Leave
-                </NavLink>
-                <NavLink href="/my-payslips" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">
-                    <i class="bi bi-receipt text-sm shrink-0"></i>
-                    Payslips
-                </NavLink>
-            </div>
-        }
-    </div>
-
-    <AuthorizeView Roles="Admin,HRManager,Manager">
-        <Authorized>
-            <div class="mb-2">
-                <button class="nav-section-header" @onclick="() => ToggleSection(5)">
-                    <span>Management</span>
-                    <i class="bi @(IsOpen(5) ? "bi-chevron-up" : "bi-chevron-down") text-xs"></i>
-                </button>
-                @if (IsOpen(5))
-                {
-                    <div class="nav-section-items">
-                        <NavLink href="/leave-approvals" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">
-                            <i class="bi bi-check-square text-sm shrink-0"></i>
-                            Leave Approvals
-                        </NavLink>
-                        <NavLink href="/overtime-approvals" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">
-                            <i class="bi bi-clock-history text-sm shrink-0"></i>
-                            OT Approvals
-                        </NavLink>
-                        <NavLink href="/performance" class="flex items-center gap-2 px-3 py-2 rounded hover:bg-blue-700 text-sm" ActiveClass="bg-blue-900">
-                            <i class="bi bi-bar-chart text-sm shrink-0"></i>
-                            Performance
-                        </NavLink>
-                    </div>
-                }
-            </div>
-        </Authorized>
-    </AuthorizeView>
-</nav>
+@foreach (var section in Sections)
+{
+    if (section.Roles is null)
+    {
+        @RenderSection(section)
+    }
+    else
+    {
+        <AuthorizeView Roles="@section.Roles" Context="authContext">
+            <Authorized>
+                @RenderSection(section)
+            </Authorized>
+        </AuthorizeView>
+    }
+}
 
 @code {
-    private HashSet<int> openSections = new() { 0, 1, 2, 3, 4, 5, 6 };
+    private sealed record NavEntry(string Href, string Label, string Icon, bool Exact = false);
 
-    private bool IsOpen(int index) => openSections.Contains(index);
+    private sealed record NavSection(string Label, string? Roles, NavEntry[] Entries);
 
-    private void ToggleSection(int index)
+    private static readonly NavSection[] Sections =
+    [
+        new("My HR", null,
+        [
+            new("/", "Dashboard", "bi-house", Exact: true),
+            new("/my-profile", "My Profile", "bi-person-circle"),
+            new("/my-attendance", "Attendance", "bi-clock"),
+            new("/my-leave", "Leave", "bi-calendar-check"),
+            new("/my-payslips", "Payslips", "bi-receipt")
+        ]),
+        new("Organization", "Admin,HRManager",
+        [
+            new("/departments", "Departments", "bi-building"),
+            new("/positions", "Positions", "bi-briefcase")
+        ]),
+        new("Employees", "Admin,HRManager",
+        [
+            new("/employees", "All Employees", "bi-people")
+        ]),
+        new("Management", "Admin,HRManager,Manager",
+        [
+            new("/leave-approvals", "Leave Approvals", "bi-check-square"),
+            new("/overtime-approvals", "OT Approvals", "bi-clock-history"),
+            new("/performance", "Performance", "bi-bar-chart")
+        ]),
+        new("Payroll", "Admin,HRManager,PayrollService",
+        [
+            new("/payroll-runs", "Payroll Runs", "bi-cash-stack"),
+            new("/bir-2316", "BIR Form 2316", "bi-file-earmark-text")
+        ]),
+        new("Recruitment", "Admin,HRManager",
+        [
+            new("/job-postings", "Job Postings", "bi-file-text"),
+            new("/applicants", "Applicants", "bi-person-plus")
+        ]),
+        new("Analytics", "Admin,HRManager",
+        [
+            new("/analytics", "Analytics", "bi-graph-up")
+        ])
+    ];
+
+    [CascadingParameter] public ShadcnSidebar? Sidebar { get; set; }
+
+    protected override void OnInitialized() => Nav.LocationChanged += OnLocationChanged;
+
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e) => StateHasChanged();
+
+    private bool IsActive(NavEntry entry)
     {
-        if (!openSections.Remove(index))
-            openSections.Add(index);
+        var path = "/" + Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0].TrimEnd('/');
+
+        return entry.Exact
+            ? path == entry.Href.TrimEnd('/') || (entry.Href == "/" && path == "/")
+            : path == entry.Href || path.StartsWith(entry.Href + "/", StringComparison.Ordinal);
     }
+
+    private RenderFragment RenderSection(NavSection section) =>
+        @<ShadcnSidebarGroup Class="py-1">
+            <ShadcnSidebarGroupLabel>@section.Label</ShadcnSidebarGroupLabel>
+            <ShadcnSidebarGroupContent>
+                <ShadcnSidebarMenu>
+                    @foreach (var entry in section.Entries)
+                    {
+                        <ShadcnSidebarMenuItem>
+                            <ShadcnSidebarMenuButton Href="@entry.Href" IsActive="@IsActive(entry)">
+                                <Icon><i class="bi @entry.Icon text-base"></i></Icon>
+                                <TooltipContent>@entry.Label</TooltipContent>
+                                <ChildContent>@entry.Label</ChildContent>
+                            </ShadcnSidebarMenuButton>
+                        </ShadcnSidebarMenuItem>
+                    }
+                </ShadcnSidebarMenu>
+            </ShadcnSidebarGroupContent>
+        </ShadcnSidebarGroup>;
 }
