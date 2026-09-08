@@ -6,16 +6,18 @@
 
 <PageHeader Title="Applicants" Section="Recruitment" Description="Everyone who has applied, and where they are in the pipeline.">
     <Actions>
-        <Select TValue="string" Value="@_statusFilter" Class="w-48"
-                ValueChanged="@(async v => { _statusFilter = v; await Load(); })">
-            <option value="">All Status</option>
-            <option value="Applied">Applied</option>
-            <option value="Screening">Screening</option>
-            <option value="Interviewing">Interviewing</option>
-            <option value="Offered">Offered</option>
-            <option value="Hired">Hired</option>
-            <option value="Rejected">Rejected</option>
-        </Select>
+        <div class="w-48">
+            <Select TValue="string" Value="@_statusFilter"
+                    ValueChanged="@(async v => { _statusFilter = v; await Load(); })">
+                <option value="">All Status</option>
+                <option value="Applied">Applied</option>
+                <option value="Screening">Screening</option>
+                <option value="Interviewing">Interviewing</option>
+                <option value="Offered">Offered</option>
+                <option value="Hired">Hired</option>
+                <option value="Rejected">Rejected</option>
+            </Select>
+        </div>
     </Actions>
 </PageHeader>
 

@@ -7,13 +7,15 @@
 
 <PageHeader Title="Leave Approvals" Section="Management" Description="Leave requests waiting on your decision.">
     <Actions>
-        <Select TValue="string" Value="@_statusFilter" Class="w-[160px]"
-                ValueChanged="@(async v => { _statusFilter = v; await LoadRequests(); })">
-            <option value="">All Statuses</option>
-            <option value="Pending">Pending</option>
-            <option value="Approved">Approved</option>
-            <option value="Rejected">Rejected</option>
-        </Select>
+        <div class="w-[160px]">
+            <Select TValue="string" Value="@_statusFilter"
+                    ValueChanged="@(async v => { _statusFilter = v; await LoadRequests(); })">
+                <option value="">All Statuses</option>
+                <option value="Pending">Pending</option>
+                <option value="Approved">Approved</option>
+                <option value="Rejected">Rejected</option>
+            </Select>
+        </div>
     </Actions>
 </PageHeader>
 

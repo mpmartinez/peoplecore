@@ -6,13 +6,15 @@
 
 <PageHeader Title="Job Postings" Section="Recruitment" Description="Open roles and the vacancies behind them.">
     <Actions>
-        <Select TValue="string" Value="@_statusFilter" Class="w-40"
-                ValueChanged="@(async v => { _statusFilter = v; await Load(); })">
-            <option value="">All Status</option>
-            <option value="Draft">Draft</option>
-            <option value="Open">Open</option>
-            <option value="Closed">Closed</option>
-        </Select>
+        <div class="w-40">
+            <Select TValue="string" Value="@_statusFilter"
+                    ValueChanged="@(async v => { _statusFilter = v; await Load(); })">
+                <option value="">All Status</option>
+                <option value="Draft">Draft</option>
+                <option value="Open">Open</option>
+                <option value="Closed">Closed</option>
+            </Select>
+        </div>
         <Button Variant="primary" OnClick="() => _showForm = !_showForm">
             <i class="bi bi-plus-lg mr-1"></i> New Posting
         </Button>
