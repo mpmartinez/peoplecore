@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Mondays, 02:00 UTC. This is the point of the dependency audit rather than decoration: a scan
+    # that only fires on push reports advisories when you happen to push, and the Microsoft.OpenApi
+    # CVE found in this project was sitting in code nobody had touched. It also catches bit-rot
+    # when the runner image or the SDK moves under a project that has not changed.
+    - cron: '0 2 * * 1'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        # Matches the m2net-postgres server the repository tests were developed against (18.1).
+        # Pinned to the major so a PostgreSQL 19 release cannot change what a test run means
+        # overnight. If that server is upgraded, move this tag with it - nothing links the two
+        # except somebody remembering.
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        # Without a health check the first test run races the server's startup and fails
+        # intermittently - the worst possible first impression for a pipeline, because it teaches
+        # people to re-run rather than to read.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          cache: true
+          cache-dependency-path: '**/*.csproj'
+
+      - name: Restore
+        run: dotnet restore PeopleCore.slnx
+
+      - name: Build
+        run: dotnet build PeopleCore.slnx --no-restore --configuration Release
+
+      - name: Test
+        env:
+          # No Database component on purpose. PostgresFixture appends peoplecore_repotests itself,
+          # and the database name is deliberately not configurable - making it so is exactly how
+          # the fixture's truncation guard would get bypassed by accident.
+          PEOPLECORE_TEST_POSTGRES: Host=localhost;Port=5432;Username=postgres;Password=postgres
+        run: dotnet test PeopleCore.slnx --no-build --configuration Release --verbosity normal
+
+      - name: Audit dependencies
+        run: |
+          # `dotnet list package --vulnerable` exits 0 whether or not it finds anything, so the
+          # result has to be inspected rather than the exit code trusted. Transitive packages are
+          # included because that is where the last one was: a vulnerable Microsoft.OpenApi pulled
+          # in by a direct reference.
+          #
+          # Parsed as JSON rather than grepped for English. A security gate keyed on prose stops
+          # firing the day that prose is reworded, and it fails OPEN - silently reporting clean
+          # forever. The JSON shape is structural: under --vulnerable, a project with nothing to
+          # report carries only "path", and a "frameworks" array appears only when there are
+          # findings.
+          dotnet list PeopleCore.slnx package --vulnerable --include-transitive --format json > audit.json
+          python3 - audit.json <<'PYCHECK'
+          import json, sys
+
+          data = json.load(open(sys.argv[1]))
+          hits = []
+          for project in data.get('projects', []):
+              for framework in project.get('frameworks') or []:
+                  for key in ('topLevelPackages', 'transitivePackages'):
+                      for package in framework.get(key) or []:
+                          hits.append(f"{package['id']} {package.get('resolvedVersion', '')}"
+                                      f"  ({project['path']})")
+
+          if hits:
+              print('::error::Vulnerable packages found:')
+              for hit in hits:
+                  print('  ' + hit)
+              sys.exit(1)
+
+          print('No vulnerable packages.')
+          PYCHECK
