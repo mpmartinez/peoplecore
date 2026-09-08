@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "peoplecore-web",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "src/PeopleCore.Web/PeopleCore.Web.csproj", "--launch-profile", "http"],
+      "port": 5199
+    }
+  ]
+}
