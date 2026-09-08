@@ -5,7 +5,7 @@
     with -p:M2NetCoreProject=<path> only if consuming a copy from elsewhere.
   -->
   <PropertyGroup Condition=" '$(M2NetCoreProject)' == '' ">
-    <M2NetCoreProject>$(MSBuildThisFileDirectory)src\M2NET.Core\M2NET.Core.csproj</M2NetCoreProject>
+    <M2NetCoreProject>$(MSBuildThisFileDirectory)src/M2NET.Core/M2NET.Core.csproj</M2NetCoreProject>
   </PropertyGroup>
 
 </Project>
