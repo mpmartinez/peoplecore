@@ -1,0 +1,70 @@
+@namespace PeopleCore.Web.Components.UI
+
+@* Percentage readout for an upload in flight. Fed by UploadClient's IProgress<int>: 0–20 while the
+   picked file is read out of the browser, 20–100 as the bytes actually go over the wire. Render it
+   only while an upload is running — a bar parked at 0% reads as broken. *@
+
+@if (Circular)
+{
+    <div class="relative inline-flex items-center justify-center @Class" style="width:@(Size)px;height:@(Size)px">
+        <svg class="-rotate-90" width="@Size" height="@Size" viewBox="0 0 @Size @Size">
+            <circle class="text-accent/20" cx="@Center" cy="@Center" r="@Radius"
+                    fill="none" stroke="currentColor" stroke-width="@Stroke" />
+            <circle class="text-accent" cx="@Center" cy="@Center" r="@Radius"
+                    fill="none" stroke="currentColor" stroke-width="@Stroke" stroke-linecap="round"
+                    stroke-dasharray="@Circumference.ToString("F1", Culture)"
+                    stroke-dashoffset="@Offset.ToString("F1", Culture)"
+                    style="transition: stroke-dashoffset 150ms ease-out" />
+        </svg>
+        <span class="absolute text-xs font-semibold text-accent">@Clamped%</span>
+    </div>
+}
+else
+{
+    <div class="space-y-1.5 @Class">
+        <div class="flex items-baseline justify-between gap-3">
+            <span class="text-xs text-muted-foreground">@(Label ?? DefaultLabel)</span>
+            <span class="text-xs font-semibold text-accent">@Clamped%</span>
+        </div>
+        <div class="h-1.5 w-full overflow-hidden rounded-full bg-accent/15">
+            <div class="h-full rounded-full bg-accent transition-all duration-150 ease-out"
+                 style="width:@Clamped%"></div>
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>Percentage complete, 0–100.</summary>
+    [Parameter] public int Percent { get; set; }
+
+    /// <summary>Overrides the phase text shown beside the number.</summary>
+    [Parameter] public string? Label { get; set; }
+
+    /// <summary>Draw a ring instead of a bar — fits over an avatar or photo tile.</summary>
+    [Parameter] public bool Circular { get; set; }
+
+    /// <summary>Diameter of the ring, in pixels. Ignored for the bar.</summary>
+    [Parameter] public int Size { get; set; } = 56;
+
+    [Parameter] public string? Class { get; set; }
+
+    private static readonly System.Globalization.CultureInfo Culture =
+        System.Globalization.CultureInfo.InvariantCulture;
+
+    private int Clamped => Math.Clamp(Percent, 0, 100);
+
+    // Below 20% the bytes are still being read out of the browser; nothing has been sent yet.
+    // At 100% every byte is out and we are waiting on the server's answer.
+    private string DefaultLabel => Clamped switch
+    {
+        < 20 => "Preparing…",
+        < 100 => "Uploading…",
+        _ => "Processing…"
+    };
+
+    private int Stroke => Math.Max(3, Size / 12);
+    private double Center => Size / 2.0;
+    private double Radius => Center - Stroke / 2.0;
+    private double Circumference => 2 * Math.PI * Radius;
+    private double Offset => Circumference * (1 - Clamped / 100.0);
+}

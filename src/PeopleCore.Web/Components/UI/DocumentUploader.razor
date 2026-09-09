@@ -1,0 +1,141 @@
+@namespace PeopleCore.Web.Components.UI
+@* Picks files, reads them in the browser with a progress readout, and hands the bytes back
+   through OnFilesReady. *@
+@using Microsoft.AspNetCore.Components.Forms
+
+<div class="space-y-4">
+    <!-- Upload / Scan Options -->
+    <div class="grid grid-cols-1 gap-4">
+        <label class="flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg cursor-pointer hover:border-accent hover:bg-accent/5 transition-colors">
+            <svg class="h-10 w-10 text-muted-foreground mb-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+            </svg>
+            <span class="font-medium">Upload File(s)</span>
+            <span class="text-xs text-muted-foreground mt-1">PDF, JPEG, PNG â€” max @(MaxFileSizeMb)MB</span>
+            <InputFile OnChange="@HandleFilesSelected" multiple accept="@AcceptedTypes" class="hidden" />
+        </label>
+
+    </div>
+
+    @if (_readingFileName != null)
+    {
+        <UploadProgress Percent="@_readProgress" Label="@($"Reading {_readingFileName}â€¦")" />
+    }
+
+
+    @if (_error != null)
+    {
+        <div class="p-3 rounded-lg border border-destructive/30 bg-destructive/5 text-destructive text-sm">
+            @_error
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>Max file size in MB. Default 10.</summary>
+    [Parameter] public int MaxFileSizeMb { get; set; } = 10;
+
+    /// <summary>Accepted file types for the file picker.</summary>
+    [Parameter] public string AcceptedTypes { get; set; } = ".pdf,.jpg,.jpeg,.png,.tiff,.tif";
+
+    /// <summary>Allow multiple file selection. Default true.</summary>
+    [Parameter] public bool Multiple { get; set; } = true;
+
+    /// <summary>Called once the picked files have been read into memory.</summary>
+    [Parameter] public EventCallback<List<FileResult>> OnFilesReady { get; set; }
+
+    private string? _error;
+    private string? _readingFileName;
+    private int _readProgress;
+
+    private async Task HandleFilesSelected(InputFileChangeEventArgs e)
+    {
+        _error = null;
+        var maxBytes = MaxFileSizeMb * 1024L * 1024L;
+        var results = new List<FileResult>();
+
+        var files = Multiple ? e.GetMultipleFiles(50) : e.GetMultipleFiles(1);
+
+        foreach (var file in files)
+        {
+            if (file.Size > maxBytes)
+            {
+                _error = $"File '{file.Name}' exceeds {MaxFileSizeMb}MB limit. Skipped.";
+                continue;
+            }
+
+            try
+            {
+                _readingFileName = file.Name;
+                _readProgress = 0;
+                StateHasChanged();
+
+                var bytes = await ReadWithProgressAsync(file, maxBytes);
+
+                var contentType = file.ContentType;
+                if (string.IsNullOrEmpty(contentType))
+                {
+                    contentType = Path.GetExtension(file.Name).ToLower() switch
+                    {
+                        ".pdf" => "application/pdf",
+                        ".jpg" or ".jpeg" => "image/jpeg",
+                        ".png" => "image/png",
+                        ".tif" or ".tiff" => "image/tiff",
+                        _ => "application/octet-stream"
+                    };
+                }
+
+                results.Add(new FileResult(bytes, file.Name, contentType));
+            }
+            catch (Exception ex)
+            {
+                _error = $"Failed to read '{file.Name}': {ex.Message}";
+            }
+        }
+
+        // Cleared once, after the whole selection â€” clearing per file makes the bar blink out
+        // and back between them.
+        _readingFileName = null;
+        StateHasChanged();
+
+        if (results.Count > 0)
+        {
+            await OnFilesReady.InvokeAsync(results);
+        }
+    }
+
+    /// <summary>
+    /// Pull the picked file into memory a chunk at a time so the percentage moves. Blazor streams
+    /// browser files over JS interop, which on a large PDF takes long enough that a silent wait
+    /// looks like the picker did nothing.
+    /// </summary>
+    private async Task<byte[]> ReadWithProgressAsync(IBrowserFile file, long maxBytes)
+    {
+        using var source = file.OpenReadStream(maxBytes);
+        using var buffer = new MemoryStream();
+
+        var chunk = new byte[81920];
+        long read = 0;
+        var lastPct = -1;
+        int count;
+
+        while ((count = await source.ReadAsync(chunk)) > 0)
+        {
+            buffer.Write(chunk, 0, count);
+            read += count;
+
+            if (file.Size <= 0) continue;
+            var pct = (int)(read * 100 / file.Size);
+            if (pct == lastPct) continue;
+            lastPct = pct;
+            _readProgress = pct;
+            StateHasChanged();
+        }
+
+        return buffer.ToArray();
+    }
+
+    /// <summary>A file read out of the browser and ready to send.</summary>
+    public record FileResult(byte[] Bytes, string FileName, string ContentType);
+
+}
