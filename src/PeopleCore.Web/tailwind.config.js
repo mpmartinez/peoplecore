@@ -39,6 +39,13 @@ module.exports = {
           ring: 'hsl(var(--sidebar-ring))',
         },
       },
+      // Preflight paints every element's border with theme('borderColor.DEFAULT'), which
+      // ships as gray-200. Components that write a bare `border` (Card, Dialog, DataGrid...)
+      // therefore drew a near-white hairline that stayed near-white in the dark theme.
+      // Pointing the default at the token makes those borders follow whichever theme is on.
+      borderColor: {
+        DEFAULT: 'hsl(var(--border))',
+      },
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
