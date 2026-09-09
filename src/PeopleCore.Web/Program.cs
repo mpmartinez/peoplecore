@@ -17,6 +17,11 @@ builder.RootComponents.Add<HeadOutlet>("head::after");
 // failures; they are the nav working. Warning and above still comes through.
 builder.Logging.AddFilter("Microsoft.AspNetCore.Authorization", LogLevel.Warning);
 
+// HttpClient's logging handler narrates every API call at Information - two lines out, two back,
+// and a full stack trace when one fails. A request that genuinely fails still surfaces: the
+// exception reaches the component and Blazor logs it as critical.
+builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
+
 var apiBaseUrl = builder.Configuration["ApiBaseUrl"] ?? "https://localhost:5001";
 
 builder.Services.AddBlazoredLocalStorage();
