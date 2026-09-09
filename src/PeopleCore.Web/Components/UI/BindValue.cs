@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace IAS.Client.Components.UI;
+namespace PeopleCore.Web.Components.UI;
 
 /// <summary>
 /// Converts between the strings an <c>&lt;input&gt;</c>/<c>&lt;select&gt;</c> element exchanges with
