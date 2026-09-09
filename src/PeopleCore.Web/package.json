@@ -1,0 +1,12 @@
+{
+  "name": "peoplecore-web-styles",
+  "private": true,
+  "description": "Builds PeopleCore.Web's stylesheet. Invoked by the csproj; not a JavaScript app.",
+  "scripts": {
+    "build:css": "tailwindcss -i ./Styles/app.tailwind.css -o ./wwwroot/css/tailwind.css --minify",
+    "watch:css": "tailwindcss -i ./Styles/app.tailwind.css -o ./wwwroot/css/tailwind.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.17"
+  }
+}

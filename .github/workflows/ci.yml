@@ -51,6 +51,15 @@ jobs:
           cache: true
           cache-dependency-path: '**/*.csproj'
 
+      # PeopleCore.Web builds its stylesheet with the Tailwind CLI as part of `dotnet build`,
+      # so the .NET build cannot run without Node. The csproj runs `npm ci` itself when
+      # node_modules is absent, which on a fresh runner is always.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: src/PeopleCore.Web/package-lock.json
+
       - name: Restore
         run: dotnet restore PeopleCore.slnx
 

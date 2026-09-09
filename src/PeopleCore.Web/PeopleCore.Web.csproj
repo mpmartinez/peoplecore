@@ -16,4 +16,28 @@
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.4.0" />
   </ItemGroup>
 
+  <!--
+    Everything the stylesheet's content depends on. Declared at project level, not inside the
+    target: Inputs/Outputs are evaluated before the target body runs, so an ItemGroup declared
+    inside it would be empty and the up-to-date check meaningless.
+  -->
+  <ItemGroup>
+    <TailwindInput Include="Styles/app.tailwind.css;tailwind.config.js;package.json" />
+    <TailwindInput Include="**/*.razor" Exclude="bin/**;obj/**" />
+  </ItemGroup>
+
+  <!--
+    The stylesheet is generated, not committed, so it cannot drift from the markup: add a utility
+    to a .razor file and the next build emits it. Runs before static web assets are collected,
+    which is when wwwroot is globbed. npm ci only runs when node_modules is absent, so ordinary
+    incremental builds do not pay for it.
+  -->
+  <Target Name="BuildTailwindCss" BeforeTargets="ResolveStaticWebAssetsInputs"
+          Inputs="@(TailwindInput)" Outputs="$(MSBuildProjectDirectory)/wwwroot/css/tailwind.css">
+    <Exec Command="npm ci --no-audit --no-fund"
+          Condition="!Exists('$(MSBuildProjectDirectory)/node_modules')"
+          WorkingDirectory="$(MSBuildProjectDirectory)" />
+    <Exec Command="npm run build:css" WorkingDirectory="$(MSBuildProjectDirectory)" />
+  </Target>
+
 </Project>
