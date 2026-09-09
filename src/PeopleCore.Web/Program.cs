@@ -17,6 +17,7 @@ builder.Services.AddAuthorizationCore();
 builder.Services.AddScoped<AuthenticationStateProvider, JwtAuthStateProvider>();
 builder.Services.AddScoped<JwtAuthStateProvider>();
 builder.Services.AddTransient<AuthTokenHandler>();
+builder.Services.AddScoped<ToastService>();
 
 builder.Services.AddHttpClient<ApiClient>(client =>
 {

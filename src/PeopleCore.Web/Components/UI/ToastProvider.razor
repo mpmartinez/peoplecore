@@ -1,0 +1,83 @@
+@namespace PeopleCore.Web.Components.UI
+@inject ToastService ToastService
+@implements IDisposable
+
+@* Sits above Dialog, which renders its backdrop at z-index 9998 and its panel at 9999. At a
+   conventional z-50 every toast raised while a dialog was open would render behind the backdrop
+   and be invisible — including the errors explaining why the dialog's save had just failed. *@
+<div class="fixed bottom-4 right-4 z-[10000] flex flex-col gap-2">
+    @foreach (var toast in _toasts)
+    {
+        <Toast Message="@toast" OnClose="@(() => Remove(toast.Id))" />
+    }
+</div>
+
+@code {
+    private readonly List<ToastMessage> _toasts = [];
+    private readonly Dictionary<Guid, CancellationTokenSource> _timers = [];
+
+    protected override void OnInitialized()
+    {
+        ToastService.OnShow += Show;
+        ToastService.OnRemove += Remove;
+    }
+
+    private void Show(ToastMessage message)
+    {
+        _toasts.Add(message);
+
+        var cts = new CancellationTokenSource();
+        _timers[message.Id] = cts;
+        _ = DismissAfter(message, cts.Token);
+
+        StateHasChanged();
+    }
+
+    private async Task DismissAfter(ToastMessage message, CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(message.Duration, token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Dismissed by hand, or the provider went away first.
+            return;
+        }
+
+        await InvokeAsync(() => Remove(message.Id));
+    }
+
+    private void Remove(Guid id)
+    {
+        var toast = _toasts.FirstOrDefault(t => t.Id == id);
+        if (toast is null)
+        {
+            return;
+        }
+
+        _toasts.Remove(toast);
+
+        if (_timers.Remove(id, out var cts))
+        {
+            cts.Cancel();
+            cts.Dispose();
+        }
+
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        ToastService.OnShow -= Show;
+        ToastService.OnRemove -= Remove;
+
+        foreach (var cts in _timers.Values)
+        {
+            cts.Cancel();
+            cts.Dispose();
+        }
+
+        _timers.Clear();
+    }
+}
