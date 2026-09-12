@@ -8,6 +8,7 @@ using Minio;
 using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Application.Attendance.Services;
 using PeopleCore.Application.Common.Interfaces;
+using PeopleCore.Application.Common.Options;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Employees.Services;
 using PeopleCore.Application.Leave.Interfaces;
@@ -93,9 +94,9 @@ public static class ServiceExtensions
         services.AddScoped<ICompanyRepository, CompanyRepository>();
 
         // Storage (provider-selectable via Storage:Provider in appsettings.json)
-        var storageProvider = configuration["Storage:Provider"] ?? "Minio";
+        services.AddSingleton(ResolveDocumentStorageOptions(configuration));
 
-        if (storageProvider.Equals("R2", StringComparison.OrdinalIgnoreCase))
+        if (IsR2Provider(configuration))
         {
             var r2Config = configuration.GetSection("R2");
             var accountId = r2Config["AccountId"]!;
@@ -220,4 +221,32 @@ public static class ServiceExtensions
 
         return bytes;
     }
+
+    /// <summary>
+    /// Bucket names differ per deployment, so they are read from the active provider's section
+    /// (<c>R2</c> or <c>Minio</c>) rather than hardcoded in the services that upload. Anything
+    /// missing or blank falls back to the historical default, which keeps files already stored
+    /// by existing deployments reachable.
+    /// </summary>
+    public static DocumentStorageOptions ResolveDocumentStorageOptions(IConfiguration configuration)
+    {
+        var section = configuration.GetSection(IsR2Provider(configuration) ? "R2" : "Minio");
+
+        return new DocumentStorageOptions
+        {
+            BucketName = Configured(section["BucketName"], DocumentStorageOptions.DefaultBucketName),
+            ResumesBucketName = Configured(section["ResumesBucketName"], DocumentStorageOptions.DefaultResumesBucketName)
+        };
+
+        static string Configured(string? value, string fallback) =>
+            string.IsNullOrWhiteSpace(value) ? fallback : value;
+    }
+
+    /// <summary>
+    /// Single source of truth for which provider is active. Both the storage client and the
+    /// bucket names are selected from it: if the two ever disagreed, uploads would land in a
+    /// bucket the other half of the application never looks in.
+    /// </summary>
+    private static bool IsR2Provider(IConfiguration configuration) =>
+        (configuration["Storage:Provider"] ?? "Minio").Equals("R2", StringComparison.OrdinalIgnoreCase);
 }
