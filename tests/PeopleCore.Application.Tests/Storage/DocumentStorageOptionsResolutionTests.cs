@@ -141,6 +141,25 @@ public class DocumentStorageOptionsResolutionTests
         value.Should().Be("resumes");
     }
 
+    [Fact]
+    public void ProviderName_DefaultsToMinio_WhenNotConfigured()
+    {
+        ServiceExtensions.ResolveStorageProviderName(BuildConfiguration()).Should().Be("Minio");
+    }
+
+    [Theory]
+    [InlineData("R2", "R2")]
+    [InlineData("r2", "R2")]
+    [InlineData("Minio", "Minio")]
+    [InlineData("minio", "Minio")]
+    [InlineData("something-else", "Minio")]
+    public void ProviderName_NormalisesTheConfiguredValue(string configured, string expected)
+    {
+        var configuration = BuildConfiguration(("Storage:Provider", configured));
+
+        ServiceExtensions.ResolveStorageProviderName(configuration).Should().Be(expected);
+    }
+
     private static string FindAppSettingsPath()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

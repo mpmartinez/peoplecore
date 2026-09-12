@@ -243,6 +243,13 @@ public static class ServiceExtensions
     }
 
     /// <summary>
+    /// The active provider's name, for the startup banner. Derived from the same predicate that
+    /// selects the storage client, so what is logged cannot drift from what was registered.
+    /// </summary>
+    public static string ResolveStorageProviderName(IConfiguration configuration) =>
+        IsR2Provider(configuration) ? "R2" : "Minio";
+
+    /// <summary>
     /// Single source of truth for which provider is active. Both the storage client and the
     /// bucket names are selected from it: if the two ever disagreed, uploads would land in a
     /// bucket the other half of the application never looks in.
