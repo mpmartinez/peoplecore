@@ -1,0 +1,15 @@
+# Build output. A local obj/ carries absolute paths and a project.assets.json from the host,
+# which poisons the container's restore.
+**/bin/
+**/obj/
+
+# Reinstalled inside the image against the lockfile.
+**/node_modules/
+
+.git/
+.github/
+.claude/
+docs/
+**/TestResults/
+*.user
+.env
