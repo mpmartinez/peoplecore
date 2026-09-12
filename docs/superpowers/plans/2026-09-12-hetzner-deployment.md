@@ -1294,7 +1294,7 @@ regresses, check that those paths did not pick up the `_framework` immutable rul
 Every variable named in the runbook must exist in `.env.example`:
 
 ```bash
-grep -oE "\`[A-Z_]+\`" docs/deployment.md | tr -d '`' | sort -u | while read v; do
+grep -oE "\`[A-Z][A-Z0-9_]*\`" docs/deployment.md | tr -d '`' | sort -u | while read v; do
   grep -q "^$v=" .env.example || echo "NOT IN .env.example: $v"
 done
 ```
