@@ -31,6 +31,7 @@ services:
       R2__AccessKey: ${R2_ACCESS_KEY}
       R2__SecretKey: ${R2_SECRET_KEY}
       R2__BucketName: ${R2_BUCKET_NAME}
+      R2__ResumesBucketName: ${R2_RESUMES_BUCKET_NAME}
     # Neon's hostname has to resolve from inside the container; the box's own resolver has
     # been unreliable for this on the training stack.
     dns:

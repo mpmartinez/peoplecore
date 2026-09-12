@@ -41,24 +41,29 @@ The API applies its 11 migrations itself on first boot. There is nothing to run 
 
 ### 2. Cloudflare R2
 
-Create **two** buckets. The API writes to both, and both names are hardcoded, so they must
-match exactly:
+Create **two** buckets. The API writes to both:
 
-| Bucket | Written by | Holds |
-|---|---|---|
-| `peoplecore-documents` | `EmployeeDocumentService` | Employee documents |
-| `resumes` | `CareersService` | Uploads from the public careers portal |
+| Bucket | Written by | Holds | Variable |
+|---|---|---|---|
+| `peoplecore-documents` | `EmployeeDocumentService` | Employee documents | `R2_BUCKET_NAME` |
+| `resumes` | `CareersService` | Uploads from the public careers portal | `R2_RESUMES_BUCKET_NAME` |
 
-1. Create both buckets under those exact names.
+1. Create both buckets. The names above are the defaults, used when the matching variable
+   is unset or blank; to use different ones, set the variables to match what you created.
 2. Create an R2 API token scoped to them with **Object Read & Write**.
 3. Record the account id, the access key id, and the secret access key.
 
-Both must exist before the first upload. `R2StorageService` uploads straight through and
+Whichever names you choose, both buckets must exist before the first upload. `R2StorageService` uploads straight through and
 does not call `MakeBucketAsync` the way the MinIO provider does, so a missing bucket is not
 created on demand — it fails with `NoSuchBucket`. For `resumes` that failure lands at the
 end of a candidate's application, after they have filled the whole form in, which is why
 this step asks for both even though only employee documents are exercised by the
 post-deploy checks below.
+
+The API logs the provider and both resolved bucket names on the first line of its boot log,
+so a mistyped variable is visible there rather than at the first upload. That matters more
+on MinIO than here: MinIO *does* call `MakeBucketAsync`, so a typo quietly creates an empty
+bucket instead of failing, and whatever was stored under the old name stops being found.
 
 Leave both **private**. The API hands out time-limited presigned URLs
 (`R2StorageService.GetPresignedUrlAsync`), so no public access binding is needed — adding
@@ -88,7 +93,7 @@ Environment tab from `.env.example`:
 | `JWT_KEY` | `openssl rand -base64 32` |
 | `SEED_ADMIN_EMAIL` | the address that should own the first admin account |
 | `SEED_ADMIN_PASSWORD` | chosen now; the API refuses to start without it on a fresh database |
-| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`, `R2_BUCKET_NAME` | Step 2 |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`, `R2_BUCKET_NAME`, `R2_RESUMES_BUCKET_NAME` | Step 2 |
 
 Then deploy.
 
