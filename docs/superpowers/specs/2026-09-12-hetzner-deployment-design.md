@@ -18,6 +18,7 @@ R2 bucket.
 | R2 bucket | Does not exist yet; created by hand in the Cloudflare dashboard |
 | Migration procedure | The same procedure training uses (see §4) |
 | Nginx | One baked config, no runtime override (deviation from training, approved) |
+| Admin account | Startup fails when no admin exists and no password is configured (see §6) |
 
 ## 1. Container build
 
@@ -41,7 +42,7 @@ roughly 700 MB in the runtime image.
 `fontconfig`, `fonts-liberation` and `fonts-dejavu-core` are kept. `PeopleCore.Reports`
 renders payslips and BIR 2316 with QuestPDF and PDFsharp, and no code path calls
 `FontManager.RegisterFont`, so glyphs resolve from system fonts. A runtime image without
-them produces blank or substituted text rather than an error, which is why §8 makes a
+them produces blank or substituted text rather than an error, which is why §9 makes a
 payslip the first post-deploy check.
 
 Stage outline:
@@ -152,9 +153,9 @@ Environment variables, set in the Dokploy service's Environment tab:
 `builder.Configuration["AllowedOrigins"]` and passes it to `policy.WithOrigins(...)` —
 unlike training's indexed `AllowedOrigins__0` array. The flat env var is correct here.
 
-`Seed__AdminPassword` is required: without it `Program.cs` logs
-"Seed:AdminPassword is not configured; skipping the default admin account" and the
-deployment comes up with no way to log in.
+`Seed__AdminPassword` is required on the first deploy, and §6 changes `Program.cs` to
+enforce that rather than warn about it: with no admin account in the database and no
+password configured, the API refuses to start.
 
 A `.env.example` at the root documents every variable with the same commentary, following
 training's file.
@@ -222,7 +223,61 @@ It deliberately does **not** probe the database. Neon scales compute to zero and
 start can outlast the health check's timeout; a DB-backed check would have Docker restart
 a container whose only problem is that its database was asleep.
 
-## 6. Client configuration
+## 6. Admin account seeding
+
+`Program.cs` today resolves `Seed:AdminPassword`, and when it is missing outside
+development it logs
+
+> Seed:AdminPassword is not configured; skipping the default admin account.
+
+and carries on. The deployment then comes up healthy, serves the client, answers
+`/health` — and has no account anyone can log in with. A warning in the container log is
+not where that gets noticed.
+
+Change the behaviour to refuse to start, matching the precedent `ResolveJwtSigningKey`
+already sets in `ServiceExtensions.cs`: a missing `Jwt:Key` throws an
+`InvalidOperationException` at startup rather than signing tokens with a placeholder. A
+missing admin password is the same class of problem.
+
+The throw is conditional on the account not already existing:
+
+- Admin account **already present** — nothing to seed, no password needed, startup
+  proceeds. This matters because the alternative, an unconditional throw, would take a
+  working production deployment down the moment someone pruned the env var from Dokploy,
+  trading a silent failure for an outage.
+- Admin account **absent** and no password configured — throw, naming
+  `Seed:AdminPassword` and the `Seed__AdminPassword` environment variable in the message.
+
+The existing development branch is untouched: outside Production a missing password still
+falls back to the well-known `Admin@123456` with its warning, so `dotnet run` against a
+local Postgres keeps working with no configuration.
+
+Because this runs inside the seeding scope after `app.Build()` and before `app.Run()`, a
+misconfigured container exits at startup and Dokploy's `restart: unless-stopped` puts it
+into a crash loop — visible in the service's logs, which is the point.
+
+**Made testable.** The decision is currently inline in `Program.cs`'s top-level statements,
+which have no test seam — and `ResolveJwtSigningKey`, the guard this one mirrors, has no
+tests either. Extract the rule into a static
+`ResolveSeedAdminPassword(IConfiguration, IHostEnvironment, bool adminExists)` alongside
+`ResolveJwtSigningKey` in `ServiceExtensions.cs`, returning the password to use or `null`
+when there is nothing to seed, and throwing otherwise. `Program.cs` calls it with the
+result of the `FindByEmailAsync` lookup it already performs.
+
+Four cases, each a test in `PeopleCore.Application.Tests`, which already references
+`PeopleCore.API`:
+
+| Environment | Password set | Admin exists | Result |
+|---|---|---|---|
+| Production | no | no | throws, message names `Seed__AdminPassword` |
+| Production | no | yes | returns `null` — nothing to seed, startup proceeds |
+| Production | yes | no | returns the configured password |
+| Development | no | no | returns the well-known password, warning logged |
+
+This is the only new test coverage the deployment work adds; everything else in this design
+is configuration whose behaviour is proven by the first deploy, not by the suite.
+
+## 7. Client configuration
 
 Add `src/PeopleCore.Web/wwwroot/appsettings.Production.json`:
 
@@ -240,7 +295,7 @@ its two files.
 Because the API and the client share a host and Traefik splits by path, this base URL is
 same-origin in production and the CORS policy is belt-and-braces rather than load-bearing.
 
-## 7. CI
+## 8. CI
 
 New `.github/workflows/docker-publish.yml`, modelled on training's:
 
@@ -260,7 +315,7 @@ what `ci.yml` already uses.
 The existing `ci.yml` (build, test against a Postgres service, vulnerable-package audit) is
 not modified. It remains the correctness gate; `docker-publish.yml` only packages.
 
-## 8. Manual steps
+## 9. Manual steps
 
 These need a human with console access and are documented in a new `docs/deployment.md`
 rather than automated:
@@ -291,7 +346,7 @@ rather than automated:
 - Upload an employee document and download it back, confirming the R2 round trip and the
   presigned URL.
 
-## 9. Files
+## 10. Files
 
 Created:
 
@@ -307,7 +362,9 @@ Created:
 Modified:
 
 - `src/PeopleCore.API/Program.cs` — migration block at the head of the seeding scope; the
-  `/health` endpoint
+  `/health` endpoint; the admin-seeding change in §6
+- `src/PeopleCore.API/Extensions/ServiceExtensions.cs` — `ResolveSeedAdminPassword`
+- `tests/PeopleCore.Application.Tests` — the four cases in §6
 
 No change to `appsettings.json`: the `Storage`, `R2` and `ConnectionStrings` sections
 already exist with development defaults, and production overrides arrive as environment
