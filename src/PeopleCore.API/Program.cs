@@ -95,24 +95,17 @@ using (var scope = app.Services.CreateScope())
             await roleManager.CreateAsync(new IdentityRole(role));
 
     var adminEmail = builder.Configuration["Seed:AdminEmail"] ?? "admin@peoplecore.local";
-    var adminPassword = builder.Configuration["Seed:AdminPassword"];
+    var existingAdmin = await userManager.FindByEmailAsync(adminEmail);
+    var adminPassword = ServiceExtensions.ResolveSeedAdminPassword(
+        builder.Configuration, app.Environment, adminExists: existingAdmin is not null);
 
-    if (string.IsNullOrWhiteSpace(adminPassword) && app.Environment.IsDevelopment())
+    if (existingAdmin is null && adminPassword is not null)
     {
-        adminPassword = "Admin@123456";
-        app.Logger.LogWarning(
-            "Seeding {Email} with the well-known development password. Set Seed:AdminPassword to override.",
-            adminEmail);
-    }
+        if (adminPassword == ServiceExtensions.DevelopmentAdminPassword)
+            app.Logger.LogWarning(
+                "Seeding {Email} with the well-known development password. Set Seed:AdminPassword to override.",
+                adminEmail);
 
-    if (string.IsNullOrWhiteSpace(adminPassword))
-    {
-        // Outside development, refuse to create a login nobody chose the password for.
-        app.Logger.LogWarning(
-            "Seed:AdminPassword is not configured; skipping the default admin account.");
-    }
-    else if (await userManager.FindByEmailAsync(adminEmail) is null)
-    {
         var admin = new ApplicationUser { UserName = adminEmail, Email = adminEmail, EmailConfirmed = true };
         var created = await userManager.CreateAsync(admin, adminPassword);
         if (created.Succeeded)

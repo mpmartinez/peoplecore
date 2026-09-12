@@ -3,6 +3,7 @@ using Amazon.S3;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Minio;
 using PeopleCore.Application.Attendance.Interfaces;
@@ -219,5 +220,49 @@ public static class ServiceExtensions
                 $"Jwt:Key must be at least 32 bytes for HMAC-SHA256; the configured value is {bytes.Length}.");
 
         return bytes;
+    }
+
+    /// <summary>
+    /// The password Development seeds the administrator with when none is configured. Public so
+    /// that the warning in Program.cs and the test that pins this behaviour both name one value.
+    /// </summary>
+    public const string DevelopmentAdminPassword = "Admin@123456";
+
+    /// <summary>
+    /// Resolves the password to seed the administrator account with, or <c>null</c> when there is
+    /// nothing to seed.
+    /// </summary>
+    /// <remarks>
+    /// This used to log a warning and carry on, which meant a Production deploy missing
+    /// Seed:AdminPassword came up healthy — serving the client, answering /health — with no
+    /// account anyone could log in with. The only signal was a line in the container log.
+    /// Refuse to start instead, the way <see cref="ResolveJwtSigningKey"/> already does for a
+    /// missing Jwt:Key.
+    ///
+    /// The throw is conditional on <paramref name="adminExists"/>. An unconditional one would
+    /// take a working deployment down the moment somebody pruned the variable from its
+    /// environment — an outage traded for a misconfiguration that costs nothing while an
+    /// administrator is already in the database.
+    /// </remarks>
+    public static string? ResolveSeedAdminPassword(
+        IConfiguration configuration,
+        IHostEnvironment environment,
+        bool adminExists)
+    {
+        var password = configuration["Seed:AdminPassword"];
+
+        if (!string.IsNullOrWhiteSpace(password))
+            return password;
+
+        if (adminExists)
+            return null;
+
+        if (environment.IsDevelopment())
+            return DevelopmentAdminPassword;
+
+        throw new InvalidOperationException(
+            "Seed:AdminPassword is not configured and no administrator account exists, so this " +
+            "deployment would start with no way to log in. Set it out of source control, for " +
+            "example via the Seed__AdminPassword environment variable.");
     }
 }
