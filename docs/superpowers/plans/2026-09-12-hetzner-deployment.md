@@ -755,11 +755,18 @@ docker stop peoplecore-web-check
 
 - [ ] **Step 7: Verify the API image boots and answers /health**
 
-Against a local Postgres, reachable from the container as `host.docker.internal`. On Docker Desktop (Windows, macOS) that name resolves on its own; on Linux add `--add-host=host.docker.internal:host-gateway` to both `docker run` commands below.
+Postgres runs locally as the container `m2net-postgres` (`postgres:18-alpine3.23`, user `postgres`, password `postgres`). Container-name DNS does not work on Docker's default bridge, so put both containers on a user-defined network first — this attaches `m2net-postgres` to an additional network without disturbing its existing bridge connectivity or published ports:
 
 ```bash
-docker run --rm -d --name peoplecore-api-check -p 8082:8080 \
-  -e ConnectionStrings__Default="Host=host.docker.internal;Database=peoplecore;Username=postgres;Password=postgres" \
+docker network create peoplecore-check
+docker network connect peoplecore-check m2net-postgres
+```
+
+The API container then reaches the database at `Host=m2net-postgres`:
+
+```bash
+docker run --rm -d --name peoplecore-api-check --network peoplecore-check -p 8082:8080 \
+  -e ConnectionStrings__Default="Host=m2net-postgres;Database=peoplecore;Username=postgres;Password=postgres" \
   -e Jwt__Key="$(openssl rand -base64 32)" \
   -e Seed__AdminPassword="Local@123456" \
   peoplecore-api:local
@@ -781,17 +788,21 @@ Now confirm Task 1's guard fires in a container. Stop the running one and start 
 
 ```bash
 docker stop peoplecore-api-check
-psql -h localhost -U postgres -c "DROP DATABASE IF EXISTS peoplecore_guardcheck;" -c "CREATE DATABASE peoplecore_guardcheck;"
-docker run --rm --name peoplecore-guard-check \
-  -e ConnectionStrings__Default="Host=host.docker.internal;Database=peoplecore_guardcheck;Username=postgres;Password=postgres" \
+docker exec -e PGPASSWORD=postgres m2net-postgres psql -U postgres -c "DROP DATABASE IF EXISTS peoplecore_guardcheck;" -c "CREATE DATABASE peoplecore_guardcheck;"
+docker run --rm --name peoplecore-guard-check --network peoplecore-check \
+  -e ConnectionStrings__Default="Host=m2net-postgres;Database=peoplecore_guardcheck;Username=postgres;Password=postgres" \
   -e Jwt__Key="$(openssl rand -base64 32)" \
   peoplecore-api:local
 ```
 
 Expected: the container exits non-zero with an `InvalidOperationException` naming `Seed__AdminPassword`. This is the behaviour that keeps a misconfigured deploy from coming up loginless.
 
+Then clean up the throwaway database and the scratch network:
+
 ```bash
-psql -h localhost -U postgres -c "DROP DATABASE peoplecore_guardcheck;"
+docker exec -e PGPASSWORD=postgres m2net-postgres psql -U postgres -c "DROP DATABASE peoplecore_guardcheck;"
+docker network disconnect peoplecore-check m2net-postgres
+docker network rm peoplecore-check
 ```
 
 - [ ] **Step 8: Commit**
