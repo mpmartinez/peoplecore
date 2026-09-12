@@ -86,6 +86,35 @@ app.MapControllers();
 // Seed roles and default admin on first run
 using (var scope = app.Services.CreateScope())
 {
+    var dbContext = scope.ServiceProvider.GetRequiredService<PeopleCore.Infrastructure.Persistence.AppDbContext>();
+
+    // Apply pending migrations. The catch is SPMS.Training's: a transaction-mode connection
+    // pooler — Neon's PgBouncer, Supabase's Supavisor — can interrupt the migration lock and
+    // surface as the context being disposed mid-flight. It is a fallback, not a substitute. If
+    // migrations genuinely did not apply, startup continues only as far as the seeding below,
+    // which fails loudly against a schema that is not there.
+    try
+    {
+        var pending = await dbContext.Database.GetPendingMigrationsAsync();
+        if (pending.Any())
+        {
+            app.Logger.LogInformation("Applying {Count} pending migration(s)...", pending.Count());
+            await dbContext.Database.MigrateAsync();
+        }
+        else
+        {
+            app.Logger.LogInformation("Database is up to date - no pending migrations");
+        }
+    }
+    catch (ObjectDisposedException)
+    {
+        app.Logger.LogWarning(
+            "MigrateAsync failed (connection pooler limitation) - verifying database connectivity...");
+        if (!await dbContext.Database.CanConnectAsync())
+            throw new InvalidOperationException("Cannot connect to database");
+        app.Logger.LogInformation("Database connection verified successfully");
+    }
+
     var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
     var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
 
@@ -115,7 +144,6 @@ using (var scope = app.Services.CreateScope())
                 string.Join("; ", created.Errors.Select(e => e.Description)));
     }
 
-    var dbContext = scope.ServiceProvider.GetRequiredService<PeopleCore.Infrastructure.Persistence.AppDbContext>();
     if (!await dbContext.Companies.AnyAsync())
     {
         dbContext.Companies.Add(new PeopleCore.Domain.Entities.Organization.Company { Name = "My Company" });
