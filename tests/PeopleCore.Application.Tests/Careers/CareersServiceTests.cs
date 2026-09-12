@@ -4,6 +4,7 @@ using PeopleCore.Application.Careers.DTOs;
 using PeopleCore.Application.Careers.Interfaces;
 using PeopleCore.Application.Careers.Services;
 using PeopleCore.Application.Common.Interfaces;
+using PeopleCore.Application.Common.Options;
 using PeopleCore.Application.Recruitment.Interfaces;
 using PeopleCore.Domain.Entities.Organization;
 using PeopleCore.Domain.Entities.Recruitment;
@@ -19,18 +20,13 @@ public class CareersServiceTests
     private readonly Mock<IApplicantRepository> _applicantRepo = new();
     private readonly Mock<IStorageService> _storageService = new();
 
-    // CareersService does not exist yet — this will cause a compile error (TDD red phase).
-    // Uncomment and update once the implementation class is created.
-    // private readonly CareersService _sut;
-    //
-    // public CareersServiceTests()
-    // {
-    //     _sut = new CareersService(_jobPostingRepo.Object, _applicantRepo.Object, _storageService.Object);
-    // }
-
     private ICareersService CreateSut()
     {
-        return new CareersService(_jobPostingRepo.Object, _applicantRepo.Object, _storageService.Object);
+        return new CareersService(
+            _jobPostingRepo.Object,
+            _applicantRepo.Object,
+            _storageService.Object,
+            new DocumentStorageOptions());
     }
 
     private static JobPosting MakeOpenJobPosting(Guid? id = null) => new()

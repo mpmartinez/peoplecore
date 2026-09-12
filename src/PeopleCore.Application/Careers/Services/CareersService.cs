@@ -1,6 +1,7 @@
 using PeopleCore.Application.Careers.DTOs;
 using PeopleCore.Application.Careers.Interfaces;
 using PeopleCore.Application.Common.Interfaces;
+using PeopleCore.Application.Common.Options;
 using PeopleCore.Application.Recruitment.Interfaces;
 using PeopleCore.Domain.Entities.Recruitment;
 using PeopleCore.Domain.Enums;
@@ -13,6 +14,7 @@ public class CareersService : ICareersService
     private readonly IJobPostingRepository _jobPostingRepo;
     private readonly IApplicantRepository _applicantRepo;
     private readonly IStorageService _storageService;
+    private readonly DocumentStorageOptions _storageOptions;
 
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -24,11 +26,13 @@ public class CareersService : ICareersService
     public CareersService(
         IJobPostingRepository jobPostingRepo,
         IApplicantRepository applicantRepo,
-        IStorageService storageService)
+        IStorageService storageService,
+        DocumentStorageOptions storageOptions)
     {
         _jobPostingRepo = jobPostingRepo;
         _applicantRepo = applicantRepo;
         _storageService = storageService;
+        _storageOptions = storageOptions;
     }
 
     public async Task<IReadOnlyList<PublicJobPostingDto>> GetOpenJobsAsync(CancellationToken ct = default)
@@ -86,7 +90,7 @@ public class CareersService : ICareersService
         string storageKey;
         using (var stream = new MemoryStream(resumeBytes))
         {
-            storageKey = await _storageService.UploadAsync("resumes", objectKey, stream, contentType, ct);
+            storageKey = await _storageService.UploadAsync(_storageOptions.ResumesBucketName, objectKey, stream, contentType, ct);
         }
 
         // Create applicant

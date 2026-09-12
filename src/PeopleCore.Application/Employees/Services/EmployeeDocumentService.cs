@@ -1,4 +1,5 @@
 using PeopleCore.Application.Common.Interfaces;
+using PeopleCore.Application.Common.Options;
 using PeopleCore.Application.Employees.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Domain.Entities.Employees;
@@ -10,12 +11,16 @@ public class EmployeeDocumentService : IEmployeeDocumentService
 {
     private readonly IEmployeeRepository _employeeRepo;
     private readonly IStorageService _storage;
-    private const string BucketName = "peoplecore-documents";
+    private readonly DocumentStorageOptions _storageOptions;
 
-    public EmployeeDocumentService(IEmployeeRepository employeeRepo, IStorageService storage)
+    public EmployeeDocumentService(
+        IEmployeeRepository employeeRepo,
+        IStorageService storage,
+        DocumentStorageOptions storageOptions)
     {
         _employeeRepo = employeeRepo;
         _storage = storage;
+        _storageOptions = storageOptions;
     }
 
     public async Task<IReadOnlyList<EmployeeDocumentDto>> GetDocumentsAsync(Guid employeeId, CancellationToken ct = default)
@@ -35,7 +40,7 @@ public class EmployeeDocumentService : IEmployeeDocumentService
             ?? throw new KeyNotFoundException($"Employee {employeeId} not found.");
 
         var objectKey = $"employees/{employeeId}/{documentType}/{Guid.NewGuid()}_{fileName}";
-        await _storage.UploadAsync(BucketName, objectKey, fileStream, contentType, ct);
+        await _storage.UploadAsync(_storageOptions.BucketName, objectKey, fileStream, contentType, ct);
 
         var document = new EmployeeDocument
         {
@@ -55,7 +60,7 @@ public class EmployeeDocumentService : IEmployeeDocumentService
         }
         catch
         {
-            await _storage.DeleteAsync(BucketName, objectKey, ct);
+            await _storage.DeleteAsync(_storageOptions.BucketName, objectKey, ct);
             throw;
         }
 
@@ -68,7 +73,7 @@ public class EmployeeDocumentService : IEmployeeDocumentService
             ?? throw new KeyNotFoundException($"Employee {employeeId} not found.");
         var doc = employee.Documents.FirstOrDefault(d => d.Id == documentId)
             ?? throw new KeyNotFoundException($"Document {documentId} not found.");
-        return await _storage.GetPresignedUrlAsync(BucketName, doc.StorageKey, ct: ct);
+        return await _storage.GetPresignedUrlAsync(_storageOptions.BucketName, doc.StorageKey, ct: ct);
     }
 
     public async Task DeleteDocumentAsync(Guid employeeId, Guid documentId, CancellationToken ct = default)
@@ -77,7 +82,7 @@ public class EmployeeDocumentService : IEmployeeDocumentService
             ?? throw new KeyNotFoundException($"Employee {employeeId} not found.");
         var doc = employee.Documents.FirstOrDefault(d => d.Id == documentId)
             ?? throw new KeyNotFoundException($"Document {documentId} not found.");
-        await _storage.DeleteAsync(BucketName, doc.StorageKey, ct);
+        await _storage.DeleteAsync(_storageOptions.BucketName, doc.StorageKey, ct);
         employee.Documents.Remove(doc);
         await _employeeRepo.UpdateAsync(employee, ct);
     }

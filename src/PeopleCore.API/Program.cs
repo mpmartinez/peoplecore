@@ -11,6 +11,7 @@ using System.Text.Json.Serialization;
 using PeopleCore.API;
 using PeopleCore.API.Extensions;
 using PeopleCore.API.Middleware;
+using PeopleCore.Application.Common.Options;
 using PeopleCore.Infrastructure.Identity;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -68,6 +69,20 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+
+// Name the buckets this process will actually use, once, at boot. Bucket names are
+// configuration rather than consts now, and the two providers disagree about what a wrong
+// name does: R2 rejects an absent bucket with NoSuchBucket, while MinIO creates it on first
+// upload. So on MinIO a typo does not fail - it quietly starts a new, empty bucket, and the
+// files already uploaded under the old name simply stop being found. This line turns that
+// into something an operator can spot in the boot log instead of discovering it from a
+// download that 404s.
+var storageOptions = app.Services.GetRequiredService<DocumentStorageOptions>();
+app.Logger.LogInformation(
+    "Object storage: provider {Provider}, employee documents in {DocumentsBucket}, resumes in {ResumesBucket}.",
+    ServiceExtensions.ResolveStorageProviderName(builder.Configuration),
+    storageOptions.BucketName,
+    storageOptions.ResumesBucketName);
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
