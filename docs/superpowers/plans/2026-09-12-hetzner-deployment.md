@@ -1271,6 +1271,13 @@ The pooler interrupted the migration lock. If the database was already migrated,
 harmless and the next line confirms connectivity. On a *fresh* database it means the schema
 is not there, and the seeding immediately afterwards will fail — redeploy to retry.
 
+**The very first deploy logs an EF Core `fail:` line about `__EFMigrationsHistory`.**
+Expected once, on a genuinely empty database, and not an incident. `GetPendingMigrationsAsync`
+finds out which migrations have run by querying the history table — which does not exist yet
+the first time — and EF logs that failed probe at error level before creating it. The
+`Applying N pending migration(s)...` line immediately after is the one that matters. It does
+not recur on later deploys.
+
 **The client loads but every API call fails.**
 Check `appsettings.Production.json` in the web image matches the deployed hostname, and that
 the api router still outranks the web router — if the web router's priority ever meets or
