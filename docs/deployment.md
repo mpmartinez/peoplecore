@@ -1,8 +1,8 @@
 # Deploying PeopleCore
 
 PeopleCore runs on the Hetzner box that already hosts SPMS.Training, under the same Dokploy
-installation and behind the same Traefik. Postgres is Neon; employee documents are on
-Cloudflare R2.
+installation and behind the same Traefik. Postgres is Neon; employee documents and
+applicant resumes are on Cloudflare R2.
 
 - Design and rationale: `docs/superpowers/specs/2026-09-12-hetzner-deployment-design.md`
 - Stack definition: `docker-compose.dokploy.yml`
@@ -37,11 +37,17 @@ The API applies its 11 migrations itself on first boot. There is nothing to run 
 
 ### 2. Cloudflare R2
 
-1. Create a bucket named `peoplecore-documents`.
-2. Create an R2 API token scoped to that bucket with **Object Read & Write**.
+1. Create two buckets: `peoplecore-documents` for employee documents, and `resumes` for
+   resumes uploaded through the public careers portal.
+2. Create an R2 API token scoped to both buckets with **Object Read & Write**.
 3. Record the account id, the access key id, and the secret access key.
 
-Leave the bucket **private**. The API hands out time-limited presigned URLs
+Create both up front. `R2StorageService` uploads straight through, so — unlike the MinIO
+provider, which calls `MakeBucketAsync` for a bucket that is missing — a bucket that does
+not exist is not created on first use. It surfaces as a `NoSuchBucket` error on the upload,
+and for resumes that means a silent dead end at the end of a candidate's application.
+
+Leave both **private**. The API hands out time-limited presigned URLs
 (`R2StorageService.GetPresignedUrlAsync`), so no public access binding is needed — adding
 one would expose every document to anyone who guessed a key.
 
@@ -69,7 +75,7 @@ Environment tab from `.env.example`:
 | `JWT_KEY` | `openssl rand -base64 32` |
 | `SEED_ADMIN_EMAIL` | the address that should own the first admin account |
 | `SEED_ADMIN_PASSWORD` | chosen now; the API refuses to start without it on a fresh database |
-| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`, `R2_BUCKET_NAME` | Step 2 |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`, `R2_BUCKET_NAME`, `R2_RESUMES_BUCKET_NAME` | Step 2 |
 
 Then deploy.
 
