@@ -1,0 +1,78 @@
+# PeopleCore — Dokploy stack for the Hetzner box, behind Dokploy's Traefik.
+#
+# ─── Setup in Dokploy ─────────────────────────────────────────────────────────
+#  1. Create a "Compose" service pointing at this file.
+#  2. In the service's *Environment* tab, set every variable listed in .env.example.
+#  3. Point peoplecore.m2netsolutions.com DNS at the Hetzner box, then deploy —
+#     Traefik issues the Let's Encrypt certificate automatically over HTTP-01.
+#
+# ─── Routing ──────────────────────────────────────────────────────────────────
+#  Traefik terminates TLS for peoplecore.m2netsolutions.com and splits by path:
+#    /api + /health  -> api  (higher priority)
+#    everything else -> web  (nginx serving the Blazor WASM on plain HTTP)
+#  SPMS.Training is untouched; it keeps its own compose service on the same box.
+services:
+  peoplecore-api:
+    image: ghcr.io/mpmartinez/peoplecore-api:latest
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Default: ${PEOPLECORE_DB_CONNECTION}
+      Jwt__Key: ${JWT_KEY}
+      Jwt__Issuer: peoplecore-api
+      Jwt__Audience: peoplecore-web
+      AllowedOrigins: https://peoplecore.m2netsolutions.com
+      Seed__AdminEmail: ${SEED_ADMIN_EMAIL}
+      Seed__AdminPassword: ${SEED_ADMIN_PASSWORD}
+      Storage__Provider: R2
+      R2__AccountId: ${R2_ACCOUNT_ID}
+      R2__AccessKey: ${R2_ACCESS_KEY}
+      R2__SecretKey: ${R2_SECRET_KEY}
+      R2__BucketName: ${R2_BUCKET_NAME}
+    # Neon's hostname has to resolve from inside the container; the box's own resolver has
+    # been unreliable for this on the training stack.
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    networks:
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
+      - "traefik.http.routers.peoplecore-api.rule=Host(`peoplecore.m2netsolutions.com`) && (PathPrefix(`/api`) || PathPrefix(`/health`))"
+      - "traefik.http.routers.peoplecore-api.entrypoints=websecure"
+      - "traefik.http.routers.peoplecore-api.tls=true"
+      - "traefik.http.routers.peoplecore-api.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.peoplecore-api.priority=100"
+      - "traefik.http.services.peoplecore-api.loadbalancer.server.port=8080"
+
+  peoplecore-web:
+    image: ghcr.io/mpmartinez/peoplecore-web:latest
+    pull_policy: always
+    restart: unless-stopped
+    depends_on:
+      - peoplecore-api
+    networks:
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
+      - "traefik.http.middlewares.peoplecore-compress.compress=true"
+      - "traefik.http.routers.peoplecore-web.rule=Host(`peoplecore.m2netsolutions.com`)"
+      - "traefik.http.routers.peoplecore-web.entrypoints=websecure"
+      - "traefik.http.routers.peoplecore-web.tls=true"
+      - "traefik.http.routers.peoplecore-web.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.peoplecore-web.priority=10"
+      - "traefik.http.routers.peoplecore-web.middlewares=peoplecore-compress"
+      - "traefik.http.services.peoplecore-web.loadbalancer.server.port=80"
+      # HTTP -> HTTPS redirect
+      - "traefik.http.routers.peoplecore-web-http.rule=Host(`peoplecore.m2netsolutions.com`)"
+      - "traefik.http.routers.peoplecore-web-http.entrypoints=web"
+      - "traefik.http.routers.peoplecore-web-http.middlewares=peoplecore-redirect"
+      - "traefik.http.middlewares.peoplecore-redirect.redirectscheme.scheme=https"
+
+networks:
+  dokploy-network:
+    external: true
