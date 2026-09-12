@@ -41,11 +41,26 @@ The API applies its 11 migrations itself on first boot. There is nothing to run 
 
 ### 2. Cloudflare R2
 
-1. Create a bucket named `peoplecore-documents`.
-2. Create an R2 API token scoped to that bucket with **Object Read & Write**.
+Create **two** buckets. The API writes to both, and both names are hardcoded, so they must
+match exactly:
+
+| Bucket | Written by | Holds |
+|---|---|---|
+| `peoplecore-documents` | `EmployeeDocumentService` | Employee documents |
+| `resumes` | `CareersService` | Uploads from the public careers portal |
+
+1. Create both buckets under those exact names.
+2. Create an R2 API token scoped to them with **Object Read & Write**.
 3. Record the account id, the access key id, and the secret access key.
 
-Leave the bucket **private**. The API hands out time-limited presigned URLs
+Both must exist before the first upload. `R2StorageService` uploads straight through and
+does not call `MakeBucketAsync` the way the MinIO provider does, so a missing bucket is not
+created on demand — it fails with `NoSuchBucket`. For `resumes` that failure lands at the
+end of a candidate's application, after they have filled the whole form in, which is why
+this step asks for both even though only employee documents are exercised by the
+post-deploy checks below.
+
+Leave both **private**. The API hands out time-limited presigned URLs
 (`R2StorageService.GetPresignedUrlAsync`), so no public access binding is needed — adding
 one would expose every document to anyone who guessed a key.
 
