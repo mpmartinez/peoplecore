@@ -227,7 +227,12 @@ Expected: `Passed! - Failed: 0, Passed: 4`.
 In `src/PeopleCore.API/Program.cs`, replace lines 97-123 — from `var adminEmail = ...` through the closing brace of the `else if (await userManager.FindByEmailAsync(adminEmail) is null)` block — with:
 
 ```csharp
-    var adminEmail = builder.Configuration["Seed:AdminEmail"] ?? "admin@peoplecore.local";
+    // Docker Compose substitutes an empty string for an unset SEED_ADMIN_EMAIL, not an absent
+    // key, so "??" never sees a null to fall back on. IsNullOrWhiteSpace catches that case too.
+    var configuredAdminEmail = builder.Configuration["Seed:AdminEmail"];
+    var adminEmail = string.IsNullOrWhiteSpace(configuredAdminEmail)
+        ? "admin@peoplecore.local"
+        : configuredAdminEmail;
     var existingAdmin = await userManager.FindByEmailAsync(adminEmail);
     var adminPassword = ServiceExtensions.ResolveSeedAdminPassword(
         builder.Configuration, app.Environment, adminExists: existingAdmin is not null);
@@ -242,14 +247,30 @@ In `src/PeopleCore.API/Program.cs`, replace lines 97-123 — from `var adminEmai
         var admin = new ApplicationUser { UserName = adminEmail, Email = adminEmail, EmailConfirmed = true };
         var created = await userManager.CreateAsync(admin, adminPassword);
         if (created.Succeeded)
+        {
             await userManager.AddToRoleAsync(admin, "Admin");
+        }
         else
-            app.Logger.LogError("Failed to seed the admin account: {Errors}",
+        {
+            // Logging this and continuing is exactly the failure mode this guard exists to
+            // prevent: a configured-but-rejected password (e.g. Identity's RequireDigit) would
+            // still leave the container healthy, serving /health, with no account anyone could
+            // log in with. The Identity errors say precisely what was wrong - e.g. "Passwords
+            // must have at least one digit" - which is what an operator needs to fix it.
+            throw new InvalidOperationException(
+                $"Failed to seed the admin account {adminEmail}: " +
                 string.Join("; ", created.Errors.Select(e => e.Description)));
+        }
     }
 ```
 
 `Program.cs:11` already has `using PeopleCore.API.Extensions;`, so `ServiceExtensions` resolves unqualified — no new using directive is needed.
+
+**Later broadened** (final whole-branch review): the email fallback and the failure branch
+above were revised after this task originally landed — `CreateAsync` failing (e.g. a
+configured password Identity rejects) used to log and continue, leaving the same
+no-login-possible end state this task exists to prevent. It now throws. See the code for
+the current version; this block is kept here as the historical record of Task 1.
 
 - [ ] **Step 7: Verify the whole solution still builds and the suite is green**
 
@@ -321,10 +342,10 @@ Immediately after the `dbContext` line inserted in Step 1, and before `var roleM
     // which fails loudly against a schema that is not there.
     try
     {
-        var pending = await dbContext.Database.GetPendingMigrationsAsync();
-        if (pending.Any())
+        var pending = (await dbContext.Database.GetPendingMigrationsAsync()).ToList();
+        if (pending.Count > 0)
         {
-            app.Logger.LogInformation("Applying {Count} pending migration(s)...", pending.Count());
+            app.Logger.LogInformation("Applying {Count} pending migration(s)...", pending.Count);
             await dbContext.Database.MigrateAsync();
         }
         else
@@ -545,6 +566,16 @@ http {
             try_files $uri $uri/ /index.html;
         }
 
+        # The one non-fingerprinted entry point: it names the fingerprinted bundles
+        # (blazor.webassembly.<hash>.js and friends) by URL. Falling through to the bare
+        # location / above would leave index.html to browser heuristic freshness, so a
+        # returning browser could serve a stale copy that references a bundle the current
+        # deploy no longer ships - _framework has no try_files, so that 404s instead of
+        # falling back to HTML, and the app is blank until a hard reload.
+        location = /index.html {
+            add_header Cache-Control "no-cache";
+        }
+
         # The service worker is how a new deploy reaches a browser that already has the old one,
         # so it is the one file that must never be cached. Note PeopleCore names it sw.js.
         location = /sw.js {
@@ -675,26 +706,6 @@ WORKDIR /usr/share/nginx/html
 
 COPY --from=build /app/web/wwwroot .
 
-# .NET 10 fingerprints the framework JS filename (blazor.webassembly.<hash>.js), but the
-# <script src> in index.html resolves through a placeholder, and import maps do not apply to
-# classic script tags. Point the plain name at whichever fingerprinted file the publish wrote.
-#
-# The `[ -e "$f" ]` guard matters because this shell is BusyBox ash: when the glob matches
-# nothing, POSIX sh leaves it unexpanded, so $f would be the literal string
-# "blazor.webassembly.*.js" and `ln -sf` would happily create a symlink to a target that does
-# not exist - exit 0, image builds, Blazor never loads. Failing loudly here beats a green build
-# that ships a broken site.
-RUN cd _framework \
-    && found= \
-    && for f in blazor.webassembly.*.js; do \
-         [ -e "$f" ] || continue; \
-         [ "$f" = "blazor.webassembly.js" ] && continue; \
-         ln -sf "$f" blazor.webassembly.js; \
-         found=1; \
-         break; \
-       done \
-    && [ -n "$found" ] || { echo "ERROR: no fingerprinted blazor.webassembly.*.js found in _framework" >&2; exit 1; }
-
 COPY nginx.conf /etc/nginx/nginx.conf
 
 EXPOSE 80
@@ -703,6 +714,15 @@ CMD ["nginx", "-g", "daemon off;"]
 ```
 
 Note the `api` target does **not** copy the Blazor output into its own `wwwroot`. SPMS.Training does, but under this compose the web container serves those files and the copy would be dead weight.
+
+**Later removed** (final whole-branch review): the symlink block this step originally wrote
+was deleted outright. `PeopleCore.Web.csproj` sets
+`<OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>`, which rewrites the `#[.{fingerprint}]` placeholder in `index.html` at publish time, so the
+published page already points straight at `_framework/blazor.webassembly.<hash>.js` —
+verified by inspecting the built image. The plain name survives only as an unused
+import-map key. Training needs the symlink because it does not set that csproj property;
+PeopleCore does. The `blazor.webassembly.js` block in the Dockerfile above is the historical
+record of Task 4; the code no longer has it.
 
 - [ ] **Step 5: Build both images**
 
@@ -737,10 +757,14 @@ curl -s http://localhost:8081/appsettings.Production.json
 Expected: `{"ApiBaseUrl": "https://peoplecore.m2netsolutions.com"}` — confirming Step 2's file made it into the published output.
 
 ```bash
-curl -sI http://localhost:8081/_framework/blazor.webassembly.js | head -3
+docker exec peoplecore-web-check sh -c 'ls _framework/blazor.webassembly.*.js'
+curl -sI http://localhost:8081/_framework/blazor.webassembly.<hash>.js | head -3   # use the real fingerprinted name from the ls above
 ```
 
-Expected: `HTTP/1.1 200 OK` — confirming the symlink resolves. A `404` means the loop in Step 4 matched nothing; list `_framework` inside the container to see what the publish actually named the file.
+Expected: `HTTP/1.1 200 OK` for the fingerprinted name directly. There is no plain-name
+symlink to fall back on (see the note above Step 5) — the published `index.html` already
+points straight at the fingerprinted URL via `OverrideHtmlAssetPlaceholders`, so this check
+confirms the file the page actually requests, not a compatibility shim.
 
 ```bash
 curl -sI http://localhost:8081/css/tailwind.css | grep -i cache-control
@@ -938,9 +962,12 @@ Create `.env.example` at the repository root:
 #   cp .env.example .env   # then edit .env
 
 # Neon Postgres — pooled endpoint (host ends in "-pooler"), database "peoplecore".
-# Keep "No Reset On Close=true": Neon's PgBouncer runs in transaction mode and Npgsql's
-# server-side prepared statements break against it.
-PEOPLECORE_DB_CONNECTION=Host=ep-CHANGE_ME-pooler.c-2.ap-southeast-1.aws.neon.tech;Database=peoplecore;Username=neondb_owner;Password=CHANGE_ME;SSL Mode=Require;Trust Server Certificate=true;No Reset On Close=true
+# "SSL Mode=VerifyFull" authenticates the server, not just encrypts the channel: Neon serves
+# publicly-trusted certificates, so there is no reason to fall back to "Trust Server
+# Certificate=true" on a connection that crosses the public internet carrying the whole HRMS
+# and payroll dataset. Keep "No Reset On Close=true": Neon's PgBouncer runs in transaction
+# mode and Npgsql's server-side prepared statements break against it without that flag.
+PEOPLECORE_DB_CONNECTION=Host=ep-CHANGE_ME-pooler.c-2.ap-southeast-1.aws.neon.tech;Database=peoplecore;Username=neondb_owner;Password=CHANGE_ME;SSL Mode=VerifyFull;No Reset On Close=true
 
 # JWT signing key — at least 32 bytes. Generate: openssl rand -base64 32
 # The API refuses to start if this is missing or shorter.
@@ -957,8 +984,17 @@ SEED_ADMIN_PASSWORD=CHANGE_ME
 R2_ACCOUNT_ID=CHANGE_ME
 R2_ACCESS_KEY=CHANGE_ME
 R2_SECRET_KEY=CHANGE_ME
+# The application currently ignores this value - EmployeeDocumentService hardcodes the bucket
+# name as a const - and always uses "peoplecore-documents". Create the R2 bucket under that
+# exact name; a differently-named bucket fails with NoSuchBucket regardless of what this is
+# set to. (Wiring this variable through is queued as separate work.)
 R2_BUCKET_NAME=peoplecore-documents
 ```
+
+**Later revised** (final whole-branch review): the connection string above moved from
+`SSL Mode=Require;Trust Server Certificate=true` to `SSL Mode=VerifyFull`, and the
+`R2_BUCKET_NAME` comment noting it is currently inert was added. The current `.env.example`
+is the source of truth; this block is Task 5's historical record.
 
 - [ ] **Step 3: Verify the compose file parses and every variable resolves**
 
@@ -1191,11 +1227,15 @@ Create a database named `peoplecore` in the existing Neon project — the same p
 holds `training`. The role stays `neondb_owner`.
 
 Copy the **pooled** connection string (the host ends in `-pooler`) and append
-`No Reset On Close=true`. Neon's PgBouncer runs in transaction mode, and Npgsql's
-server-side prepared statements break against it without that flag. The result:
+`SSL Mode=VerifyFull;No Reset On Close=true`. Neon serves publicly-trusted certificates, so
+`VerifyFull` authenticates the server rather than merely encrypting the channel — this
+connection crosses the public internet carrying the whole HRMS and payroll dataset, so
+`Trust Server Certificate=true` (which disables that validation) has no place here. Keep
+`No Reset On Close=true` exactly as it is: Neon's PgBouncer runs in transaction mode, and
+Npgsql's server-side prepared statements break against it without that flag. The result:
 
 ```
-Host=ep-<id>-pooler.<region>.aws.neon.tech;Database=peoplecore;Username=neondb_owner;Password=<secret>;SSL Mode=Require;Trust Server Certificate=true;No Reset On Close=true
+Host=ep-<id>-pooler.<region>.aws.neon.tech;Database=peoplecore;Username=neondb_owner;Password=<secret>;SSL Mode=VerifyFull;No Reset On Close=true
 ```
 
 The API applies its 11 migrations itself on first boot. There is nothing to run by hand.
@@ -1287,7 +1327,17 @@ exceeds 100, it swallows `/api` and the client gets `index.html` back instead of
 `nginx.conf` serves `/css/` and `/js/` with `no-cache` precisely to prevent this. If it
 regresses, check that those paths did not pick up the `_framework` immutable rule — only
 `_framework` is content-fingerprinted and safe to cache for a year.
+
+**The first deploy fails with a TLS or certificate-validation error from Npgsql.**
+That is `SSL Mode=VerifyFull` in `PEOPLECORE_DB_CONNECTION` — the one part of the connection
+string not yet exercised against real Neon. Confirm the string was copied from Neon's
+pooled endpoint unmodified; a hand-edited host or a non-Neon Postgres in front of it is the
+usual cause of a certificate Npgsql won't validate.
 ````
+
+**Later revised** (final whole-branch review): the connection string in Step 1 above moved
+to `SSL Mode=VerifyFull`, and the TLS troubleshooting entry was added. The current
+`docs/deployment.md` is the source of truth; this block is Task 7's historical record.
 
 - [ ] **Step 2: Verify the runbook is accurate against the files it describes**
 

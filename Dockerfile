@@ -90,26 +90,6 @@ WORKDIR /usr/share/nginx/html
 
 COPY --from=build /app/web/wwwroot .
 
-# .NET 10 fingerprints the framework JS filename (blazor.webassembly.<hash>.js), but the
-# <script src> in index.html resolves through a placeholder, and import maps do not apply to
-# classic script tags. Point the plain name at whichever fingerprinted file the publish wrote.
-#
-# The `[ -e "$f" ]` guard matters because this shell is BusyBox ash: when the glob matches
-# nothing, POSIX sh leaves it unexpanded, so $f would be the literal string
-# "blazor.webassembly.*.js" and `ln -sf` would happily create a symlink to a target that does
-# not exist - exit 0, image builds, Blazor never loads. Failing loudly here beats a green build
-# that ships a broken site.
-RUN cd _framework \
-    && found= \
-    && for f in blazor.webassembly.*.js; do \
-         [ -e "$f" ] || continue; \
-         [ "$f" = "blazor.webassembly.js" ] && continue; \
-         ln -sf "$f" blazor.webassembly.js; \
-         found=1; \
-         break; \
-       done \
-    && [ -n "$found" ] || { echo "ERROR: no fingerprinted blazor.webassembly.*.js found in _framework" >&2; exit 1; }
-
 COPY nginx.conf /etc/nginx/nginx.conf
 
 EXPOSE 80

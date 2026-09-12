@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Identity;
@@ -76,6 +77,21 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+// Traefik terminates TLS and forwards plain HTTP, so without this Request.Scheme reads "http"
+// (CreatedAtAction would emit an http:// Location from an https:// service) and
+// Connection.RemoteIpAddress reads Traefik's container IP - collapsing the careers-apply rate
+// limiter's per-IP partition into one shared bucket for every caller. Clearing KnownIPNetworks
+// and KnownProxies is safe here specifically because docker-compose.dokploy.yml publishes no host
+// ports: the container is reachable only from dokploy-network, never directly from the internet,
+// so there is no untrusted path these headers could arrive from.
+var forwardedHeaderOptions = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+};
+forwardedHeaderOptions.KnownIPNetworks.Clear();
+forwardedHeaderOptions.KnownProxies.Clear();
+app.UseForwardedHeaders(forwardedHeaderOptions);
+
 app.UseCors();
 app.UseResponseCaching();
 app.UseRateLimiter();
@@ -101,10 +117,10 @@ using (var scope = app.Services.CreateScope())
     // which fails loudly against a schema that is not there.
     try
     {
-        var pending = await dbContext.Database.GetPendingMigrationsAsync();
-        if (pending.Any())
+        var pending = (await dbContext.Database.GetPendingMigrationsAsync()).ToList();
+        if (pending.Count > 0)
         {
-            app.Logger.LogInformation("Applying {Count} pending migration(s)...", pending.Count());
+            app.Logger.LogInformation("Applying {Count} pending migration(s)...", pending.Count);
             await dbContext.Database.MigrateAsync();
         }
         else
@@ -129,7 +145,12 @@ using (var scope = app.Services.CreateScope())
         if (!await roleManager.RoleExistsAsync(role))
             await roleManager.CreateAsync(new IdentityRole(role));
 
-    var adminEmail = builder.Configuration["Seed:AdminEmail"] ?? "admin@peoplecore.local";
+    // Docker Compose substitutes an empty string for an unset SEED_ADMIN_EMAIL, not an absent
+    // key, so "??" never sees a null to fall back on. IsNullOrWhiteSpace catches that case too.
+    var configuredAdminEmail = builder.Configuration["Seed:AdminEmail"];
+    var adminEmail = string.IsNullOrWhiteSpace(configuredAdminEmail)
+        ? "admin@peoplecore.local"
+        : configuredAdminEmail;
     var existingAdmin = await userManager.FindByEmailAsync(adminEmail);
     var adminPassword = ServiceExtensions.ResolveSeedAdminPassword(
         builder.Configuration, app.Environment, adminExists: existingAdmin is not null);
@@ -144,10 +165,20 @@ using (var scope = app.Services.CreateScope())
         var admin = new ApplicationUser { UserName = adminEmail, Email = adminEmail, EmailConfirmed = true };
         var created = await userManager.CreateAsync(admin, adminPassword);
         if (created.Succeeded)
+        {
             await userManager.AddToRoleAsync(admin, "Admin");
+        }
         else
-            app.Logger.LogError("Failed to seed the admin account: {Errors}",
+        {
+            // Logging this and continuing is exactly the failure mode this guard exists to
+            // prevent: a configured-but-rejected password (e.g. Identity's RequireDigit) would
+            // still leave the container healthy, serving /health, with no account anyone could
+            // log in with. The Identity errors say precisely what was wrong - e.g. "Passwords
+            // must have at least one digit" - which is what an operator needs to fix it.
+            throw new InvalidOperationException(
+                $"Failed to seed the admin account {adminEmail}: " +
                 string.Join("; ", created.Errors.Select(e => e.Description)));
+        }
     }
 
     if (!await dbContext.Companies.AnyAsync())

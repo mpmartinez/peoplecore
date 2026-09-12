@@ -71,14 +71,20 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS api
 
 FROM nginx:alpine AS web
   COPY --from=build /app/web/wwwroot .
-  # symlink blazor.webassembly.<hash>.js -> blazor.webassembly.js
   COPY nginx.conf /etc/nginx/nginx.conf
   EXPOSE 80
 ```
 
-The `blazor.webassembly.js` symlink is carried over from training unchanged. .NET 10
-fingerprints the framework JS filename, `index.html` references it through the
-`#[.{fingerprint}]` placeholder, and import maps do not apply to classic script tags.
+Training carries a `blazor.webassembly.js` symlink here because .NET 10 fingerprints the
+framework JS filename and `index.html`'s `<script src>` cannot follow the
+`#[.{fingerprint}]` placeholder through a classic script tag. PeopleCore does not need it:
+`src/PeopleCore.Web/PeopleCore.Web.csproj` sets `<OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>`, which
+rewrites that placeholder at publish time, so the published `index.html` already points
+straight at `_framework/blazor.webassembly.<hash>.js`. The plain name survives only as an
+import-map key, which resolves to the fingerprinted URL and is never fetched. Verified by
+inspecting the built image's `index.html`. Keeping the symlink would also apply the
+`_framework` one-year `immutable` cache rule (§2) to a non-fingerprinted filename — a latent
+trap on a future SDK bump — so it was removed rather than carried over.
 
 The API image does **not** copy the Blazor output into its own `wwwroot`. Training does,
 but under the Dokploy compose the web container serves those files and the copy is dead
@@ -95,6 +101,10 @@ file would be a workaround with no cause.
 Caching rules are taken from `nginx.dokploy.conf`, which reasons them out in comments:
 
 - SPA fallback: `try_files $uri $uri/ /index.html`
+- `index.html` — `no-cache`. It is the one non-fingerprinted entry point and it names the
+  fingerprinted bundles; falling through to the SPA fallback's implicit heuristic freshness
+  would let a returning browser serve a stale copy that references a bundle the current
+  deploy no longer ships.
 - `gzip_static on` — `dotnet publish` writes a `.gz` beside each framework asset,
   compressed harder than any on-the-fly compressor would pay for. `.br` files are left
   unused; stock nginx has no brotli module.
@@ -203,11 +213,16 @@ to exist first. The `AppDbContext` is currently resolved partway down that block
 to the top.
 
 The connection string uses Neon's **pooled** endpoint (host ending `-pooler`) and must end
-with `No Reset On Close=true`. Neon's PgBouncer runs in transaction mode and Npgsql's
-server-side prepared statements break against it without that flag. Shape:
+with `SSL Mode=VerifyFull;No Reset On Close=true`. `VerifyFull` authenticates the Neon
+server's certificate rather than merely encrypting the channel — Neon serves
+publicly-trusted certificates, so there is no reason to accept `Trust Server
+Certificate=true`'s validation bypass on a connection that carries the whole HRMS and
+payroll dataset across the public internet. `No Reset On Close=true` is unrelated and
+unchanged: Neon's PgBouncer runs in transaction mode and Npgsql's server-side prepared
+statements break against it without that flag. Shape:
 
 ```
-Host=ep-<id>-pooler.<region>.aws.neon.tech;Database=peoplecore;Username=neondb_owner;Password=<secret>;SSL Mode=Require;Trust Server Certificate=true;No Reset On Close=true
+Host=ep-<id>-pooler.<region>.aws.neon.tech;Database=peoplecore;Username=neondb_owner;Password=<secret>;SSL Mode=VerifyFull;No Reset On Close=true
 ```
 
 ## 5. Health endpoint

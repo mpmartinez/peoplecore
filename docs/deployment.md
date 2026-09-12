@@ -1,8 +1,8 @@
 # Deploying PeopleCore
 
 PeopleCore runs on the Hetzner box that already hosts SPMS.Training, under the same Dokploy
-installation and behind the same Traefik. Postgres is Neon; employee documents and
-applicant resumes are on Cloudflare R2.
+installation and behind the same Traefik. Postgres is Neon; employee documents are on
+Cloudflare R2.
 
 - Design and rationale: `docs/superpowers/specs/2026-09-12-hetzner-deployment-design.md`
 - Stack definition: `docker-compose.dokploy.yml`
@@ -26,28 +26,26 @@ Create a database named `peoplecore` in the existing Neon project — the same p
 holds `training`. The role stays `neondb_owner`.
 
 Copy the **pooled** connection string (the host ends in `-pooler`) and append
-`No Reset On Close=true`. Neon's PgBouncer runs in transaction mode, and Npgsql's
-server-side prepared statements break against it without that flag. The result:
+`SSL Mode=VerifyFull;No Reset On Close=true`. Neon serves publicly-trusted certificates, so
+`VerifyFull` authenticates the server rather than merely encrypting the channel — this
+connection crosses the public internet carrying the whole HRMS and payroll dataset, so
+`Trust Server Certificate=true` (which disables that validation) has no place here. Keep
+`No Reset On Close=true` exactly as it is: Neon's PgBouncer runs in transaction mode, and
+Npgsql's server-side prepared statements break against it without that flag. The result:
 
 ```
-Host=ep-<id>-pooler.<region>.aws.neon.tech;Database=peoplecore;Username=neondb_owner;Password=<secret>;SSL Mode=Require;Trust Server Certificate=true;No Reset On Close=true
+Host=ep-<id>-pooler.<region>.aws.neon.tech;Database=peoplecore;Username=neondb_owner;Password=<secret>;SSL Mode=VerifyFull;No Reset On Close=true
 ```
 
 The API applies its 11 migrations itself on first boot. There is nothing to run by hand.
 
 ### 2. Cloudflare R2
 
-1. Create two buckets: `peoplecore-documents` for employee documents, and `resumes` for
-   resumes uploaded through the public careers portal.
-2. Create an R2 API token scoped to both buckets with **Object Read & Write**.
+1. Create a bucket named `peoplecore-documents`.
+2. Create an R2 API token scoped to that bucket with **Object Read & Write**.
 3. Record the account id, the access key id, and the secret access key.
 
-Create both up front. `R2StorageService` uploads straight through, so — unlike the MinIO
-provider, which calls `MakeBucketAsync` for a bucket that is missing — a bucket that does
-not exist is not created on first use. It surfaces as a `NoSuchBucket` error on the upload,
-and for resumes that means a silent dead end at the end of a candidate's application.
-
-Leave both **private**. The API hands out time-limited presigned URLs
+Leave the bucket **private**. The API hands out time-limited presigned URLs
 (`R2StorageService.GetPresignedUrlAsync`), so no public access binding is needed — adding
 one would expose every document to anyone who guessed a key.
 
@@ -75,7 +73,7 @@ Environment tab from `.env.example`:
 | `JWT_KEY` | `openssl rand -base64 32` |
 | `SEED_ADMIN_EMAIL` | the address that should own the first admin account |
 | `SEED_ADMIN_PASSWORD` | chosen now; the API refuses to start without it on a fresh database |
-| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`, `R2_BUCKET_NAME`, `R2_RESUMES_BUCKET_NAME` | Step 2 |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`, `R2_BUCKET_NAME` | Step 2 |
 
 Then deploy.
 
@@ -128,3 +126,9 @@ exceeds 100, it swallows `/api` and the client gets `index.html` back instead of
 `nginx.conf` serves `/css/` and `/js/` with `no-cache` precisely to prevent this. If it
 regresses, check that those paths did not pick up the `_framework` immutable rule — only
 `_framework` is content-fingerprinted and safe to cache for a year.
+
+**The first deploy fails with a TLS or certificate-validation error from Npgsql.**
+That is `SSL Mode=VerifyFull` in `PEOPLECORE_DB_CONNECTION` — the one part of the connection
+string not yet exercised against real Neon. Confirm the string was copied from Neon's
+pooled endpoint unmodified; a hand-edited host or a non-Neon Postgres in front of it is the
+usual cause of a certificate Npgsql won't validate.
