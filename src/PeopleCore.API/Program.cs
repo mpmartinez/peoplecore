@@ -81,6 +81,12 @@ app.UseResponseCaching();
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
+
+// Liveness only - deliberately does not touch the database. Neon scales compute to zero, and a
+// cold start can outlast the health check's timeout; a DB-backed probe would have Docker restart
+// a container whose only problem is that its database was asleep.
+app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
+
 app.MapControllers();
 
 // Seed roles and default admin on first run
