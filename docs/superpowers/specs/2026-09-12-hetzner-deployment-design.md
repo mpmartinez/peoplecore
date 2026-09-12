@@ -162,7 +162,7 @@ training's file.
 
 ## 4. Migrations
 
-The API has 23 migrations under `src/PeopleCore.Infrastructure/Persistence/Migrations` and
+The API has 11 migrations under `src/PeopleCore.Infrastructure/Persistence/Migrations` and
 currently calls neither `Migrate` nor `EnsureCreated` anywhere outside the test fixture. A
 fresh Neon database would come up empty.
 
@@ -337,7 +337,7 @@ rather than automated:
 ### First-deploy verification
 
 - `https://peoplecore.m2netsolutions.com/health` returns 200
-- API logs show "Applying 23 pending migration(s)" then the seeding lines
+- API logs show "Applying 11 pending migration(s)" then the seeding lines
 - Log in as the seeded admin
 - **Generate a payslip PDF.** This is the one behaviour the deployment cannot prove by
   construction: no code registers fonts, so QuestPDF and PDFsharp resolve glyphs from the

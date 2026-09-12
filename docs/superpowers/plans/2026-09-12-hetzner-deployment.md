@@ -284,7 +284,7 @@ its environment, trading a silent failure for an outage."
 
 ## Task 2: Apply migrations at startup
 
-The API has 23 migrations under `src/PeopleCore.Infrastructure/Persistence/Migrations` and calls neither `Migrate` nor `EnsureCreated` anywhere outside the test fixture. A fresh Neon database would come up empty and every seeding statement below would fail. This is the procedure SPMS.Training uses in `DataSeeder.SeedAsync`, adopted as-is.
+The API has 11 migrations under `src/PeopleCore.Infrastructure/Persistence/Migrations` and calls neither `Migrate` nor `EnsureCreated` anywhere outside the test fixture. A fresh Neon database would come up empty and every seeding statement below would fail. This is the procedure SPMS.Training uses in `DataSeeder.SeedAsync`, adopted as-is.
 
 **Files:**
 - Modify: `src/PeopleCore.API/Program.cs:86-130`
@@ -362,13 +362,13 @@ psql -h localhost -U postgres -c "DROP DATABASE IF EXISTS peoplecore_migratechec
 ConnectionStrings__Default="Host=localhost;Database=peoplecore_migratecheck;Username=postgres;Password=postgres" Jwt__Key="$(openssl rand -base64 32)" dotnet run --project src/PeopleCore.API
 ```
 
-Expected in the console: `Applying 23 pending migration(s)...`, then the application starts and listens. Stop it with Ctrl-C, then confirm the schema landed:
+Expected in the console: `Applying 11 pending migration(s)...`, then the application starts and listens. Stop it with Ctrl-C, then confirm the schema landed:
 
 ```bash
 psql -h localhost -U postgres -d peoplecore_migratecheck -c "\dt" | head -20
 ```
 
-Expected: a table list including `employees`, `asp_net_users` and `__ef_migrations_history`.
+Expected: a table list including `employees`, `AspNetUsers` and `__EFMigrationsHistory`. Note the casing: `UseSnakeCaseNamingConvention` rewrites the domain entities, but ASP.NET Identity's tables and EF's own history table keep their Pascal-case names.
 
 Start it a second time against the same database and expect `Database is up to date - no pending migrations`, proving the block is idempotent.
 
@@ -384,7 +384,7 @@ psql -h localhost -U postgres -c "DROP DATABASE peoplecore_migratecheck;"
 git add src/PeopleCore.API/Program.cs
 git commit -m "feat(api): apply pending migrations at startup
 
-23 migrations existed and nothing outside the test fixture applied them,
+11 migrations existed and nothing outside the test fixture applied them,
 so a fresh database came up empty and every seeding statement below
 failed. Adopts the procedure SPMS.Training uses, ObjectDisposedException
 fallback included: a transaction-mode pooler can interrupt the migration
@@ -666,7 +666,7 @@ COPY --from=build /app/api .
 
 EXPOSE 8080
 
-# A generous start period: the container applies 23 migrations against Neon at boot, and Neon
+# A generous start period: the container applies 11 migrations against Neon at boot, and Neon
 # scales compute to zero, so the first request can wait on a cold start.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
@@ -1182,7 +1182,7 @@ server-side prepared statements break against it without that flag. The result:
 Host=ep-<id>-pooler.<region>.aws.neon.tech;Database=peoplecore;Username=neondb_owner;Password=<secret>;SSL Mode=Require;Trust Server Certificate=true;No Reset On Close=true
 ```
 
-The API applies its 23 migrations itself on first boot. There is nothing to run by hand.
+The API applies its 11 migrations itself on first boot. There is nothing to run by hand.
 
 ### 2. Cloudflare R2
 
@@ -1229,7 +1229,7 @@ amount of configuration review can confirm.
 
 1. **Health** — `curl https://peoplecore.m2netsolutions.com/health` returns
    `{"status":"healthy"}`.
-2. **Migrations** — the API container log shows `Applying 23 pending migration(s)...`
+2. **Migrations** — the API container log shows `Applying 11 pending migration(s)...`
    followed by the seeding lines.
 3. **Login** — sign in as `SEED_ADMIN_EMAIL` with `SEED_ADMIN_PASSWORD`.
 4. **Generate a payslip PDF.** This is the one behaviour the deployment cannot prove by
@@ -1284,7 +1284,7 @@ Confirm the migration count the runbook quotes is still right:
 ls src/PeopleCore.Infrastructure/Persistence/Migrations/*.cs | grep -vc "Designer\|ModelSnapshot"
 ```
 
-Expected: `23`. If the number has moved because a migration was added during this work, update the two places `docs/deployment.md` says 23.
+Expected: `11`. If the number has moved because a migration was added during this work, update the two places `docs/deployment.md` says 11.
 
 - [ ] **Step 3: Commit**
 
