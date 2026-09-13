@@ -84,20 +84,20 @@ public class PayslipDocument : IDocument
         // Position navigations are not, and including them would mean a new join on every payslip
         // render. So this keeps the original first row's column spans (5/3/4), substituting
         // DaysWorked for BasicSalary, and drops the second row entirely rather than fetch Position
-        // and Department for a payslip.
+        // and Department for a payslip. The spans are now relative widths on a Row, since QuestPDF
+        // deprecated Grid; with a single row and no spacing the two lay out the same.
         c.Border(1).BorderColor(Colors.Grey.Lighten2).Background("#eff6ff").Padding(10)
-            .Grid(grid =>
+            .Row(row =>
             {
-                grid.Columns(12);
-                InfoCell(grid, "Employee Name:", _emp.EmployeeName, 5);
-                InfoCell(grid, "Employee No.:", _emp.EmployeeNumber, 3);
-                InfoCell(grid, "Days Worked:", $"{_emp.DaysWorked:N1}", 4);
+                InfoCell(row, "Employee Name:", _emp.EmployeeName, 5);
+                InfoCell(row, "Employee No.:", _emp.EmployeeNumber, 3);
+                InfoCell(row, "Days Worked:", $"{_emp.DaysWorked:N1}", 4);
             });
     }
 
-    private static void InfoCell(GridDescriptor grid, string label, string value, int span)
+    private static void InfoCell(RowDescriptor row, string label, string value, int span)
     {
-        grid.Item(span).Column(col =>
+        row.RelativeItem(span).Column(col =>
         {
             col.Item().Text(label).FontSize(7.5f).FontColor(Colors.Grey.Darken2);
             col.Item().Text(value).Bold().FontSize(9);

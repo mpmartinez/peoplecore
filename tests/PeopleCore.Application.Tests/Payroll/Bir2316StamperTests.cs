@@ -20,7 +20,7 @@ public class Bir2316StamperTests
     {
         var pdf = new Bir2316Stamper().Stamp(SampleDto());
 
-        using var doc = PdfReader.Open(new MemoryStream(pdf), PdfDocumentOpenMode.ReadOnly);
+        using var doc = PdfReader.Open(new MemoryStream(pdf), PdfDocumentOpenMode.Import);
         doc.PageCount.Should().Be(1);
         // 612 x 936 pts = 8.5 x 13in, Philippine folio. The QuestPDF version used Legal
         // (8.5 x 14in) and was a full inch too tall, so nothing aligned on official stock.
@@ -64,7 +64,7 @@ public class Bir2316StamperTests
     /// </summary>
     private static List<(string Text, double X, double Y, double FontSize)> ExtractPositionedTextRuns(byte[] pdfBytes)
     {
-        using var doc = PdfReader.Open(new MemoryStream(pdfBytes), PdfDocumentOpenMode.ReadOnly);
+        using var doc = PdfReader.Open(new MemoryStream(pdfBytes), PdfDocumentOpenMode.Import);
         var runs = new List<(string Text, double X, double Y, double FontSize)>();
 
         foreach (var page in doc.Pages)
