@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Employees.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
@@ -49,12 +50,28 @@ public class EmployeesController : ControllerBase
     /// never equals the route's <see cref="Guid"/>.
     /// </summary>
     private bool IsSelfOr(string roles, Guid employeeId)
-        => roles.Split(',', StringSplitOptions.TrimEntries).Any(_currentUser.IsInRole)
-           || _currentUser.EmployeeId == employeeId;
+        => HoldsAnyOf(roles) || _currentUser.EmployeeId == employeeId;
 
+    private bool HoldsAnyOf(string roles)
+        => roles.Split(',', StringSplitOptions.TrimEntries).Any(_currentUser.IsInRole);
+
+    /// <summary>
+    /// The company directory, open to every signed-in user. Only callers who may read ANY employee's
+    /// record through <see cref="GetById"/> get full records here; everyone else gets
+    /// <see cref="EmployeeDirectoryEntryDto"/>. Otherwise this list would hand out in bulk the date
+    /// of birth, mobile number and civil status that GetById refuses to show a stranger one at a time.
+    /// </summary>
     [HttpGet]
     public async Task<IActionResult> GetAll([FromQuery] EmployeeFilterDto filter, CancellationToken ct)
-        => Ok(await _service.GetAllAsync(filter, ct));
+    {
+        var employees = await _service.GetAllAsync(filter, ct);
+        if (HoldsAnyOf(PayrollReadRoles))
+            return Ok(employees);
+
+        return Ok(PagedResult<EmployeeDirectoryEntryDto>.Create(
+            employees.Items.Select(EmployeeDirectoryEntryDto.From).ToList(),
+            employees.TotalCount, employees.Page, employees.PageSize));
+    }
 
     /// <summary>
     /// A full employee record - date of birth, personal email, mobile, address. HR and payroll

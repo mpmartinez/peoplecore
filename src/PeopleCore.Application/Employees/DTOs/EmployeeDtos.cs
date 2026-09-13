@@ -29,6 +29,28 @@ public record EmployeeDto(
     bool IsActive,
     bool Is13thMonthEligible);
 
+/// <summary>
+/// One row of the company directory, which every signed-in user may list. Deliberately a subset of
+/// <see cref="EmployeeDto"/>: nothing personal (date of birth, gender, civil status, mobile) and
+/// nothing about the employment terms (type, hire or regularization date, 13th-month eligibility).
+/// </summary>
+public record EmployeeDirectoryEntryDto(
+    Guid Id,
+    string EmployeeNumber,
+    string FirstName,
+    string LastName,
+    string FullName,
+    string WorkEmail,
+    string? DepartmentName,
+    string? PositionTitle,
+    EmploymentStatus EmploymentStatus,
+    bool IsActive)
+{
+    public static EmployeeDirectoryEntryDto From(EmployeeDto e) => new(
+        e.Id, e.EmployeeNumber, e.FirstName, e.LastName, e.FullName, e.WorkEmail,
+        e.DepartmentName, e.PositionTitle, e.EmploymentStatus, e.IsActive);
+}
+
 public record CreateEmployeeDto(
     string EmployeeNumber,
     string FirstName,

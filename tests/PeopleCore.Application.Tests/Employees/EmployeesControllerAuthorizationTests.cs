@@ -1,10 +1,12 @@
 using System.Reflection;
 using FluentAssertions;
+using M2NET.Core.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 using PeopleCore.API.Controllers.Employees;
+using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Employees.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
@@ -186,6 +188,57 @@ public class EmployeesControllerAuthorizationTests
         result.Should().BeOfType<ForbidResult>();
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Employee")]
+    [InlineData("Manager")]
+    public async Task GetAll_ForCallersWhoCannotReadEmployeeRecords_ReturnsOnlyTheDirectory(string? role)
+    {
+        // The list is the company directory, open to everyone. The full record behind it carries
+        // date of birth, mobile number and civil status - the very fields GetById refuses to hand
+        // a stranger - so a caller GetById would refuse must not get them in bulk here instead.
+        SignInAs(Caller, role is null ? [] : [role]);
+        var filter = new EmployeeFilterDto(null, null, null, null, 2, 5);
+        _service.Setup(s => s.GetAllAsync(filter, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PagedResult<EmployeeDto>.Create([FullRecord()], 6, 2, 5));
+
+        var result = await _sut.GetAll(filter, CancellationToken.None);
+
+        var page = result.Should().BeOfType<OkObjectResult>()
+            .Which.Value.Should().BeOfType<PagedResult<EmployeeDirectoryEntryDto>>().Subject;
+        page.Items.Should().ContainSingle().Which.Should().Be(new EmployeeDirectoryEntryDto(
+            Stranger, "EMP-0042", "Maria", "Santos", "Maria Santos", "maria.santos@company.test",
+            "Finance", "Accountant", EmploymentStatus.Regular, true));
+        (page.TotalCount, page.Page, page.PageSize).Should().Be((6, 2, 5), "paging must survive the projection");
+    }
+
+    [Theory]
+    [InlineData("Admin")]
+    [InlineData("HRManager")]
+    [InlineData("PayrollService")]
+    public async Task GetAll_ForCallersWhoCanReadAnyEmployeeRecord_ReturnsFullRecords(string role)
+    {
+        SignInAs(Caller, role);
+        var filter = new EmployeeFilterDto(null, null, null, null);
+        var full = PagedResult<EmployeeDto>.Create([FullRecord()], 1, 1, 20);
+        _service.Setup(s => s.GetAllAsync(filter, It.IsAny<CancellationToken>())).ReturnsAsync(full);
+
+        var result = await _sut.GetAll(filter, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>().Which.Value.Should().BeSameAs(full);
+    }
+
+    [Fact]
+    public void EmployeeDirectoryEntry_CarriesNoPersonalData()
+    {
+        // Pinning the exact field set: adding DateOfBirth, MobileNumber or the like to the
+        // directory would publish it to every signed-in user, and must be a deliberate decision.
+        typeof(EmployeeDirectoryEntryDto).GetProperties().Select(p => p.Name).Should().BeEquivalentTo([
+            "Id", "EmployeeNumber", "FirstName", "LastName", "FullName", "WorkEmail",
+            "DepartmentName", "PositionTitle", "EmploymentStatus", "IsActive"
+        ]);
+    }
+
     [Fact]
     public void UpsertGovernmentId_DoesNotRelyOnAnEmployeeRoleList()
     {
@@ -222,6 +275,14 @@ public class EmployeesControllerAuthorizationTests
         employeeScoped.Should().BeSubsetOf(covered,
             "every action taking an employee id must either be role-locked to HR or listed in GuardedActions");
     }
+
+    private static EmployeeDto FullRecord() => new(
+        Stranger, "EMP-0042", "Maria", "Dela", "Santos", "Maria Santos",
+        new DateOnly(1990, 4, 12), default, default, "maria.santos@company.test", "+639171234567",
+        Guid.NewGuid(), "Finance", Guid.NewGuid(), "Accountant",
+        Guid.NewGuid(), "Jose Rizal", Guid.NewGuid(),
+        EmploymentStatus.Regular, EmploymentType.Regular, new DateOnly(2020, 1, 6), new DateOnly(2020, 7, 6),
+        true, true);
 
     private static CreateEmergencyContactDto NewContact() =>
         new("Maria dela Cruz", "Spouse", "+639171234567", null);
