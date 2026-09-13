@@ -95,6 +95,25 @@ public class PayrollRunDetailTests : BunitContext
         cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("500"));
         ActionButtons(cut).Should().BeEmpty();
         cut.FindAll("button").Should().NotContain(b => b.TextContent.Contains("Download all"));
+        cut.Markup.Should().NotContain("Payroll run not found.", "a server failure says nothing about whether the run exists");
+    }
+
+    [Fact]
+    public void ARunThatDoesNotExist_SaysSo_AndOffersTheWayBackToTheList()
+    {
+        // A stale bookmark or a mistyped id is not a failure to retry; the user needs to be told
+        // there is no such run and pointed back to the ones there are.
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.NotFound);
+
+        var cut = RenderPage();
+
+        cut.Markup.Should().Contain("Payroll run not found.");
+        cut.FindAll("[role=alert]").Should().BeEmpty();
+        ActionButtons(cut).Should().BeEmpty();
+
+        Button(cut, "Back to Runs").Click();
+
+        CurrentUri.Should().Be("http://localhost/payroll-runs");
     }
 
     [Theory]

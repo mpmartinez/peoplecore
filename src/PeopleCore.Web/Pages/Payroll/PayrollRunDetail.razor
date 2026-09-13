@@ -42,7 +42,11 @@
 
 @if (_run is null)
 {
-    if (_error is not null)
+    if (_notFound)
+    {
+        <div class="p-6 text-center text-muted-foreground text-sm">Payroll run not found.</div>
+    }
+    else if (_error is not null)
     {
         <Alert Variant="destructive">@_error</Alert>
     }
@@ -150,6 +154,7 @@ else
 
     private PayrollRunDto? _run;
     private string? _error;
+    private bool _notFound;
     private string? _actionError;
     private bool _computing;
     private bool _approving;
@@ -164,11 +169,21 @@ else
         try
         {
             _run = await Api.GetPayrollRunAsync(Id);
-            if (_run is null) _error = "Payroll run not found.";
-            else _error = null;
+            _notFound = _run is null;
+            _error = null;
+        }
+        // The API answers an unknown id with a 404, which ApiClient throws like any other failure.
+        // That is not something to retry - there is no such run - so it gets the not-found state
+        // (the header's Back to Runs is the way out) rather than a generic error.
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            _run = null;
+            _notFound = true;
+            _error = null;
         }
         catch (Exception ex)
         {
+            _notFound = false;
             _error = ex.Message;
         }
     }
