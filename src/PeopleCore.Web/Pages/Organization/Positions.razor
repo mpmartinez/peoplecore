@@ -159,9 +159,9 @@
         {
             await Api.CreatePositionAsync(new { departmentId = Guid.Parse(_newDeptId), title = _newTitle, level = _newLevel });
         }
-        catch
+        catch (Exception ex)
         {
-            _error = "Failed to create position.";
+            _error = $"Failed to create position. {ex.Message}";
             return;
         }
         finally { _creating = false; }

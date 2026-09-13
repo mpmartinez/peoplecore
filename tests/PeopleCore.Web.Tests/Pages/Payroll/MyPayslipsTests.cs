@@ -112,13 +112,14 @@ public class MyPayslipsTests : BunitContext
     public void AFailedDownload_ShowsAnInlineError_AndKeepsTheList()
     {
         _api.On(HttpMethod.Get, ListPath, HttpStatusCode.OK, TwoPayslips)
-            .On(HttpMethod.Get, $"/api/reports/my-payslip/{SeptemberRunId}", HttpStatusCode.InternalServerError);
+            .On(HttpMethod.Get, $"/api/reports/my-payslip/{SeptemberRunId}", HttpStatusCode.Conflict,
+                """{"detail":"Payslips are released once the run is paid."}""");
         var cut = RenderPage();
 
         cut.FindAll("tbody tr")[0].QuerySelector("button")!.Click();
 
         cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should()
-            .Contain("Failed to download payslip for PR-2026-0017. Please try again."));
+            .Contain("Failed to download payslip for PR-2026-0017. Payslips are released once the run is paid."));
         cut.FindAll("tbody tr").Should().HaveCount(2);
         JSInterop.VerifyNotInvoke("downloadFileFromBytes");
     }

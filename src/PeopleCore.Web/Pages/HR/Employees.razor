@@ -355,9 +355,9 @@
                 hireDate = _form.HireDate.ToString("yyyy-MM-dd")
             });
         }
-        catch
+        catch (Exception ex)
         {
-            _formError = "Failed to save employee. Check all fields and try again.";
+            _formError = $"Failed to save employee. {ex.Message}";
             return;
         }
         finally

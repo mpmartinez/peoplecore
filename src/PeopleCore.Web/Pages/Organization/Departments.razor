@@ -141,9 +141,9 @@ else if (_companies is { Count: 0 })
         {
             await Api.CreateDepartmentAsync(new { companyId = _companies[0].Id, name = _newName, code = _newCode, parentDepartmentId = (Guid?)null });
         }
-        catch
+        catch (Exception ex)
         {
-            _error = "Failed to create department.";
+            _error = $"Failed to create department. {ex.Message}";
             return;
         }
         finally { _creating = false; }

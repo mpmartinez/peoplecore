@@ -143,7 +143,7 @@ public class DepartmentsTests : BunitContext
     [Fact]
     public void ARejectedCreate_ShowsTheError_AndKeepsWhatWasTyped()
     {
-        _api.On(HttpMethod.Post, "/api/departments", HttpStatusCode.Conflict);
+        _api.On(HttpMethod.Post, "/api/departments", HttpStatusCode.Conflict, """{"detail":"A department named Finance already exists."}""");
         var cut = RenderPage();
 
         NameInput(cut).Input("Finance");
@@ -151,7 +151,7 @@ public class DepartmentsTests : BunitContext
         AddButton(cut).Click();
 
         cut.WaitForAssertion(() =>
-            cut.Find("[role=alert]").TextContent.Should().Contain("Failed to create department."));
+            cut.Find("[role=alert]").TextContent.Should().Contain("Failed to create department. A department named Finance already exists."));
         NameInput(cut).GetAttribute("value").Should().Be("Finance");
         CodeInput(cut).GetAttribute("value").Should().Be("FIN");
         AddButton(cut).HasAttribute("disabled").Should().BeFalse("the user has to be able to try again");

@@ -113,17 +113,12 @@
         try
         {
             var pdf = await Api.GetMyPayslipAsync(payslip.RunId);
-            if (pdf is null)
-            {
-                _actionError = $"Failed to download payslip for {payslip.RunNumber}. Please try again.";
-                return;
-            }
             var fileName = $"Payslip-{payslip.RunNumber}.pdf";
             await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(pdf), fileName, "application/pdf");
         }
         catch (Exception ex)
         {
-            _actionError = ex.Message;
+            _actionError = $"Failed to download payslip for {payslip.RunNumber}. {ex.Message}";
         }
         finally
         {

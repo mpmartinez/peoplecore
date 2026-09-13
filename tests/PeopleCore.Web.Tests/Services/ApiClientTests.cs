@@ -171,17 +171,43 @@ public class ApiClientTests
     }
 
     [Fact]
-    public async Task GetPayslip_ReturnsThePdfBytes_OnSuccess_AndNull_OnFailure()
+    public async Task GetPayslip_ReturnsThePdfBytes_OnSuccess()
     {
         var runId = Guid.NewGuid();
-        var found = Guid.NewGuid();
+        var employeeId = Guid.NewGuid();
         var pdf = "%PDF-1.7"u8.ToArray();
-        _api.On(HttpMethod.Get, $"/api/reports/payslip/{runId}/{found}", () =>
+        _api.On(HttpMethod.Get, $"/api/reports/payslip/{runId}/{employeeId}", () =>
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(pdf) });
+
+        (await CreateClient().GetPayslipAsync(runId, employeeId)).Should().Equal(pdf);
+    }
+
+    [Fact]
+    public async Task PdfDownloads_CarryTheApisExplanation_WhenRefused()
+    {
+        // These used to return null on any failure, which left the page nothing to say but
+        // "Please try again" - even when trying again could never work.
+        var runId = Guid.NewGuid();
+        var employeeId = Guid.NewGuid();
+        const string reason = """{"detail":"Payslips are released once the run is paid."}""";
+        _api.On(HttpMethod.Get, $"/api/reports/payslip/{runId}/{employeeId}", HttpStatusCode.Conflict, reason)
+            .On(HttpMethod.Get, $"/api/reports/payslips/{runId}", HttpStatusCode.Conflict, reason)
+            .On(HttpMethod.Get, $"/api/reports/my-payslip/{runId}", HttpStatusCode.Conflict, reason)
+            .On(HttpMethod.Post, $"/api/reports/2316/generate/{employeeId}?year=2025", HttpStatusCode.Conflict, reason);
         var client = CreateClient();
 
-        (await client.GetPayslipAsync(runId, found)).Should().Equal(pdf);
-        (await client.GetPayslipAsync(runId, Guid.NewGuid())).Should().BeNull();
+        foreach (var download in new Func<Task>[]
+                 {
+                     () => client.GetPayslipAsync(runId, employeeId),
+                     () => client.GetRunPayslipsAsync(runId),
+                     () => client.GetMyPayslipAsync(runId),
+                     () => client.GenerateBir2316Async(employeeId, 2025, new { })
+                 })
+        {
+            var thrown = await download.Should().ThrowAsync<HttpRequestException>()
+                .WithMessage("Payslips are released once the run is paid.");
+            thrown.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        }
     }
 
     [Fact]

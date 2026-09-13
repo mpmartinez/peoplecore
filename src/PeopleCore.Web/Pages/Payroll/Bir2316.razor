@@ -342,18 +342,12 @@ else if (_selectedYear.HasValue && !_previewLoadFailed)
                 // inputs card for why.
             });
 
-            if (pdf is null)
-            {
-                _generateError = "Failed to generate the 2316. Please try again.";
-                return;
-            }
-
             var fileName = $"BIR2316-{_selectedYear}-{_preview.EmployeeLastName}{_preview.EmployeeFirstName}.pdf";
             await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(pdf), fileName, "application/pdf");
         }
         catch (Exception ex)
         {
-            _generateError = ex.Message;
+            _generateError = $"Failed to generate the 2316. {ex.Message}";
         }
         finally
         {

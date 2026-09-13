@@ -327,28 +327,28 @@ public class ApiClient
 
     // Payslip downloads
     //
-    // A PDF is bytes, not JSON, so these three differ from every other method here: they read
-    // the raw byte content of a successful response instead of deserializing JSON, and return
-    // null (rather than throwing) on failure so callers can show an inline error the same way
-    // the JSON-returning methods above do via ReadProblemDetailAsync.
-    public async Task<byte[]?> GetPayslipAsync(Guid runId, Guid employeeId)
+    // A PDF is bytes, not JSON, so these read the raw content of a successful response instead of
+    // deserializing it. A failure throws like every other call here, carrying the API's reason:
+    // these used to return null, which left the page nothing to say but "Please try again", even
+    // when the API had explained why trying again could never work.
+    public async Task<byte[]> GetPayslipAsync(Guid runId, Guid employeeId)
     {
         var response = await _http.GetAsync($"api/reports/payslip/{runId}/{employeeId}");
-        if (!response.IsSuccessStatusCode) return null;
+        await EnsureSuccessAsync(response);
         return await response.Content.ReadAsByteArrayAsync();
     }
 
-    public async Task<byte[]?> GetRunPayslipsAsync(Guid runId)
+    public async Task<byte[]> GetRunPayslipsAsync(Guid runId)
     {
         var response = await _http.GetAsync($"api/reports/payslips/{runId}");
-        if (!response.IsSuccessStatusCode) return null;
+        await EnsureSuccessAsync(response);
         return await response.Content.ReadAsByteArrayAsync();
     }
 
-    public async Task<byte[]?> GetMyPayslipAsync(Guid runId)
+    public async Task<byte[]> GetMyPayslipAsync(Guid runId)
     {
         var response = await _http.GetAsync($"api/reports/my-payslip/{runId}");
-        if (!response.IsSuccessStatusCode) return null;
+        await EnsureSuccessAsync(response);
         return await response.Content.ReadAsByteArrayAsync();
     }
 
@@ -372,19 +372,19 @@ public class ApiClient
         return await response.Content.ReadFromJsonAsync<Bir2316Dto>(JsonOptions);
     }
 
-    // The PDF pair below mirrors the payslip PDF methods above: bytes, not JSON, and null (rather
-    // than throwing) on failure so the page can show an inline error the same way.
-    public async Task<byte[]?> GenerateBir2316Async(Guid employeeId, int year, object manualInputs)
+    // The PDF pair below mirrors the payslip PDF methods above: bytes, not JSON, and a failure throws
+    // with the API's reason.
+    public async Task<byte[]> GenerateBir2316Async(Guid employeeId, int year, object manualInputs)
     {
         var response = await _http.PostAsJsonAsync($"api/reports/2316/generate/{employeeId}?year={year}", manualInputs);
-        if (!response.IsSuccessStatusCode) return null;
+        await EnsureSuccessAsync(response);
         return await response.Content.ReadAsByteArrayAsync();
     }
 
     // Mirrors GetBir2316PreviewAsync: a 404 here means no employee had a paid run in that year
     // (Bir2316Service.BuildAllAsync returned an empty list) - a legitimate empty result, not a
     // failure, so the page should say so rather than report an error. Any OTHER failure still
-    // throws, same as GenerateBir2316Async's sibling above would if it distinguished status codes.
+    // throws, as GenerateBir2316Async does.
     public async Task<byte[]?> GenerateAllBir2316Async(int year)
     {
         var response = await _http.PostAsync($"api/reports/2316/generate-all?year={year}", null);
