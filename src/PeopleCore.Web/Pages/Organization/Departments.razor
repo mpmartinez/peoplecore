@@ -10,6 +10,14 @@
 {
     <Alert Variant="destructive" Class="mb-4">@_error</Alert>
 }
+@if (_companiesError is not null)
+{
+    <Alert Variant="destructive" Class="mb-4">Companies could not be loaded, so departments cannot be added: @_companiesError</Alert>
+}
+else if (_companies is { Count: 0 })
+{
+    <Alert Variant="warning" Class="mb-4">Departments belong to a company, and no company has been set up yet.</Alert>
+}
 
 <Card Class="mb-4">
     <CardContent>
@@ -22,7 +30,7 @@
                 <Label>Code</Label>
                 <Input TValue="string" Value="@(_newCode ?? "")" ValueChanged="@(v => _newCode = string.IsNullOrEmpty(v) ? null : v)" Placeholder="e.g. HR, FIN" />
             </div>
-            <Button Variant="primary" OnClick="Create" Disabled="@(_creating || string.IsNullOrWhiteSpace(_newName))" Loading="@_creating">
+            <Button Variant="primary" OnClick="Create" Disabled="@(_creating || string.IsNullOrWhiteSpace(_newName) || _companies is not { Count: > 0 })" Loading="@_creating">
                 + Add
             </Button>
         </div>
@@ -31,7 +39,11 @@
 
 <Card>
     <CardContent Class="p-0">
-        @if (_departments is null)
+        @if (_loadError is not null)
+        {
+            <div class="p-4"><Alert Variant="destructive">@_loadError</Alert></div>
+        }
+        else if (_departments is null)
         {
             <div class="flex items-center justify-center p-10">
                 <Spinner />
@@ -64,13 +76,23 @@
                     }
                 </TableBody>
             </Table>
+
+            @if (_departments.TotalPages > 1)
+            {
+                <div class="border-t px-4 py-3">
+                    <Pagination CurrentPage="@_page" TotalPages="@_departments.TotalPages" OnPageChange="@HandlePageChange" />
+                </div>
+            }
         }
     </CardContent>
 </Card>
 
 @code {
     private PagedResult<DepartmentDto>? _departments;
+    private string? _loadError;
+    private int _page = 1;
     private IReadOnlyList<CompanyDto>? _companies;
+    private string? _companiesError;
     private string _newName = string.Empty;
     private string? _newCode;
     private bool _creating;
@@ -78,25 +100,57 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _companies = await Api.GetCompaniesAsync();
+        // Companies only matter to Add, so their failure is explained there and the list still loads.
+        try
+        {
+            _companies = await Api.GetCompaniesAsync();
+        }
+        catch (Exception ex)
+        {
+            _companiesError = ex.Message;
+        }
         await Load();
     }
 
-    private async Task Load() => _departments = await Api.GetDepartmentsAsync();
+    private async Task Load()
+    {
+        try
+        {
+            _departments = await Api.GetDepartmentsAsync(page: _page);
+            _loadError = null;
+        }
+        catch (Exception ex)
+        {
+            _departments = null;
+            _loadError = ex.Message;
+        }
+    }
+
+    private async Task HandlePageChange(int page)
+    {
+        _page = page;
+        await Load();
+    }
 
     private async Task Create()
     {
-        if (string.IsNullOrWhiteSpace(_newName) || _companies is null || !_companies.Any()) return;
+        if (string.IsNullOrWhiteSpace(_newName) || _companies is not { Count: > 0 }) return;
         _creating = true;
         _error = null;
         try
         {
             await Api.CreateDepartmentAsync(new { companyId = _companies[0].Id, name = _newName, code = _newCode, parentDepartmentId = (Guid?)null });
-            _newName = string.Empty;
-            _newCode = null;
-            await Load();
         }
-        catch { _error = "Failed to create department."; }
+        catch
+        {
+            _error = "Failed to create department.";
+            return;
+        }
         finally { _creating = false; }
+
+        // Created. If the reload fails, that is the list's error to show, not a failed create.
+        _newName = string.Empty;
+        _newCode = null;
+        await Load();
     }
 }

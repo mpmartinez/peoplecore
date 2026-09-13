@@ -20,21 +20,32 @@ public class DepartmentsTests : BunitContext
     // Read on every request, so a test can change what the API holds after the page has loaded
     // and see whether the page actually asks again.
     private string _departments = Paged();
+    private string _companies = $$"""[{"id":"{{CompanyId}}","name":"Acme PH"},{"id":"{{Guid.NewGuid()}}","name":"Acme SG"}]""";
+
+    // When set, the first page of departments fails with this explanation instead.
+    private string? _departmentsFailure;
 
     public DepartmentsTests()
     {
         Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(_api)));
 
-        _api.On(HttpMethod.Get, "/api/companies", HttpStatusCode.OK,
-                $$"""[{"id":"{{CompanyId}}","name":"Acme PH"},{"id":"{{Guid.NewGuid()}}","name":"Acme SG"}]""")
-            .On(HttpMethod.Get, DepartmentsPath, () => Json(_departments));
+        _api.On(HttpMethod.Get, "/api/companies", () => Json(_companies))
+            .On(HttpMethod.Get, DepartmentsPath, () => _departmentsFailure is null ? Json(_departments) : ServerError(_departmentsFailure));
     }
 
     private static HttpResponseMessage Json(string json) =>
         new(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
 
-    private static string Paged(params string[] items) =>
-        $$"""{"items":[{{string.Join(",", items)}}],"totalCount":{{items.Length}},"page":1,"pageSize":50,"totalPages":1}""";
+    private static HttpResponseMessage ServerError(string detail) =>
+        new(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent($$"""{"detail":"{{detail}}"}""", Encoding.UTF8, "application/json")
+        };
+
+    private static string Paged(params string[] items) => PageOf(1, 1, items);
+
+    private static string PageOf(int page, int totalPages, params string[] items) =>
+        $$"""{"items":[{{string.Join(",", items)}}],"totalCount":{{items.Length}},"page":{{page}},"pageSize":50,"totalPages":{{totalPages}}}""";
 
     private static string Department(string name, string? code = null, string? parent = null, int subDepartments = 0) =>
         $$"""
@@ -144,5 +155,97 @@ public class DepartmentsTests : BunitContext
         NameInput(cut).GetAttribute("value").Should().Be("Finance");
         CodeInput(cut).GetAttribute("value").Should().Be("FIN");
         AddButton(cut).HasAttribute("disabled").Should().BeFalse("the user has to be able to try again");
+    }
+
+    [Fact]
+    public void WithNoCompany_AddExplainsWhyItCannotWork_InsteadOfDoingNothing()
+    {
+        // Every department belongs to a company. With none set up, an enabled Add that silently
+        // ignores the click leaves the user guessing.
+        _companies = "[]";
+        var cut = RenderPage();
+
+        NameInput(cut).Input("Finance");
+
+        cut.Find("[role=alert]").TextContent.Should().Contain("no company has been set up");
+        AddButton(cut).HasAttribute("disabled").Should().BeTrue();
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Post);
+    }
+
+    [Fact]
+    public void CompaniesThatFailToLoad_AreExplained_AndAddStaysOff_WhileTheListStillShows()
+    {
+        // A separate API: the stub answers with the first matching route, so the constructor's
+        // working companies route cannot be overridden.
+        var api = new StubHttpHandler()
+            .On(HttpMethod.Get, "/api/companies", () => ServerError("Companies are unavailable."))
+            .On(HttpMethod.Get, DepartmentsPath, () => Json(Paged(Department("Finance", "FIN"))));
+        Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(api)));
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Companies are unavailable."));
+        Rows(cut).Should().ContainSingle().Which[0].Should().Be("Finance");
+        NameInput(cut).Input("Legal");
+        AddButton(cut).HasAttribute("disabled").Should().BeTrue();
+    }
+
+    [Fact]
+    public void AFailedLoad_ShowsWhy_InsteadOfSpinningForever()
+    {
+        _departmentsFailure = "Departments are unavailable.";
+
+        var cut = Render<Departments>();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Departments are unavailable."));
+        cut.FindAll(".animate-spin").Should().BeEmpty();
+        cut.FindAll("table").Should().BeEmpty();
+        cut.Markup.Should().NotContain("No departments yet.", "a failure is not the same as having none");
+    }
+
+    [Fact]
+    public void ACreateThatWorked_IsNotReportedAsFailed_WhenOnlyTheReloadAfterItFails()
+    {
+        // A "failed" create invites a second attempt, which would add the department twice.
+        _departments = Paged(Department("Legal"));
+        _api.On(HttpMethod.Post, "/api/departments", () =>
+        {
+            _departmentsFailure = "Departments are unavailable.";
+            return new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = new StringContent(Department("Finance", "FIN"), Encoding.UTF8, "application/json")
+            };
+        });
+        var cut = RenderPage();
+
+        NameInput(cut).Input("Finance");
+        AddButton(cut).Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Departments are unavailable."));
+        cut.Markup.Should().NotContain("Failed to create department.");
+        cut.FindAll("table").Should().BeEmpty("the rows from before the create are out of date");
+    }
+
+    [Fact]
+    public void MoreThanOnePage_OffersAPager_ThatAsksForTheChosenPage()
+    {
+        _departments = PageOf(1, 2, Department("Finance"));
+        _api.On(HttpMethod.Get, "/api/departments?page=2&pageSize=50", () => Json(PageOf(2, 2, Department("Legal"))));
+        var cut = RenderPage();
+
+        cut.Find("nav:not([aria-label=breadcrumb])").QuerySelectorAll("button").Single(b => b.TextContent.Trim() == "2").Click();
+
+        cut.WaitForAssertion(() => Rows(cut).Should().ContainSingle().Which[0].Should().Be("Legal"));
+        cut.Find("nav:not([aria-label=breadcrumb])").TextContent.Should().Contain("Page 2 of 2");
+    }
+
+    [Fact]
+    public void ASinglePage_NeedsNoPager()
+    {
+        _departments = Paged(Department("Finance"));
+
+        var cut = RenderPage();
+
+        cut.FindAll("nav:not([aria-label=breadcrumb])").Should().BeEmpty();
     }
 }
