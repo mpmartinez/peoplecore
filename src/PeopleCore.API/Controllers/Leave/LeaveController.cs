@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.Application.Common.Interfaces;
+using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Leave.DTOs;
 using PeopleCore.Application.Leave.Interfaces;
 
@@ -9,9 +10,9 @@ namespace PeopleCore.API.Controllers.Leave;
 /// <summary>
 /// Leave types, requests and balances. The class-level [Authorize] only says the caller is signed
 /// in; every employee id below - route, query string or body - is caller-supplied, so each
-/// employee-scoped action carries its own ownership check. Leave staff (<see cref="LeaveStaffRoles"/>)
-/// read anyone's leave; everybody else reads only their own. Filing and cancelling leave is
-/// self-service for everyone, including leave staff: the employee is the one in the caller's
+/// employee-scoped action carries its own ownership check through <see cref="IEmployeeAccessService"/>:
+/// HR staff reach everyone's leave, a Manager their direct reports', everybody their own. Filing and
+/// cancelling leave is self-service for everyone: the employee is the one in the caller's
 /// employee_id claim, never one the caller names.
 /// </summary>
 [ApiController]
@@ -19,40 +20,25 @@ namespace PeopleCore.API.Controllers.Leave;
 [Authorize]
 public class LeaveController : ControllerBase
 {
-    /// <summary>
-    /// The roles that approve and reject leave, and so need to see any employee's requests and
-    /// balances. Managers are organisation-wide for now: nothing scopes them to their direct reports.
-    /// </summary>
-    private const string LeaveStaffRoles = "Admin,HRManager,Manager";
-
     private readonly ILeaveTypeService _typeService;
     private readonly ILeaveRequestService _requestService;
     private readonly ILeaveBalanceService _balanceService;
     private readonly ICurrentUserService _currentUser;
+    private readonly IEmployeeAccessService _access;
 
     public LeaveController(
         ILeaveTypeService typeService,
         ILeaveRequestService requestService,
         ILeaveBalanceService balanceService,
-        ICurrentUserService currentUser)
+        ICurrentUserService currentUser,
+        IEmployeeAccessService access)
     {
         _typeService = typeService;
         _requestService = requestService;
         _balanceService = balanceService;
         _currentUser = currentUser;
+        _access = access;
     }
-
-    private bool IsLeaveStaff()
-        => LeaveStaffRoles.Split(',', StringSplitOptions.TrimEntries).Any(_currentUser.IsInRole);
-
-    /// <summary>
-    /// True when the caller is leave staff or is themselves <paramref name="employeeId"/>. A null
-    /// on either side matches nothing: a caller with no employee_id claim is nobody, and a missing
-    /// employee filter means "everyone" - letting null equal null would open both to all leave.
-    /// </summary>
-    private bool IsSelfOrLeaveStaff(Guid? employeeId)
-        => IsLeaveStaff()
-           || (employeeId is not null && _currentUser.EmployeeId == employeeId);
 
     // Leave Types
     [HttpGet("leave-types")]
@@ -79,8 +65,9 @@ public class LeaveController : ControllerBase
 
     // Leave Requests
     /// <summary>
-    /// Leave requests, reasons included. With no <paramref name="employeeId"/> this is every
-    /// employee's, so only leave staff may leave it out; everybody else must name themselves.
+    /// Leave requests, reasons included. Naming an employee needs access to that employee. With no
+    /// <paramref name="employeeId"/> HR staff get everyone's, a Manager gets their direct reports'
+    /// (the approval queue), and anyone else is refused.
     /// </summary>
     [HttpGet("leave-requests")]
     public async Task<IActionResult> GetAll(
@@ -88,10 +75,19 @@ public class LeaveController : ControllerBase
         [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
         CancellationToken ct = default)
     {
-        if (!IsSelfOrLeaveStaff(employeeId))
+        if (employeeId is { } id)
+        {
+            if (!await _access.CanViewAsync(id, ct))
+                return Forbid();
+
+            return Ok(await _requestService.GetAllAsync(id, null, status, page, pageSize, ct));
+        }
+
+        var scope = _access.GetUnfilteredListScope();
+        if (!scope.IsAllowed)
             return Forbid();
 
-        return Ok(await _requestService.GetAllAsync(employeeId, status, page, pageSize, ct));
+        return Ok(await _requestService.GetAllAsync(null, scope.ReportingManagerId, status, page, pageSize, ct));
     }
 
     /// <summary>
@@ -102,7 +98,7 @@ public class LeaveController : ControllerBase
     public async Task<IActionResult> GetById(Guid id, CancellationToken ct = default)
     {
         var request = await _requestService.GetByIdAsync(id, ct);
-        if (!IsSelfOrLeaveStaff(request.EmployeeId))
+        if (!await _access.CanViewAsync(request.EmployeeId, ct))
             return Forbid();
 
         return Ok(request);
@@ -111,8 +107,8 @@ public class LeaveController : ControllerBase
     /// <summary>
     /// Self-service only. The body still carries an employee id (the service needs one), but it
     /// must be the caller's own: a mismatch is refused rather than silently rewritten, so a client
-    /// filing for the wrong person finds out. Leave staff are no exception - seeing someone's leave
-    /// is not a licence to spend their balance.
+    /// filing for the wrong person finds out. HR and managers are no exception - seeing someone's
+    /// leave is not a licence to spend their balance.
     /// </summary>
     [HttpPost("leave-requests")]
     public async Task<IActionResult> Create([FromBody] CreateLeaveRequestDto dto, CancellationToken ct = default)
@@ -125,35 +121,43 @@ public class LeaveController : ControllerBase
     }
 
     /// <summary>
-    /// Takes no approver. It used to read one from the body and store it as the request's
-    /// ApprovedBy, so the record named whoever the caller chose (the web client chose nobody, so
-    /// Guid.Empty). The approver is now the employee in the caller's employee_id claim; an account
-    /// with no employee record has nobody to record and is refused.
+    /// Approves as the employee in the caller's employee_id claim; an account with no employee
+    /// record has nobody to record and is refused. HR staff approve anyone's leave, a Manager only
+    /// a direct report's. The caller's own request is left to the service, which refuses it with
+    /// its reason.
     /// </summary>
     [HttpPut("leave-requests/{id:guid}/approve")]
     [Authorize(Roles = "Admin,HRManager,Manager")]
     public async Task<IActionResult> Approve(Guid id, CancellationToken ct = default)
     {
         var approverId = _currentUser.EmployeeId;
-        if (approverId is null)
+        if (approverId is null || !await MayDecideAsync(id, approverId.Value, ct))
             return Forbid();
 
         return Ok(await _requestService.ApproveAsync(id, approverId.Value, ct));
     }
 
-    /// <summary>
-    /// Rejects as the employee in the caller's employee_id claim, so the service can refuse anyone
-    /// rejecting their own leave. An account with no employee record cannot be checked and is refused.
-    /// </summary>
+    /// <summary>Held to the same rules as <see cref="Approve"/>.</summary>
     [HttpPut("leave-requests/{id:guid}/reject")]
     [Authorize(Roles = "Admin,HRManager,Manager")]
     public async Task<IActionResult> Reject(Guid id, [FromBody] RejectLeaveDto dto, CancellationToken ct = default)
     {
         var rejecterId = _currentUser.EmployeeId;
-        if (rejecterId is null)
+        if (rejecterId is null || !await MayDecideAsync(id, rejecterId.Value, ct))
             return Forbid();
 
         return Ok(await _requestService.RejectAsync(id, rejecterId.Value, dto, ct));
+    }
+
+    /// <summary>
+    /// True when the decider may manage the request's employee, or the request is the decider's own -
+    /// passed through so the service can refuse that with "You cannot approve your own leave request"
+    /// instead of a bare 403.
+    /// </summary>
+    private async Task<bool> MayDecideAsync(Guid requestId, Guid deciderId, CancellationToken ct)
+    {
+        var request = await _requestService.GetByIdAsync(requestId, ct);
+        return request.EmployeeId == deciderId || await _access.CanManageAsync(request.EmployeeId, ct);
     }
 
     /// <summary>
@@ -176,7 +180,7 @@ public class LeaveController : ControllerBase
     [HttpGet("leave-balances/{employeeId:guid}")]
     public async Task<IActionResult> GetBalances(Guid employeeId, [FromQuery] int? year, CancellationToken ct = default)
     {
-        if (!IsSelfOrLeaveStaff(employeeId))
+        if (!await _access.CanViewAsync(employeeId, ct))
             return Forbid();
 
         return Ok(await _balanceService.GetByEmployeeAsync(employeeId, year, ct));

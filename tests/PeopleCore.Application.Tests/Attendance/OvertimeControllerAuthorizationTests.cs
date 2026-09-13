@@ -5,43 +5,34 @@ using Moq;
 using PeopleCore.API.Controllers.Attendance;
 using PeopleCore.Application.Attendance.DTOs;
 using PeopleCore.Application.Attendance.Interfaces;
-using PeopleCore.Application.Common.Interfaces;
+using PeopleCore.Application.Tests.Common;
 using Xunit;
+using static PeopleCore.Application.Tests.Common.SignedInCaller;
 
 namespace PeopleCore.Application.Tests.Attendance;
 
 /// <summary>
 /// <see cref="OvertimeController"/> sits behind a class-level [Authorize] only, and every employee
-/// id that reaches it is caller-supplied. These tests pin the rules: HR and managers
-/// (<c>Admin,HRManager,Manager</c>) read anyone's overtime; everybody else reads only their own;
+/// id that reaches it is caller-supplied. These tests pin the rules: HR staff (<c>Admin,HRManager</c>)
+/// read anyone's overtime; a Manager reads their direct reports'; everybody else reads only their own;
 /// filing overtime is self-service for everyone; and the approver or rejecter is the employee in
 /// the caller's employee_id claim, never one named in the body - the service's "direct reporting
 /// manager only" rule is worthless if the caller picks who the manager is.
 /// </summary>
 public class OvertimeControllerAuthorizationTests
 {
-    private static readonly Guid Caller = Guid.Parse("11111111-1111-1111-1111-111111111111");
-    private static readonly Guid Stranger = Guid.Parse("22222222-2222-2222-2222-222222222222");
     private static readonly Guid RequestId = Guid.Parse("33333333-3333-3333-3333-333333333333");
 
     private readonly Mock<IOvertimeService> _service = new();
-    private readonly Mock<ICurrentUserService> _currentUser = new();
+    private readonly SignedInCaller _caller = new();
     private readonly OvertimeController _sut;
 
     public OvertimeControllerAuthorizationTests()
     {
-        // Default caller: a rank-and-file employee holding no privileged role.
-        SignInAs(Caller);
-        _sut = new OvertimeController(_service.Object, _currentUser.Object);
+        _sut = new OvertimeController(_service.Object, _caller.CurrentUser.Object, _caller.Access);
     }
 
-    private void SignInAs(Guid? employeeId, params string[] roles)
-    {
-        _currentUser.Setup(c => c.EmployeeId).Returns(employeeId);
-        _currentUser.Setup(c => c.IsInRole(It.IsAny<string>())).Returns((string r) => roles.Contains(r));
-    }
-
-    public static TheoryData<string> OvertimeReaderRoles => new() { "Admin", "HRManager", "Manager" };
+    private void SignInAs(Guid? employeeId, params string[] roles) => _caller.As(employeeId, roles);
 
     private static CreateOvertimeRequestDto NewRequestFor(Guid employeeId) => new(
         employeeId, new DateOnly(2026, 9, 10),
@@ -55,7 +46,7 @@ public class OvertimeControllerAuthorizationTests
         var result = await _sut.GetAll(Caller, "Pending", 1, 20, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
-        _service.Verify(s => s.GetAllAsync(Caller, "Pending", 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+        _service.Verify(s => s.GetAllAsync(Caller, null, "Pending", 1, 20, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -89,15 +80,60 @@ public class OvertimeControllerAuthorizationTests
     }
 
     [Theory]
-    [MemberData(nameof(OvertimeReaderRoles))]
-    public async Task GetAll_WithNoEmployeeFilter_IsAllowedThrough_ForOvertimeReaders(string role)
+    [MemberData(nameof(HrRoles), MemberType = typeof(SignedInCaller))]
+    public async Task GetAll_WithNoEmployeeFilter_IsEveryonesOvertime_ForHrStaff(string role)
     {
         SignInAs(null, role);
 
         var result = await _sut.GetAll(null, "Pending", 1, 20, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
-        _service.Verify(s => s.GetAllAsync(null, "Pending", 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+        _service.Verify(s => s.GetAllAsync(null, null, "Pending", 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetAll_WithNoEmployeeFilter_IsTheirDirectReportsOvertime_ForAManager()
+    {
+        // The approval queue, which is also everything a Manager may decide.
+        SignInAs(Caller, "Manager");
+
+        var result = await _sut.GetAll(null, "Pending", 1, 20, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+        _service.Verify(s => s.GetAllAsync(null, Caller, "Pending", 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetAll_WithNoEmployeeFilter_ReturnsForbid_ForAManagerWithNoEmployeeIdClaim()
+    {
+        SignInAs(null, "Manager");
+
+        var result = await _sut.GetAll(null, null, 1, 20, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+        _service.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GetAll_ForADirectReport_IsAllowedThrough_ForTheirManager()
+    {
+        SignInAs(Caller, "Manager");
+
+        var result = await _sut.GetAll(DirectReport, null, 1, 20, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+        _service.Verify(s => s.GetAllAsync(DirectReport, null, null, 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetAll_ForSomeoneOutsideTheirTeam_ReturnsForbid_ForAManager()
+    {
+        SignInAs(Caller, "Manager");
+
+        var result = await _sut.GetAll(Stranger, null, 1, 20, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+        _service.VerifyNoOtherCalls();
     }
 
     // ---- POST api/overtime-requests --------------------------------------------------------
@@ -122,13 +158,13 @@ public class OvertimeControllerAuthorizationTests
     }
 
     [Theory]
-    [MemberData(nameof(OvertimeReaderRoles))]
-    public async Task Create_ForAnotherEmployee_ReturnsForbid_EvenForOvertimeReaders(string role)
+    [MemberData(nameof(DeciderRoles), MemberType = typeof(SignedInCaller))]
+    public async Task Create_ForSomeoneElse_ReturnsForbid_EvenForHrStaffAndTheirManager(string role)
     {
         // A manager filing overtime for a report could then approve it themselves.
         SignInAs(Caller, role);
 
-        var result = await _sut.Create(NewRequestFor(Stranger), CancellationToken.None);
+        var result = await _sut.Create(NewRequestFor(DirectReport), CancellationToken.None);
 
         result.Should().BeOfType<ForbidResult>();
         _service.VerifyNoOtherCalls();

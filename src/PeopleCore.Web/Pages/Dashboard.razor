@@ -98,7 +98,7 @@
             <CardTitle>Pending Leave Requests</CardTitle>
         </CardHeader>
         <CardContent>
-            @if (_notLinked && !_isLeaveStaff)
+            @if (_notLinked && !_isHrStaff)
             {
                 <p class="text-sm text-muted-foreground">@NotLinkedText</p>
             }
@@ -137,7 +137,7 @@
 
     // Each card loads and fails on its own, so one unavailable service does not blank the others.
     private bool _notLinked;
-    private bool _isLeaveStaff;
+    private bool _isHrStaff;
     private IReadOnlyList<LeaveBalanceDto>? _balances;
     private string? _balancesError;
     private bool _attendanceLoaded;
@@ -161,10 +161,11 @@
             await LoadTodaysAttendance(employeeId.Value);
         }
 
-        // Without an id the count is the organisation's, which the API serves only to the roles
-        // that approve leave. Anyone else with no employee record has nothing to count.
-        _isLeaveStaff = new[] { "Admin", "HRManager", "Manager" }.Any(authState.User.IsInRole);
-        if (employeeId.HasValue || _isLeaveStaff)
+        // Without an id the count is the organisation's, which the API serves only to HR staff. A
+        // Manager's unfiltered list is their direct reports', and an account with no employee
+        // record has none, so anyone else with no employee record has nothing to count.
+        _isHrStaff = new[] { "Admin", "HRManager" }.Any(authState.User.IsInRole);
+        if (employeeId.HasValue || _isHrStaff)
             await LoadPendingCount(employeeId);
     }
 

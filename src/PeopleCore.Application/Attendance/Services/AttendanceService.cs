@@ -96,9 +96,9 @@ public class AttendanceService : IAttendanceService
     }
 
     public async Task<PagedResult<AttendanceRecordDto>> GetAllAsync(
-        Guid? employeeId, DateOnly? from, DateOnly? to, int page, int pageSize, CancellationToken ct = default)
+        Guid? employeeId, Guid? reportingManagerId, DateOnly? from, DateOnly? to, int page, int pageSize, CancellationToken ct = default)
     {
-        var (items, total) = await _repo.GetPagedAsync(employeeId, from, to, page, pageSize, ct);
+        var (items, total) = await _repo.GetPagedAsync(employeeId, reportingManagerId, from, to, page, pageSize, ct);
         var dtos = items.Select(r => ToDto(r, r.Employee?.FullName ?? string.Empty)).ToList();
         return PagedResult<AttendanceRecordDto>.Create(dtos, total, page, pageSize);
     }

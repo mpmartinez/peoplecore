@@ -4,53 +4,37 @@ using Microsoft.AspNetCore.Mvc;
 using PeopleCore.Application.Attendance.DTOs;
 using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Application.Common.Interfaces;
+using PeopleCore.Application.Employees.Interfaces;
 
 namespace PeopleCore.API.Controllers.Attendance;
 
 /// <summary>
 /// Time-in, time-out and attendance history. The class-level [Authorize] only says the caller is
 /// signed in; every employee id below - query string or body - is caller-supplied, so each
-/// employee-scoped action carries its own ownership check. Attendance staff
-/// (<see cref="AttendanceStaffRoles"/>) read anyone's attendance; everybody else reads only their
-/// own. Clocking in and out is self-service for everyone, including attendance staff: corrections
-/// go through <see cref="Sync"/> and <see cref="Import"/>.
+/// employee-scoped action carries its own ownership check through <see cref="IEmployeeAccessService"/>:
+/// HR staff read everyone's attendance, a Manager their direct reports', everybody their own.
+/// Clocking in and out is self-service for everyone: corrections go through <see cref="Sync"/> and
+/// <see cref="Import"/>.
 /// </summary>
 [ApiController]
 [Route("api/attendance")]
 [Authorize]
 public class AttendanceController : ControllerBase
 {
-    /// <summary>
-    /// The roles that need to see any employee's attendance. Managers are organisation-wide for
-    /// now: nothing scopes them to their direct reports.
-    /// </summary>
-    private const string AttendanceStaffRoles = "Admin,HRManager,Manager";
-
     private readonly IAttendanceService _service;
     private readonly ICurrentUserService _currentUser;
+    private readonly IEmployeeAccessService _access;
 
-    public AttendanceController(IAttendanceService service, ICurrentUserService currentUser)
+    public AttendanceController(IAttendanceService service, ICurrentUserService currentUser, IEmployeeAccessService access)
     {
         _service = service;
         _currentUser = currentUser;
+        _access = access;
     }
 
-    private bool IsAttendanceStaff()
-        => AttendanceStaffRoles.Split(',', StringSplitOptions.TrimEntries).Any(_currentUser.IsInRole);
-
     /// <summary>
-    /// True when the caller is attendance staff or is themselves <paramref name="employeeId"/>. A
-    /// null on either side matches nothing: a caller with no employee_id claim is nobody, and a
-    /// missing employee filter means "everyone" - letting null equal null would open both to all
-    /// attendance.
-    /// </summary>
-    private bool IsSelfOrAttendanceStaff(Guid? employeeId)
-        => IsAttendanceStaff()
-           || (employeeId is not null && _currentUser.EmployeeId == employeeId);
-
-    /// <summary>
-    /// With no <paramref name="employeeId"/> this is every employee's attendance, so only
-    /// attendance staff may leave it out; everybody else must name themselves.
+    /// Naming an employee needs access to that employee. With no <paramref name="employeeId"/> HR
+    /// staff get everyone's attendance, a Manager their direct reports', and anyone else is refused.
     /// </summary>
     [HttpGet]
     public async Task<IActionResult> GetAll(
@@ -61,10 +45,19 @@ public class AttendanceController : ControllerBase
         [FromQuery] int pageSize = 20,
         CancellationToken ct = default)
     {
-        if (!IsSelfOrAttendanceStaff(employeeId))
+        if (employeeId is { } id)
+        {
+            if (!await _access.CanViewAsync(id, ct))
+                return Forbid();
+
+            return Ok(await _service.GetAllAsync(id, null, from, to, page, pageSize, ct));
+        }
+
+        var scope = _access.GetUnfilteredListScope();
+        if (!scope.IsAllowed)
             return Forbid();
 
-        return Ok(await _service.GetAllAsync(employeeId, from, to, page, pageSize, ct));
+        return Ok(await _service.GetAllAsync(null, scope.ReportingManagerId, from, to, page, pageSize, ct));
     }
 
     /// <summary>
@@ -100,7 +93,7 @@ public class AttendanceController : ControllerBase
         [FromQuery] DateOnly to,
         CancellationToken ct = default)
     {
-        if (!IsSelfOrAttendanceStaff(employeeId))
+        if (!await _access.CanViewAsync(employeeId, ct))
             return Forbid();
 
         return Ok(await _service.GetSummaryAsync(employeeId, from, to, ct));

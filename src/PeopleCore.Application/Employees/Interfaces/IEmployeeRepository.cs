@@ -19,4 +19,7 @@ public interface IEmployeeRepository : IRepository<Employee>
     /// load once per employee.
     /// </summary>
     Task<IReadOnlyList<Employee>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default);
+
+    /// <summary>True when <paramref name="employeeId"/>'s reporting manager is <paramref name="managerId"/>.</summary>
+    Task<bool> IsDirectReportAsync(Guid employeeId, Guid managerId, CancellationToken ct = default);
 }

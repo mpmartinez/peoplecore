@@ -5,7 +5,7 @@ namespace PeopleCore.Application.Attendance.Interfaces;
 
 public interface IOvertimeService
 {
-    Task<PagedResult<OvertimeRequestDto>> GetAllAsync(Guid? employeeId, string? status, int page, int pageSize, CancellationToken ct = default);
+    Task<PagedResult<OvertimeRequestDto>> GetAllAsync(Guid? employeeId, Guid? reportingManagerId, string? status, int page, int pageSize, CancellationToken ct = default);
     Task<OvertimeRequestDto> CreateAsync(CreateOvertimeRequestDto dto, CancellationToken ct = default);
     Task<OvertimeRequestDto> ApproveAsync(Guid id, Guid approverId, CancellationToken ct = default);
     Task<OvertimeRequestDto> RejectAsync(Guid id, Guid rejecterId, RejectOvertimeDto dto, CancellationToken ct = default);

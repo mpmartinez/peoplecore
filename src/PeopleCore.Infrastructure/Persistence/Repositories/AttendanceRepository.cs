@@ -15,10 +15,11 @@ public class AttendanceRepository : Repository<AttendanceRecord>, IAttendanceRep
             .FirstOrDefaultAsync(r => r.EmployeeId == employeeId && r.AttendanceDate == date, ct);
 
     public async Task<(IReadOnlyList<AttendanceRecord> Items, int TotalCount)> GetPagedAsync(
-        Guid? employeeId, DateOnly? from, DateOnly? to, int page, int pageSize, CancellationToken ct = default)
+        Guid? employeeId, Guid? reportingManagerId, DateOnly? from, DateOnly? to, int page, int pageSize, CancellationToken ct = default)
     {
         var query = Context.AttendanceRecords.Include(r => r.Employee).AsQueryable();
         if (employeeId.HasValue) query = query.Where(r => r.EmployeeId == employeeId.Value);
+        if (reportingManagerId.HasValue) query = query.Where(r => r.Employee.ReportingManagerId == reportingManagerId.Value);
         if (from.HasValue) query = query.Where(r => r.AttendanceDate >= from.Value);
         if (to.HasValue) query = query.Where(r => r.AttendanceDate <= to.Value);
         query = query.OrderByDescending(r => r.AttendanceDate);

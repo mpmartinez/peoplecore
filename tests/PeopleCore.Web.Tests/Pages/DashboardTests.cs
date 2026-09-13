@@ -189,8 +189,7 @@ public class DashboardTests : BunitContext
     [Theory]
     [InlineData("Admin")]
     [InlineData("HRManager")]
-    [InlineData("Manager")]
-    public void ALeaveStaffAccountWithNoEmployeeRecord_AsksForNoPersonalData_SaysSo_AndCountsAllPendingRequests(string role)
+    public void AnHrAccountWithNoEmployeeRecord_AsksForNoPersonalData_SaysSo_AndCountsAllPendingRequests(string role)
     {
         // An HR or admin login is not necessarily an employee. Asking for balances or attendance
         // without an id would fail, and waiting for them would spin forever; the pending count is
@@ -207,12 +206,15 @@ public class DashboardTests : BunitContext
             .And.NotContain("Not clocked in yet today.", "there is no one to clock in");
     }
 
-    [Fact]
-    public void AnUnprivilegedAccountWithNoEmployeeRecord_AsksForNothing_AndSaysSoInEveryCard()
+    [Theory]
+    [InlineData("Employee")]
+    [InlineData("Manager")]
+    public void AnAccountWithNoEmployeeRecord_AndNoHrRole_AsksForNothing_AndSaysSoInEveryCard(string role)
     {
-        // The API refuses the organisation's leave requests to anyone but leave staff, so asking
-        // would only put a 403 in the pending card. There is nothing of the caller's own to count.
-        _auth.SetRoles("Employee");
+        // The API refuses the organisation's leave requests to anyone but HR staff, and a Manager
+        // with no employee record has no direct reports, so asking would only put a 403 in the
+        // pending card. There is nothing of the caller's own to count.
+        _auth.SetRoles(role);
 
         var cut = RenderPage();
 

@@ -11,13 +11,14 @@ public class LeaveRequestRepository : Repository<LeaveRequest>, ILeaveRequestRep
     public LeaveRequestRepository(AppDbContext context) : base(context) { }
 
     public async Task<(IReadOnlyList<LeaveRequest> Items, int TotalCount)> GetPagedAsync(
-        Guid? employeeId, string? status, int page, int pageSize, CancellationToken ct = default)
+        Guid? employeeId, Guid? reportingManagerId, string? status, int page, int pageSize, CancellationToken ct = default)
     {
         var query = Context.LeaveRequests
             .Include(r => r.Employee)
             .Include(r => r.LeaveType)
             .AsQueryable();
         if (employeeId.HasValue) query = query.Where(r => r.EmployeeId == employeeId.Value);
+        if (reportingManagerId.HasValue) query = query.Where(r => r.Employee.ReportingManagerId == reportingManagerId.Value);
         if (!string.IsNullOrEmpty(status) && Enum.TryParse<LeaveStatus>(status, true, out var statusEnum))
             query = query.Where(r => r.Status == statusEnum);
         query = query.OrderByDescending(r => r.StartDate);

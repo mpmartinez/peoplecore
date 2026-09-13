@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using PeopleCore.Application.Common.Interfaces;
+using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Leave.Interfaces;
 
 namespace PeopleCore.API.Controllers.Leave;
@@ -10,16 +10,13 @@ namespace PeopleCore.API.Controllers.Leave;
 [Authorize]
 public class LeaveAccrualsController : ControllerBase
 {
-    /// <summary>Same roles as <see cref="LeaveController"/>'s leave staff: they read anyone's leave.</summary>
-    private const string LeaveStaffRoles = "Admin,HRManager,Manager";
-
     private readonly ILeaveAccrualService _accrualService;
-    private readonly ICurrentUserService _currentUser;
+    private readonly IEmployeeAccessService _access;
 
-    public LeaveAccrualsController(ILeaveAccrualService accrualService, ICurrentUserService currentUser)
+    public LeaveAccrualsController(ILeaveAccrualService accrualService, IEmployeeAccessService access)
     {
         _accrualService = accrualService;
-        _currentUser = currentUser;
+        _access = access;
     }
 
     [HttpPost("run-manual")]
@@ -31,14 +28,13 @@ public class LeaveAccrualsController : ControllerBase
     }
 
     /// <summary>
-    /// An employee's balance line by line, so the same rule as GET api/leave-balances: leave staff
-    /// read anyone's, everybody else only their own.
+    /// An employee's balance line by line, so the same rule as GET api/leave-balances: HR staff
+    /// read anyone's, a Manager their direct reports', everybody else only their own.
     /// </summary>
     [HttpGet("/api/employees/{employeeId:guid}/accrual-history")]
     public async Task<IActionResult> GetEmployeeAccrualHistoryAsync(Guid employeeId, CancellationToken ct = default)
     {
-        var isLeaveStaff = LeaveStaffRoles.Split(',', StringSplitOptions.TrimEntries).Any(_currentUser.IsInRole);
-        if (!isLeaveStaff && _currentUser.EmployeeId != employeeId)
+        if (!await _access.CanViewAsync(employeeId, ct))
             return Forbid();
 
         return Ok(await _accrualService.GetEmployeeAccrualHistoryAsync(employeeId, ct));

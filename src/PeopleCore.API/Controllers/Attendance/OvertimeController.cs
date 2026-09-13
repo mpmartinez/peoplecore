@@ -3,52 +3,38 @@ using Microsoft.AspNetCore.Mvc;
 using PeopleCore.Application.Attendance.DTOs;
 using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Application.Common.Interfaces;
+using PeopleCore.Application.Employees.Interfaces;
 
 namespace PeopleCore.API.Controllers.Attendance;
 
 /// <summary>
 /// Overtime requests. The class-level [Authorize] only says the caller is signed in; every employee
-/// id below is caller-supplied, so each employee-scoped action carries its own ownership check.
-/// Overtime staff (<see cref="OvertimeStaffRoles"/>) read anyone's requests; everybody else reads
-/// only their own. Filing is self-service for everyone. Approving and rejecting are done as the
-/// employee in the caller's employee_id claim, and the service then allows only that employee's
-/// direct reporting manager.
+/// id below is caller-supplied, so each employee-scoped action carries its own ownership check
+/// through <see cref="IEmployeeAccessService"/>: HR staff read everyone's requests, a Manager their
+/// direct reports', everybody their own. Filing is self-service for everyone. Approving and
+/// rejecting are done as the employee in the caller's employee_id claim, and the service then
+/// allows only that employee's direct reporting manager.
 /// </summary>
 [ApiController]
 [Route("api/overtime-requests")]
 [Authorize]
 public class OvertimeController : ControllerBase
 {
-    /// <summary>
-    /// The roles that may open the approval queue and so see any employee's requests. Managers are
-    /// organisation-wide for reading; deciding is limited to the direct reporting manager.
-    /// </summary>
-    private const string OvertimeStaffRoles = "Admin,HRManager,Manager";
-
     private readonly IOvertimeService _service;
     private readonly ICurrentUserService _currentUser;
+    private readonly IEmployeeAccessService _access;
 
-    public OvertimeController(IOvertimeService service, ICurrentUserService currentUser)
+    public OvertimeController(IOvertimeService service, ICurrentUserService currentUser, IEmployeeAccessService access)
     {
         _service = service;
         _currentUser = currentUser;
+        _access = access;
     }
 
-    private bool IsOvertimeStaff()
-        => OvertimeStaffRoles.Split(',', StringSplitOptions.TrimEntries).Any(_currentUser.IsInRole);
-
     /// <summary>
-    /// True when the caller is overtime staff or is themselves <paramref name="employeeId"/>. A null
-    /// on either side matches nothing: a caller with no employee_id claim is nobody, and a missing
-    /// employee filter means "everyone".
-    /// </summary>
-    private bool IsSelfOrOvertimeStaff(Guid? employeeId)
-        => IsOvertimeStaff()
-           || (employeeId is not null && _currentUser.EmployeeId == employeeId);
-
-    /// <summary>
-    /// With no <paramref name="employeeId"/> this is every employee's overtime, so only overtime
-    /// staff may leave it out; everybody else must name themselves.
+    /// Naming an employee needs access to that employee. With no <paramref name="employeeId"/> HR
+    /// staff get everyone's overtime, a Manager their direct reports' (the approval queue), and
+    /// anyone else is refused.
     /// </summary>
     [HttpGet]
     public async Task<IActionResult> GetAll(
@@ -58,10 +44,19 @@ public class OvertimeController : ControllerBase
         [FromQuery] int pageSize = 20,
         CancellationToken ct = default)
     {
-        if (!IsSelfOrOvertimeStaff(employeeId))
+        if (employeeId is { } id)
+        {
+            if (!await _access.CanViewAsync(id, ct))
+                return Forbid();
+
+            return Ok(await _service.GetAllAsync(id, null, status, page, pageSize, ct));
+        }
+
+        var scope = _access.GetUnfilteredListScope();
+        if (!scope.IsAllowed)
             return Forbid();
 
-        return Ok(await _service.GetAllAsync(employeeId, status, page, pageSize, ct));
+        return Ok(await _service.GetAllAsync(null, scope.ReportingManagerId, status, page, pageSize, ct));
     }
 
     /// <summary>

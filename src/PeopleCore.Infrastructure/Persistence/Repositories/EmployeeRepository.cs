@@ -31,6 +31,9 @@ public class EmployeeRepository : Repository<Employee>, IEmployeeRepository
             .ToListAsync(ct);
     }
 
+    public async Task<bool> IsDirectReportAsync(Guid employeeId, Guid managerId, CancellationToken ct = default)
+        => await Context.Employees.AnyAsync(e => e.Id == employeeId && e.ReportingManagerId == managerId, ct);
+
     public async Task<(IReadOnlyList<Employee> Items, int TotalCount)> GetPagedAsync(
         EmployeeFilterDto filter, CancellationToken ct = default)
     {

@@ -32,9 +32,9 @@ public class LeaveRequestService : ILeaveRequestService
     }
 
     public async Task<PagedResult<LeaveRequestDto>> GetAllAsync(
-        Guid? employeeId, string? status, int page, int pageSize, CancellationToken ct = default)
+        Guid? employeeId, Guid? reportingManagerId, string? status, int page, int pageSize, CancellationToken ct = default)
     {
-        var (items, total) = await _leaveRepo.GetPagedAsync(employeeId, status, page, pageSize, ct);
+        var (items, total) = await _leaveRepo.GetPagedAsync(employeeId, reportingManagerId, status, page, pageSize, ct);
         return PagedResult<LeaveRequestDto>.Create(items.Select(ToDto).ToList(), total, page, pageSize);
     }
 

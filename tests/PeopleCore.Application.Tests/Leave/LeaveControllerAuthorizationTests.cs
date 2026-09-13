@@ -3,11 +3,12 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 using PeopleCore.API.Controllers.Leave;
-using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Leave.DTOs;
 using PeopleCore.Application.Leave.Interfaces;
+using PeopleCore.Application.Tests.Common;
 using PeopleCore.Domain.Enums;
 using Xunit;
+using static PeopleCore.Application.Tests.Common.SignedInCaller;
 
 namespace PeopleCore.Application.Tests.Leave;
 
@@ -15,43 +16,36 @@ namespace PeopleCore.Application.Tests.Leave;
 /// <see cref="LeaveController"/> sits behind a class-level [Authorize] only, and "signed in" says
 /// nothing about WHICH employee's leave the caller may touch. Every employee id that reaches it -
 /// in the route, the query string or the request body - is caller-supplied. These tests pin the
-/// rules: HR and managers (<c>Admin,HRManager,Manager</c>, the same roles that approve and reject)
-/// read anyone's leave; everybody else reads only their own; and filing or cancelling leave is
-/// self-service for everyone, resolved from the employee_id claim.
+/// rules: HR staff (<c>Admin,HRManager</c>) reach anyone's leave; a Manager reaches their direct
+/// reports'; everybody reaches their own; and filing or cancelling leave is self-service for
+/// everyone, resolved from the employee_id claim.
 /// </summary>
 public class LeaveControllerAuthorizationTests
 {
-    private static readonly Guid Caller = Guid.Parse("11111111-1111-1111-1111-111111111111");
-    private static readonly Guid Stranger = Guid.Parse("22222222-2222-2222-2222-222222222222");
     private static readonly Guid RequestId = Guid.Parse("33333333-3333-3333-3333-333333333333");
     private static readonly Guid LeaveTypeId = Guid.Parse("44444444-4444-4444-4444-444444444444");
 
     private readonly Mock<ILeaveTypeService> _types = new();
     private readonly Mock<ILeaveRequestService> _requests = new();
     private readonly Mock<ILeaveBalanceService> _balances = new();
-    private readonly Mock<ICurrentUserService> _currentUser = new();
+    private readonly SignedInCaller _caller = new();
     private readonly LeaveController _sut;
 
     public LeaveControllerAuthorizationTests()
     {
-        // Default caller: a rank-and-file employee holding no privileged role.
-        SignInAs(Caller);
-        _sut = new LeaveController(_types.Object, _requests.Object, _balances.Object, _currentUser.Object);
+        _sut = new LeaveController(_types.Object, _requests.Object, _balances.Object, _caller.CurrentUser.Object, _caller.Access);
     }
 
-    private void SignInAs(Guid? employeeId, params string[] roles)
-    {
-        _currentUser.Setup(c => c.EmployeeId).Returns(employeeId);
-        _currentUser.Setup(c => c.IsInRole(It.IsAny<string>())).Returns((string r) => roles.Contains(r));
-    }
-
-    public static TheoryData<string> LeaveReaderRoles => new() { "Admin", "HRManager", "Manager" };
+    private void SignInAs(Guid? employeeId, params string[] roles) => _caller.As(employeeId, roles);
 
     private void VerifyNoServiceReached()
     {
         _requests.VerifyNoOtherCalls();
         _balances.VerifyNoOtherCalls();
     }
+
+    private void RequestIsOwnedBy(Guid employeeId)
+        => _requests.Setup(s => s.GetByIdAsync(RequestId, It.IsAny<CancellationToken>())).ReturnsAsync(RequestOf(employeeId));
 
     private static LeaveRequestDto RequestOf(Guid employeeId) => new(
         RequestId, employeeId, "Maria Santos", LeaveTypeId, "Vacation Leave",
@@ -69,7 +63,7 @@ public class LeaveControllerAuthorizationTests
         var result = await _sut.GetAll(Caller, "Pending", 1, 20, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
-        _requests.Verify(s => s.GetAllAsync(Caller, "Pending", 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+        _requests.Verify(s => s.GetAllAsync(Caller, null, "Pending", 1, 20, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -79,6 +73,39 @@ public class LeaveControllerAuthorizationTests
 
         result.Should().BeOfType<ForbidResult>();
         VerifyNoServiceReached();
+    }
+
+    [Fact]
+    public async Task GetAll_ForADirectReport_IsAllowedThrough_ForTheirManager()
+    {
+        SignInAs(Caller, "Manager");
+
+        var result = await _sut.GetAll(DirectReport, null, 1, 20, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+        _requests.Verify(s => s.GetAllAsync(DirectReport, null, null, 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetAll_ForSomeoneOutsideTheirTeam_ReturnsForbid_ForAManager()
+    {
+        SignInAs(Caller, "Manager");
+
+        var result = await _sut.GetAll(Stranger, null, 1, 20, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+        VerifyNoServiceReached();
+    }
+
+    [Theory]
+    [MemberData(nameof(HrRoles), MemberType = typeof(SignedInCaller))]
+    public async Task GetAll_ForAnyEmployee_IsAllowedThrough_ForHrStaff(string role)
+    {
+        SignInAs(null, role);
+
+        var result = await _sut.GetAll(Stranger, null, 1, 20, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
     }
 
     [Fact]
@@ -105,15 +132,40 @@ public class LeaveControllerAuthorizationTests
     }
 
     [Theory]
-    [MemberData(nameof(LeaveReaderRoles))]
-    public async Task GetAll_WithNoEmployeeFilter_IsAllowedThrough_ForLeaveReaders(string role)
+    [MemberData(nameof(HrRoles), MemberType = typeof(SignedInCaller))]
+    public async Task GetAll_WithNoEmployeeFilter_IsEveryonesRequests_ForHrStaff(string role)
     {
         SignInAs(null, role);
 
         var result = await _sut.GetAll(null, "Pending", 1, 20, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
-        _requests.Verify(s => s.GetAllAsync(null, "Pending", 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+        _requests.Verify(s => s.GetAllAsync(null, null, "Pending", 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetAll_WithNoEmployeeFilter_IsTheirDirectReportsRequests_ForAManager()
+    {
+        // The approval queue: narrowed to the team in the query itself, so the count and pages match.
+        SignInAs(Caller, "Manager");
+
+        var result = await _sut.GetAll(null, "Pending", 1, 20, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+        _requests.Verify(s => s.GetAllAsync(null, Caller, "Pending", 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetAll_WithNoEmployeeFilter_ReturnsForbid_ForAManagerWithNoEmployeeIdClaim()
+    {
+        // Nobody reports to an account that is not an employee; a null manager id must not become
+        // "no filter".
+        SignInAs(null, "Manager");
+
+        var result = await _sut.GetAll(null, null, 1, 20, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+        VerifyNoServiceReached();
     }
 
     // ---- GET api/leave-requests/{id} -------------------------------------------------------
@@ -121,7 +173,7 @@ public class LeaveControllerAuthorizationTests
     [Fact]
     public async Task GetById_ForOwnRequest_IsAllowedThrough()
     {
-        _requests.Setup(s => s.GetByIdAsync(RequestId, It.IsAny<CancellationToken>())).ReturnsAsync(RequestOf(Caller));
+        RequestIsOwnedBy(Caller);
 
         var result = await _sut.GetById(RequestId, CancellationToken.None);
 
@@ -131,7 +183,7 @@ public class LeaveControllerAuthorizationTests
     [Fact]
     public async Task GetById_ForAnotherEmployeesRequest_ReturnsForbid()
     {
-        _requests.Setup(s => s.GetByIdAsync(RequestId, It.IsAny<CancellationToken>())).ReturnsAsync(RequestOf(Stranger));
+        RequestIsOwnedBy(Stranger);
 
         var result = await _sut.GetById(RequestId, CancellationToken.None);
 
@@ -142,7 +194,7 @@ public class LeaveControllerAuthorizationTests
     public async Task GetById_ForACallerWithNoEmployeeIdClaim_ReturnsForbid()
     {
         SignInAs(null);
-        _requests.Setup(s => s.GetByIdAsync(RequestId, It.IsAny<CancellationToken>())).ReturnsAsync(RequestOf(Stranger));
+        RequestIsOwnedBy(Stranger);
 
         var result = await _sut.GetById(RequestId, CancellationToken.None);
 
@@ -150,15 +202,37 @@ public class LeaveControllerAuthorizationTests
     }
 
     [Theory]
-    [MemberData(nameof(LeaveReaderRoles))]
-    public async Task GetById_ForAnotherEmployeesRequest_IsAllowedThrough_ForLeaveReaders(string role)
+    [MemberData(nameof(HrRoles), MemberType = typeof(SignedInCaller))]
+    public async Task GetById_ForAnotherEmployeesRequest_IsAllowedThrough_ForHrStaff(string role)
     {
         SignInAs(Caller, role);
-        _requests.Setup(s => s.GetByIdAsync(RequestId, It.IsAny<CancellationToken>())).ReturnsAsync(RequestOf(Stranger));
+        RequestIsOwnedBy(Stranger);
 
         var result = await _sut.GetById(RequestId, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
+    }
+
+    [Fact]
+    public async Task GetById_ForADirectReportsRequest_IsAllowedThrough_ForTheirManager()
+    {
+        SignInAs(Caller, "Manager");
+        RequestIsOwnedBy(DirectReport);
+
+        var result = await _sut.GetById(RequestId, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+    }
+
+    [Fact]
+    public async Task GetById_ForARequestOutsideTheirTeam_ReturnsForbid_ForAManager()
+    {
+        SignInAs(Caller, "Manager");
+        RequestIsOwnedBy(Stranger);
+
+        var result = await _sut.GetById(RequestId, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
     }
 
     // ---- POST api/leave-requests -----------------------------------------------------------
@@ -183,14 +257,14 @@ public class LeaveControllerAuthorizationTests
     }
 
     [Theory]
-    [MemberData(nameof(LeaveReaderRoles))]
-    public async Task Create_ForAnotherEmployee_ReturnsForbid_EvenForLeaveReaders(string role)
+    [MemberData(nameof(DeciderRoles), MemberType = typeof(SignedInCaller))]
+    public async Task Create_ForSomeoneElse_ReturnsForbid_EvenForHrStaffAndTheirManager(string role)
     {
         // Filing leave is self-service only: seeing someone's leave is not a licence to spend
         // their balance.
         SignInAs(Caller, role);
 
-        var result = await _sut.Create(NewRequestFor(Stranger), CancellationToken.None);
+        var result = await _sut.Create(NewRequestFor(DirectReport), CancellationToken.None);
 
         result.Should().BeOfType<ForbidResult>();
         VerifyNoServiceReached();
@@ -223,14 +297,52 @@ public class LeaveControllerAuthorizationTests
     }
 
     [Theory]
-    [MemberData(nameof(LeaveReaderRoles))]
-    public async Task Approve_ApprovesAsTheEmployeeInTheClaim(string role)
+    [MemberData(nameof(HrRoles), MemberType = typeof(SignedInCaller))]
+    public async Task Approve_AnyonesRequest_ApprovesAsTheEmployeeInTheClaim_ForHrStaff(string role)
     {
         SignInAs(Caller, role);
+        RequestIsOwnedBy(Stranger);
 
         var result = await _sut.Approve(RequestId, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
+        _requests.Verify(s => s.ApproveAsync(RequestId, Caller, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Approve_ADirectReportsRequest_IsAllowedThrough_ForTheirManager()
+    {
+        SignInAs(Caller, "Manager");
+        RequestIsOwnedBy(DirectReport);
+
+        var result = await _sut.Approve(RequestId, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+        _requests.Verify(s => s.ApproveAsync(RequestId, Caller, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Approve_ARequestOutsideTheirTeam_ReturnsForbid_ForAManager()
+    {
+        SignInAs(Caller, "Manager");
+        RequestIsOwnedBy(Stranger);
+
+        var result = await _sut.Approve(RequestId, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+        _requests.Verify(s => s.ApproveAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Approve_TheirOwnRequest_IsLeftToTheServiceToRefuseWithItsReason()
+    {
+        // A Manager does not "manage" themselves, but a bare 403 would hide why; the service
+        // refuses self-approval with "You cannot approve your own leave request".
+        SignInAs(Caller, "Manager");
+        RequestIsOwnedBy(Caller);
+
+        await _sut.Approve(RequestId, CancellationToken.None);
+
         _requests.Verify(s => s.ApproveAsync(RequestId, Caller, It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -261,16 +373,42 @@ public class LeaveControllerAuthorizationTests
     }
 
     [Theory]
-    [MemberData(nameof(LeaveReaderRoles))]
-    public async Task Reject_RejectsAsTheEmployeeInTheClaim(string role)
+    [MemberData(nameof(HrRoles), MemberType = typeof(SignedInCaller))]
+    public async Task Reject_AnyonesRequest_RejectsAsTheEmployeeInTheClaim_ForHrStaff(string role)
     {
         SignInAs(Caller, role);
+        RequestIsOwnedBy(Stranger);
         var dto = new RejectLeaveDto("Peak season");
 
         var result = await _sut.Reject(RequestId, dto, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
         _requests.Verify(s => s.RejectAsync(RequestId, Caller, dto, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Reject_ADirectReportsRequest_IsAllowedThrough_ForTheirManager()
+    {
+        SignInAs(Caller, "Manager");
+        RequestIsOwnedBy(DirectReport);
+        var dto = new RejectLeaveDto("Peak season");
+
+        var result = await _sut.Reject(RequestId, dto, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+        _requests.Verify(s => s.RejectAsync(RequestId, Caller, dto, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Reject_ARequestOutsideTheirTeam_ReturnsForbid_ForAManager()
+    {
+        SignInAs(Caller, "Manager");
+        RequestIsOwnedBy(Stranger);
+
+        var result = await _sut.Reject(RequestId, new RejectLeaveDto("Peak season"), CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+        _requests.Verify(s => s.RejectAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<RejectLeaveDto>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -353,14 +491,35 @@ public class LeaveControllerAuthorizationTests
     }
 
     [Theory]
-    [MemberData(nameof(LeaveReaderRoles))]
-    public async Task GetBalances_ForAnotherEmployee_IsAllowedThrough_ForLeaveReaders(string role)
+    [MemberData(nameof(HrRoles), MemberType = typeof(SignedInCaller))]
+    public async Task GetBalances_ForAnotherEmployee_IsAllowedThrough_ForHrStaff(string role)
     {
         SignInAs(Caller, role);
 
         var result = await _sut.GetBalances(Stranger, null, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
+    }
+
+    [Fact]
+    public async Task GetBalances_ForADirectReport_IsAllowedThrough_ForTheirManager()
+    {
+        SignInAs(Caller, "Manager");
+
+        var result = await _sut.GetBalances(DirectReport, null, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+    }
+
+    [Fact]
+    public async Task GetBalances_ForSomeoneOutsideTheirTeam_ReturnsForbid_ForAManager()
+    {
+        SignInAs(Caller, "Manager");
+
+        var result = await _sut.GetBalances(Stranger, null, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+        VerifyNoServiceReached();
     }
 
     [Fact]

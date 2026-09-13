@@ -20,9 +20,9 @@ public class OvertimeService : IOvertimeService
     }
 
     public async Task<PagedResult<OvertimeRequestDto>> GetAllAsync(
-        Guid? employeeId, string? status, int page, int pageSize, CancellationToken ct = default)
+        Guid? employeeId, Guid? reportingManagerId, string? status, int page, int pageSize, CancellationToken ct = default)
     {
-        var (items, total) = await _repo.GetPagedAsync(employeeId, status, page, pageSize, ct);
+        var (items, total) = await _repo.GetPagedAsync(employeeId, reportingManagerId, status, page, pageSize, ct);
         return PagedResult<OvertimeRequestDto>.Create(items.Select(ToDto).ToList(), total, page, pageSize);
     }
 

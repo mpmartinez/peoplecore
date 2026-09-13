@@ -127,6 +127,7 @@ public static class ServiceExtensions
         // Employees
         services.AddScoped<IEmployeeRepository, EmployeeRepository>();
         services.AddScoped<IEmployeeService, EmployeeService>();
+        services.AddScoped<IEmployeeAccessService, EmployeeAccessService>();
         services.AddScoped<IEmployeeDocumentService, EmployeeDocumentService>();
 
         // Attendance

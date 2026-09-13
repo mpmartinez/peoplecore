@@ -5,7 +5,7 @@ namespace PeopleCore.Application.Leave.Interfaces;
 
 public interface ILeaveRequestService
 {
-    Task<PagedResult<LeaveRequestDto>> GetAllAsync(Guid? employeeId, string? status, int page, int pageSize, CancellationToken ct = default);
+    Task<PagedResult<LeaveRequestDto>> GetAllAsync(Guid? employeeId, Guid? reportingManagerId, string? status, int page, int pageSize, CancellationToken ct = default);
     Task<LeaveRequestDto> GetByIdAsync(Guid id, CancellationToken ct = default);
     Task<LeaveRequestDto> CreateAsync(CreateLeaveRequestDto dto, CancellationToken ct = default);
     Task<LeaveRequestDto> ApproveAsync(Guid id, Guid approverId, CancellationToken ct = default);

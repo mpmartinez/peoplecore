@@ -11,10 +11,11 @@ public class OvertimeRepository : Repository<OvertimeRequest>, IOvertimeReposito
     public OvertimeRepository(AppDbContext context) : base(context) { }
 
     public async Task<(IReadOnlyList<OvertimeRequest> Items, int TotalCount)> GetPagedAsync(
-        Guid? employeeId, string? status, int page, int pageSize, CancellationToken ct = default)
+        Guid? employeeId, Guid? reportingManagerId, string? status, int page, int pageSize, CancellationToken ct = default)
     {
         var query = Context.OvertimeRequests.Include(r => r.Employee).Include(r => r.Approver).AsQueryable();
         if (employeeId.HasValue) query = query.Where(r => r.EmployeeId == employeeId.Value);
+        if (reportingManagerId.HasValue) query = query.Where(r => r.Employee.ReportingManagerId == reportingManagerId.Value);
         if (!string.IsNullOrEmpty(status) && Enum.TryParse<OvertimeStatus>(status, true, out var statusEnum))
             query = query.Where(r => r.Status == statusEnum);
         query = query.OrderByDescending(r => r.OvertimeDate);
