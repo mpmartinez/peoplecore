@@ -65,7 +65,7 @@
                                 @if (r.Status == "Pending")
                                 {
                                     <div class="flex gap-2">
-                                        @if (_linkedToEmployee)
+                                        @if (CanApprove(r))
                                         {
                                             <Button Variant="ghost" Size="sm" OnClick="() => Approve(r.Id)">Approve</Button>
                                         }
@@ -101,9 +101,13 @@
     private int _page = 1;
     private const int _pageSize = 50;
 
-    // The API records the approver as the signed-in account's employee and refuses an account
-    // without one, so there is no point offering Approve there. Rejecting records nobody.
-    private bool _linkedToEmployee;
+    // The signed-in account's employee. The API records the approver from it, refuses an account
+    // without one, and refuses anyone approving their own leave, so Approve is offered only where
+    // it can succeed. Rejecting records nobody.
+    private Guid? _currentEmployeeId;
+
+    private bool CanApprove(LeaveRequestDto request)
+        => _currentEmployeeId is { } me && request.EmployeeId != me;
 
     private string EmptyText => _statusFilter == ""
         ? "No leave requests."
@@ -112,7 +116,7 @@
     protected override async Task OnInitializedAsync()
     {
         var auth = await AuthStateProvider.GetAuthenticationStateAsync();
-        _linkedToEmployee = Guid.TryParse(auth.User.FindFirst("employee_id")?.Value, out _);
+        if (Guid.TryParse(auth.User.FindFirst("employee_id")?.Value, out var id)) _currentEmployeeId = id;
         await LoadRequests();
     }
 

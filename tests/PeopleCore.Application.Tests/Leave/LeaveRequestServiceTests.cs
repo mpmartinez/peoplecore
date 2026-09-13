@@ -85,6 +85,32 @@ public class LeaveRequestServiceTests
     }
 
     [Fact]
+    public async Task ApproveAsync_OwnRequest_ThrowsDomainException_WithoutSpendingTheBalance()
+    {
+        // Holding an approver role (Manager, HRManager or Admin) is not a licence to sign off
+        // your own leave: somebody else has to.
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        var request = new LeaveRequest
+        {
+            Id = Guid.NewGuid(), EmployeeId = emp.Id, LeaveTypeId = lt.Id,
+            StartDate = new DateOnly(2026, 10, 5), EndDate = new DateOnly(2026, 10, 6),
+            TotalDays = 2, Status = LeaveStatus.Pending
+        };
+        _leaveRepo.Setup(r => r.GetByIdAsync(request.Id, default)).ReturnsAsync(request);
+        _balanceRepo.Setup(r => r.GetByEmployeeAndTypeAsync(emp.Id, lt.Id, 2026, default))
+            .ReturnsAsync(MakeBalance(emp.Id, lt.Id));
+
+        var act = () => _sut.ApproveAsync(request.Id, emp.Id);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("*your own leave*");
+        request.Status.Should().Be(LeaveStatus.Pending);
+        request.ApprovedBy.Should().BeNull();
+        _balanceRepo.Verify(r => r.UpdateAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()), Times.Never);
+        _leaveRepo.Verify(r => r.UpdateAsync(It.IsAny<LeaveRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task CreateAsync_WhenInsufficientBalance_ThrowsDomainException()
     {
         var emp = MakeEmployee();

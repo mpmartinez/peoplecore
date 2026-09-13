@@ -55,17 +55,19 @@ public class LeaveApprovalsTests : BunitContext
     private static string PageOf(int page, int totalPages, params string[] items) =>
         $$"""{"items":[{{string.Join(",", items)}}],"totalCount":{{items.Length}},"page":{{page}},"pageSize":50,"totalPages":{{totalPages}}}""";
 
-    private static string Request(Guid id, string employee, string status, string? reason) =>
+    private static string Request(Guid id, string employee, string status, string? reason, Guid? employeeId = null) =>
         $$"""
-        {"id":"{{id}}","employeeId":"{{Guid.NewGuid()}}","employeeName":"{{employee}}","leaveTypeName":"Vacation Leave",
+        {"id":"{{id}}","employeeId":"{{employeeId ?? Guid.NewGuid()}}","employeeName":"{{employee}}","leaveTypeName":"Vacation Leave",
          "startDate":"2026-10-05","endDate":"2026-10-07","totalDays":3,"status":"{{status}}",
          "reason":{{(reason is null ? "null" : $"\"{reason}\"")}}}
         """;
 
+    private static readonly Guid SignedInEmployeeId = Guid.Parse("7c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f");
+
     private IRenderedComponent<LeaveApprovals> RenderPage(bool linkedToEmployee = true)
     {
         if (linkedToEmployee)
-            _auth.SetClaims(new Claim("employee_id", Guid.NewGuid().ToString()));
+            _auth.SetClaims(new Claim("employee_id", SignedInEmployeeId.ToString()));
 
         var cut = Render<LeaveApprovals>();
         cut.WaitForAssertion(() => cut.FindAll(".animate-spin").Should().BeEmpty());
@@ -113,6 +115,20 @@ public class LeaveApprovalsTests : BunitContext
         var cut = RenderPage(linkedToEmployee: false);
 
         ButtonsIn(RowFor(cut, "Maria Santos")).Should().Equal("Reject");
+    }
+
+    [Fact]
+    public void TheSignedInManagersOwnRequest_CanBeRejectedButNotApproved()
+    {
+        // The API refuses anyone approving their own leave; somebody else has to sign it off.
+        _requests = Paged(
+            Request(PendingId, "Maria Santos", "Pending", "Family event"),
+            Request(Guid.NewGuid(), "Signed-in Manager", "Pending", "Conference", SignedInEmployeeId));
+
+        var cut = RenderPage();
+
+        ButtonsIn(RowFor(cut, "Signed-in Manager")).Should().Equal("Reject");
+        ButtonsIn(RowFor(cut, "Maria Santos")).Should().Equal("Approve", "Reject");
     }
 
     [Fact]

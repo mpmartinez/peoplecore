@@ -94,6 +94,11 @@ public class LeaveRequestService : ILeaveRequestService
         if (request.Status != LeaveStatus.Pending)
             throw new DomainException("Only pending leave requests can be approved.");
 
+        // Every approver role could otherwise sign off its own leave. approverId comes from the
+        // caller's employee_id claim, so this cannot be dodged by naming someone else.
+        if (request.EmployeeId == approverId)
+            throw new DomainException("You cannot approve your own leave request.");
+
         var balance = await _balanceRepo.GetByEmployeeAndTypeAsync(
             request.EmployeeId, request.LeaveTypeId, request.StartDate.Year, ct)
             ?? throw new DomainException("Leave balance not found.");
