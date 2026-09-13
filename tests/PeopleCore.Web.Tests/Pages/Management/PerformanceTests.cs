@@ -21,11 +21,14 @@ public class PerformanceTests : BunitContext
     private readonly StubHttpHandler _api = new();
 
     private string _cyclesJson = Paged();
+    private bool _cyclesFail;
 
     public PerformanceTests()
     {
         Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(_api)));
-        _api.On(HttpMethod.Get, CyclesPath, () => Json(_cyclesJson));
+        _api.On(HttpMethod.Get, CyclesPath, () => _cyclesFail
+            ? new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            : Json(_cyclesJson));
     }
 
     private static string Paged(params string[] items) =>
@@ -152,5 +155,67 @@ public class PerformanceTests : BunitContext
         cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Failed to create cycle."));
         cut.Find("input[placeholder='e.g. Q1 2026']").GetAttribute("value").Should().Be("Year-end 2026");
         ButtonNamed(cut, "Save").HasAttribute("disabled").Should().BeFalse();
+    }
+
+    [Fact]
+    public void CyclesThatFailToLoad_AreReported_InsteadOfCrashingThePage()
+    {
+        _cyclesFail = true;
+        _api.On(HttpMethod.Get, ReviewsPath, HttpStatusCode.OK, Paged());
+
+        var cut = Render<Performance>();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Couldn't load review cycles"));
+        cut.FindAll(".animate-spin").Should().BeEmpty();
+        cut.Markup.Should().Contain("No reviews found.", "the reviews still loaded");
+    }
+
+    [Fact]
+    public void AFilteredReloadThatFails_DoesNotLeaveTheOtherCyclesReviewsOnScreen()
+    {
+        _cyclesJson = Paged(Cycle(H2CycleId, "Year-end 2026", 4, "Open"));
+        _api.On(HttpMethod.Get, ReviewsPath, HttpStatusCode.OK, Paged(Review("Ana Reyes", H1CycleId, "4.0", "Completed")))
+            .On(HttpMethod.Get, $"{ReviewsPath}&cycleId={H2CycleId}", HttpStatusCode.InternalServerError);
+        var cut = RenderPage();
+
+        CycleRow(cut, "Year-end 2026").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Couldn't load reviews"));
+        cut.Markup.Should().NotContain("Ana Reyes");
+    }
+
+    [Theory]
+    [InlineData("", "2026-07-01", "2026-12-31", "Please enter a name for the cycle.")]
+    [InlineData("   ", "2026-07-01", "2026-12-31", "Please enter a name for the cycle.")]
+    [InlineData("Year-end 2026", "2026-12-31", "2026-07-01", "The end date cannot be before the start date.")]
+    public void AnInvalidCycle_IsRefusedWithoutCallingTheApi(string name, string start, string end, string expectedError)
+    {
+        _api.On(HttpMethod.Get, ReviewsPath, HttpStatusCode.OK, Paged());
+        var cut = RenderPage();
+
+        ButtonNamed(cut, "+ New Cycle").Click();
+        cut.Find("#cycle-name").Input(name);
+        cut.Find("#cycle-start").Input(start);
+        cut.Find("#cycle-end").Input(end);
+        ButtonNamed(cut, "Save").Click();
+
+        cut.Find("[role=alert]").TextContent.Should().Contain(expectedError);
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Post);
+    }
+
+    [Fact]
+    public void TheNameAndYearLabels_PointAtTheirInputs()
+    {
+        // FormField renders <label for=Id>; an input without that id leaves the label unattached,
+        // so clicking it does nothing and a screen reader announces an unnamed field.
+        _api.On(HttpMethod.Get, ReviewsPath, HttpStatusCode.OK, Paged());
+        var cut = RenderPage();
+
+        ButtonNamed(cut, "+ New Cycle").Click();
+
+        cut.FindAll("label[for=cycle-name]").Should().ContainSingle();
+        cut.FindAll("input#cycle-name").Should().ContainSingle();
+        cut.FindAll("label[for=cycle-year]").Should().ContainSingle();
+        cut.FindAll("input#cycle-year").Should().ContainSingle();
     }
 }

@@ -26,7 +26,11 @@
 
 <Card>
     <CardContent Class="p-0">
-        @if (_requests is null)
+        @if (_loadError is not null)
+        {
+            <div class="p-4"><Alert Variant="destructive" Title="Couldn't load overtime requests">@_loadError</Alert></div>
+        }
+        else if (_requests is null)
         {
             <div class="flex items-center justify-center p-10">
                 <Spinner />
@@ -82,6 +86,7 @@
     private string _statusFilter = "Pending";
     private Guid? _currentEmployeeId;
     private string? _error;
+    private string? _loadError;
 
     protected override async Task OnInitializedAsync()
     {
@@ -91,19 +96,32 @@
         await Load();
     }
 
-    private async Task Load() => _requests = await Api.GetOvertimeRequestsAsync(status: string.IsNullOrEmpty(_statusFilter) ? null : _statusFilter);
+    private async Task Load()
+    {
+        _loadError = null;
+        try
+        {
+            _requests = await Api.GetOvertimeRequestsAsync(status: string.IsNullOrEmpty(_statusFilter) ? null : _statusFilter);
+        }
+        catch (Exception ex)
+        {
+            // Not the previous list: after a filter change those rows belong to a different status.
+            _requests = null;
+            _loadError = ex.Message;
+        }
+    }
 
     private async Task Approve(Guid id)
     {
         if (!_currentEmployeeId.HasValue) { _error = "No employee ID linked to your account."; return; }
-        try { await Api.ApproveOvertimeAsync(id, _currentEmployeeId.Value); await Load(); }
-        catch { _error = "Failed to approve."; }
+        try { await Api.ApproveOvertimeAsync(id, _currentEmployeeId.Value); _error = null; await Load(); }
+        catch (Exception ex) { _error = $"Failed to approve. {ex.Message}"; }
     }
 
     private async Task Reject(Guid id)
     {
-        try { await Api.RejectOvertimeAsync(id, "Rejected by manager"); await Load(); }
-        catch { _error = "Failed to reject."; }
+        try { await Api.RejectOvertimeAsync(id, "Rejected by manager"); _error = null; await Load(); }
+        catch (Exception ex) { _error = $"Failed to reject. {ex.Message}"; }
     }
 
     private static string OtStatusVariant(string s) => s switch

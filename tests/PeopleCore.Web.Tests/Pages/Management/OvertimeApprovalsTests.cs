@@ -25,6 +25,7 @@ public class OvertimeApprovalsTests : BunitContext
     private readonly BunitAuthorizationContext _auth;
 
     private string _pendingJson = Paged(Overtime(PendingId, "Juan Cruz", 150, "Pending"));
+    private bool _pendingFails;
 
     public OvertimeApprovalsTests()
     {
@@ -32,7 +33,9 @@ public class OvertimeApprovalsTests : BunitContext
         _auth = AddAuthorization();
         _auth.SetAuthorized("manager@company.test");
         _auth.SetRoles("Manager");
-        _api.On(HttpMethod.Get, PendingPath, () => Json(_pendingJson));
+        _api.On(HttpMethod.Get, PendingPath, () => _pendingFails
+            ? new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            : Json(_pendingJson));
     }
 
     private static string Paged(params string[] items) =>
@@ -175,5 +178,46 @@ public class OvertimeApprovalsTests : BunitContext
 
         cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain(expectedError));
         ActionsIn(RowFor(cut, "Juan Cruz")).Should().Equal("Approve", "Reject");
+    }
+
+    [Fact]
+    public void RequestsThatFailToLoad_AreReported_InsteadOfCrashingThePage()
+    {
+        _pendingFails = true;
+        _auth.SetClaims(new Claim("employee_id", ApproverId.ToString()));
+
+        var cut = Render<OvertimeApprovals>();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Couldn't load overtime requests"));
+        cut.FindAll(".animate-spin").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AFilterChangeThatFails_DoesNotLeaveThePreviousListOnScreen()
+    {
+        _api.On(HttpMethod.Get, ListPath + "&status=Approved", HttpStatusCode.InternalServerError);
+        var cut = RenderPage();
+
+        cut.Find("select").Change("Approved");
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Couldn't load overtime requests"));
+        cut.Markup.Should().NotContain("Juan Cruz", "those are the Pending requests, not the Approved ones");
+    }
+
+    [Fact]
+    public void AnEarlierFailure_IsClearedOnceALaterDecisionSucceeds()
+    {
+        var rosaId = Guid.NewGuid();
+        _pendingJson = Paged(Overtime(PendingId, "Juan Cruz", 150, "Pending"), Overtime(rosaId, "Rosa Lim", 60, "Pending"));
+        _api.On(HttpMethod.Put, $"/api/overtime-requests/{PendingId}/approve", HttpStatusCode.Conflict)
+            .On(HttpMethod.Put, $"/api/overtime-requests/{rosaId}/approve", HttpStatusCode.NoContent);
+        var cut = RenderPage();
+
+        RowFor(cut, "Juan Cruz").QuerySelectorAll("button").Single(b => b.TextContent.Trim() == "Approve").Click();
+        cut.WaitForAssertion(() => cut.FindAll("[role=alert]").Should().ContainSingle());
+
+        RowFor(cut, "Rosa Lim").QuerySelectorAll("button").Single(b => b.TextContent.Trim() == "Approve").Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[role=alert]").Should().BeEmpty());
     }
 }

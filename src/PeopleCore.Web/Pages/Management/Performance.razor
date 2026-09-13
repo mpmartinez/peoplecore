@@ -21,10 +21,10 @@
                 <CardContent>
                     <div class="grid grid-cols-2 gap-3 mb-3">
                         <FormField LabelText="Name *" Id="cycle-name">
-                            <Input TValue="string" Value="@_cycleName" ValueChanged="@(v => _cycleName = v)" Placeholder="e.g. Q1 2026" />
+                            <Input TValue="string" Id="cycle-name" Value="@_cycleName" ValueChanged="@(v => _cycleName = v)" Placeholder="e.g. Q1 2026" />
                         </FormField>
                         <FormField LabelText="Year" Id="cycle-year">
-                            <Input TValue="string" Value="@_cycleYear.ToString()" ValueChanged="@(v => { if (int.TryParse(v, out var yr)) _cycleYear = yr; })" Type="number" />
+                            <Input TValue="string" Id="cycle-year" Value="@_cycleYear.ToString()" ValueChanged="@(v => { if (int.TryParse(v, out var yr)) _cycleYear = yr; })" Type="number" />
                         </FormField>
                         <FormField LabelText="Start Date" Id="cycle-start">
                             <Input TValue="DateOnly" Id="cycle-start" Type="date" @bind-Value="_cycleStart" />
@@ -33,6 +33,10 @@
                             <Input TValue="DateOnly" Id="cycle-end" Type="date" @bind-Value="_cycleEnd" />
                         </FormField>
                     </div>
+                    @if (_formError is not null)
+                    {
+                        <Alert Variant="destructive" Class="mb-2">@_formError</Alert>
+                    }
                     <div class="flex gap-2 mt-2">
                         <Button Variant="primary" Size="sm" OnClick="CreateCycle" Loading="@_savingCycle" Disabled="@_savingCycle">Save</Button>
                         <Button Variant="outline" Size="sm" OnClick="() => _showCycleForm = false">Cancel</Button>
@@ -43,7 +47,11 @@
             <Separator />
 
             <CardContent Class="p-0">
-                @if (_cycles is null)
+                @if (_cyclesError is not null)
+                {
+                    <div class="p-4"><Alert Variant="destructive" Title="Couldn't load review cycles">@_cyclesError</Alert></div>
+                }
+                else if (_cycles is null)
                 {
                     <div class="flex items-center justify-center p-8"><Spinner /></div>
                 }
@@ -85,7 +93,11 @@
                 <CardTitle>Performance Reviews @(_selectedCycleId.HasValue ? "(filtered by cycle)" : "")</CardTitle>
             </CardHeader>
             <CardContent Class="p-0">
-                @if (_reviews is null)
+                @if (_reviewsError is not null)
+                {
+                    <div class="p-4"><Alert Variant="destructive" Title="Couldn't load reviews">@_reviewsError</Alert></div>
+                }
+                else if (_reviews is null)
                 {
                     <div class="flex items-center justify-center p-8"><Spinner /></div>
                 }
@@ -134,6 +146,9 @@
     private bool _showCycleForm;
     private bool _savingCycle;
     private string? _error;
+    private string? _formError;
+    private string? _cyclesError;
+    private string? _reviewsError;
     private string _cycleName = string.Empty;
     private int _cycleYear = DateTime.Today.Year;
     private DateOnly _cycleStart = DateOnly.FromDateTime(DateTime.Today);
@@ -144,8 +159,21 @@
         await Task.WhenAll(LoadCycles(), LoadReviews());
     }
 
-    private async Task LoadCycles() => _cycles = await Api.GetReviewCyclesAsync();
-    private async Task LoadReviews() => _reviews = await Api.GetPerformanceReviewsAsync(cycleId: _selectedCycleId);
+    private async Task LoadCycles()
+    {
+        _cyclesError = null;
+        try { _cycles = await Api.GetReviewCyclesAsync(); }
+        catch (Exception ex) { _cycles = null; _cyclesError = ex.Message; }
+    }
+
+    // A failed reload clears the list rather than leaving the previous filter's reviews under a
+    // heading that now claims to be showing the selected cycle.
+    private async Task LoadReviews()
+    {
+        _reviewsError = null;
+        try { _reviews = await Api.GetPerformanceReviewsAsync(cycleId: _selectedCycleId); }
+        catch (Exception ex) { _reviews = null; _reviewsError = ex.Message; }
+    }
 
     private async Task SelectCycle(Guid id)
     {
@@ -155,7 +183,20 @@
 
     private async Task CreateCycle()
     {
-        _savingCycle = true; _error = null;
+        _error = null;
+        _formError = null;
+        if (string.IsNullOrWhiteSpace(_cycleName))
+        {
+            _formError = "Please enter a name for the cycle.";
+            return;
+        }
+        if (_cycleEnd < _cycleStart)
+        {
+            _formError = "The end date cannot be before the start date.";
+            return;
+        }
+
+        _savingCycle = true;
         try
         {
             await Api.CreateReviewCycleAsync(new { name = _cycleName, year = _cycleYear, quarter = (int?)null, startDate = _cycleStart.ToString("yyyy-MM-dd"), endDate = _cycleEnd.ToString("yyyy-MM-dd") });
@@ -163,7 +204,7 @@
             _cycleName = string.Empty;
             await LoadCycles();
         }
-        catch { _error = "Failed to create cycle."; }
+        catch (Exception ex) { _error = $"Failed to create cycle. {ex.Message}"; }
         finally { _savingCycle = false; }
     }
 
