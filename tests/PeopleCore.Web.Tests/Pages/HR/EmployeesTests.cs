@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using AngleSharp.Dom;
 using Bunit;
 using Bunit.TestDoubles;
@@ -255,5 +256,203 @@ public class EmployeesTests : BunitContext
 
         FieldLabelled(cut, "firstName").GetAttribute("value").Should().BeEmpty();
         cut.FindAll("[role=alert]").Should().BeEmpty("a stale error from the last attempt would be misleading");
+    }
+
+    private static IElement SearchBox(IRenderedComponent<Employees> cut) => cut.Find("input[placeholder='Search by name or number...']");
+
+    private static IElement StatusFilter(IRenderedComponent<Employees> cut) =>
+        cut.FindAll("select").Single(s => s.QuerySelector("option")!.TextContent == "All Status");
+
+    private static HttpResponseMessage Json(HttpStatusCode status, string json) =>
+        new(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+
+    private static HttpResponseMessage ServerError(string detail) =>
+        Json(HttpStatusCode.InternalServerError, $$"""{"detail":"{{detail}}"}""");
+
+    /// <summary>
+    /// Swaps in an API with none of the constructor's routes, for a test that needs one of them to
+    /// fail: the stub answers with the first route that matches, so it cannot be overridden.
+    /// </summary>
+    private StubHttpHandler FreshApi()
+    {
+        var api = new StubHttpHandler();
+        Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(api)));
+        return api;
+    }
+
+    [Fact]
+    public void AFailedLoad_ShowsWhy_InsteadOfSpinningForever()
+    {
+        _api.On(HttpMethod.Get, FirstPagePath, () => ServerError("The employee directory is unavailable."));
+
+        var cut = Render<Employees>();
+
+        cut.WaitForAssertion(() =>
+            cut.Find("[role=alert]").TextContent.Should().Contain("The employee directory is unavailable."));
+        cut.FindAll(".animate-spin").Should().BeEmpty();
+        cut.FindAll("table").Should().BeEmpty();
+        cut.Markup.Should().NotContain("No employees found.", "a failure is not the same as an empty directory");
+    }
+
+    [Fact]
+    public void AFailedPageChange_DropsTheRowsOfThePreviousPage()
+    {
+        // Rows left under the error would read as page 2's employees.
+        _api.On(HttpMethod.Get, "/api/employees?page=2&pageSize=20", () => ServerError("Timed out."));
+        var cut = RenderPage(Paged(2, Employee("EMP-0001", "Maria Santos")));
+
+        ButtonNamed(cut, "2").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Timed out."));
+        cut.FindAll("table").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Searching_AsksTheApiForMatches_StartingFromPageOne()
+    {
+        _api.On(HttpMethod.Get, "/api/employees?page=2&pageSize=20", HttpStatusCode.OK, Paged(2, Employee("EMP-0021", "Andres Bonifacio")))
+            .On(HttpMethod.Get, "/api/employees?page=1&pageSize=20&search=Santos", HttpStatusCode.OK, Paged(1, Employee("EMP-0042", "Maria Santos")));
+        var cut = RenderPage(Paged(2, Employee("EMP-0001", "Jose Rizal")));
+        ButtonNamed(cut, "2").Click();
+        cut.WaitForAssertion(() => Pager(cut).TextContent.Should().Contain("Page 2 of 2"));
+
+        SearchBox(cut).Input("Santos");
+
+        cut.WaitForAssertion(() => Rows(cut).Should().ContainSingle().Which[0].Should().Be("EMP-0042"));
+        EmployeeListRequests.Last().Should().Be("/api/employees?page=1&pageSize=20&search=Santos",
+            "the matches start on page one, whichever page the user was on");
+    }
+
+    [Theory]
+    [InlineData("true", "&isActive=true")]
+    [InlineData("false", "&isActive=false")]
+    [InlineData("", "")]
+    public void TheStatusFilter_AsksForActiveOrInactiveEmployees_StartingFromPageOne(string choice, string expectedFilter)
+    {
+        _api.On(HttpMethod.Get, "/api/employees?page=2&pageSize=20", HttpStatusCode.OK, Paged(2, Employee("EMP-0021", "Andres Bonifacio")))
+            .On(HttpMethod.Get, "/api/employees?page=1&pageSize=20&isActive=true", HttpStatusCode.OK, Paged(1, Employee("EMP-0042", "Maria Santos")))
+            .On(HttpMethod.Get, "/api/employees?page=1&pageSize=20&isActive=false", HttpStatusCode.OK, Paged(1, Employee("EMP-0007", "Jose Rizal", active: false)));
+        var cut = RenderPage(Paged(2, Employee("EMP-0001", "Maria Santos")));
+        ButtonNamed(cut, "2").Click();
+        cut.WaitForAssertion(() => Pager(cut).TextContent.Should().Contain("Page 2 of 2"));
+        if (choice == "")
+        {
+            // Choosing "All Status" is only a change coming from another filter.
+            StatusFilter(cut).Change("true");
+            cut.WaitForAssertion(() => EmployeeListRequests.Last().Should().EndWith("&isActive=true"));
+        }
+
+        StatusFilter(cut).Change(choice);
+
+        cut.WaitForAssertion(() => EmployeeListRequests.Last().Should().Be(FirstPagePath + expectedFilter));
+    }
+
+    [Fact]
+    public void SearchAndStatus_AreSentTogether()
+    {
+        _api.On(HttpMethod.Get, "/api/employees?page=1&pageSize=20&isActive=false", HttpStatusCode.OK, Paged(1))
+            .On(HttpMethod.Get, "/api/employees?page=1&pageSize=20&search=Rizal&isActive=false", HttpStatusCode.OK,
+                Paged(1, Employee("EMP-0007", "Jose Rizal", active: false)));
+        var cut = RenderPage(Paged(1));
+
+        StatusFilter(cut).Change("false");
+        SearchBox(cut).Input("Rizal");
+
+        cut.WaitForAssertion(() => Rows(cut).Should().ContainSingle().Which[0].Should().Be("EMP-0007"));
+    }
+
+    [Fact]
+    public void AnOlderSearchAnsweredLate_DoesNotReplaceTheNewerResults()
+    {
+        // Every keystroke asks again, and the answers can come back in any order. The list has to
+        // show what matches the text now in the box, not whichever answer happened to arrive last.
+        var release = new TaskCompletionSource();
+        Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(
+            new HoldingHandler(_api, "/api/employees?page=1&pageSize=20&search=Ma", release.Task))));
+        _api.On(HttpMethod.Get, "/api/employees?page=1&pageSize=20&search=Ma", HttpStatusCode.OK,
+                Paged(1, Employee("EMP-0042", "Maria Santos"), Employee("EMP-0050", "Mark Cruz")))
+            .On(HttpMethod.Get, "/api/employees?page=1&pageSize=20&search=Mar", HttpStatusCode.OK,
+                Paged(1, Employee("EMP-0042", "Maria Santos")));
+        var cut = RenderPage(Paged(1));
+
+        SearchBox(cut).Input("Ma");
+        SearchBox(cut).Input("Mar");
+        cut.WaitForAssertion(() => Rows(cut).Should().ContainSingle());
+
+        // The page re-renders once the held search's handler finishes, whatever it did with the answer.
+        var rendersBefore = cut.RenderCount;
+        release.SetResult();
+        cut.WaitForState(() => cut.RenderCount > rendersBefore);
+
+        Rows(cut).Should().ContainSingle().Which[0].Should().Be("EMP-0042");
+    }
+
+    [Fact]
+    public void ASaveThatWorked_IsNotReportedAsFailed_WhenOnlyTheReloadAfterItFails()
+    {
+        // Telling the user the save failed invites a second attempt, which the API then refuses
+        // as a duplicate employee number.
+        var saved = false;
+        _api.On(HttpMethod.Post, "/api/employees", () =>
+            {
+                saved = true;
+                return Json(HttpStatusCode.Created, Employee("EMP-0100", "Ana Reyes"));
+            })
+            .On(HttpMethod.Get, FirstPagePath, () => saved
+                ? ServerError("The employee directory is unavailable.")
+                : Json(HttpStatusCode.OK, Paged(1)));
+        var cut = Render<Employees>();
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain("No employees found."));
+        OpenForm(cut);
+
+        FillRequiredFields(cut);
+        ButtonNamed(cut, "Save Employee").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("The employee directory is unavailable."));
+        cut.Markup.Should().NotContain("Failed to save employee");
+        cut.FindAll("button").Should().NotContain(b => b.TextContent.Trim() == "Save Employee", "the form closed on the successful save");
+    }
+
+    [Fact]
+    public void DepartmentsThatFailToLoad_AreExplainedInTheForm_AndTheListStillShows()
+    {
+        FreshApi()
+            .On(HttpMethod.Get, "/api/departments?page=1&pageSize=100", () => ServerError("Departments are unavailable."))
+            .On(HttpMethod.Get, FirstPagePath, HttpStatusCode.OK, Paged(1, Employee("EMP-0042", "Maria Santos")));
+
+        var cut = Render<Employees>();
+
+        cut.WaitForAssertion(() => Rows(cut).Should().ContainSingle());
+        cut.FindAll("[role=alert]").Should().BeEmpty("the list itself loaded, and the form is not open");
+        OpenForm(cut);
+        cut.Find("[role=alert]").TextContent.Should().Contain("Departments are unavailable.");
+    }
+
+    [Fact]
+    public void PositionsThatFailToLoad_AreExplainedInTheForm()
+    {
+        FreshApi()
+            .On(HttpMethod.Get, "/api/departments?page=1&pageSize=100", HttpStatusCode.OK, Paged(1, Department(FinanceId, "Finance")))
+            .On(HttpMethod.Get, $"/api/positions?page=1&pageSize=100&departmentId={FinanceId}", () => ServerError("Positions are unavailable."))
+            .On(HttpMethod.Get, FirstPagePath, HttpStatusCode.OK, Paged(1));
+        var cut = Render<Employees>();
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain("No employees found."));
+        OpenForm(cut);
+
+        cut.Find("#department").Change(FinanceId.ToString());
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Positions are unavailable."));
+        cut.FindAll("#position option").Select(o => o.TextContent).Should().Equal("None");
+    }
+
+    /// <summary>Holds back the answer to one URL until the test releases it.</summary>
+    private sealed class HoldingHandler(HttpMessageHandler inner, string heldPathAndQuery, Task release) : DelegatingHandler(inner)
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.PathAndQuery == heldPathAndQuery)
+                await release;
+            return await base.SendAsync(request, cancellationToken);
+        }
     }
 }
