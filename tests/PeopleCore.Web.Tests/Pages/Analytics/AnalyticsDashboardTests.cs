@@ -187,4 +187,51 @@ public class AnalyticsDashboardTests : BunitContext
             .Which.Should().Equal("4.0-5.0", "12", $"{40m:F1}%");
         Rows(cut, "Headcount by Department").Should().BeEmpty();
     }
+
+    [Fact]
+    public void AFailingSection_SaysItFailed_RatherThanLoadingForever()
+    {
+        Fails("hr/headcount");
+        Fails("hr/turnover");
+
+        var cut = RenderAs("HRManager");
+
+        Card(cut, "Headcount by Department").TextContent.Should().Contain("Couldn't load this section.").And.NotContain("Loading...");
+        cut.Find("[role=alert]").TextContent.Should()
+            .Contain("Some sections couldn't be loaded").And.Contain("Headcount by Department").And.Contain("Turnover")
+            .And.NotContain("Attendance Rates");
+    }
+
+    [Fact]
+    public void ASectionThatFailsForANewRange_DoesNotKeepShowingTheOldRangesFigures()
+    {
+        var from = new DateOnly(2025, 1, 1);
+        var to = new DateOnly(2025, 6, 30);
+        Returns("hr/headcount", Data("""{"department":"Finance","active":18,"inactive":2,"total":20}"""));
+        StubRange(from, to);
+        var cut = RenderAs("HRManager");
+        Rows(cut, "Headcount by Department").Should().ContainSingle();
+
+        Fails("hr/headcount");
+        cut.Find("#analytics-from").Input("2025-01-01");
+        cut.Find("#analytics-to").Input("2025-06-30");
+        ApplyButton(cut).Click();
+
+        cut.WaitForAssertion(() => Card(cut, "Headcount by Department").TextContent.Should().Contain("Couldn't load this section."));
+        Rows(cut, "Headcount by Department").Should().BeEmpty("those figures were for the previous range");
+    }
+
+    [Fact]
+    public void ARangeThatEndsBeforeItStarts_IsRefusedWithoutRefetching()
+    {
+        var cut = RenderAs("HRManager");
+        _api.Requests.Clear();
+
+        cut.Find("#analytics-from").Input("2025-06-30");
+        cut.Find("#analytics-to").Input("2025-01-01");
+        ApplyButton(cut).Click();
+
+        cut.Find("[role=alert]").TextContent.Should().Contain("The From date must be on or before the To date.");
+        _api.Requests.Should().BeEmpty();
+    }
 }

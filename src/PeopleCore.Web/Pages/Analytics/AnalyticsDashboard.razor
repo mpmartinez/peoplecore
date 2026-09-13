@@ -39,7 +39,7 @@
         <CardContent>
             @if (headcountData is null)
             {
-                <p class="text-sm text-muted-foreground">Loading...</p>
+                @SectionPlaceholder
             }
             else if (headcountData.Data.Count == 0)
             {
@@ -84,7 +84,7 @@
         <CardContent>
             @if (attendanceData is null)
             {
-                <p class="text-sm text-muted-foreground">Loading...</p>
+                @SectionPlaceholder
             }
             else if (attendanceData.Data.Count == 0)
             {
@@ -125,7 +125,7 @@
         <CardContent>
             @if (leaveUtilData is null)
             {
-                <p class="text-sm text-muted-foreground">Loading...</p>
+                @SectionPlaceholder
             }
             else if (leaveUtilData.Data.Count == 0)
             {
@@ -170,7 +170,7 @@
         <CardContent>
             @if (overtimeData is null)
             {
-                <p class="text-sm text-muted-foreground">Loading...</p>
+                @SectionPlaceholder
             }
             else if (overtimeData.Data.Count == 0)
             {
@@ -209,7 +209,7 @@
         <CardContent>
             @if (turnoverData is null)
             {
-                <p class="text-sm text-muted-foreground">Loading...</p>
+                @SectionPlaceholder
             }
             else if (turnoverData.Data.Count == 0)
             {
@@ -254,7 +254,7 @@
         <CardContent>
             @if (recruitmentData is null)
             {
-                <p class="text-sm text-muted-foreground">Loading...</p>
+                @SectionPlaceholder
             }
             else if (recruitmentData.Data.Count == 0)
             {
@@ -293,7 +293,7 @@
         <CardContent>
             @if (perfDistData is null)
             {
-                <p class="text-sm text-muted-foreground">Loading...</p>
+                @SectionPlaceholder
             }
             else if (perfDistData.Data.Count == 0)
             {
@@ -340,7 +340,7 @@
             <CardContent>
                 @if (workforceSummary is null)
                 {
-                    <p class="text-sm text-muted-foreground">Loading...</p>
+                    @SectionPlaceholder
                 }
                 else if (workforceSummary.Data.Count == 0)
                 {
@@ -401,7 +401,7 @@
             <CardContent>
                 @if (hiringTrend is null)
                 {
-                    <p class="text-sm text-muted-foreground">Loading...</p>
+                    @SectionPlaceholder
                 }
                 else if (hiringTrend.Data.Count == 0)
                 {
@@ -440,7 +440,7 @@
             <CardContent>
                 @if (attritionData is null)
                 {
-                    <p class="text-sm text-muted-foreground">Loading...</p>
+                    @SectionPlaceholder
                 }
                 else if (attritionData.Data.Count == 0)
                 {
@@ -485,7 +485,7 @@
             <CardContent>
                 @if (leaveSummary is null)
                 {
-                    <p class="text-sm text-muted-foreground">Loading...</p>
+                    @SectionPlaceholder
                 }
                 else if (leaveSummary.Data.Count == 0)
                 {
@@ -542,7 +542,7 @@
             <CardContent>
                 @if (perfOverview is null)
                 {
-                    <p class="text-sm text-muted-foreground">Loading...</p>
+                    @SectionPlaceholder
                 }
                 else if (perfOverview.Data.Count == 0)
                 {
@@ -598,6 +598,11 @@
     private AnalyticsResponse<LeaveSummaryDto>? leaveSummary;
     private AnalyticsResponse<PerformanceOverviewDto>? perfOverview;
 
+    // A section with no data is either still loading or failed; once loading has finished, only the
+    // second is possible.
+    private RenderFragment SectionPlaceholder =>
+        @<p class="text-sm text-muted-foreground">@(isLoading ? "Loading..." : "Couldn't load this section.")</p>;
+
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -608,54 +613,59 @@
 
     private async Task LoadData()
     {
-        isLoading = true;
         errorMessage = null;
-
-        try
+        if (fromDate > toDate)
         {
-            // Load HR analytics in parallel
-            var hrTasks = new List<Task>
-            {
-                LoadSafe(async () => headcountData = await Api.GetHeadcountAnalyticsAsync(fromDate, toDate)),
-                LoadSafe(async () => turnoverData = await Api.GetTurnoverAnalyticsAsync(fromDate, toDate)),
-                LoadSafe(async () => attendanceData = await Api.GetAttendanceAnalyticsAsync(fromDate, toDate)),
-                LoadSafe(async () => leaveUtilData = await Api.GetLeaveUtilizationAnalyticsAsync(fromDate, toDate)),
-                LoadSafe(async () => overtimeData = await Api.GetOvertimeAnalyticsAsync(fromDate, toDate)),
-                LoadSafe(async () => recruitmentData = await Api.GetRecruitmentFunnelAnalyticsAsync(fromDate, toDate)),
-                LoadSafe(async () => perfDistData = await Api.GetPerformanceDistributionAnalyticsAsync(fromDate, toDate))
-            };
+            errorMessage = "The From date must be on or before the To date.";
+            return;
+        }
 
-            // Load executive analytics if admin
-            if (isAdmin)
-            {
-                hrTasks.Add(LoadSafe(async () => workforceSummary = await Api.GetWorkforceSummaryAsync(fromDate, toDate)));
-                hrTasks.Add(LoadSafe(async () => hiringTrend = await Api.GetHiringTrendAsync(fromDate, toDate)));
-                hrTasks.Add(LoadSafe(async () => attritionData = await Api.GetAttritionRateAsync(fromDate, toDate)));
-                hrTasks.Add(LoadSafe(async () => leaveSummary = await Api.GetLeaveSummaryAsync(fromDate, toDate)));
-                hrTasks.Add(LoadSafe(async () => perfOverview = await Api.GetPerformanceOverviewAsync()));
-            }
+        isLoading = true;
 
-            await Task.WhenAll(hrTasks);
-        }
-        catch (Exception ex)
+        // Cleared first: a section that fails for the new range must not go on showing the figures
+        // it had for the previous one.
+        headcountData = null; turnoverData = null; attendanceData = null; leaveUtilData = null;
+        overtimeData = null; recruitmentData = null; perfDistData = null;
+        workforceSummary = null; hiringTrend = null; attritionData = null; leaveSummary = null; perfOverview = null;
+
+        var sections = new List<Task<string?>>
         {
-            errorMessage = $"Failed to load analytics data: {ex.Message}";
-        }
-        finally
+            LoadSection("Headcount by Department", async () => headcountData = await Api.GetHeadcountAnalyticsAsync(fromDate, toDate)),
+            LoadSection("Turnover", async () => turnoverData = await Api.GetTurnoverAnalyticsAsync(fromDate, toDate)),
+            LoadSection("Attendance Rates", async () => attendanceData = await Api.GetAttendanceAnalyticsAsync(fromDate, toDate)),
+            LoadSection("Leave Utilization", async () => leaveUtilData = await Api.GetLeaveUtilizationAnalyticsAsync(fromDate, toDate)),
+            LoadSection("Overtime by Department", async () => overtimeData = await Api.GetOvertimeAnalyticsAsync(fromDate, toDate)),
+            LoadSection("Recruitment Funnel", async () => recruitmentData = await Api.GetRecruitmentFunnelAnalyticsAsync(fromDate, toDate)),
+            LoadSection("Performance Distribution", async () => perfDistData = await Api.GetPerformanceDistributionAnalyticsAsync(fromDate, toDate))
+        };
+
+        if (isAdmin)
         {
-            isLoading = false;
+            sections.Add(LoadSection("Workforce Summary", async () => workforceSummary = await Api.GetWorkforceSummaryAsync(fromDate, toDate)));
+            sections.Add(LoadSection("Hiring Trend", async () => hiringTrend = await Api.GetHiringTrendAsync(fromDate, toDate)));
+            sections.Add(LoadSection("Attrition Rate", async () => attritionData = await Api.GetAttritionRateAsync(fromDate, toDate)));
+            sections.Add(LoadSection("Leave Summary", async () => leaveSummary = await Api.GetLeaveSummaryAsync(fromDate, toDate)));
+            sections.Add(LoadSection("Performance Overview", async () => perfOverview = await Api.GetPerformanceOverviewAsync()));
         }
+
+        var failed = (await Task.WhenAll(sections)).OfType<string>().ToList();
+        if (failed.Count > 0)
+            errorMessage = $"Some sections couldn't be loaded: {string.Join(", ", failed)}.";
+
+        isLoading = false;
     }
 
-    private static async Task LoadSafe(Func<Task> action)
+    /// <summary>Loads one section, returning its name if it failed so the others still show.</summary>
+    private static async Task<string?> LoadSection(string name, Func<Task> load)
     {
         try
         {
-            await action();
+            await load();
+            return null;
         }
         catch
         {
-            // Individual section failures are handled by null checks in the UI
+            return name;
         }
     }
 }
