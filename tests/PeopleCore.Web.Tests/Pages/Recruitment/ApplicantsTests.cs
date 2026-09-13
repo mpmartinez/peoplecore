@@ -113,4 +113,46 @@ public class ApplicantsTests : BunitContext
         Requested.Last().Should().Be("/api/applicants?page=2&pageSize=20&status=Screening");
         Pager(cut)!.TextContent.Should().Contain("Page 2 of 3");
     }
+
+    [Fact]
+    public void ChangingTheStatusFilter_StartsAgainFromTheFirstPage()
+    {
+        // Staying on page 3 of the old filter usually asks for a page the new filter does not have,
+        // and with a single page the pager is hidden - leaving the user looking at nothing.
+        _api.On(HttpMethod.Get, FirstPage, HttpStatusCode.OK, Page(1, 3, Applicant("Ana", "Reyes", "Screening")))
+            .On(HttpMethod.Get, "/api/applicants?page=3&pageSize=20", HttpStatusCode.OK, Page(3, 3, Applicant("Dan", "Uy", "Applied")))
+            .On(HttpMethod.Get, FirstPage + "&status=Hired", HttpStatusCode.OK, Page(1, 1, Applicant("Ben", "Cruz", "Hired")));
+        var cut = RenderPage();
+        Pager(cut)!.QuerySelectorAll("button").Single(b => b.TextContent.Trim() == "3").Click();
+        cut.WaitForAssertion(() => Rows(cut).Should().ContainSingle().Which[0].Should().Contain("Dan Uy"));
+
+        cut.Find("select").Change("Hired");
+
+        cut.WaitForAssertion(() => Rows(cut).Should().ContainSingle().Which[0].Should().Contain("Ben Cruz"));
+        Requested.Last().Should().Be(FirstPage + "&status=Hired");
+    }
+
+    [Fact]
+    public void ApplicantsThatFailToLoad_AreReported_InsteadOfCrashingThePage()
+    {
+        _api.On(HttpMethod.Get, FirstPage, HttpStatusCode.InternalServerError);
+
+        var cut = Render<Applicants>();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Couldn't load applicants"));
+        cut.FindAll("svg.animate-spin").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AFilterChangeThatFails_DoesNotLeaveThePreviousApplicantsOnScreen()
+    {
+        _api.On(HttpMethod.Get, FirstPage, HttpStatusCode.OK, Page(1, 1, Applicant("Ana", "Reyes", "Screening")))
+            .On(HttpMethod.Get, FirstPage + "&status=Hired", HttpStatusCode.InternalServerError);
+        var cut = RenderPage();
+
+        cut.Find("select").Change("Hired");
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Couldn't load applicants"));
+        cut.Markup.Should().NotContain("Ana Reyes");
+    }
 }

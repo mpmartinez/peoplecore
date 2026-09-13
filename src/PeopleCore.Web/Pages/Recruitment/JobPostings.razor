@@ -8,7 +8,7 @@
     <Actions>
         <div class="w-40">
             <Select TValue="string" Value="@_statusFilter"
-                    ValueChanged="@(async v => { _statusFilter = v; await Load(); })">
+                    ValueChanged="@(async v => { _statusFilter = v; _page = 1; await Load(); })">
                 <option value="">All Status</option>
                 <option value="Draft">Draft</option>
                 <option value="Open">Open</option>
@@ -57,7 +57,11 @@
 
 <Card>
     <CardContent Class="p-0">
-        @if (_postings is null)
+        @if (_loadError is not null)
+        {
+            <div class="p-4"><Alert Variant="destructive" Title="Couldn't load job postings">@_loadError</Alert></div>
+        }
+        else if (_postings is null)
         {
             <div class="flex items-center justify-center p-10">
                 <Spinner />
@@ -107,6 +111,12 @@
             </Table>
         }
     </CardContent>
+    @if (_loadError is null && _postings is not null && _postings.TotalPages > 1)
+    {
+        <CardFooter>
+            <Pagination CurrentPage="@_page" TotalPages="@_postings.TotalPages" OnPageChange="@HandlePage" />
+        </CardFooter>
+    }
 </Card>
 
 @code {
@@ -115,27 +125,70 @@
     private bool _showForm;
     private bool _saving;
     private string? _error;
+    private string? _loadError;
+    private int _page = 1;
     private JobPostingForm _form = new();
 
     protected override async Task OnInitializedAsync() => await Load();
-    private async Task Load() => _postings = await Api.GetJobPostingsAsync(string.IsNullOrEmpty(_statusFilter) ? null : _statusFilter);
+
+    private async Task Load()
+    {
+        _loadError = null;
+        try
+        {
+            _postings = await Api.GetJobPostingsAsync(string.IsNullOrEmpty(_statusFilter) ? null : _statusFilter, page: _page);
+        }
+        catch (Exception ex)
+        {
+            // Not the previous rows: after a filter or page change they answer a different question.
+            _postings = null;
+            _loadError = ex.Message;
+        }
+    }
+
+    private async Task HandlePage(int page) { _page = page; await Load(); }
 
     private async Task CreatePosting()
     {
-        _saving = true; _error = null;
+        _error = null;
+        if (_form.Vacancies < 1)
+        {
+            _error = "A posting needs at least one vacancy.";
+            return;
+        }
+
+        _saving = true;
         try
         {
             await Api.CreateJobPostingAsync(new { title = _form.Title, description = _form.Description, vacancies = _form.Vacancies, departmentId = (Guid?)null, positionId = (Guid?)null, requirements = (string?)null });
-            _showForm = false;
-            _form = new();
-            await Load();
         }
-        catch { _error = "Failed to create posting."; }
+        catch (Exception ex)
+        {
+            _error = $"Failed to create posting. {ex.Message}";
+            return;
+        }
         finally { _saving = false; }
+
+        // Outside the try: the posting exists now, so a failed reload is a list problem (Load reports
+        // it) and must not read as a failed create that invites the user to create it again.
+        _showForm = false;
+        _form = new();
+        await Load();
     }
 
-    private async Task Publish(Guid id) { try { await Api.PublishJobPostingAsync(id); await Load(); } catch { _error = "Failed to publish."; } }
-    private async Task Close(Guid id) { try { await Api.CloseJobPostingAsync(id); await Load(); } catch { _error = "Failed to close."; } }
+    private async Task Publish(Guid id)
+    {
+        try { await Api.PublishJobPostingAsync(id); _error = null; }
+        catch (Exception ex) { _error = $"Failed to publish. {ex.Message}"; return; }
+        await Load();
+    }
+
+    private async Task Close(Guid id)
+    {
+        try { await Api.CloseJobPostingAsync(id); _error = null; }
+        catch (Exception ex) { _error = $"Failed to close. {ex.Message}"; return; }
+        await Load();
+    }
 
     private static string JobStatusVariant(string s) => s switch
     {

@@ -8,7 +8,7 @@
     <Actions>
         <div class="w-48">
             <Select TValue="string" Value="@_statusFilter"
-                    ValueChanged="@(async v => { _statusFilter = v; await Load(); })">
+                    ValueChanged="@(async v => { _statusFilter = v; _page = 1; await Load(); })">
                 <option value="">All Status</option>
                 <option value="Applied">Applied</option>
                 <option value="Screening">Screening</option>
@@ -23,7 +23,11 @@
 
 <Card>
     <CardContent Class="p-0">
-        @if (_applicants is null)
+        @if (_loadError is not null)
+        {
+            <div class="p-4"><Alert Variant="destructive" Title="Couldn't load applicants">@_loadError</Alert></div>
+        }
+        else if (_applicants is null)
         {
             <div class="flex items-center justify-center p-10">
                 <Spinner />
@@ -75,11 +79,24 @@
     private PagedResult<ApplicantDto>? _applicants;
     private string _statusFilter = string.Empty;
     private int _page = 1;
+    private string? _loadError;
 
     protected override async Task OnInitializedAsync() => await Load();
-    private async Task Load() => _applicants = await Api.GetApplicantsAsync(status: string.IsNullOrEmpty(_statusFilter) ? null : _statusFilter, page: _page);
-    private async Task PrevPage() { if (_page > 1) { _page--; await Load(); } }
-    private async Task NextPage() { if (_applicants is not null && _page < _applicants.TotalPages) { _page++; await Load(); } }
+
+    private async Task Load()
+    {
+        _loadError = null;
+        try
+        {
+            _applicants = await Api.GetApplicantsAsync(status: string.IsNullOrEmpty(_statusFilter) ? null : _statusFilter, page: _page);
+        }
+        catch (Exception ex)
+        {
+            // Not the previous rows: after a filter or page change they answer a different question.
+            _applicants = null;
+            _loadError = ex.Message;
+        }
+    }
 
     private async Task HandlePage(int page) { _page = page; await Load(); }
 

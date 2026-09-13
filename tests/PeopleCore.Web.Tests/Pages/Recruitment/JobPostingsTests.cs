@@ -218,4 +218,120 @@ public class JobPostingsTests : BunitContext
         Button(cut, "Save Draft").HasAttribute("disabled").Should().BeFalse("the user has to be able to try again");
         Gets.Should().ContainSingle("nothing was created, so there is nothing new to show");
     }
+
+    private static string PageOf(int page, int totalPages, params string[] postings) =>
+        $$"""{"items":[{{string.Join(",", postings)}}],"totalCount":{{postings.Length}},"page":{{page}},"pageSize":20,"totalPages":{{totalPages}}}""";
+
+    [Fact]
+    public void MoreThanOnePage_OffersAPager_SoLaterPostingsCanBeReached()
+    {
+        _api.On(HttpMethod.Get, AllPath, HttpStatusCode.OK, PageOf(1, 2, Posting(OpenId, "Backend Developer", "Open")))
+            .On(HttpMethod.Get, "/api/job-postings?page=2&pageSize=20", HttpStatusCode.OK,
+                PageOf(2, 2, Posting(ClosedId, "Office Clerk", "Closed")));
+        var cut = RenderPage();
+
+        cut.FindAll("nav").Single(n => n.TextContent.Contains("Page ")).QuerySelectorAll("button")
+            .Single(b => b.TextContent.Trim() == "2").Click();
+
+        cut.WaitForAssertion(() => Row(cut, "Office Clerk"));
+        Gets.Last().Should().Be("/api/job-postings?page=2&pageSize=20");
+    }
+
+    [Fact]
+    public void ChangingTheStatusFilter_StartsAgainFromTheFirstPage()
+    {
+        _api.On(HttpMethod.Get, AllPath, HttpStatusCode.OK, PageOf(1, 2, Posting(OpenId, "Backend Developer", "Open")))
+            .On(HttpMethod.Get, "/api/job-postings?page=2&pageSize=20", HttpStatusCode.OK,
+                PageOf(2, 2, Posting(ClosedId, "Office Clerk", "Closed")))
+            .On(HttpMethod.Get, AllPath + "&status=Draft", HttpStatusCode.OK, Page(Posting(DraftId, "Payroll Analyst", "Draft")));
+        var cut = RenderPage();
+        cut.FindAll("nav").Single(n => n.TextContent.Contains("Page ")).QuerySelectorAll("button")
+            .Single(b => b.TextContent.Trim() == "2").Click();
+        cut.WaitForAssertion(() => Row(cut, "Office Clerk"));
+
+        cut.Find("select").Change("Draft");
+
+        cut.WaitForAssertion(() => Row(cut, "Payroll Analyst"));
+        Gets.Last().Should().Be(AllPath + "&status=Draft");
+    }
+
+    [Fact]
+    public void PostingsThatFailToLoad_AreReported_InsteadOfCrashingThePage()
+    {
+        _api.On(HttpMethod.Get, AllPath, HttpStatusCode.InternalServerError);
+
+        var cut = Render<JobPostings>();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Couldn't load job postings"));
+        cut.FindAll("svg.animate-spin").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AFilterChangeThatFails_DoesNotLeaveThePreviousPostingsOnScreen()
+    {
+        _api.On(HttpMethod.Get, AllPath, HttpStatusCode.OK, ThreePostings)
+            .On(HttpMethod.Get, AllPath + "&status=Open", HttpStatusCode.InternalServerError);
+        var cut = RenderPage();
+
+        cut.Find("select").Change("Open");
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Couldn't load job postings"));
+        cut.FindAll("tbody tr").Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-2")]
+    public void FewerThanOneVacancy_IsRefusedWithoutCallingTheApi(string vacancies)
+    {
+        _api.On(HttpMethod.Get, AllPath, HttpStatusCode.OK, ThreePostings);
+        var cut = RenderPage();
+        OpenForm(cut);
+
+        cut.Find("input[placeholder='Position title']").Input("Data Engineer");
+        cut.Find("input[type=number]").Input(vacancies);
+        Button(cut, "Save Draft").Click();
+
+        cut.Find("[role=alert]").TextContent.Should().Contain("A posting needs at least one vacancy.");
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Post);
+    }
+
+    [Fact]
+    public void AnEarlierFailure_IsClearedOnceALaterActionSucceeds()
+    {
+        _api.On(HttpMethod.Get, AllPath, HttpStatusCode.OK, ThreePostings)
+            .On(HttpMethod.Put, $"/api/job-postings/{DraftId}/publish", HttpStatusCode.Conflict)
+            .On(HttpMethod.Put, $"/api/job-postings/{OpenId}/close", HttpStatusCode.OK, Posting(OpenId, "Backend Developer", "Closed"));
+        var cut = RenderPage();
+
+        Button(cut, "Publish").Click();
+        cut.WaitForAssertion(() => cut.FindAll("[role=alert]").Should().ContainSingle());
+
+        Button(cut, "Close").Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[role=alert]").Should().BeEmpty());
+    }
+
+    [Fact]
+    public void ACreatedPostingWhoseListFailsToReload_IsNotReportedAsAFailedCreate()
+    {
+        // Saying "Failed to create posting." here would invite the user to create it a second time.
+        var loads = 0;
+        _api.On(HttpMethod.Get, AllPath, () => ++loads == 1
+                ? new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(ThreePostings, System.Text.Encoding.UTF8, "application/json")
+                }
+                : new HttpResponseMessage(HttpStatusCode.InternalServerError))
+            .On(HttpMethod.Post, "/api/job-postings", HttpStatusCode.Created, Posting(Guid.NewGuid(), "Data Engineer", "Draft"));
+        var cut = RenderPage();
+        OpenForm(cut);
+
+        cut.Find("input[placeholder='Position title']").Input("Data Engineer");
+        Button(cut, "Save Draft").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Couldn't load job postings"));
+        cut.Markup.Should().NotContain("Failed to create posting.");
+        cut.FindAll("input[placeholder='Position title']").Should().BeEmpty("the posting was created, so the form is done");
+    }
 }
