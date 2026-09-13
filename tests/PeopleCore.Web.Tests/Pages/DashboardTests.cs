@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Security.Claims;
+using System.Text;
 using Bunit;
 using Bunit.TestDoubles;
 using FluentAssertions;
@@ -27,12 +28,19 @@ public class DashboardTests : BunitContext
 
     private string BalancesPath => $"/api/leave-balances/{EmployeeId}";
     private string AttendancePath => $"/api/attendance?page=1&pageSize=1&employeeId={EmployeeId}";
-    private string MyRequestsPath => $"/api/leave-requests?page=1&pageSize=100&employeeId={EmployeeId}";
+
+    // Only the count is shown, so one row is enough; the API's total says how many there are.
+    private string MyPendingPath => $"/api/leave-requests?page=1&pageSize=1&employeeId={EmployeeId}&status=Pending";
+    private const string AllPendingPath = "/api/leave-requests?page=1&pageSize=1&status=Pending";
 
     private static string Today => DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
     private static string Paged(params string[] items) =>
         $$"""{"items":[{{string.Join(",", items)}}],"totalCount":{{items.Length}},"page":1,"pageSize":100,"totalPages":1}""";
+
+    /// <summary>The first page of a pending-only query whose total is <paramref name="total"/>.</summary>
+    private static string Pending(int total) =>
+        $$"""{"items":[{{(total == 0 ? "" : LeaveRequest("Pending"))}}],"totalCount":{{total}},"page":1,"pageSize":1,"totalPages":{{total}}}""";
 
     private static string Balance(string leaveType, decimal remaining) =>
         $$"""
@@ -52,12 +60,28 @@ public class DashboardTests : BunitContext
          "startDate":"2026-10-05","endDate":"2026-10-06","totalDays":2,"status":"{{status}}","reason":null}
         """;
 
+    private static HttpResponseMessage ServerError(string detail) =>
+        new(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent($$"""{"detail":"{{detail}}"}""", Encoding.UTF8, "application/json")
+        };
+
     private void SignedInAsAnEmployee(string balances = "[]", string attendance = "", string requests = "")
     {
         _auth.SetClaims(new Claim("employee_id", EmployeeId.ToString()));
         _api.On(HttpMethod.Get, BalancesPath, HttpStatusCode.OK, balances)
             .On(HttpMethod.Get, AttendancePath, HttpStatusCode.OK, attendance == "" ? Paged() : attendance)
-            .On(HttpMethod.Get, MyRequestsPath, HttpStatusCode.OK, requests == "" ? Paged() : requests);
+            .On(HttpMethod.Get, MyPendingPath, HttpStatusCode.OK, requests == "" ? Pending(0) : requests);
+    }
+
+    /// <summary>
+    /// Signed in as an employee whose request to <paramref name="failingPath"/> fails. The stub
+    /// answers with the first route that matches, so the failure is registered first.
+    /// </summary>
+    private void SignedInAsAnEmployeeWhereThisFails(string failingPath, string detail)
+    {
+        _api.On(HttpMethod.Get, failingPath, () => ServerError(detail));
+        SignedInAsAnEmployee(balances: $"[{Balance("Vacation Leave", 12)}]", requests: Pending(4));
     }
 
     private IRenderedComponent<Dashboard> RenderPage()
@@ -65,6 +89,13 @@ public class DashboardTests : BunitContext
         var cut = Render<Dashboard>();
         cut.WaitForAssertion(() => cut.Markup.Should().NotContain("Loading..."));
         return cut;
+    }
+
+    /// <summary>The text of the card with this title, whitespace collapsed.</summary>
+    private static string CardText(IRenderedComponent<Dashboard> cut, string title)
+    {
+        var card = cut.FindAll("h3").Single(h => h.TextContent.Trim() == title).ParentElement!.ParentElement!;
+        return string.Join(' ', card.TextContent.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
     }
 
     [Fact]
@@ -78,6 +109,17 @@ public class DashboardTests : BunitContext
         cut.FindAll("tbody tr").Select(r => r.TextContent.Trim().Replace("\n", " "))
             .Select(t => string.Join(' ', t.Split(' ', StringSplitOptions.RemoveEmptyEntries)))
             .Should().Equal("Vacation Leave 12.5 days", "Sick Leave 7 days", "Emergency Leave 3 days");
+    }
+
+    [Fact]
+    public void NoLeaveBalances_SaysSo_InsteadOfAnEmptyTable()
+    {
+        SignedInAsAnEmployee(balances: "[]");
+
+        var cut = RenderPage();
+
+        CardText(cut, "Leave Balances").Should().Be("Leave Balances No leave balances yet.");
+        cut.FindAll("table").Should().BeEmpty();
     }
 
     [Fact]
@@ -111,52 +153,91 @@ public class DashboardTests : BunitContext
         var yesterday = DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         SignedInAsAnEmployee(
             attendance: Paged(Attendance(yesterday, "08:00", "17:00", 30)),
-            requests: Paged(LeaveRequest("Pending")));
+            requests: Pending(1));
 
         var cut = RenderPage();
 
-        // The pending count is the last thing loaded, so once it shows, attendance has been read.
-        cut.WaitForAssertion(() => cut.Find(".text-3xl").TextContent.Trim().Should().Be("1"));
         cut.Markup.Should().Contain("Not clocked in yet today.");
         cut.Markup.Should().NotContain("08:00").And.NotContain("Late by");
     }
 
     [Fact]
-    public void PendingRequests_AreCounted_AndFlaggedForAction()
+    public void PendingRequests_AreCountedFromTheApisTotal_AndFlaggedForAction()
     {
-        SignedInAsAnEmployee(requests: Paged(LeaveRequest("Pending"), LeaveRequest("Approved"), LeaveRequest("Pending"), LeaveRequest("Rejected")));
+        // The total, not the rows that came back: counting a page of rows undercounts as soon as
+        // there are more pending requests than fit on it.
+        SignedInAsAnEmployee(requests: Pending(137));
 
         var cut = RenderPage();
 
-        cut.WaitForAssertion(() => cut.Find(".text-3xl").TextContent.Trim().Should().Be("2"));
+        cut.Find(".text-3xl").TextContent.Trim().Should().Be("137");
         cut.Markup.Should().Contain("Action Required").And.NotContain("All Clear");
     }
 
     [Fact]
     public void WithNothingPending_ItIsAllClear()
     {
-        SignedInAsAnEmployee(requests: Paged(LeaveRequest("Approved")));
+        SignedInAsAnEmployee(requests: Pending(0));
 
         var cut = RenderPage();
 
-        cut.WaitForAssertion(() => cut.Markup.Should().Contain("All Clear"));
+        cut.Markup.Should().Contain("All Clear");
         cut.Find(".text-3xl").TextContent.Trim().Should().Be("0");
         cut.Markup.Should().NotContain("Action Required");
     }
 
     [Fact]
-    public void AnAccountWithNoEmployeeRecord_AsksForNoPersonalData_AndCountsAllRequests()
+    public void AnAccountWithNoEmployeeRecord_AsksForNoPersonalData_SaysSo_AndCountsAllPendingRequests()
     {
         // An HR or admin login is not necessarily an employee. Asking for balances or attendance
-        // without an id would fail; the pending count is the organisation's instead.
-        _api.On(HttpMethod.Get, "/api/leave-requests?page=1&pageSize=100", HttpStatusCode.OK,
-            Paged(LeaveRequest("Pending"), LeaveRequest("Pending"), LeaveRequest("Pending")));
+        // without an id would fail, and waiting for them would spin forever; the pending count is
+        // the organisation's instead.
+        _api.On(HttpMethod.Get, AllPendingPath, HttpStatusCode.OK, Pending(3));
 
-        var cut = Render<Dashboard>();
+        var cut = RenderPage();
 
-        cut.WaitForAssertion(() => cut.Find(".text-3xl").TextContent.Trim().Should().Be("3"));
-        _api.Requests.Select(r => r.RequestUri!.PathAndQuery)
-            .Should().Equal("/api/leave-requests?page=1&pageSize=100");
-        cut.Markup.Should().Contain("Not clocked in yet today.");
+        cut.Find(".text-3xl").TextContent.Trim().Should().Be("3");
+        _api.Requests.Select(r => r.RequestUri!.PathAndQuery).Should().Equal(AllPendingPath);
+        CardText(cut, "Leave Balances").Should().Contain("not linked to an employee record");
+        CardText(cut, "Today's Attendance").Should().Contain("not linked to an employee record")
+            .And.NotContain("Not clocked in yet today.", "there is no one to clock in");
+    }
+
+    [Fact]
+    public void BalancesThatFailToLoad_AreExplainedInTheirCard_AndTheRestStillShows()
+    {
+        SignedInAsAnEmployeeWhereThisFails(BalancesPath, "Balances are unavailable.");
+
+        var cut = RenderPage();
+
+        CardText(cut, "Leave Balances").Should().Contain("Balances are unavailable.");
+        cut.Find(".text-3xl").TextContent.Trim().Should().Be("4");
+        CardText(cut, "Today's Attendance").Should().Contain("Not clocked in yet today.");
+    }
+
+    [Fact]
+    public void AttendanceThatFailsToLoad_IsExplained_NotReportedAsNotClockedIn()
+    {
+        // "Not clocked in" would be a claim about the employee that nobody checked.
+        SignedInAsAnEmployeeWhereThisFails(AttendancePath, "Attendance is unavailable.");
+
+        var cut = RenderPage();
+
+        CardText(cut, "Today's Attendance").Should().Contain("Attendance is unavailable.").And.NotContain("Not clocked in");
+        CardText(cut, "Leave Balances").Should().Contain("Vacation Leave");
+        cut.Find(".text-3xl").TextContent.Trim().Should().Be("4");
+    }
+
+    [Fact]
+    public void APendingCountThatFailsToLoad_IsExplained_NotReportedAsAllClear()
+    {
+        SignedInAsAnEmployeeWhereThisFails(MyPendingPath, "Leave requests are unavailable.");
+
+        var cut = RenderPage();
+
+        var card = CardText(cut, "Pending Leave Requests");
+        card.Should().Contain("Leave requests are unavailable.").And.NotContain("All Clear").And.NotContain("Action Required");
+        cut.FindAll(".text-3xl").Should().BeEmpty("a zero would read as nothing to approve");
+        CardText(cut, "Leave Balances").Should().Contain("Vacation Leave");
     }
 }

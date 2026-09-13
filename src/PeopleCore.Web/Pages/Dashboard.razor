@@ -14,9 +14,21 @@
             <CardTitle>Leave Balances</CardTitle>
         </CardHeader>
         <CardContent>
-            @if (_balances is null)
+            @if (_notLinked)
+            {
+                <p class="text-sm text-muted-foreground">@NotLinkedText</p>
+            }
+            else if (_balancesError is not null)
+            {
+                <Alert Variant="destructive">@_balancesError</Alert>
+            }
+            else if (_balances is null)
             {
                 <p class="text-sm text-muted-foreground">Loading...</p>
+            }
+            else if (!_balances.Any())
+            {
+                <p class="text-sm text-muted-foreground">No leave balances yet.</p>
             }
             else
             {
@@ -42,7 +54,19 @@
             <CardTitle>Today's Attendance</CardTitle>
         </CardHeader>
         <CardContent>
-            @if (_todayRecord is not null)
+            @if (_notLinked)
+            {
+                <p class="text-sm text-muted-foreground">@NotLinkedText</p>
+            }
+            else if (_attendanceError is not null)
+            {
+                <Alert Variant="destructive">@_attendanceError</Alert>
+            }
+            else if (!_attendanceLoaded)
+            {
+                <p class="text-sm text-muted-foreground">Loading...</p>
+            }
+            else if (_todayRecord is not null)
             {
                 <div class="text-sm space-y-2">
                     <div class="flex justify-between">
@@ -74,19 +98,30 @@
             <CardTitle>Pending Leave Requests</CardTitle>
         </CardHeader>
         <CardContent>
-            <div class="text-3xl font-bold text-foreground mb-1">@_pendingCount</div>
-            <p class="text-sm text-muted-foreground">awaiting approval</p>
-            @if (_pendingCount > 0)
+            @if (_pendingError is not null)
             {
-                <div class="mt-3">
-                    <Badge Variant="warning">Action Required</Badge>
-                </div>
+                <Alert Variant="destructive">@_pendingError</Alert>
+            }
+            else if (_pendingCount is null)
+            {
+                <p class="text-sm text-muted-foreground">Loading...</p>
             }
             else
             {
-                <div class="mt-3">
-                    <Badge Variant="success">All Clear</Badge>
-                </div>
+                <div class="text-3xl font-bold text-foreground mb-1">@_pendingCount</div>
+                <p class="text-sm text-muted-foreground">awaiting approval</p>
+                @if (_pendingCount > 0)
+                {
+                    <div class="mt-3">
+                        <Badge Variant="warning">Action Required</Badge>
+                    </div>
+                }
+                else
+                {
+                    <div class="mt-3">
+                        <Badge Variant="success">All Clear</Badge>
+                    </div>
+                }
             }
         </CardContent>
     </Card>
@@ -94,25 +129,62 @@
 </div>
 
 @code {
+    private const string NotLinkedText = "Your account is not linked to an employee record.";
+
+    // Each card loads and fails on its own, so one unavailable service does not blank the others.
+    private bool _notLinked;
     private IReadOnlyList<LeaveBalanceDto>? _balances;
+    private string? _balancesError;
+    private bool _attendanceLoaded;
     private AttendanceRecordDto? _todayRecord;
-    private int _pendingCount;
-    private Guid? _employeeId;
+    private string? _attendanceError;
+    private int? _pendingCount;
+    private string? _pendingError;
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         var empIdClaim = authState.User.FindFirst("employee_id")?.Value;
-        if (Guid.TryParse(empIdClaim, out var empId))
+        Guid? employeeId = Guid.TryParse(empIdClaim, out var empId) ? empId : null;
+
+        // An admin or HR login need not be an employee. There are no balances or attendance to
+        // wait for then, and asking without an id would fail.
+        _notLinked = employeeId is null;
+        if (employeeId.HasValue)
         {
-            _employeeId = empId;
-            _balances = await Api.GetLeaveBalancesAsync(empId);
-            var attendance = await Api.GetAttendanceAsync(empId, page: 1, pageSize: 1);
-            _todayRecord = attendance?.Items.FirstOrDefault(r =>
-                r.AttendanceDate == DateOnly.FromDateTime(DateTime.Today).ToString("yyyy-MM-dd"));
+            await LoadBalances(employeeId.Value);
+            await LoadTodaysAttendance(employeeId.Value);
         }
 
-        var leaveRequests = await Api.GetLeaveRequestsAsync(employeeId: _employeeId, page: 1, pageSize: 100);
-        _pendingCount = leaveRequests?.Items.Count(r => r.Status == "Pending") ?? 0;
+        await LoadPendingCount(employeeId);
+    }
+
+    private async Task LoadBalances(Guid employeeId)
+    {
+        try { _balances = await Api.GetLeaveBalancesAsync(employeeId) ?? []; }
+        catch (Exception ex) { _balancesError = ex.Message; }
+    }
+
+    private async Task LoadTodaysAttendance(Guid employeeId)
+    {
+        try
+        {
+            var attendance = await Api.GetAttendanceAsync(employeeId, page: 1, pageSize: 1);
+            _todayRecord = attendance?.Items.FirstOrDefault(r =>
+                r.AttendanceDate == DateOnly.FromDateTime(DateTime.Today).ToString("yyyy-MM-dd"));
+            _attendanceLoaded = true;
+        }
+        catch (Exception ex) { _attendanceError = ex.Message; }
+    }
+
+    private async Task LoadPendingCount(Guid? employeeId)
+    {
+        // Only the total is needed, so ask for a single row and read the count the API reports.
+        try
+        {
+            var pending = await Api.GetLeaveRequestsAsync(employeeId: employeeId, page: 1, pageSize: 1, status: "Pending");
+            _pendingCount = pending?.TotalCount ?? 0;
+        }
+        catch (Exception ex) { _pendingError = ex.Message; }
     }
 }
