@@ -208,12 +208,28 @@ public class PayrollRunDetailTests : BunitContext
     {
         _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Paid"))
             .On(HttpMethod.Get, $"/api/reports/payslip/{RunId}/{MariaId}", HttpStatusCode.InternalServerError);
+        // No explanation in the body: the fallback sentence still has to reach the user.
         var cut = RenderPage();
 
         cut.Find("button[title='Download payslip for Maria Santos']").Click();
 
         cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should()
-            .Contain("Failed to download payslip for Maria Santos. Please try again."));
+            .Contain("Failed to download payslip for Maria Santos. The server ran into a problem (500). Please try again."));
+        JSInterop.VerifyNotInvoke("downloadFileFromBytes");
+    }
+
+    [Fact]
+    public void AFailedDownloadOfEveryPayslip_SaysWhy_AndSavesNothing()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Paid"))
+            .On(HttpMethod.Get, $"/api/reports/payslips/{RunId}", HttpStatusCode.Conflict,
+                """{"detail":"Payslips are released once the run is paid."}""");
+        var cut = RenderPage();
+
+        cut.FindAll("button").Single(b => b.TextContent.Contains("Download all")).Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should()
+            .Contain("Failed to download payslips for this run. Payslips are released once the run is paid."));
         JSInterop.VerifyNotInvoke("downloadFileFromBytes");
     }
 

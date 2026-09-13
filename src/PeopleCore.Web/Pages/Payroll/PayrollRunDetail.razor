@@ -272,17 +272,12 @@ else
         try
         {
             var pdf = await Api.GetPayslipAsync(Id, employee.EmployeeId);
-            if (pdf is null)
-            {
-                _actionError = $"Failed to download payslip for {employee.EmployeeName}. Please try again.";
-                return;
-            }
             var fileName = $"Payslip-{_run?.RunNumber ?? Id.ToString()}-{employee.EmployeeNumber}.pdf";
             await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(pdf), fileName, "application/pdf");
         }
         catch (Exception ex)
         {
-            _actionError = ex.Message;
+            _actionError = $"Failed to download payslip for {employee.EmployeeName}. {ex.Message}";
         }
         finally
         {
@@ -297,17 +292,12 @@ else
         try
         {
             var pdf = await Api.GetRunPayslipsAsync(Id);
-            if (pdf is null)
-            {
-                _actionError = "Failed to download payslips for this run. Please try again.";
-                return;
-            }
             var fileName = $"Payslips-{_run?.RunNumber ?? Id.ToString()}.pdf";
             await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(pdf), fileName, "application/pdf");
         }
         catch (Exception ex)
         {
-            _actionError = ex.Message;
+            _actionError = $"Failed to download payslips for this run. {ex.Message}";
         }
         finally
         {

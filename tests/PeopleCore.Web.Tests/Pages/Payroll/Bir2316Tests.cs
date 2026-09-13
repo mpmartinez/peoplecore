@@ -207,13 +207,14 @@ public class Bir2316Tests : BunitContext
     [Fact]
     public void AFailedGenerate_ShowsAnInlineError_AndSavesNothing()
     {
-        _api.On(HttpMethod.Post, $"/api/reports/2316/generate/{MariaId}?year=2025", HttpStatusCode.InternalServerError);
+        _api.On(HttpMethod.Post, $"/api/reports/2316/generate/{MariaId}?year=2025", HttpStatusCode.BadRequest,
+            """{"detail":"Previous employer TIN is not a valid TIN."}""");
         var cut = RenderWithMariasPreview();
 
         Button(cut, "Generate").Click();
 
         cut.WaitForAssertion(() =>
-            cut.Find("[role=alert]").TextContent.Should().Contain("Failed to generate the 2316. Please try again."));
+            cut.Find("[role=alert]").TextContent.Should().Contain("Failed to generate the 2316. Previous employer TIN is not a valid TIN."));
         JSInterop.VerifyNotInvoke("downloadFileFromBytes");
     }
 

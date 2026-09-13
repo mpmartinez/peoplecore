@@ -237,7 +237,7 @@ public class EmployeesTests : BunitContext
         ButtonNamed(cut, "Save Employee").Click();
 
         cut.WaitForAssertion(() =>
-            cut.Find("[role=alert]").TextContent.Should().Contain("Failed to save employee. Check all fields and try again."));
+            cut.Find("[role=alert]").TextContent.Should().Contain("Failed to save employee. Employee number already exists."));
         FieldLabelled(cut, "empNumber").GetAttribute("value").Should().Be("EMP-0100", "what the user typed must survive the failure");
         ButtonNamed(cut, "Save Employee").HasAttribute("disabled").Should().BeFalse();
         EmployeeListRequests.Should().ContainSingle();

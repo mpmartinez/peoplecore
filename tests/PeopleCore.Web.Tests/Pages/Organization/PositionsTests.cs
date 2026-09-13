@@ -152,7 +152,7 @@ public class PositionsTests : BunitContext
     [Fact]
     public void ARejectedCreate_ShowsTheError_AndKeepsWhatWasEntered()
     {
-        _api.On(HttpMethod.Post, "/api/positions", HttpStatusCode.BadRequest);
+        _api.On(HttpMethod.Post, "/api/positions", HttpStatusCode.BadRequest, """{"detail":"Title is too long."}""");
         var cut = RenderPage();
 
         DepartmentSelect(cut).Change(FinanceId.ToString());
@@ -160,7 +160,7 @@ public class PositionsTests : BunitContext
         AddButton(cut).Click();
 
         cut.WaitForAssertion(() =>
-            cut.Find("[role=alert]").TextContent.Should().Contain("Failed to create position."));
+            cut.Find("[role=alert]").TextContent.Should().Contain("Failed to create position. Title is too long."));
         DepartmentSelect(cut).GetAttribute("value").Should().Be(FinanceId.ToString());
         TitleInput(cut).GetAttribute("value").Should().Be("Accountant");
         AddButton(cut).HasAttribute("disabled").Should().BeFalse("the user has to be able to try again");
