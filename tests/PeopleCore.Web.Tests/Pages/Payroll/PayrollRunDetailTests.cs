@@ -140,6 +140,27 @@ public class PayrollRunDetailTests : BunitContext
     }
 
     [Fact]
+    public void AFailedReloadAfterAnAction_ShowsTheError_RatherThanTheRunAsItWasBefore()
+    {
+        // The compute went through, so the Draft figures on screen are out of date; leaving them
+        // there with the reload's error hidden would have the user approving numbers that no
+        // longer exist.
+        var loads = 0;
+        _api.On(HttpMethod.Get, RunPath, () => ++loads == 1
+                ? Json(RunJson("Draft"))
+                : new HttpResponseMessage(HttpStatusCode.InternalServerError))
+            .On(HttpMethod.Put, $"{RunPath}/compute", HttpStatusCode.NoContent);
+        var cut = RenderPage();
+
+        Button(cut, "Compute").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("500"));
+        cut.Markup.Should().NotContain(">Draft<");
+        cut.FindAll("tbody tr").Should().BeEmpty();
+        ActionButtons(cut).Should().BeEmpty();
+    }
+
+    [Fact]
     public void ARejectedAction_ShowsTheServersReason_AndLetsTheUserTryAgain()
     {
         _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("ForApproval"))

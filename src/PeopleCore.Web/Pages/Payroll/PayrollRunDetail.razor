@@ -183,6 +183,9 @@ else
         }
         catch (Exception ex)
         {
+            // Drop the run too: after Compute/Approve/Mark Paid the one on screen is out of date,
+            // and while _run is set the error would not be shown at all.
+            _run = null;
             _notFound = false;
             _error = ex.Message;
         }
