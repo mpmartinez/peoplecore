@@ -122,6 +122,33 @@ public class Bir2316Tests : BunitContext
     }
 
     [Fact]
+    public void AFailedYearsLoad_ShowsTheError_WithoutClaimingTheEmployeeHasNoPaidRuns()
+    {
+        // "No paid runs" is a statement about the employee; after a failure nobody knows that, and
+        // an operator taking it at face value would skip a certificate the employee is owed.
+        _api.On(HttpMethod.Get, YearsPath(MariaId), HttpStatusCode.InternalServerError);
+        var cut = RenderPage();
+
+        cut.Find("#employee").Change(MariaId.ToString());
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("500"));
+        cut.Markup.Should().NotContain("No paid runs");
+    }
+
+    [Fact]
+    public void AFailedPreviewLoad_ShowsTheError_WithoutClaimingTheYearHasNoPaidRuns()
+    {
+        _api.On(HttpMethod.Get, YearsPath(MariaId), HttpStatusCode.OK, "[2025]")
+            .On(HttpMethod.Get, PreviewPath(MariaId, 2025), HttpStatusCode.InternalServerError);
+        var cut = RenderPage();
+
+        cut.Find("#employee").Change(MariaId.ToString());
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Failed to load 2316 preview (500)."));
+        cut.Markup.Should().NotContain("No paid runs");
+    }
+
+    [Fact]
     public void APreviewErrorForOneEmployee_DoesNotLingerOverTheNext()
     {
         // The next employee has no paid runs, so no year gets selected: only the employee change

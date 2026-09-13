@@ -52,6 +52,10 @@
                 {
                     <div class="mt-1 text-sm text-muted-foreground py-2">Select an employee first.</div>
                 }
+                else if (_yearsLoadFailed)
+                {
+                    <div class="mt-1 text-sm text-muted-foreground py-2">Years could not be loaded.</div>
+                }
                 else if (_years.Count == 0)
                 {
                     <div class="mt-1 text-sm text-muted-foreground py-2">No paid runs for this employee.</div>
@@ -181,7 +185,7 @@ else if (_preview is not null)
         </Card>
     </div>
 }
-else if (_selectedYear.HasValue)
+else if (_selectedYear.HasValue && !_previewLoadFailed)
 {
     <div class="p-6 text-center text-muted-foreground text-sm">No paid runs found for this employee in @_selectedYear.</div>
 }
@@ -194,10 +198,16 @@ else if (_selectedYear.HasValue)
     private Guid? _selectedEmployeeId;
     private IReadOnlyList<int> _years = [];
     private bool _loadingYears;
+    // This and _previewLoadFailed are set when the years or the preview failed to load, so the
+    // "no paid runs" wording - a claim
+    // about the employee that an operator could act on by skipping their certificate - is not
+    // shown in place of what was really a failure (the error itself is in _pageError).
+    private bool _yearsLoadFailed;
 
     private int? _selectedYear;
     private Bir2316Dto? _preview;
     private bool _loadingPreview;
+    private bool _previewLoadFailed;
 
     private ManualInputsFormModel _manual = new();
     private bool _generating;
@@ -244,6 +254,7 @@ else if (_selectedYear.HasValue)
         _selectedYear = null;
         _preview = null;
         _years = [];
+        _yearsLoadFailed = false;
         _generateError = null;
         // A failure loading the PREVIOUS employee's years or preview must not linger under the
         // next employee's, or a stale error sits on screen above a perfectly good preview.
@@ -265,6 +276,7 @@ else if (_selectedYear.HasValue)
         }
         catch (Exception ex)
         {
+            _yearsLoadFailed = true;
             _pageError = ex.Message;
         }
         finally
@@ -276,6 +288,7 @@ else if (_selectedYear.HasValue)
     private async Task OnYearChanged(string value)
     {
         _preview = null;
+        _previewLoadFailed = false;
         _generateError = null;
         // Same reasoning as OnEmployeeChanged: a failure loading the previous year's preview must
         // not stay on screen once a different year is selected.
@@ -296,6 +309,7 @@ else if (_selectedYear.HasValue)
         }
         catch (Exception ex)
         {
+            _previewLoadFailed = true;
             _pageError = ex.Message;
         }
         finally
