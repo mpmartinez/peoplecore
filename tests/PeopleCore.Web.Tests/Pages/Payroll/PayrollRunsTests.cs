@@ -201,6 +201,19 @@ public class PayrollRunsTests : BunitContext
     }
 
     [Fact]
+    public void AFailedEmployeeLoad_ShowsTheError_WithoutClaimingThereAreNoActiveEmployees()
+    {
+        _api.On(HttpMethod.Get, "/api/employees?page=1&pageSize=100", HttpStatusCode.InternalServerError);
+
+        var cut = RenderWithCreateDialogOpen();
+
+        cut.Find("[role=alert]").TextContent.Should().Contain("The server ran into a problem (500). Please try again.");
+        // Neither "No active employees found." nor "0 selected of 0 active employees": after a
+        // failure nobody knows how many there are.
+        cut.Markup.Should().NotContain("active employees");
+    }
+
+    [Fact]
     public void APeriodEndingBeforeItStarts_IsRefusedWithoutCallingTheApi()
     {
         StubTwoActiveEmployees();

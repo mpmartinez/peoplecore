@@ -110,6 +110,10 @@
         {
             <div class="p-4 flex justify-center"><Spinner Size="sm" /></div>
         }
+        else if (_employeesLoadFailed)
+        {
+            <div class="p-4 text-sm text-muted-foreground">Employees could not be loaded.</div>
+        }
         else if (_activeEmployees.Count == 0)
         {
             <div class="p-4 text-sm text-muted-foreground">No active employees found.</div>
@@ -150,6 +154,9 @@
 
     private bool _showCreateDialog;
     private bool _loadingEmployees;
+    // After a failed employee load nobody knows whether there are active employees, so neither
+    // "none found" nor a "0 selected of 0" count is shown; _createError carries the failure.
+    private bool _employeesLoadFailed;
     private bool _creating;
     private string? _createError;
     private List<EmployeeListDto> _activeEmployees = [];
@@ -187,6 +194,7 @@
         _selectedEmployeeIds = [];
         _activeEmployees = [];
         _createError = null;
+        _employeesLoadFailed = false;
         _showCreateDialog = true;
         _loadingEmployees = true;
         try
@@ -198,6 +206,7 @@
         }
         catch (Exception ex)
         {
+            _employeesLoadFailed = true;
             _createError = ex.Message;
         }
         finally
