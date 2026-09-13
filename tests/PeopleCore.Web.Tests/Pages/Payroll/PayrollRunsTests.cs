@@ -36,8 +36,17 @@ public class PayrollRunsTests : BunitContext
          "createdAt":"2026-09-01T00:00:00Z"}
         """;
 
-    private static string Runs(params string[] runs) =>
-        $$"""{"items":[{{string.Join(",", runs)}}],"totalCount":{{runs.Length}},"page":1,"pageSize":50,"totalPages":1}""";
+    private static string Runs(params string[] runs) => RunsPage(1, 1, runs);
+
+    private static string RunsPage(int page, int totalPages, params string[] runs) =>
+        $$"""{"items":[{{string.Join(",", runs)}}],"totalCount":{{runs.Length}},"page":{{page}},"pageSize":50,"totalPages":{{totalPages}}}""";
+
+    /// <summary>The Pagination bar - the page header has a nav of its own (the breadcrumb).</summary>
+    private static IEnumerable<IElement> PaginationBars(IRenderedComponent<PayrollRuns> cut) =>
+        cut.FindAll("nav").Where(n => n.TextContent.Contains("Page "));
+
+    private static IElement PageButton(IRenderedComponent<PayrollRuns> cut, int page) =>
+        PaginationBars(cut).Single().QuerySelectorAll("button").Single(b => b.TextContent.Trim() == page.ToString());
 
     private IRenderedComponent<PayrollRuns> RenderPage()
     {
@@ -119,6 +128,58 @@ public class PayrollRunsTests : BunitContext
         Button(cut, "Retry").Click();
 
         cut.WaitForAssertion(() => cut.FindAll("tbody tr").Should().ContainSingle());
+        cut.FindAll("[role=alert]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void OlderRuns_AreReachableThroughThePages()
+    {
+        // Only the newest page comes back at a time; without paging, every run past it could
+        // never be opened again from this list.
+        _api.On(HttpMethod.Get, RunsPath, HttpStatusCode.OK,
+                RunsPage(1, 2, RunSummary(Guid.NewGuid(), "PR-2026-0017", "Draft", 12)))
+            .On(HttpMethod.Get, "/api/payroll-runs?page=2&pageSize=50", HttpStatusCode.OK,
+                RunsPage(2, 2, RunSummary(Guid.NewGuid(), "PR-2025-0001", "Paid", 9)));
+        var cut = RenderPage();
+
+        PageButton(cut, 2).Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("tbody tr").Should().ContainSingle()
+            .Which.TextContent.Should().Contain("PR-2025-0001"));
+        cut.Markup.Should().NotContain("PR-2026-0017").And.Contain("Page 2 of 2");
+    }
+
+    [Fact]
+    public void ASinglePageOfRuns_OffersNoPaging()
+    {
+        _api.On(HttpMethod.Get, RunsPath, HttpStatusCode.OK, Runs(RunSummary(Guid.NewGuid(), "PR-2026-0017", "Draft", 12)));
+
+        var cut = RenderPage();
+
+        PaginationBars(cut).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AFailedPageChange_ShowsTheError_RatherThanThePreviousPagesRuns_AndRetriesThatPage()
+    {
+        var page2Attempts = 0;
+        _api.On(HttpMethod.Get, RunsPath, HttpStatusCode.OK,
+                RunsPage(1, 2, RunSummary(Guid.NewGuid(), "PR-2026-0017", "Draft", 12)))
+            .On(HttpMethod.Get, "/api/payroll-runs?page=2&pageSize=50", () => ++page2Attempts == 1
+                ? new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                : Json(RunsPage(2, 2, RunSummary(Guid.NewGuid(), "PR-2025-0001", "Paid", 9))));
+        var cut = RenderPage();
+
+        PageButton(cut, 2).Click();
+
+        // Page one's runs left under a failed move to page two would pass for page two's.
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Couldn't load payroll runs"));
+        cut.FindAll("tbody tr").Should().BeEmpty();
+
+        Button(cut, "Retry").Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("tbody tr").Should().ContainSingle()
+            .Which.TextContent.Should().Contain("PR-2025-0001"));
         cut.FindAll("[role=alert]").Should().BeEmpty();
     }
 

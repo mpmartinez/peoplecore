@@ -64,6 +64,12 @@
             </Table>
         }
     </CardContent>
+    @if (_runs is not null && _runs.TotalPages > 1)
+    {
+        <CardFooter>
+            <Pagination CurrentPage="@_page" TotalPages="@_runs.TotalPages" OnPageChange="@HandlePage" />
+        </CardFooter>
+    }
 </Card>
 
 <Dialog IsOpen="@_showCreateDialog" Title="Create Payroll Run"
@@ -139,6 +145,7 @@
 
 @code {
     private PagedResult<PayrollRunSummaryDto>? _runs;
+    private int _page = 1;
     private string? _error;
 
     private bool _showCreateDialog;
@@ -153,15 +160,19 @@
 
     private void GoToRun(Guid id) => Nav.NavigateTo($"/payroll-runs/{id}");
 
+    private async Task HandlePage(int page) { _page = page; await LoadRuns(); }
+
     // A failed load shows its error in place of the list; while _runs is null the card would
     // otherwise sit on its spinner forever. Clearing the error first shows the spinner again
-    // while a Retry is in flight.
+    // while a Retry is in flight. The runs are dropped on failure as well, so a failed move to
+    // another page cannot leave the previous page's runs on screen looking like that page's -
+    // and Retry reloads the page that failed.
     private async Task LoadRuns()
     {
         _error = null;
         try
         {
-            _runs = await Api.GetPayrollRunsAsync(page: 1, pageSize: 50);
+            _runs = await Api.GetPayrollRunsAsync(page: _page, pageSize: 50);
         }
         catch (Exception ex)
         {
