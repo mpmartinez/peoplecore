@@ -22,7 +22,7 @@
                 <Button Variant="primary" Size="lg" Class="w-full sm:w-auto" OnClick="TimeIn" Disabled="@(_clockedIn || _processing)" Loading="@(_processing && !_clockedIn)">
                     <i class="bi bi-clock-history mr-1"></i> Time In
                 </Button>
-                <Button Variant="destructive" Size="lg" Class="w-full sm:w-auto" OnClick="TimeOut" Disabled="@(!_clockedIn || _processing)" Loading="@(_processing && _clockedIn)">
+                <Button Variant="destructive" Size="lg" Class="w-full sm:w-auto" OnClick="TimeOut" Disabled="@(!_clockedIn || _clockedOut || _processing)" Loading="@(_processing && _clockedIn)">
                     <i class="bi bi-clock mr-1"></i> Time Out
                 </Button>
                 <Separator Orientation="vertical" Class="hidden h-6 sm:block" />
@@ -30,6 +30,10 @@
                 @if (_message is not null)
                 {
                     <Badge Variant="@(_isError ? "destructive" : "success")">@_message</Badge>
+                }
+                else if (_clockedOut)
+                {
+                    <span class="text-sm text-muted-foreground">You have clocked out for today.</span>
                 }
             </div>
         }
@@ -41,7 +45,15 @@
         <CardTitle>Recent Attendance</CardTitle>
     </CardHeader>
     <CardContent Class="p-0">
-        @if (_records is null)
+        @if (_employeeId == Guid.Empty)
+        {
+            <div class="p-6 text-center text-muted-foreground text-sm">No attendance to show for an account without an employee record.</div>
+        }
+        else if (_loadError is not null)
+        {
+            <div class="p-4"><Alert Variant="destructive" Title="Couldn't load your attendance">@_loadError</Alert></div>
+        }
+        else if (_records is null)
         {
             <div class="p-6 flex justify-center"><Spinner /></div>
         }
@@ -81,7 +93,9 @@
 @code {
     private PagedResult<AttendanceRecordDto>? _records;
     private bool _clockedIn;
+    private bool _clockedOut;
     private bool _processing;
+    private string? _loadError;
     private string? _message;
     private bool _isError;
     private Guid _employeeId;
@@ -95,13 +109,27 @@
 
         await LoadRecords();
         var today = DateOnly.FromDateTime(DateTime.Today).ToString("yyyy-MM-dd");
-        _clockedIn = _records?.Items.Any(r => r.AttendanceDate == today && r.TimeIn != null) ?? false;
+        var todays = _records?.Items.FirstOrDefault(r => r.AttendanceDate == today);
+        _clockedIn = todays?.TimeIn != null;
+        // The API takes one time-in a day and lets a later time-out overwrite an earlier one, so once
+        // today's record has both, neither button has anything legitimate left to do.
+        _clockedOut = todays?.TimeOut != null;
     }
 
     private async Task LoadRecords()
     {
         if (_employeeId == Guid.Empty) return;
-        _records = await Api.GetAttendanceAsync(_employeeId, page: 1, pageSize: 20);
+        _loadError = null;
+        try
+        {
+            _records = await Api.GetAttendanceAsync(_employeeId, page: 1, pageSize: 20);
+        }
+        catch (Exception ex)
+        {
+            // Only the history is lost; clocking in and out do not depend on it.
+            _records = null;
+            _loadError = ex.Message;
+        }
     }
 
     private async Task TimeIn()
@@ -125,6 +153,7 @@
         try
         {
             await Api.TimeOutAsync(_employeeId);
+            _clockedOut = true;
             _message = "Clocked out successfully.";
             _isError = false;
             await LoadRecords();

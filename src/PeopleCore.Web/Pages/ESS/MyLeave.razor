@@ -7,6 +7,23 @@
 
 <PageHeader Title="My Leave" Section="My HR" Description="Your balances, and the requests you have filed." />
 
+@if (!_initialized)
+{
+    <div class="p-6 flex justify-center"><Spinner /></div>
+}
+else if (_employeeId == Guid.Empty)
+{
+    <Alert Variant="warning" Title="Account not linked">
+        Your account is not linked to an employee record. Leave balances and requests are unavailable.
+    </Alert>
+}
+else
+{
+@if (_loadError is not null)
+{
+    <Alert Variant="destructive" Title="Couldn't load your leave" Class="mb-6">@_loadError</Alert>
+}
+
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
     <Card>
         <CardHeader>
@@ -15,7 +32,7 @@
         <CardContent Class="p-0">
             @if (_balances is null)
             {
-                <div class="p-6 flex justify-center"><Spinner /></div>
+                <div class="p-6 text-center text-muted-foreground text-sm">Leave balances are unavailable.</div>
             }
             else if (!_balances.Any())
             {
@@ -97,7 +114,7 @@
     <CardContent Class="p-0">
         @if (_requests is null)
         {
-            <div class="p-6 flex justify-center"><Spinner /></div>
+            <div class="p-6 text-center text-muted-foreground text-sm">Leave history is unavailable.</div>
         }
         else if (!_requests.Items.Any())
         {
@@ -133,6 +150,7 @@
         }
     </CardContent>
 </Card>
+}
 
 @code {
     private IReadOnlyList<LeaveBalanceDto>? _balances;
@@ -145,6 +163,8 @@
     private string? _successMsg;
     private string? _error;
     private bool _submitting;
+    private bool _initialized;
+    private string? _loadError;
 
     protected override async Task OnInitializedAsync()
     {
@@ -153,14 +173,31 @@
         if (Guid.TryParse(empIdClaim, out var empId))
             _employeeId = empId;
 
+        // No employee id means nothing of the user's own to show, and a leave request filed against
+        // Guid.Empty - so the page says so instead of loading.
+        if (_employeeId != Guid.Empty)
+            await LoadAll();
+
+        _initialized = true;
+    }
+
+    private async Task LoadAll()
+    {
+        _loadError = null;
         await Task.WhenAll(LoadBalances(), LoadRequests());
     }
 
     private async Task LoadBalances()
-        => _balances = await Api.GetLeaveBalancesAsync(_employeeId);
+    {
+        try { _balances = await Api.GetLeaveBalancesAsync(_employeeId); }
+        catch (Exception ex) { _balances = null; _loadError = ex.Message; }
+    }
 
     private async Task LoadRequests()
-        => _requests = await Api.GetLeaveRequestsAsync(_employeeId, page: 1, pageSize: 20);
+    {
+        try { _requests = await Api.GetLeaveRequestsAsync(_employeeId, page: 1, pageSize: 20); }
+        catch (Exception ex) { _requests = null; _loadError = ex.Message; }
+    }
 
     private async Task SubmitLeave()
     {
@@ -171,6 +208,8 @@
         {
             if (string.IsNullOrEmpty(_leaveTypeId))
             { _error = "Please select a leave type."; return; }
+            if (_endDate < _startDate)
+            { _error = "The end date cannot be before the start date."; return; }
 
             await Api.CreateLeaveRequestAsync(new
             {
@@ -181,7 +220,7 @@
                 reason = _reason
             });
             _successMsg = "Leave request submitted successfully.";
-            await Task.WhenAll(LoadBalances(), LoadRequests());
+            await LoadAll();
         }
         catch (Exception ex) { _error = ex.Message; }
         finally { _submitting = false; }

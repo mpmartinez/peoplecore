@@ -90,21 +90,6 @@ public class MyLeaveTests : BunitContext
     }
 
     [Fact]
-    public void AnAccountWithoutAnEmployeeLink_NeverAsksForEveryonesLeaveRequests()
-    {
-        // The leave-requests endpoint lists the whole company when employeeId is omitted, so a
-        // missing claim must still produce a filtered query rather than an unfiltered one.
-        _api.On(HttpMethod.Get, BalancesPath(Guid.Empty), HttpStatusCode.OK, "[]")
-            .On(HttpMethod.Get, RequestsPath(Guid.Empty), HttpStatusCode.OK, Paged());
-
-        RenderPage();
-
-        _api.Requests.Should().NotBeEmpty()
-            .And.OnlyContain(r => !r.RequestUri!.AbsolutePath.StartsWith("/api/leave-requests")
-                                  || r.RequestUri.Query.Contains("employeeId="));
-    }
-
-    [Fact]
     public void BalancesAndHistory_AreShown_AndTheTypePickerSaysWhatIsLeft()
     {
         _balancesJson = $"[{VacationBalance(total: 15, used: 3)}]";
@@ -182,5 +167,45 @@ public class MyLeaveTests : BunitContext
         cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("400"));
         cut.Markup.Should().NotContain("Leave request submitted successfully.");
         SubmitButton(cut).HasAttribute("disabled").Should().BeFalse();
+    }
+
+    [Fact]
+    public void AnAccountWithoutAnEmployeeLink_IsToldSo_AndCannotFileLeave()
+    {
+        // Without an employee id the form would file a request against Guid.Empty.
+        var cut = Render<MyLeave>();
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain("Your account is not linked to an employee record."));
+        cut.FindAll("button").Should().NotContain(b => b.TextContent.Trim() == "Submit Request");
+        cut.FindAll(".animate-spin").Should().BeEmpty();
+        _api.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AnEndDateBeforeTheStartDate_IsRefusedWithoutCallingTheApi()
+    {
+        _balancesJson = $"[{VacationBalance(total: 15, used: 3)}]";
+        var cut = RenderAsLinkedEmployee();
+
+        cut.Find("#leaveType").Change(VacationTypeId.ToString());
+        cut.Find("#leaveFrom").Input("2026-10-07");
+        cut.Find("#leaveTo").Input("2026-10-05");
+        SubmitButton(cut).Click();
+
+        cut.Find("[role=alert]").TextContent.Should().Contain("The end date cannot be before the start date.");
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Post);
+    }
+
+    [Fact]
+    public void BalancesOrHistoryThatFailToLoad_AreReported_InsteadOfCrashingThePage()
+    {
+        _auth.SetClaims(new Claim("employee_id", EmployeeId.ToString()));
+        _api.On(HttpMethod.Get, BalancesPath(EmployeeId), HttpStatusCode.InternalServerError)
+            .On(HttpMethod.Get, RequestsPath(EmployeeId), () => Json(_requestsJson));
+
+        var cut = Render<MyLeave>();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Couldn't load your leave"));
+        cut.FindAll(".animate-spin").Should().BeEmpty();
     }
 }

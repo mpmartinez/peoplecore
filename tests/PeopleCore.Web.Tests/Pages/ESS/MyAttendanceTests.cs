@@ -179,4 +179,71 @@ public class MyAttendanceTests : BunitContext
         IsEnabled(Button(cut, "Time In")).Should().BeTrue();
         IsEnabled(Button(cut, "Time Out")).Should().BeFalse();
     }
+
+    [Fact]
+    public void AnAccountWithoutAnEmployeeLink_HasNoRecordsToWaitFor()
+    {
+        // There is nothing to fetch, so the history card must not spin forever waiting for it.
+        var cut = Render<MyAttendance>();
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain("Account not linked"));
+        cut.FindAll(".animate-spin").Should().BeEmpty();
+        cut.Markup.Should().Contain("No attendance to show for an account without an employee record.");
+    }
+
+    [Fact]
+    public void AlreadyClockedOutToday_NeitherButtonIsAvailable()
+    {
+        // The API allows one time-in a day, and a second time-out would overwrite the first.
+        _recordsJson = Paged(Record(Today, "08:00", "17:00"));
+
+        var cut = RenderAsLinkedEmployee();
+
+        IsEnabled(Button(cut, "Time In")).Should().BeFalse();
+        IsEnabled(Button(cut, "Time Out")).Should().BeFalse();
+        cut.Markup.Should().Contain("You have clocked out for today.");
+    }
+
+    [Fact]
+    public void AfterClockingOut_TimeOutCannotBePressedAgain()
+    {
+        _recordsJson = Paged(Record(Today, "08:00", null));
+        _api.On(HttpMethod.Post, "/api/attendance/time-out", () =>
+        {
+            _recordsJson = Paged(Record(Today, "08:00", "17:05"));
+            return Json(Record(Today, "08:00", "17:05"));
+        });
+        var cut = RenderAsLinkedEmployee();
+
+        Button(cut, "Time Out").Click();
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain("Clocked out successfully."));
+        IsEnabled(Button(cut, "Time Out")).Should().BeFalse();
+        IsEnabled(Button(cut, "Time In")).Should().BeFalse();
+    }
+
+    [Fact]
+    public void HistoryThatFailsToLoad_IsReported_AndTheClockStaysUsable()
+    {
+        _auth.SetClaims(new Claim("employee_id", EmployeeId.ToString()));
+        _api.On(HttpMethod.Get, AttendancePath, HttpStatusCode.InternalServerError);
+
+        var cut = Render<MyAttendance>();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Couldn't load your attendance"));
+        cut.FindAll(".animate-spin").Should().BeEmpty();
+        IsEnabled(Button(cut, "Time In")).Should().BeTrue("a history outage must not stop anyone clocking in");
+    }
+
+    [Fact]
+    public void ARefusedTimeIn_ShowsTheApisReason()
+    {
+        _api.On(HttpMethod.Post, "/api/attendance/time-in", HttpStatusCode.BadRequest,
+            """{"detail":"Employee has already clocked in today."}""");
+        var cut = RenderAsLinkedEmployee();
+
+        Button(cut, "Time In").Click();
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain("Employee has already clocked in today."));
+    }
 }

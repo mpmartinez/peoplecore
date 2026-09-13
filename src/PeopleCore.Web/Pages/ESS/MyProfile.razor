@@ -7,7 +7,11 @@
 
 <PageHeader Title="My Profile" Section="My HR" Description="Your employment record as HR holds it." />
 
-@if (_employee is null)
+@if (_loadError is not null)
+{
+    <Alert Variant="destructive" Title="Couldn't load your profile" Class="max-w-lg">@_loadError</Alert>
+}
+else if (_employee is null)
 {
     <Card Class="max-w-lg">
         <CardContent Class="p-6 text-center text-muted-foreground text-sm">
@@ -62,13 +66,25 @@ else
 @code {
     private EmployeeListDto? _employee;
     private bool _loading = true;
+    private string? _loadError;
 
     protected override async Task OnInitializedAsync()
     {
         var auth = await AuthStateProvider.GetAuthenticationStateAsync();
         var empIdStr = auth.User.FindFirst("employee_id")?.Value;
-        if (Guid.TryParse(empIdStr, out var empId))
-            _employee = await Api.GetEmployeeAsync(empId);
-        _loading = false;
+        try
+        {
+            if (Guid.TryParse(empIdStr, out var empId))
+                _employee = await Api.GetEmployeeAsync(empId);
+        }
+        catch (Exception ex)
+        {
+            // Includes a 404 for a claim that points at an employee record since deleted.
+            _loadError = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
     }
 }

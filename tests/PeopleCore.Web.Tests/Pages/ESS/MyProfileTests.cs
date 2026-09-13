@@ -91,4 +91,19 @@ public class MyProfileTests : BunitContext
         cut.WaitForAssertion(() => cut.Markup.Should().Contain("Profile not linked to an employee record."));
         _api.Requests.Should().BeEmpty();
     }
+
+    [Theory]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public void AProfileThatFailsToLoad_SaysSo_InsteadOfCrashingThePage(HttpStatusCode status)
+    {
+        // A 404 is what a claim pointing at a deleted employee record gets back.
+        _auth.SetClaims(new Claim("employee_id", EmployeeId.ToString()));
+        _api.On(HttpMethod.Get, $"/api/employees/{EmployeeId}", status);
+
+        var cut = Render<MyProfile>();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Couldn't load your profile"));
+        cut.Markup.Should().NotContain("Loading...").And.NotContain("Profile not linked");
+    }
 }
