@@ -51,11 +51,11 @@ public class OvertimeServiceTests
                  .WithMessage("*after start time*");
     }
 
-    [Fact]
-    public async Task ApproveAsync_WhenNotManager_ThrowsDomainException()
+    private static readonly Guid ManagerId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+
+    /// <summary>A pending request by an employee who reports to <see cref="ManagerId"/>.</summary>
+    private OvertimeRequest PendingRequestReportingTo(Guid? managerId)
     {
-        var managerId = Guid.NewGuid();
-        var wrongApproverId = Guid.NewGuid();
         var request = new OvertimeRequest
         {
             Id = Guid.NewGuid(),
@@ -74,11 +74,31 @@ public class OvertimeServiceTests
 
         _repo.Setup(r => r.GetByIdAsync(request.Id, default)).ReturnsAsync(request);
         _employeeRepo.Setup(r => r.GetByIdAsync(request.EmployeeId, default)).ReturnsAsync(employee);
+        return request;
+    }
 
-        var act = () => _sut.ApproveAsync(request.Id, new ApproveOvertimeDto(wrongApproverId));
+    [Fact]
+    public async Task ApproveAsync_WhenNotManager_ThrowsDomainException()
+    {
+        var request = PendingRequestReportingTo(ManagerId);
+
+        var act = () => _sut.ApproveAsync(request.Id, Guid.NewGuid());
 
         await act.Should().ThrowAsync<DomainException>()
                  .WithMessage("*reporting manager*");
+        _repo.Verify(r => r.UpdateAsync(It.IsAny<OvertimeRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ApproveAsync_ByTheDirectManager_RecordsThemAsApprover()
+    {
+        var request = PendingRequestReportingTo(ManagerId);
+
+        var result = await _sut.ApproveAsync(request.Id, ManagerId);
+
+        result.Status.Should().Be(nameof(OvertimeStatus.Approved));
+        result.ApprovedBy.Should().Be(ManagerId);
+        _repo.Verify(r => r.UpdateAsync(request, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -91,9 +111,46 @@ public class OvertimeServiceTests
         };
         _repo.Setup(r => r.GetByIdAsync(request.Id, default)).ReturnsAsync(request);
 
-        var act = () => _sut.RejectAsync(request.Id, new RejectOvertimeDto("reason"));
+        var act = () => _sut.RejectAsync(request.Id, ManagerId, new RejectOvertimeDto("reason"));
 
         await act.Should().ThrowAsync<DomainException>()
                  .WithMessage("*pending*");
+    }
+
+    [Fact]
+    public async Task RejectAsync_WhenNotManager_ThrowsDomainException()
+    {
+        // Same rule as approving: a manager elsewhere in the organisation cannot turn down
+        // another team's overtime.
+        var request = PendingRequestReportingTo(ManagerId);
+
+        var act = () => _sut.RejectAsync(request.Id, Guid.NewGuid(), new RejectOvertimeDto("reason"));
+
+        await act.Should().ThrowAsync<DomainException>()
+                 .WithMessage("*reporting manager*");
+        _repo.Verify(r => r.UpdateAsync(It.IsAny<OvertimeRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RejectAsync_WhenTheEmployeeHasNoManager_ThrowsDomainException()
+    {
+        var request = PendingRequestReportingTo(null);
+
+        var act = () => _sut.RejectAsync(request.Id, ManagerId, new RejectOvertimeDto("reason"));
+
+        await act.Should().ThrowAsync<DomainException>()
+                 .WithMessage("*reporting manager*");
+    }
+
+    [Fact]
+    public async Task RejectAsync_ByTheDirectManager_RecordsTheReason()
+    {
+        var request = PendingRequestReportingTo(ManagerId);
+
+        var result = await _sut.RejectAsync(request.Id, ManagerId, new RejectOvertimeDto("Not pre-approved"));
+
+        result.Status.Should().Be(nameof(OvertimeStatus.Rejected));
+        result.RejectionReason.Should().Be("Not pre-approved");
+        _repo.Verify(r => r.UpdateAsync(request, It.IsAny<CancellationToken>()), Times.Once);
     }
 }

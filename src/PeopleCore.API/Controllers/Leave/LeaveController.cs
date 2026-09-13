@@ -124,10 +124,22 @@ public class LeaveController : ControllerBase
         return StatusCode(201, await _requestService.CreateAsync(dto, ct));
     }
 
+    /// <summary>
+    /// Takes no approver. It used to read one from the body and store it as the request's
+    /// ApprovedBy, so the record named whoever the caller chose (the web client chose nobody, so
+    /// Guid.Empty). The approver is now the employee in the caller's employee_id claim; an account
+    /// with no employee record has nobody to record and is refused.
+    /// </summary>
     [HttpPut("leave-requests/{id:guid}/approve")]
     [Authorize(Roles = "Admin,HRManager,Manager")]
-    public async Task<IActionResult> Approve(Guid id, [FromBody] ApproveLeaveDto dto, CancellationToken ct = default)
-        => Ok(await _requestService.ApproveAsync(id, dto, ct));
+    public async Task<IActionResult> Approve(Guid id, CancellationToken ct = default)
+    {
+        var approverId = _currentUser.EmployeeId;
+        if (approverId is null)
+            return Forbid();
+
+        return Ok(await _requestService.ApproveAsync(id, approverId.Value, ct));
+    }
 
     [HttpPut("leave-requests/{id:guid}/reject")]
     [Authorize(Roles = "Admin,HRManager,Manager")]

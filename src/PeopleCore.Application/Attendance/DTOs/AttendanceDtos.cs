@@ -54,7 +54,6 @@ public record CreateOvertimeRequestDto(
     DateTime EndTime,
     string Reason);
 
-public record ApproveOvertimeDto(Guid ApproverId);
 public record RejectOvertimeDto(string RejectionReason);
 
 public record HolidayDto(Guid Id, string Name, DateOnly HolidayDate, HolidayType HolidayType, bool IsRecurring);

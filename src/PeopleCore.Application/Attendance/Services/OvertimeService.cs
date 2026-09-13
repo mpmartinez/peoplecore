@@ -51,7 +51,7 @@ public class OvertimeService : IOvertimeService
         return ToDto(created);
     }
 
-    public async Task<OvertimeRequestDto> ApproveAsync(Guid id, ApproveOvertimeDto dto, CancellationToken ct = default)
+    public async Task<OvertimeRequestDto> ApproveAsync(Guid id, Guid approverId, CancellationToken ct = default)
     {
         var request = await _repo.GetByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Overtime request {id} not found.");
@@ -59,15 +59,10 @@ public class OvertimeService : IOvertimeService
         if (request.Status != OvertimeStatus.Pending)
             throw new DomainException("Only pending overtime requests can be approved.");
 
-        var employee = await _employeeRepo.GetByIdAsync(request.EmployeeId, ct)
-            ?? throw new KeyNotFoundException($"Employee {request.EmployeeId} not found.");
-        if (employee.ReportingManagerId is null)
-            throw new DomainException("Employee does not have a reporting manager assigned.");
-        if (employee.ReportingManagerId != dto.ApproverId)
-            throw new DomainException("Only the direct reporting manager can approve overtime requests.");
+        await EnsureDirectManagerAsync(request, approverId, "approve", ct);
 
         request.Status = OvertimeStatus.Approved;
-        request.ApprovedBy = dto.ApproverId;
+        request.ApprovedBy = approverId;
         request.ApprovedAt = DateTime.UtcNow;
         request.UpdatedAt = DateTime.UtcNow;
 
@@ -75,7 +70,7 @@ public class OvertimeService : IOvertimeService
         return ToDto(request);
     }
 
-    public async Task<OvertimeRequestDto> RejectAsync(Guid id, RejectOvertimeDto dto, CancellationToken ct = default)
+    public async Task<OvertimeRequestDto> RejectAsync(Guid id, Guid rejecterId, RejectOvertimeDto dto, CancellationToken ct = default)
     {
         var request = await _repo.GetByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Overtime request {id} not found.");
@@ -83,12 +78,29 @@ public class OvertimeService : IOvertimeService
         if (request.Status != OvertimeStatus.Pending)
             throw new DomainException("Only pending overtime requests can be rejected.");
 
+        await EnsureDirectManagerAsync(request, rejecterId, "reject", ct);
+
         request.Status = OvertimeStatus.Rejected;
         request.RejectionReason = dto.RejectionReason;
         request.UpdatedAt = DateTime.UtcNow;
 
         await _repo.UpdateAsync(request, ct);
         return ToDto(request);
+    }
+
+    /// <summary>
+    /// Overtime is decided by the employee's direct reporting manager and nobody else.
+    /// <paramref name="deciderId"/> must come from the caller's employee_id claim, not the request
+    /// body, or this check only tests whether the caller can name the right manager.
+    /// </summary>
+    private async Task EnsureDirectManagerAsync(OvertimeRequest request, Guid deciderId, string decision, CancellationToken ct)
+    {
+        var employee = await _employeeRepo.GetByIdAsync(request.EmployeeId, ct)
+            ?? throw new KeyNotFoundException($"Employee {request.EmployeeId} not found.");
+        if (employee.ReportingManagerId is null)
+            throw new DomainException("Employee does not have a reporting manager assigned.");
+        if (employee.ReportingManagerId != deciderId)
+            throw new DomainException($"Only the direct reporting manager can {decision} overtime requests.");
     }
 
     private static OvertimeRequestDto ToDto(OvertimeRequest r) => new(

@@ -63,6 +63,28 @@ public class LeaveRequestServiceTests
     };
 
     [Fact]
+    public async Task ApproveAsync_RecordsTheApproverItIsGiven()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        var approverId = Guid.NewGuid();
+        var request = new LeaveRequest
+        {
+            Id = Guid.NewGuid(), EmployeeId = emp.Id, LeaveTypeId = lt.Id,
+            StartDate = new DateOnly(2026, 10, 5), EndDate = new DateOnly(2026, 10, 6),
+            TotalDays = 2, Status = LeaveStatus.Pending
+        };
+        _leaveRepo.Setup(r => r.GetByIdAsync(request.Id, default)).ReturnsAsync(request);
+        _balanceRepo.Setup(r => r.GetByEmployeeAndTypeAsync(emp.Id, lt.Id, 2026, default))
+            .ReturnsAsync(MakeBalance(emp.Id, lt.Id));
+
+        var result = await _sut.ApproveAsync(request.Id, approverId);
+
+        result.Status.Should().Be(LeaveStatus.Approved);
+        result.ApprovedBy.Should().Be(approverId);
+    }
+
+    [Fact]
     public async Task CreateAsync_WhenInsufficientBalance_ThrowsDomainException()
     {
         var emp = MakeEmployee();

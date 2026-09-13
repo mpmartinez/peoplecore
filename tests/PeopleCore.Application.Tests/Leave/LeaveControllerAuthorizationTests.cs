@@ -207,6 +207,46 @@ public class LeaveControllerAuthorizationTests
         VerifyNoServiceReached();
     }
 
+    // ---- PUT api/leave-requests/{id}/approve -----------------------------------------------
+
+    [Fact]
+    public void Approve_TakesNoApproverFromTheCaller()
+    {
+        // It used to take an ApproveLeaveDto whose ApproverId was stored as ApprovedBy. The web
+        // client sent {}, so every approval was recorded against Guid.Empty, and any other client
+        // could record the approval against whoever it liked.
+        var parameters = typeof(LeaveController)
+            .GetMethod(nameof(LeaveController.Approve), BindingFlags.Public | BindingFlags.Instance)!
+            .GetParameters().Select(p => p.Name);
+
+        parameters.Should().BeEquivalentTo(["id", "ct"]);
+    }
+
+    [Theory]
+    [MemberData(nameof(LeaveReaderRoles))]
+    public async Task Approve_ApprovesAsTheEmployeeInTheClaim(string role)
+    {
+        SignInAs(Caller, role);
+
+        var result = await _sut.Approve(RequestId, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+        _requests.Verify(s => s.ApproveAsync(RequestId, Caller, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Approve_ForACallerWithNoEmployeeIdClaim_ReturnsForbid()
+    {
+        // The approval is recorded against an employee; an account with no employee record has
+        // nobody to record.
+        SignInAs(null, "Admin");
+
+        var result = await _sut.Approve(RequestId, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+        VerifyNoServiceReached();
+    }
+
     // ---- PUT api/leave-requests/{id}/cancel ------------------------------------------------
 
     [Fact]

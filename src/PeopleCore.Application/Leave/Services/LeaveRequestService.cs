@@ -86,7 +86,7 @@ public class LeaveRequestService : ILeaveRequestService
         return ToDto(created);
     }
 
-    public async Task<LeaveRequestDto> ApproveAsync(Guid id, ApproveLeaveDto dto, CancellationToken ct = default)
+    public async Task<LeaveRequestDto> ApproveAsync(Guid id, Guid approverId, CancellationToken ct = default)
     {
         var request = await _leaveRepo.GetByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Leave request {id} not found.");
@@ -102,7 +102,7 @@ public class LeaveRequestService : ILeaveRequestService
         balance.UpdatedAt = DateTime.UtcNow;
 
         request.Status = LeaveStatus.Approved;
-        request.ApprovedBy = dto.ApproverId;
+        request.ApprovedBy = approverId;
         request.ApprovedAt = DateTime.UtcNow;
         request.UpdatedAt = DateTime.UtcNow;
 

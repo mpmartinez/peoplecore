@@ -31,5 +31,4 @@ public record CreateLeaveRequestDto(
     Guid EmployeeId, Guid LeaveTypeId,
     DateOnly StartDate, DateOnly EndDate, string? Reason);
 
-public record ApproveLeaveDto(Guid ApproverId);
 public record RejectLeaveDto(string RejectionReason);
