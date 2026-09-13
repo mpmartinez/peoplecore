@@ -1,6 +1,7 @@
 @page "/leave-approvals"
 @attribute [Authorize(Roles = "Admin,HRManager,Manager")]
 @inject ApiClient Api
+@inject AuthenticationStateProvider AuthStateProvider
 
 <PageTitle>Leave Approvals</PageTitle>
 
@@ -64,7 +65,10 @@
                                 @if (r.Status == "Pending")
                                 {
                                     <div class="flex gap-2">
-                                        <Button Variant="ghost" Size="sm" OnClick="() => Approve(r.Id)">Approve</Button>
+                                        @if (_linkedToEmployee)
+                                        {
+                                            <Button Variant="ghost" Size="sm" OnClick="() => Approve(r.Id)">Approve</Button>
+                                        }
                                         <Button Variant="destructive" Size="sm" OnClick="() => Reject(r.Id)">Reject</Button>
                                     </div>
                                 }
@@ -97,11 +101,20 @@
     private int _page = 1;
     private const int _pageSize = 50;
 
+    // The API records the approver as the signed-in account's employee and refuses an account
+    // without one, so there is no point offering Approve there. Rejecting records nobody.
+    private bool _linkedToEmployee;
+
     private string EmptyText => _statusFilter == ""
         ? "No leave requests."
         : $"No {_statusFilter.ToLowerInvariant()} leave requests.";
 
-    protected override async Task OnInitializedAsync() => await LoadRequests();
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+        _linkedToEmployee = Guid.TryParse(auth.User.FindFirst("employee_id")?.Value, out _);
+        await LoadRequests();
+    }
 
     private async Task LoadRequests()
     {

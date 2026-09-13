@@ -1,7 +1,9 @@
 using System.Net;
+using System.Security.Claims;
 using System.Text;
 using AngleSharp.Dom;
 using Bunit;
+using Bunit.TestDoubles;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using PeopleCore.Web.Pages.HR;
@@ -17,6 +19,7 @@ public class LeaveApprovalsTests : BunitContext
     private static readonly Guid ApprovedId = Guid.Parse("6b2c3d4e-5f6a-4b7c-9d8e-0f1a2b3c4d5e");
 
     private readonly StubHttpHandler _api = new();
+    private readonly BunitAuthorizationContext _auth;
 
     // Read on every request, so a test can change what the API holds after the page has loaded
     // and see whether the page actually asks again.
@@ -32,7 +35,8 @@ public class LeaveApprovalsTests : BunitContext
     public LeaveApprovalsTests()
     {
         Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(_api)));
-        AddAuthorization().SetAuthorized("manager@company.test");
+        _auth = AddAuthorization();
+        _auth.SetAuthorized("manager@company.test");
 
         _api.On(HttpMethod.Get, RequestsPath, () => _loadFailure is null ? Json(_requests) : ServerError(_loadFailure));
     }
@@ -58,8 +62,11 @@ public class LeaveApprovalsTests : BunitContext
          "reason":{{(reason is null ? "null" : $"\"{reason}\"")}}}
         """;
 
-    private IRenderedComponent<LeaveApprovals> RenderPage()
+    private IRenderedComponent<LeaveApprovals> RenderPage(bool linkedToEmployee = true)
     {
+        if (linkedToEmployee)
+            _auth.SetClaims(new Claim("employee_id", Guid.NewGuid().ToString()));
+
         var cut = Render<LeaveApprovals>();
         cut.WaitForAssertion(() => cut.FindAll(".animate-spin").Should().BeEmpty());
         return cut;
@@ -97,6 +104,15 @@ public class LeaveApprovalsTests : BunitContext
         var decided = RowFor(cut, "Jose Rizal");
         decided.QuerySelectorAll("td")[5].TextContent.Trim().Should().Be("--");
         ButtonsIn(decided).Should().BeEmpty("a request that was already decided must not be decided again");
+    }
+
+    [Fact]
+    public void AnAccountWithoutAnEmployeeLink_CanRejectButNotApprove()
+    {
+        // The API records the approver as the account's employee and refuses an account with none.
+        var cut = RenderPage(linkedToEmployee: false);
+
+        ButtonsIn(RowFor(cut, "Maria Santos")).Should().Equal("Reject");
     }
 
     [Fact]
@@ -276,7 +292,8 @@ public class LeaveApprovalsTests : BunitContext
 
         cut.WaitForAssertion(() => ButtonsIn(RowFor(cut, "Maria Santos")).Should().BeEmpty());
         _api.Requests[PutIndex].RequestUri!.PathAndQuery.Should().Be($"/api/leave-requests/{PendingId}/reject");
-        _api.RequestBodies[PutIndex].Should().Be("""{"reason":"Rejected by manager."}""");
+        // The API's RejectLeaveDto reads rejectionReason; under any other name the reason is dropped.
+        _api.RequestBodies[PutIndex].Should().Be("""{"rejectionReason":"Rejected by manager."}""");
         _api.Requests.Should().NotContain(r => r.RequestUri!.PathAndQuery.EndsWith("/approve"));
     }
 

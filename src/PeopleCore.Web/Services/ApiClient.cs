@@ -84,6 +84,7 @@ public class ApiClient
     }
 
     // Leave approvals (HR)
+    /// <summary>The API records the signed-in account's employee as the approver; the body names nobody.</summary>
     public async Task<LeaveRequestDto?> ApproveLeaveAsync(Guid requestId)
     {
         var response = await _http.PutAsJsonAsync($"api/leave-requests/{requestId}/approve", new { });
@@ -93,7 +94,7 @@ public class ApiClient
 
     public async Task<LeaveRequestDto?> RejectLeaveAsync(Guid requestId, string reason)
     {
-        var response = await _http.PutAsJsonAsync($"api/leave-requests/{requestId}/reject", new { reason });
+        var response = await _http.PutAsJsonAsync($"api/leave-requests/{requestId}/reject", new { rejectionReason = reason });
         await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<LeaveRequestDto>(JsonOptions);
     }
@@ -178,9 +179,10 @@ public class ApiClient
         return await GetJsonAsync<PagedResult<OvertimeRequestDto>>(url);
     }
 
-    public async Task ApproveOvertimeAsync(Guid id, Guid approverId)
+    /// <summary>The API approves as the signed-in account's employee; the body names nobody.</summary>
+    public async Task ApproveOvertimeAsync(Guid id)
     {
-        var response = await _http.PutAsJsonAsync($"api/overtime-requests/{id}/approve", new { approverId });
+        var response = await _http.PutAsJsonAsync($"api/overtime-requests/{id}/approve", new { });
         await EnsureSuccessAsync(response);
     }
 

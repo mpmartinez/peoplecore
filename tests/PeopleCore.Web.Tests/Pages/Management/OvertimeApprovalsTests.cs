@@ -131,7 +131,7 @@ public class OvertimeApprovalsTests : BunitContext
     }
 
     [Fact]
-    public void Approving_RecordsTheSignedInManagerAsApprover_AndDropsTheRequestFromThePendingList()
+    public void Approving_NamesNoApprover_AndDropsTheRequestFromThePendingList()
     {
         var approvePath = $"/api/overtime-requests/{PendingId}/approve";
         _api.On(HttpMethod.Put, approvePath, () =>
@@ -144,7 +144,9 @@ public class OvertimeApprovalsTests : BunitContext
         RowFor(cut, "Juan Cruz").QuerySelectorAll("button").Single(b => b.TextContent.Trim() == "Approve").Click();
 
         cut.WaitForAssertion(() => cut.Markup.Should().Contain("No overtime requests."));
-        BodyOf(HttpMethod.Put, approvePath).Should().Be($$"""{"approverId":"{{ApproverId}}"}""");
+        // The API approves as the signed-in manager's own employee id; a body naming one is what
+        // let any manager approve as someone else.
+        BodyOf(HttpMethod.Put, approvePath).Should().Be("{}");
         cut.FindAll("[role=alert]").Should().BeEmpty();
     }
 

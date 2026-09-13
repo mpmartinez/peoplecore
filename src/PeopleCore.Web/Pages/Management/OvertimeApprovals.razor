@@ -114,7 +114,7 @@
     private async Task Approve(Guid id)
     {
         if (!_currentEmployeeId.HasValue) { _error = "No employee ID linked to your account."; return; }
-        try { await Api.ApproveOvertimeAsync(id, _currentEmployeeId.Value); _error = null; await Load(); }
+        try { await Api.ApproveOvertimeAsync(id); _error = null; await Load(); }
         catch (Exception ex) { _error = $"Failed to approve. {ex.Message}"; }
     }
 
