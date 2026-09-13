@@ -24,8 +24,13 @@ public class ApiClient
     }
 
     // Employees
-    public async Task<PagedResult<EmployeeListDto>?> GetEmployeesAsync(int page = 1, int pageSize = 20)
-        => await GetJsonAsync<PagedResult<EmployeeListDto>>($"api/employees?page={page}&pageSize={pageSize}");
+    public async Task<PagedResult<EmployeeListDto>?> GetEmployeesAsync(int page = 1, int pageSize = 20, string? search = null, bool? isActive = null)
+    {
+        var url = $"api/employees?page={page}&pageSize={pageSize}";
+        if (!string.IsNullOrWhiteSpace(search)) url += $"&search={Uri.EscapeDataString(search)}";
+        if (isActive.HasValue) url += $"&isActive={(isActive.Value ? "true" : "false")}";
+        return await GetJsonAsync<PagedResult<EmployeeListDto>>(url);
+    }
 
     public async Task<EmployeeListDto?> GetEmployeeAsync(Guid id)
         => await GetJsonAsync<EmployeeListDto>($"api/employees/{id}");
@@ -41,10 +46,11 @@ public class ApiClient
     public async Task<IReadOnlyList<LeaveBalanceDto>?> GetLeaveBalancesAsync(Guid employeeId)
         => await GetJsonAsync<IReadOnlyList<LeaveBalanceDto>>($"api/leave-balances/{employeeId}");
 
-    public async Task<PagedResult<LeaveRequestDto>?> GetLeaveRequestsAsync(Guid? employeeId = null, int page = 1, int pageSize = 20)
+    public async Task<PagedResult<LeaveRequestDto>?> GetLeaveRequestsAsync(Guid? employeeId = null, int page = 1, int pageSize = 20, string? status = null)
     {
         var query = $"api/leave-requests?page={page}&pageSize={pageSize}";
         if (employeeId.HasValue) query += $"&employeeId={employeeId}";
+        if (!string.IsNullOrEmpty(status)) query += $"&status={status}";
         return await GetJsonAsync<PagedResult<LeaveRequestDto>>(query);
     }
 
