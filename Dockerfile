@@ -17,7 +17,7 @@ RUN apt-get update \
 # in PeopleCore.Application and PeopleCore.Domain read at restore time.
 COPY Directory.Build.props PeopleCore.slnx ./
 
-# Each .csproj by its own path - Docker COPY has no ** glob. All nine are needed because the
+# Each .csproj by its own path - Docker COPY has no ** glob. All ten are needed because the
 # restore below targets the whole solution.
 COPY src/M2NET.Core/M2NET.Core.csproj src/M2NET.Core/
 COPY src/PeopleCore.Domain/PeopleCore.Domain.csproj src/PeopleCore.Domain/
@@ -28,6 +28,7 @@ COPY src/PeopleCore.API/PeopleCore.API.csproj src/PeopleCore.API/
 COPY src/PeopleCore.Web/PeopleCore.Web.csproj src/PeopleCore.Web/
 COPY tests/PeopleCore.Application.Tests/PeopleCore.Application.Tests.csproj tests/PeopleCore.Application.Tests/
 COPY tests/PeopleCore.Infrastructure.Tests/PeopleCore.Infrastructure.Tests.csproj tests/PeopleCore.Infrastructure.Tests/
+COPY tests/PeopleCore.Web.Tests/PeopleCore.Web.Tests.csproj tests/PeopleCore.Web.Tests/
 
 RUN dotnet restore PeopleCore.slnx
 
