@@ -90,6 +90,49 @@ public class ApiClientTests
     }
 
     [Fact]
+    public async Task AFailedRead_CarriesTheApisExplanationAndStatus()
+    {
+        // Pages show ex.Message as it is, so it has to be the API's reason, not HttpClient's
+        // "Response status code does not indicate success" boilerplate.
+        _api.On(HttpMethod.Get, "/api/companies", HttpStatusCode.Forbidden, """{"detail":"Companies are admin-only."}""");
+
+        var act = () => CreateClient().GetCompaniesAsync();
+
+        var thrown = await act.Should().ThrowAsync<HttpRequestException>().WithMessage("Companies are admin-only.");
+        thrown.Which.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized, "Your session has expired. Please sign in again.")]
+    [InlineData(HttpStatusCode.Forbidden, "You do not have permission to do that.")]
+    [InlineData(HttpStatusCode.NotFound, "The record could not be found.")]
+    [InlineData(HttpStatusCode.Conflict, "The request could not be completed (409).")]
+    [InlineData(HttpStatusCode.BadGateway, "The server ran into a problem (502). Please try again.")]
+    public async Task AFailedCommand_WithNoExplanation_StillSaysSomethingAUserCanRead(HttpStatusCode status, string expected)
+    {
+        var requestId = Guid.NewGuid();
+        _api.On(HttpMethod.Put, $"/api/leave-requests/{requestId}/approve", () =>
+            new HttpResponseMessage(status) { Content = new StringContent("<html>error</html>") });
+
+        var act = () => CreateClient().ApproveLeaveAsync(requestId);
+
+        var thrown = await act.Should().ThrowAsync<HttpRequestException>().WithMessage(expected);
+        thrown.Which.StatusCode.Should().Be(status);
+    }
+
+    [Fact]
+    public async Task DeleteDepartment_CarriesTheApisExplanation_WhenRefused()
+    {
+        var id = Guid.NewGuid();
+        _api.On(HttpMethod.Delete, $"/api/departments/{id}", HttpStatusCode.Conflict,
+            """{"detail":"Department still has positions."}""");
+
+        var act = () => CreateClient().DeleteDepartmentAsync(id);
+
+        await act.Should().ThrowAsync<HttpRequestException>().WithMessage("Department still has positions.");
+    }
+
+    [Fact]
     public async Task ComputePayrollRun_ReturnsTheProblemDetail_WhenRejected()
     {
         var runId = Guid.NewGuid();

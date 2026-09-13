@@ -64,7 +64,9 @@ public class MyPayslipsTests : BunitContext
     [Fact]
     public void AnAccountWithNoEmployeeRecord_IsToldWhy_WithoutAPointlessRetry()
     {
-        _api.On(HttpMethod.Get, ListPath, HttpStatusCode.Forbidden);
+        // With an explanation in the body, so the page cannot get away with spotting "403" in the
+        // message text: it has to go by the status code.
+        _api.On(HttpMethod.Get, ListPath, HttpStatusCode.Forbidden, """{"detail":"No employee record for this user."}""");
 
         var cut = RenderPage();
 

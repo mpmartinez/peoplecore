@@ -25,33 +25,33 @@ public class ApiClient
 
     // Employees
     public async Task<PagedResult<EmployeeListDto>?> GetEmployeesAsync(int page = 1, int pageSize = 20)
-        => await _http.GetFromJsonAsync<PagedResult<EmployeeListDto>>($"api/employees?page={page}&pageSize={pageSize}", JsonOptions);
+        => await GetJsonAsync<PagedResult<EmployeeListDto>>($"api/employees?page={page}&pageSize={pageSize}");
 
     public async Task<EmployeeListDto?> GetEmployeeAsync(Guid id)
-        => await _http.GetFromJsonAsync<EmployeeListDto>($"api/employees/{id}", JsonOptions);
+        => await GetJsonAsync<EmployeeListDto>($"api/employees/{id}");
 
     public async Task<EmployeeListDto?> CreateEmployeeAsync(object dto)
     {
         var response = await _http.PostAsJsonAsync("api/employees", dto);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<EmployeeListDto>(JsonOptions);
     }
 
     // Leave
     public async Task<IReadOnlyList<LeaveBalanceDto>?> GetLeaveBalancesAsync(Guid employeeId)
-        => await _http.GetFromJsonAsync<IReadOnlyList<LeaveBalanceDto>>($"api/leave-balances/{employeeId}", JsonOptions);
+        => await GetJsonAsync<IReadOnlyList<LeaveBalanceDto>>($"api/leave-balances/{employeeId}");
 
     public async Task<PagedResult<LeaveRequestDto>?> GetLeaveRequestsAsync(Guid? employeeId = null, int page = 1, int pageSize = 20)
     {
         var query = $"api/leave-requests?page={page}&pageSize={pageSize}";
         if (employeeId.HasValue) query += $"&employeeId={employeeId}";
-        return await _http.GetFromJsonAsync<PagedResult<LeaveRequestDto>>(query, JsonOptions);
+        return await GetJsonAsync<PagedResult<LeaveRequestDto>>(query);
     }
 
     public async Task<LeaveRequestDto?> CreateLeaveRequestAsync(object dto)
     {
         var response = await _http.PostAsJsonAsync("api/leave-requests", dto);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<LeaveRequestDto>(JsonOptions);
     }
 
@@ -60,20 +60,20 @@ public class ApiClient
     {
         var query = $"api/attendance?page={page}&pageSize={pageSize}";
         if (employeeId.HasValue) query += $"&employeeId={employeeId}";
-        return await _http.GetFromJsonAsync<PagedResult<AttendanceRecordDto>>(query, JsonOptions);
+        return await GetJsonAsync<PagedResult<AttendanceRecordDto>>(query);
     }
 
     public async Task<AttendanceRecordDto?> TimeInAsync(Guid employeeId)
     {
         var response = await _http.PostAsJsonAsync("api/attendance/time-in", new { employeeId, timeIn = DateTime.UtcNow });
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<AttendanceRecordDto>(JsonOptions);
     }
 
     public async Task<AttendanceRecordDto?> TimeOutAsync(Guid employeeId)
     {
         var response = await _http.PostAsJsonAsync("api/attendance/time-out", new { employeeId, timeOut = DateTime.UtcNow });
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<AttendanceRecordDto>(JsonOptions);
     }
 
@@ -81,47 +81,47 @@ public class ApiClient
     public async Task<LeaveRequestDto?> ApproveLeaveAsync(Guid requestId)
     {
         var response = await _http.PutAsJsonAsync($"api/leave-requests/{requestId}/approve", new { });
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<LeaveRequestDto>(JsonOptions);
     }
 
     public async Task<LeaveRequestDto?> RejectLeaveAsync(Guid requestId, string reason)
     {
         var response = await _http.PutAsJsonAsync($"api/leave-requests/{requestId}/reject", new { reason });
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<LeaveRequestDto>(JsonOptions);
     }
 
     // Companies
     public async Task<IReadOnlyList<CompanyDto>?> GetCompaniesAsync()
-        => await _http.GetFromJsonAsync<IReadOnlyList<CompanyDto>>("api/companies", JsonOptions);
+        => await GetJsonAsync<IReadOnlyList<CompanyDto>>("api/companies");
 
     // Departments
     public async Task<PagedResult<DepartmentDto>?> GetDepartmentsAsync(int page = 1, int pageSize = 50)
-        => await _http.GetFromJsonAsync<PagedResult<DepartmentDto>>($"api/departments?page={page}&pageSize={pageSize}", JsonOptions);
+        => await GetJsonAsync<PagedResult<DepartmentDto>>($"api/departments?page={page}&pageSize={pageSize}");
 
     public async Task<DepartmentDto?> CreateDepartmentAsync(object dto)
     {
         var response = await _http.PostAsJsonAsync("api/departments", dto);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<DepartmentDto>(JsonOptions);
     }
 
     public async Task DeleteDepartmentAsync(Guid id)
-        => (await _http.DeleteAsync($"api/departments/{id}")).EnsureSuccessStatusCode();
+        => await EnsureSuccessAsync(await _http.DeleteAsync($"api/departments/{id}"));
 
     // Positions
     public async Task<PagedResult<PositionDto>?> GetPositionsAsync(Guid? departmentId = null, int page = 1, int pageSize = 50)
     {
         var url = $"api/positions?page={page}&pageSize={pageSize}";
         if (departmentId.HasValue) url += $"&departmentId={departmentId}";
-        return await _http.GetFromJsonAsync<PagedResult<PositionDto>>(url, JsonOptions);
+        return await GetJsonAsync<PagedResult<PositionDto>>(url);
     }
 
     public async Task<PositionDto?> CreatePositionAsync(object dto)
     {
         var response = await _http.PostAsJsonAsync("api/positions", dto);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<PositionDto>(JsonOptions);
     }
 
@@ -130,27 +130,27 @@ public class ApiClient
     {
         var url = $"api/job-postings?page={page}&pageSize={pageSize}";
         if (!string.IsNullOrEmpty(status)) url += $"&status={status}";
-        return await _http.GetFromJsonAsync<PagedResult<JobPostingDto>>(url, JsonOptions);
+        return await GetJsonAsync<PagedResult<JobPostingDto>>(url);
     }
 
     public async Task<JobPostingDto?> CreateJobPostingAsync(object dto)
     {
         var response = await _http.PostAsJsonAsync("api/job-postings", dto);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<JobPostingDto>(JsonOptions);
     }
 
     public async Task<JobPostingDto?> PublishJobPostingAsync(Guid id)
     {
         var response = await _http.PutAsJsonAsync($"api/job-postings/{id}/publish", new { });
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<JobPostingDto>(JsonOptions);
     }
 
     public async Task<JobPostingDto?> CloseJobPostingAsync(Guid id)
     {
         var response = await _http.PutAsJsonAsync($"api/job-postings/{id}/close", new { });
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<JobPostingDto>(JsonOptions);
     }
 
@@ -160,7 +160,7 @@ public class ApiClient
         var url = $"api/applicants?page={page}&pageSize={pageSize}";
         if (jobPostingId.HasValue) url += $"&jobPostingId={jobPostingId}";
         if (!string.IsNullOrEmpty(status)) url += $"&status={status}";
-        return await _http.GetFromJsonAsync<PagedResult<ApplicantDto>>(url, JsonOptions);
+        return await GetJsonAsync<PagedResult<ApplicantDto>>(url);
     }
 
     // Overtime
@@ -169,37 +169,37 @@ public class ApiClient
         var url = $"api/overtime-requests?page={page}&pageSize={pageSize}";
         if (employeeId.HasValue) url += $"&employeeId={employeeId}";
         if (!string.IsNullOrEmpty(status)) url += $"&status={status}";
-        return await _http.GetFromJsonAsync<PagedResult<OvertimeRequestDto>>(url, JsonOptions);
+        return await GetJsonAsync<PagedResult<OvertimeRequestDto>>(url);
     }
 
     public async Task ApproveOvertimeAsync(Guid id, Guid approverId)
     {
         var response = await _http.PutAsJsonAsync($"api/overtime-requests/{id}/approve", new { approverId });
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
     }
 
     public async Task RejectOvertimeAsync(Guid id, string reason)
     {
         var response = await _http.PutAsJsonAsync($"api/overtime-requests/{id}/reject", new { rejectionReason = reason });
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
     }
 
     // Performance
     public async Task<PagedResult<ReviewCycleDto>?> GetReviewCyclesAsync(int page = 1, int pageSize = 20)
-        => await _http.GetFromJsonAsync<PagedResult<ReviewCycleDto>>($"api/review-cycles?page={page}&pageSize={pageSize}", JsonOptions);
+        => await GetJsonAsync<PagedResult<ReviewCycleDto>>($"api/review-cycles?page={page}&pageSize={pageSize}");
 
     public async Task<PagedResult<PerformanceReviewDto>?> GetPerformanceReviewsAsync(Guid? employeeId = null, Guid? cycleId = null, int page = 1, int pageSize = 20)
     {
         var url = $"api/performance-reviews?page={page}&pageSize={pageSize}";
         if (employeeId.HasValue) url += $"&employeeId={employeeId}";
         if (cycleId.HasValue) url += $"&cycleId={cycleId}";
-        return await _http.GetFromJsonAsync<PagedResult<PerformanceReviewDto>>(url, JsonOptions);
+        return await GetJsonAsync<PagedResult<PerformanceReviewDto>>(url);
     }
 
     public async Task<ReviewCycleDto?> CreateReviewCycleAsync(object dto)
     {
         var response = await _http.PostAsJsonAsync("api/review-cycles", dto);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<ReviewCycleDto>(JsonOptions);
     }
 
@@ -208,65 +208,65 @@ public class ApiClient
     {
         var url = $"api/analytics/hr/headcount?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}";
         if (departmentId.HasValue) url += $"&departmentId={departmentId}";
-        return await _http.GetFromJsonAsync<AnalyticsResponse<HeadcountByDepartmentDto>>(url, JsonOptions);
+        return await GetJsonAsync<AnalyticsResponse<HeadcountByDepartmentDto>>(url);
     }
 
     public async Task<AnalyticsResponse<TurnoverDataDto>?> GetTurnoverAnalyticsAsync(DateOnly from, DateOnly to, string groupBy = "month")
-        => await _http.GetFromJsonAsync<AnalyticsResponse<TurnoverDataDto>>($"api/analytics/hr/turnover?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}&groupBy={groupBy}", JsonOptions);
+        => await GetJsonAsync<AnalyticsResponse<TurnoverDataDto>>($"api/analytics/hr/turnover?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}&groupBy={groupBy}");
 
     public async Task<AnalyticsResponse<AttendanceRateDto>?> GetAttendanceAnalyticsAsync(DateOnly from, DateOnly to, Guid? departmentId = null)
     {
         var url = $"api/analytics/hr/attendance?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}";
         if (departmentId.HasValue) url += $"&departmentId={departmentId}";
-        return await _http.GetFromJsonAsync<AnalyticsResponse<AttendanceRateDto>>(url, JsonOptions);
+        return await GetJsonAsync<AnalyticsResponse<AttendanceRateDto>>(url);
     }
 
     public async Task<AnalyticsResponse<LeaveUtilizationDto>?> GetLeaveUtilizationAnalyticsAsync(DateOnly from, DateOnly to, Guid? departmentId = null)
     {
         var url = $"api/analytics/hr/leave-utilization?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}";
         if (departmentId.HasValue) url += $"&departmentId={departmentId}";
-        return await _http.GetFromJsonAsync<AnalyticsResponse<LeaveUtilizationDto>>(url, JsonOptions);
+        return await GetJsonAsync<AnalyticsResponse<LeaveUtilizationDto>>(url);
     }
 
     public async Task<AnalyticsResponse<OvertimeDataDto>?> GetOvertimeAnalyticsAsync(DateOnly from, DateOnly to, Guid? departmentId = null)
     {
         var url = $"api/analytics/hr/overtime?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}";
         if (departmentId.HasValue) url += $"&departmentId={departmentId}";
-        return await _http.GetFromJsonAsync<AnalyticsResponse<OvertimeDataDto>>(url, JsonOptions);
+        return await GetJsonAsync<AnalyticsResponse<OvertimeDataDto>>(url);
     }
 
     public async Task<AnalyticsResponse<RecruitmentFunnelDto>?> GetRecruitmentFunnelAnalyticsAsync(DateOnly from, DateOnly to)
-        => await _http.GetFromJsonAsync<AnalyticsResponse<RecruitmentFunnelDto>>($"api/analytics/hr/recruitment-funnel?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}", JsonOptions);
+        => await GetJsonAsync<AnalyticsResponse<RecruitmentFunnelDto>>($"api/analytics/hr/recruitment-funnel?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
 
     public async Task<AnalyticsResponse<PerformanceDistributionDto>?> GetPerformanceDistributionAnalyticsAsync(DateOnly from, DateOnly to)
-        => await _http.GetFromJsonAsync<AnalyticsResponse<PerformanceDistributionDto>>($"api/analytics/hr/performance-distribution?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}", JsonOptions);
+        => await GetJsonAsync<AnalyticsResponse<PerformanceDistributionDto>>($"api/analytics/hr/performance-distribution?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
 
     // Executive Analytics
     public async Task<AnalyticsResponse<WorkforceSummaryDto>?> GetWorkforceSummaryAsync(DateOnly from, DateOnly to)
-        => await _http.GetFromJsonAsync<AnalyticsResponse<WorkforceSummaryDto>>($"api/analytics/executive/workforce-summary?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}", JsonOptions);
+        => await GetJsonAsync<AnalyticsResponse<WorkforceSummaryDto>>($"api/analytics/executive/workforce-summary?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
 
     public async Task<AnalyticsResponse<HiringTrendDto>?> GetHiringTrendAsync(DateOnly from, DateOnly to)
-        => await _http.GetFromJsonAsync<AnalyticsResponse<HiringTrendDto>>($"api/analytics/executive/hiring-trend?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}", JsonOptions);
+        => await GetJsonAsync<AnalyticsResponse<HiringTrendDto>>($"api/analytics/executive/hiring-trend?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
 
     public async Task<AnalyticsResponse<AttritionDataDto>?> GetAttritionRateAsync(DateOnly from, DateOnly to, string groupBy = "month")
-        => await _http.GetFromJsonAsync<AnalyticsResponse<AttritionDataDto>>($"api/analytics/executive/attrition-rate?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}&groupBy={groupBy}", JsonOptions);
+        => await GetJsonAsync<AnalyticsResponse<AttritionDataDto>>($"api/analytics/executive/attrition-rate?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}&groupBy={groupBy}");
 
     public async Task<AnalyticsResponse<LeaveSummaryDto>?> GetLeaveSummaryAsync(DateOnly from, DateOnly to)
-        => await _http.GetFromJsonAsync<AnalyticsResponse<LeaveSummaryDto>>($"api/analytics/executive/leave-summary?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}", JsonOptions);
+        => await GetJsonAsync<AnalyticsResponse<LeaveSummaryDto>>($"api/analytics/executive/leave-summary?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
 
     public async Task<AnalyticsResponse<PerformanceOverviewDto>?> GetPerformanceOverviewAsync(Guid? reviewCycleId = null)
     {
         var url = "api/analytics/executive/performance-overview";
         if (reviewCycleId.HasValue) url += $"?reviewCycleId={reviewCycleId}";
-        return await _http.GetFromJsonAsync<AnalyticsResponse<PerformanceOverviewDto>>(url, JsonOptions);
+        return await GetJsonAsync<AnalyticsResponse<PerformanceOverviewDto>>(url);
     }
 
     // Payroll
     public async Task<PagedResult<PayrollRunSummaryDto>?> GetPayrollRunsAsync(int page = 1, int pageSize = 20)
-        => await _http.GetFromJsonAsync<PagedResult<PayrollRunSummaryDto>>($"api/payroll-runs?page={page}&pageSize={pageSize}", JsonOptions);
+        => await GetJsonAsync<PagedResult<PayrollRunSummaryDto>>($"api/payroll-runs?page={page}&pageSize={pageSize}");
 
     public async Task<PayrollRunDto?> GetPayrollRunAsync(Guid id)
-        => await _http.GetFromJsonAsync<PayrollRunDto>($"api/payroll-runs/{id}", JsonOptions);
+        => await GetJsonAsync<PayrollRunDto>($"api/payroll-runs/{id}");
 
     public async Task<(PayrollRunDto? Run, string? Error)> CreatePayrollRunAsync(object request)
     {
@@ -308,7 +308,7 @@ public class ApiClient
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException(await ReadProblemDetailAsync(response)
-                ?? $"Failed to load compensation ({(int)response.StatusCode}).");
+                ?? $"Failed to load compensation ({(int)response.StatusCode}).", null, response.StatusCode);
         return await response.Content.ReadFromJsonAsync<EmployeeCompensationDto>(JsonOptions);
     }
 
@@ -347,11 +347,11 @@ public class ApiClient
     }
 
     public async Task<IReadOnlyList<MyPayslipSummaryDto>?> GetMyPayslipListAsync()
-        => await _http.GetFromJsonAsync<IReadOnlyList<MyPayslipSummaryDto>>("api/reports/my-payslips", JsonOptions);
+        => await GetJsonAsync<IReadOnlyList<MyPayslipSummaryDto>>("api/reports/my-payslips");
 
     // BIR Form 2316
     public async Task<IReadOnlyList<int>?> GetBir2316YearsAsync(Guid employeeId)
-        => await _http.GetFromJsonAsync<IReadOnlyList<int>>($"api/reports/2316/years/{employeeId}", JsonOptions);
+        => await GetJsonAsync<IReadOnlyList<int>>($"api/reports/2316/years/{employeeId}");
 
     // Mirrors GetEmployeeCompensationAsync: a 404 here means the employee has no paid runs in
     // that year (Bir2316Service.GetPreviewAsync returns null), which the page should treat as
@@ -362,7 +362,7 @@ public class ApiClient
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException(await ReadProblemDetailAsync(response)
-                ?? $"Failed to load 2316 preview ({(int)response.StatusCode}).");
+                ?? $"Failed to load 2316 preview ({(int)response.StatusCode}).", null, response.StatusCode);
         return await response.Content.ReadFromJsonAsync<Bir2316Dto>(JsonOptions);
     }
 
@@ -385,9 +385,39 @@ public class ApiClient
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException(await ReadProblemDetailAsync(response)
-                ?? $"Failed to generate 2316s ({(int)response.StatusCode}).");
+                ?? $"Failed to generate 2316s ({(int)response.StatusCode}).", null, response.StatusCode);
         return await response.Content.ReadAsByteArrayAsync();
     }
+
+    // Every JSON read and every command goes through these two rather than GetFromJsonAsync or
+    // EnsureSuccessStatusCode. Those throw "Response status code does not indicate success: 409
+    // (Conflict)." - which pages then showed to users verbatim - and discard the API's own
+    // explanation of what went wrong. The exception thrown here carries that explanation when the
+    // API gave one, a plain sentence when it did not, and the status code either way, so a page can
+    // show ex.Message as it is and still branch on ex.StatusCode.
+    private async Task<T?> GetJsonAsync<T>(string url)
+    {
+        var response = await _http.GetAsync(url);
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<T>(JsonOptions);
+    }
+
+    private static async Task EnsureSuccessAsync(HttpResponseMessage response)
+    {
+        if (response.IsSuccessStatusCode) return;
+
+        var message = await ReadProblemDetailAsync(response) ?? DescribeFailure(response.StatusCode);
+        throw new HttpRequestException(message, null, response.StatusCode);
+    }
+
+    private static string DescribeFailure(HttpStatusCode status) => status switch
+    {
+        HttpStatusCode.Unauthorized => "Your session has expired. Please sign in again.",
+        HttpStatusCode.Forbidden => "You do not have permission to do that.",
+        HttpStatusCode.NotFound => "The record could not be found.",
+        >= HttpStatusCode.InternalServerError => $"The server ran into a problem ({(int)status}). Please try again.",
+        _ => $"The request could not be completed ({(int)status})."
+    };
 
     private static async Task<string?> ReadProblemDetailAsync(HttpResponseMessage response)
     {

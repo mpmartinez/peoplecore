@@ -97,7 +97,7 @@
             // "my payslip" to show, not a transient failure, so this reads as guidance rather
             // than an error banner. Anything else (a 500, a dropped connection) is transient and
             // gets its own title plus a retry affordance instead of being mislabeled the same way.
-            _loadErrorIsForbidden = ex.Message.Contains("403") || ex.Message.Contains("Forbidden");
+            _loadErrorIsForbidden = ex is HttpRequestException { StatusCode: System.Net.HttpStatusCode.Forbidden };
             _loadError = _loadErrorIsForbidden
                 ? "Your account is not linked to an employee record. Payslips are unavailable."
                 : ex.Message;
