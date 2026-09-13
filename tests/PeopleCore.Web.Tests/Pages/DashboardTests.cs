@@ -186,12 +186,16 @@ public class DashboardTests : BunitContext
         cut.Markup.Should().NotContain("Action Required");
     }
 
-    [Fact]
-    public void AnAccountWithNoEmployeeRecord_AsksForNoPersonalData_SaysSo_AndCountsAllPendingRequests()
+    [Theory]
+    [InlineData("Admin")]
+    [InlineData("HRManager")]
+    [InlineData("Manager")]
+    public void ALeaveStaffAccountWithNoEmployeeRecord_AsksForNoPersonalData_SaysSo_AndCountsAllPendingRequests(string role)
     {
         // An HR or admin login is not necessarily an employee. Asking for balances or attendance
         // without an id would fail, and waiting for them would spin forever; the pending count is
         // the organisation's instead.
+        _auth.SetRoles(role);
         _api.On(HttpMethod.Get, AllPendingPath, HttpStatusCode.OK, Pending(3));
 
         var cut = RenderPage();
@@ -201,6 +205,22 @@ public class DashboardTests : BunitContext
         CardText(cut, "Leave Balances").Should().Contain("not linked to an employee record");
         CardText(cut, "Today's Attendance").Should().Contain("not linked to an employee record")
             .And.NotContain("Not clocked in yet today.", "there is no one to clock in");
+    }
+
+    [Fact]
+    public void AnUnprivilegedAccountWithNoEmployeeRecord_AsksForNothing_AndSaysSoInEveryCard()
+    {
+        // The API refuses the organisation's leave requests to anyone but leave staff, so asking
+        // would only put a 403 in the pending card. There is nothing of the caller's own to count.
+        _auth.SetRoles("Employee");
+
+        var cut = RenderPage();
+
+        _api.Requests.Should().BeEmpty();
+        cut.FindAll(".text-3xl").Should().BeEmpty("a zero would read as nothing to approve");
+        CardText(cut, "Pending Leave Requests").Should().Contain("not linked to an employee record")
+            .And.NotContain("All Clear");
+        CardText(cut, "Leave Balances").Should().Contain("not linked to an employee record");
     }
 
     [Fact]
