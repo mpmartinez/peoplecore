@@ -13,6 +13,7 @@ namespace PeopleCore.Web.Tests.Pages.Organization;
 public class PositionsTests : BunitContext
 {
     private const string PositionsPath = "/api/positions?page=1&pageSize=100";
+    private const string DepartmentsPath = "/api/departments?page=1&pageSize=100";
     private static readonly Guid FinanceId = Guid.Parse("3f7a9c1e-2b4d-4e6f-8a0b-1c2d3e4f5a6b");
     private static readonly Guid LegalId = Guid.Parse("9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0");
 
@@ -21,6 +22,11 @@ public class PositionsTests : BunitContext
     // Read on every request, so a test can change what the API holds after the page has loaded
     // and see whether the page actually asks again.
     private string _positions = Paged();
+    private string _departments = Paged(Department(FinanceId, "Finance"), Department(LegalId, "Legal"));
+
+    // When set, the first page of that list fails with this explanation instead.
+    private string? _positionsFailure;
+    private string? _departmentsFailure;
 
     public PositionsTests()
     {
@@ -28,16 +34,23 @@ public class PositionsTests : BunitContext
 
         // Every department, not the API's default page of 50: a department missing from the
         // picker is one nobody can add a position to.
-        _api.On(HttpMethod.Get, "/api/departments?page=1&pageSize=100", HttpStatusCode.OK,
-                Paged(Department(FinanceId, "Finance"), Department(LegalId, "Legal")))
-            .On(HttpMethod.Get, PositionsPath, () => Json(_positions));
+        _api.On(HttpMethod.Get, DepartmentsPath, () => _departmentsFailure is null ? Json(_departments) : ServerError(_departmentsFailure))
+            .On(HttpMethod.Get, PositionsPath, () => _positionsFailure is null ? Json(_positions) : ServerError(_positionsFailure));
     }
 
     private static HttpResponseMessage Json(string json) =>
         new(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
 
-    private static string Paged(params string[] items) =>
-        $$"""{"items":[{{string.Join(",", items)}}],"totalCount":{{items.Length}},"page":1,"pageSize":100,"totalPages":1}""";
+    private static HttpResponseMessage ServerError(string detail) =>
+        new(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent($$"""{"detail":"{{detail}}"}""", Encoding.UTF8, "application/json")
+        };
+
+    private static string Paged(params string[] items) => PageOf(1, 1, items);
+
+    private static string PageOf(int page, int totalPages, params string[] items) =>
+        $$"""{"items":[{{string.Join(",", items)}}],"totalCount":{{items.Length}},"page":{{page}},"pageSize":100,"totalPages":{{totalPages}}}""";
 
     private static string Department(Guid id, string name) =>
         $$"""{"id":"{{id}}","companyId":"{{Guid.NewGuid()}}","parentDepartmentId":null,"parentDepartmentName":null,"name":"{{name}}","code":null,"subDepartmentCount":0}""";
@@ -151,5 +164,95 @@ public class PositionsTests : BunitContext
         DepartmentSelect(cut).GetAttribute("value").Should().Be(FinanceId.ToString());
         TitleInput(cut).GetAttribute("value").Should().Be("Accountant");
         AddButton(cut).HasAttribute("disabled").Should().BeFalse("the user has to be able to try again");
+    }
+
+    [Fact]
+    public void ThePicker_OffersDepartmentsFromEveryPage()
+    {
+        // An organisation with more departments than one page holds must still be able to add a
+        // position to the last of them.
+        var researchId = Guid.NewGuid();
+        _departments = PageOf(1, 2, Department(FinanceId, "Finance"), Department(LegalId, "Legal"));
+        _api.On(HttpMethod.Get, "/api/departments?page=2&pageSize=100", () => Json(PageOf(2, 2, Department(researchId, "Research"))));
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => DepartmentSelect(cut).QuerySelectorAll("option").Select(o => o.GetAttribute("value"))
+            .Should().Equal("", FinanceId.ToString(), LegalId.ToString(), researchId.ToString()));
+        _api.Requests.Select(r => r.RequestUri!.PathAndQuery).Should().NotContain("/api/departments?page=3&pageSize=100");
+    }
+
+    [Fact]
+    public void MoreThanOnePageOfPositions_OffersAPager_ThatAsksForTheChosenPage()
+    {
+        _positions = PageOf(1, 2, Position("Accountant", "Finance"));
+        _api.On(HttpMethod.Get, "/api/positions?page=2&pageSize=100", () => Json(PageOf(2, 2, Position("Counsel", "Legal"))));
+        var cut = RenderPage();
+
+        cut.Find("nav:not([aria-label=breadcrumb])").QuerySelectorAll("button").Single(b => b.TextContent.Trim() == "2").Click();
+
+        cut.WaitForAssertion(() => Rows(cut).Should().ContainSingle().Which[0].Should().Be("Counsel"));
+        cut.Find("nav:not([aria-label=breadcrumb])").TextContent.Should().Contain("Page 2 of 2");
+    }
+
+    [Fact]
+    public void ASinglePageOfPositions_NeedsNoPager()
+    {
+        _positions = Paged(Position("Accountant", "Finance"));
+
+        var cut = RenderPage();
+
+        cut.FindAll("nav:not([aria-label=breadcrumb])").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AFailedLoad_ShowsWhy_InsteadOfSpinningForever()
+    {
+        _positionsFailure = "Positions are unavailable.";
+
+        var cut = Render<Positions>();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Positions are unavailable."));
+        cut.FindAll(".animate-spin").Should().BeEmpty();
+        cut.FindAll("table").Should().BeEmpty();
+        cut.Markup.Should().NotContain("No positions yet.", "a failure is not the same as having none");
+    }
+
+    [Fact]
+    public void DepartmentsThatFailToLoad_AreExplained_WhileTheListStillShows()
+    {
+        _departmentsFailure = "Departments are unavailable.";
+        _positions = Paged(Position("Accountant", "Finance"));
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Departments are unavailable."));
+        Rows(cut).Should().ContainSingle().Which[0].Should().Be("Accountant");
+        TitleInput(cut).Input("Counsel");
+        AddButton(cut).HasAttribute("disabled").Should().BeTrue("there is no department to put it in");
+    }
+
+    [Fact]
+    public void ACreateThatWorked_IsNotReportedAsFailed_WhenOnlyTheReloadAfterItFails()
+    {
+        // A "failed" create invites a second attempt, which would add the position twice.
+        _positions = Paged(Position("Accountant", "Finance"));
+        _api.On(HttpMethod.Post, "/api/positions", () =>
+        {
+            _positionsFailure = "Positions are unavailable.";
+            return new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = new StringContent(Position("Counsel", "Legal"), Encoding.UTF8, "application/json")
+            };
+        });
+        var cut = RenderPage();
+
+        DepartmentSelect(cut).Change(LegalId.ToString());
+        TitleInput(cut).Input("Counsel");
+        AddButton(cut).Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Positions are unavailable."));
+        cut.Markup.Should().NotContain("Failed to create position.");
+        cut.FindAll("table").Should().BeEmpty("the rows from before the create are out of date");
     }
 }

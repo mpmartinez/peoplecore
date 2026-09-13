@@ -10,6 +10,10 @@
 {
     <Alert Variant="destructive" Class="mb-4">@_error</Alert>
 }
+@if (_departmentsError is not null)
+{
+    <Alert Variant="destructive" Class="mb-4">Departments could not be loaded, so positions cannot be added: @_departmentsError</Alert>
+}
 
 <Card Class="mb-4">
     <CardContent>
@@ -17,7 +21,7 @@
             <div class="min-w-[180px]">
                 <Label For="newDept">Department</Label>
                 <Select TValue="string" Id="newDept" @bind-Value="_newDeptId" Placeholder="-- Select --" Class="mt-1">
-                    @foreach (var d in _allDepts?.Items ?? [])
+                    @foreach (var d in _allDepts)
                     {
                         <option value="@d.Id">@d.Name</option>
                     }
@@ -40,7 +44,11 @@
 
 <Card>
     <CardContent Class="p-0">
-        @if (_positions is null)
+        @if (_loadError is not null)
+        {
+            <div class="p-4"><Alert Variant="destructive">@_loadError</Alert></div>
+        }
+        else if (_positions is null)
         {
             <div class="flex items-center justify-center p-10">
                 <Spinner />
@@ -71,13 +79,23 @@
                     }
                 </TableBody>
             </Table>
+
+            @if (_positions.TotalPages > 1)
+            {
+                <div class="border-t px-4 py-3">
+                    <Pagination CurrentPage="@_page" TotalPages="@_positions.TotalPages" OnPageChange="@HandlePageChange" />
+                </div>
+            }
         }
     </CardContent>
 </Card>
 
 @code {
     private PagedResult<PositionDto>? _positions;
-    private PagedResult<DepartmentDto>? _allDepts;
+    private string? _loadError;
+    private int _page = 1;
+    private List<DepartmentDto> _allDepts = [];
+    private string? _departmentsError;
     private string _newTitle = string.Empty;
     private string? _newLevel;
     private string _newDeptId = string.Empty;
@@ -86,11 +104,51 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _allDepts = await Api.GetDepartmentsAsync(pageSize: 100);
+        await LoadDepartments();
         await Load();
     }
 
-    private async Task Load() => _positions = await Api.GetPositionsAsync(pageSize: 100);
+    private async Task LoadDepartments()
+    {
+        // Every page, not just the first: a department left out of the picker is one nobody can
+        // add a position to. A failure only affects Add, so the list still loads.
+        try
+        {
+            var all = new List<DepartmentDto>();
+            for (var page = 1; ; page++)
+            {
+                var result = await Api.GetDepartmentsAsync(page, pageSize: 100);
+                if (result is null) break;
+                all.AddRange(result.Items);
+                if (page >= result.TotalPages) break;
+            }
+            _allDepts = all;
+        }
+        catch (Exception ex)
+        {
+            _departmentsError = ex.Message;
+        }
+    }
+
+    private async Task Load()
+    {
+        try
+        {
+            _positions = await Api.GetPositionsAsync(page: _page, pageSize: 100);
+            _loadError = null;
+        }
+        catch (Exception ex)
+        {
+            _positions = null;
+            _loadError = ex.Message;
+        }
+    }
+
+    private async Task HandlePageChange(int page)
+    {
+        _page = page;
+        await Load();
+    }
 
     private async Task Create()
     {
@@ -100,12 +158,18 @@
         try
         {
             await Api.CreatePositionAsync(new { departmentId = Guid.Parse(_newDeptId), title = _newTitle, level = _newLevel });
-            _newTitle = string.Empty;
-            _newLevel = null;
-            _newDeptId = string.Empty;
-            await Load();
         }
-        catch { _error = "Failed to create position."; }
+        catch
+        {
+            _error = "Failed to create position.";
+            return;
+        }
         finally { _creating = false; }
+
+        // Created. If the reload fails, that is the list's error to show, not a failed create.
+        _newTitle = string.Empty;
+        _newLevel = null;
+        _newDeptId = string.Empty;
+        await Load();
     }
 }
