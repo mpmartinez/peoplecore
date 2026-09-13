@@ -5,66 +5,116 @@
 
 <PageTitle>My Profile</PageTitle>
 
-<PageHeader Title="My Profile" Section="My HR" Description="Your employment record as HR holds it, and your sign-in password." />
+<PageHeader Title="My Profile" Section="My HR" Description="Your name and email, your employment record as HR holds it, and your sign-in password." />
 
 <div class="grid gap-6 lg:grid-cols-2 items-start max-w-5xl">
-    <section aria-label="Employment record">
-        @if (_loadError is not null)
-        {
-            <Alert Variant="destructive" Title="Couldn't load your profile">@_loadError</Alert>
-        }
-        else if (_employee is null)
-        {
-            <Card>
-                <CardContent Class="p-6 text-center text-muted-foreground text-sm">
-                    @(_loading ? "Loading..." : "Profile not linked to an employee record.")
-                </CardContent>
-            </Card>
-        }
-        else
-        {
+    <div class="space-y-6">
+        <section aria-label="Account details">
             <Card>
                 <CardHeader>
-                    <div class="flex items-center gap-4">
-                        <div class="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xl font-bold">
-                            @(_employee.FirstName.FirstOrDefault())@(_employee.LastName.FirstOrDefault())
-                        </div>
-                        <div>
-                            <CardTitle>@_employee.FullName</CardTitle>
-                            <CardDescription>@_employee.WorkEmail</CardDescription>
-                        </div>
-                    </div>
+                    <CardTitle>Account Details</CardTitle>
+                    <CardDescription>The name on your account. Your email is your sign-in and can't be changed here.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                    <Separator Class="mb-4" />
-                    <div class="space-y-3 text-sm">
-                        <div class="flex justify-between py-1.5 border-b border-border">
-                            <span class="text-muted-foreground">Employee #</span>
-                            <span class="font-mono font-medium">@_employee.EmployeeNumber</span>
-                        </div>
-                        <div class="flex justify-between py-1.5 border-b border-border">
-                            <span class="text-muted-foreground">Department</span>
-                            <span>@(_employee.DepartmentName ?? "--")</span>
-                        </div>
-                        <div class="flex justify-between py-1.5 border-b border-border">
-                            <span class="text-muted-foreground">Position</span>
-                            <span>@(_employee.PositionTitle ?? "--")</span>
-                        </div>
-                        <div class="flex justify-between py-1.5 border-b border-border">
-                            <span class="text-muted-foreground">Employment Status</span>
-                            <span>@_employee.EmploymentStatus</span>
-                        </div>
-                        <div class="flex justify-between py-1.5">
-                            <span class="text-muted-foreground">Account Status</span>
-                            <Badge Variant="@(_employee.IsActive ? "success" : "secondary")">
-                                @(_employee.IsActive ? "Active" : "Inactive")
-                            </Badge>
-                        </div>
-                    </div>
+                    @if (_accountLoadError is not null)
+                    {
+                        <Alert Variant="destructive" Title="Couldn't load your account details">@_accountLoadError</Alert>
+                    }
+                    else if (_account is null)
+                    {
+                        <p class="text-sm text-muted-foreground">Loading...</p>
+                    }
+                    else
+                    {
+                        <form id="account-details" class="space-y-4" @onsubmit="SaveAccount" @onsubmit:preventDefault>
+                            @if (_accountError is not null)
+                            {
+                                <Alert Variant="destructive" data-account-result>@_accountError</Alert>
+                            }
+                            else if (_accountSaved)
+                            {
+                                <Alert Variant="success" data-account-result>Your details have been saved.</Alert>
+                            }
+
+                            <div class="grid gap-4 sm:grid-cols-2">
+                                <FormField LabelText="First name" Id="first-name" Error="@_firstNameError">
+                                    <Input TValue="string" Id="first-name" @bind-Value="_firstName" AutoComplete="given-name"
+                                           MaxLength="@NameMaxLength" HasError="@(_firstNameError is not null)" Disabled="@_savingAccount" />
+                                </FormField>
+                                <FormField LabelText="Last name" Id="last-name" Error="@_lastNameError">
+                                    <Input TValue="string" Id="last-name" @bind-Value="_lastName" AutoComplete="family-name"
+                                           MaxLength="@NameMaxLength" HasError="@(_lastNameError is not null)" Disabled="@_savingAccount" />
+                                </FormField>
+                            </div>
+                            <div class="space-y-2" data-account-email>
+                                <span class="block text-sm font-medium leading-none">Email</span>
+                                <p class="flex h-9 items-center text-sm">@(_account.Email ?? "--")</p>
+                            </div>
+                            <Button Type="submit" Variant="primary" Loading="@_savingAccount">Save Details</Button>
+                        </form>
+                    }
                 </CardContent>
             </Card>
-        }
-    </section>
+        </section>
+
+        <section aria-label="Employment record">
+            @if (_loadError is not null)
+            {
+                <Alert Variant="destructive" Title="Couldn't load your profile">@_loadError</Alert>
+            }
+            else if (_employee is null)
+            {
+                <Card>
+                    <CardContent Class="p-6 text-center text-muted-foreground text-sm">
+                        @(_loading ? "Loading..." : "No employee record is linked to this account.")
+                    </CardContent>
+                </Card>
+            }
+            else
+            {
+                <Card>
+                    <CardHeader>
+                        <div class="flex items-center gap-4">
+                            <div class="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xl font-bold">
+                                @(_employee.FirstName.FirstOrDefault())@(_employee.LastName.FirstOrDefault())
+                            </div>
+                            <div>
+                                <CardTitle>@_employee.FullName</CardTitle>
+                                <CardDescription>@_employee.WorkEmail</CardDescription>
+                            </div>
+                        </div>
+                    </CardHeader>
+                    <CardContent>
+                        <Separator Class="mb-4" />
+                        <div class="space-y-3 text-sm">
+                            <div class="flex justify-between py-1.5 border-b border-border">
+                                <span class="text-muted-foreground">Employee #</span>
+                                <span class="font-mono font-medium">@_employee.EmployeeNumber</span>
+                            </div>
+                            <div class="flex justify-between py-1.5 border-b border-border">
+                                <span class="text-muted-foreground">Department</span>
+                                <span>@(_employee.DepartmentName ?? "--")</span>
+                            </div>
+                            <div class="flex justify-between py-1.5 border-b border-border">
+                                <span class="text-muted-foreground">Position</span>
+                                <span>@(_employee.PositionTitle ?? "--")</span>
+                            </div>
+                            <div class="flex justify-between py-1.5 border-b border-border">
+                                <span class="text-muted-foreground">Employment Status</span>
+                                <span>@_employee.EmploymentStatus</span>
+                            </div>
+                            <div class="flex justify-between py-1.5">
+                                <span class="text-muted-foreground">Account Status</span>
+                                <Badge Variant="@(_employee.IsActive ? "success" : "secondary")">
+                                    @(_employee.IsActive ? "Active" : "Inactive")
+                                </Badge>
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+            }
+        </section>
+    </div>
 
     @* Outside the employee-record branches on purpose: an account with no employee record behind
        it (the seeded admin, say) still has a password to change. *@
@@ -114,6 +164,19 @@
     // for another reason comes back in the error message.
     private const int MinimumLength = 8;
 
+    // The API's column width (ApplicationUser.NameMaxLength).
+    private const int NameMaxLength = 100;
+
+    private UserProfileDto? _account;
+    private string? _accountLoadError;
+    private string _firstName = string.Empty;
+    private string _lastName = string.Empty;
+    private string? _firstNameError;
+    private string? _lastNameError;
+    private string? _accountError;
+    private bool _accountSaved;
+    private bool _savingAccount;
+
     private EmployeeListDto? _employee;
     private bool _loading = true;
     private string? _loadError;
@@ -130,6 +193,27 @@
 
     protected override async Task OnInitializedAsync()
     {
+        // Independent of each other: an account with no employee record still has a profile, and
+        // a failure loading one card should not blank the other.
+        await Task.WhenAll(LoadAccountAsync(), LoadEmployeeAsync());
+    }
+
+    private async Task LoadAccountAsync()
+    {
+        try
+        {
+            _account = await Api.GetMyProfileAsync();
+            _firstName = _account?.FirstName ?? string.Empty;
+            _lastName = _account?.LastName ?? string.Empty;
+        }
+        catch (Exception ex)
+        {
+            _accountLoadError = ex.Message;
+        }
+    }
+
+    private async Task LoadEmployeeAsync()
+    {
         var auth = await AuthStateProvider.GetAuthenticationStateAsync();
         var empIdStr = auth.User.FindFirst("employee_id")?.Value;
         try
@@ -145,6 +229,33 @@
         finally
         {
             _loading = false;
+        }
+    }
+
+    private async Task SaveAccount()
+    {
+        _accountError = null;
+        _accountSaved = false;
+
+        _firstNameError = string.IsNullOrWhiteSpace(_firstName) ? "Enter your first name." : null;
+        _lastNameError = string.IsNullOrWhiteSpace(_lastName) ? "Enter your last name." : null;
+        if (_firstNameError is not null || _lastNameError is not null) return;
+
+        _savingAccount = true;
+        try
+        {
+            _account = await Api.UpdateMyProfileAsync(_firstName.Trim(), _lastName.Trim()) ?? _account;
+            _firstName = _account?.FirstName ?? string.Empty;
+            _lastName = _account?.LastName ?? string.Empty;
+            _accountSaved = true;
+        }
+        catch (Exception ex)
+        {
+            _accountError = ex.Message;
+        }
+        finally
+        {
+            _savingAccount = false;
         }
     }
 

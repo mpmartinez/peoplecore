@@ -1,5 +1,6 @@
 using System.Net;
 using System.Security.Claims;
+using System.Text;
 using Bunit;
 using Bunit.TestDoubles;
 using FluentAssertions;
@@ -17,12 +18,24 @@ public class MyProfileTests : BunitContext
     private readonly StubHttpHandler _api = new();
     private readonly BunitAuthorizationContext _auth;
 
+    private const string ProfileRoute = "/api/profile";
+
+    // Read when the request arrives, so a test can change what GET api/profile answers before rendering.
+    private HttpStatusCode _profileStatus = HttpStatusCode.OK;
+    private string _profileJson = """{"firstName":"Ana","lastName":"Reyes","email":"ana@company.test"}""";
+
     public MyProfileTests()
     {
         Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(_api)));
         _auth = AddAuthorization();
         _auth.SetAuthorized("ana@company.test");
+        _api.On(HttpMethod.Get, ProfileRoute, () => new HttpResponseMessage(_profileStatus)
+        {
+            Content = new StringContent(_profileJson, Encoding.UTF8, "application/json")
+        });
     }
+
+    private List<string> RequestedPaths() => _api.Requests.Select(r => r.RequestUri!.AbsolutePath).ToList();
 
     private static string Employee(string? department, string? position, bool isActive) =>
         $$"""
@@ -54,7 +67,7 @@ public class MyProfileTests : BunitContext
     {
         var cut = RenderLinked(Employee("Finance", "Accountant", isActive: true));
 
-        _api.Requests.Should().ContainSingle().Which.RequestUri!.PathAndQuery.Should().Be($"/api/employees/{EmployeeId}");
+        RequestedPaths().Should().BeEquivalentTo([ProfileRoute, $"/api/employees/{EmployeeId}"]);
         cut.Markup.Should().Contain("Ana Reyes").And.Contain("ana@company.test");
         cut.Find(".rounded-full").TextContent.Trim().Should().Be("AR");
         Rows(cut).Should().BeEquivalentTo(new Dictionary<string, string>
@@ -88,8 +101,8 @@ public class MyProfileTests : BunitContext
 
         var cut = Render<MyProfile>();
 
-        cut.WaitForAssertion(() => cut.Markup.Should().Contain("Profile not linked to an employee record."));
-        _api.Requests.Should().BeEmpty();
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain("No employee record is linked to this account."));
+        RequestedPaths().Should().Equal(ProfileRoute);
     }
 
     [Theory]
@@ -104,7 +117,7 @@ public class MyProfileTests : BunitContext
         var cut = Render<MyProfile>();
 
         cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Couldn't load your profile"));
-        cut.Markup.Should().NotContain("Loading...").And.NotContain("Profile not linked");
+        cut.Markup.Should().NotContain("No employee record is linked");
     }
 
     // --- Change password ---------------------------------------------------------------------
@@ -115,7 +128,7 @@ public class MyProfileTests : BunitContext
     private IRenderedComponent<MyProfile> RenderUnlinked()
     {
         var cut = Render<MyProfile>();
-        cut.WaitForAssertion(() => cut.Markup.Should().Contain("Profile not linked"));
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain("No employee record is linked"));
         return cut;
     }
 
@@ -206,5 +219,114 @@ public class MyProfileTests : BunitContext
 
         cut.Markup.Should().Contain("Ana Reyes");
         cut.FindAll("form#change-password").Should().ContainSingle();
+    }
+
+    // --- Account details ---------------------------------------------------------------------
+
+    private IRenderedComponent<MyProfile> RenderAccount()
+    {
+        var cut = Render<MyProfile>();
+        cut.WaitForAssertion(() => cut.FindAll("form#account-details").Should().ContainSingle());
+        return cut;
+    }
+
+    private string? ProfileUpdateBody() =>
+        _api.Requests.Select((r, i) => (r, i))
+            .Where(x => x.r.Method == HttpMethod.Put && x.r.RequestUri!.AbsolutePath == ProfileRoute)
+            .Select(x => _api.RequestBodies[x.i]).SingleOrDefault();
+
+    [Fact]
+    public void EveryAccount_SeesItsFirstNameLastNameAndEmail_EvenWithoutAnEmployeeRecord()
+    {
+        var cut = RenderAccount();
+
+        cut.Find("#first-name").GetAttribute("value").Should().Be("Ana");
+        cut.Find("#last-name").GetAttribute("value").Should().Be("Reyes");
+        cut.Find("[data-account-email]").TextContent.Should().Contain("Email").And.Contain("ana@company.test");
+        cut.Markup.Should().Contain("No employee record is linked to this account.");
+    }
+
+    [Fact]
+    public void TheEmail_IsShownButCannotBeEdited()
+    {
+        var cut = RenderAccount();
+
+        cut.Find("[data-account-email]").QuerySelectorAll("input").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AnAccountThatHasNoNamesYet_OpensWithBlankNameFields()
+    {
+        _profileJson = """{"firstName":null,"lastName":null,"email":"admin@peoplecore.local"}""";
+
+        var cut = RenderAccount();
+
+        cut.Find("#first-name").GetAttribute("value").Should().BeNullOrEmpty();
+        cut.Find("#last-name").GetAttribute("value").Should().BeNullOrEmpty();
+        cut.Find("[data-account-email]").TextContent.Should().Contain("admin@peoplecore.local");
+    }
+
+    [Fact]
+    public void SavingNames_SendsOnlyTheTrimmedNames_AndShowsWhatTheApiSaved()
+    {
+        _api.On(HttpMethod.Put, ProfileRoute, HttpStatusCode.OK,
+            """{"firstName":"Annie","lastName":"Reyes-Cruz","email":"ana@company.test"}""");
+        var cut = RenderAccount();
+
+        cut.Find("#first-name").Input("  Annie ");
+        cut.Find("#last-name").Input("Reyes-Cruz ");
+        cut.Find("form#account-details").Submit();
+
+        cut.WaitForAssertion(() =>
+            cut.Find("[data-account-result]").TextContent.Should().Contain("Your details have been saved."));
+        ProfileUpdateBody().Should().Be("""{"firstName":"Annie","lastName":"Reyes-Cruz"}""");
+        cut.Find("#first-name").GetAttribute("value").Should().Be("Annie");
+        cut.Find("#last-name").GetAttribute("value").Should().Be("Reyes-Cruz");
+    }
+
+    [Theory]
+    [InlineData("", "Reyes", "first-name", "Enter your first name.")]
+    [InlineData("Ana", "   ", "last-name", "Enter your last name.")]
+    public void AMissingName_SaysSoBesideTheField_WithoutCallingTheApi(string first, string last, string field, string message)
+    {
+        var cut = RenderAccount();
+
+        cut.Find("#first-name").Input(first);
+        cut.Find("#last-name").Input(last);
+        cut.Find("form#account-details").Submit();
+
+        FieldError(cut, field).Should().Be(message);
+        ProfileUpdateBody().Should().BeNull();
+    }
+
+    [Fact]
+    public void ARejectedSave_ShowsTheApisReason_AndKeepsWhatWasTyped()
+    {
+        _api.On(HttpMethod.Put, ProfileRoute, HttpStatusCode.BadRequest,
+            """{"title":"Profile not saved","detail":"First name must be 100 characters or fewer.","status":400}""");
+        var cut = RenderAccount();
+
+        cut.Find("#first-name").Input("Annie");
+        cut.Find("form#account-details").Submit();
+
+        cut.WaitForAssertion(() =>
+            cut.Find("[data-account-result]").TextContent.Should().Contain("First name must be 100 characters or fewer."));
+        cut.Find("#first-name").GetAttribute("value").Should().Be("Annie");
+        cut.Find("form#account-details button[type=submit]").HasAttribute("disabled").Should().BeFalse();
+    }
+
+    [Fact]
+    public void AccountDetailsThatFailToLoad_SaySo_WithoutHidingTheRestOfThePage()
+    {
+        _profileStatus = HttpStatusCode.InternalServerError;
+        _profileJson = "{}";
+
+        var cut = Render<MyProfile>();
+
+        cut.WaitForAssertion(() =>
+            cut.Find("[role=alert]").TextContent.Should().Contain("Couldn't load your account details"));
+        cut.FindAll("form#account-details").Should().BeEmpty();
+        cut.FindAll("form#change-password").Should().ContainSingle();
+        cut.Markup.Should().Contain("No employee record is linked to this account.");
     }
 }

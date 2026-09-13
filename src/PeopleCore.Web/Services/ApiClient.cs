@@ -27,6 +27,17 @@ public class ApiClient
     /// Changes the signed-in account's own password. A wrong current password or one the password
     /// policy rejects comes back as a 400 whose message says which, ready to show as it is.
     /// </summary>
+    // The signed-in account's own profile. Not under api/auth: a 401 here is an expired session.
+    public async Task<UserProfileDto?> GetMyProfileAsync()
+        => await GetJsonAsync<UserProfileDto>("api/profile");
+
+    public async Task<UserProfileDto?> UpdateMyProfileAsync(string firstName, string lastName)
+    {
+        var response = await _http.PutAsJsonAsync("api/profile", new { firstName, lastName });
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<UserProfileDto>(JsonOptions);
+    }
+
     public async Task ChangePasswordAsync(string currentPassword, string newPassword)
         => await EnsureSuccessAsync(await _http.PostAsJsonAsync("api/auth/change-password", new { currentPassword, newPassword }));
 
@@ -450,6 +461,7 @@ public class ApiClient
 
 // Client-side DTO copies
 public record LoginResponse(string Token, string Email, IReadOnlyList<string> Roles);
+public record UserProfileDto(string? FirstName, string? LastName, string? Email);
 public record PagedResult<T>(IReadOnlyList<T> Items, int TotalCount, int Page, int PageSize, int TotalPages);
 public record EmployeeListDto(Guid Id, string EmployeeNumber, string FirstName, string LastName, string FullName, string WorkEmail, string? DepartmentName, string? PositionTitle, string EmploymentStatus, bool IsActive);
 public record LeaveBalanceDto(Guid Id, Guid EmployeeId, string EmployeeName, Guid LeaveTypeId, string LeaveTypeName, int Year, decimal TotalDays, decimal UsedDays, decimal CarriedOverDays, decimal RemainingDays);
