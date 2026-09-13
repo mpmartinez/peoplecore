@@ -62,13 +62,10 @@
                                 <Badge Variant="@LeaveStatusVariant(r.Status)">@r.Status</Badge>
                             </TableCell>
                             <TableCell Class="px-4 py-3">
-                                @if (r.Status == "Pending")
+                                @if (r.Status == "Pending" && CanDecide(r))
                                 {
                                     <div class="flex gap-2">
-                                        @if (CanApprove(r))
-                                        {
-                                            <Button Variant="ghost" Size="sm" OnClick="() => Approve(r.Id)">Approve</Button>
-                                        }
+                                        <Button Variant="ghost" Size="sm" OnClick="() => Approve(r.Id)">Approve</Button>
                                         <Button Variant="destructive" Size="sm" OnClick="() => Reject(r.Id)">Reject</Button>
                                     </div>
                                 }
@@ -101,12 +98,12 @@
     private int _page = 1;
     private const int _pageSize = 50;
 
-    // The signed-in account's employee. The API records the approver from it, refuses an account
-    // without one, and refuses anyone approving their own leave, so Approve is offered only where
-    // it can succeed. Rejecting records nobody.
+    // The signed-in account's employee. The API decides as it, refuses an account without one, and
+    // refuses anyone approving or rejecting their own leave, so decisions are offered only where
+    // they can succeed.
     private Guid? _currentEmployeeId;
 
-    private bool CanApprove(LeaveRequestDto request)
+    private bool CanDecide(LeaveRequestDto request)
         => _currentEmployeeId is { } me && request.EmployeeId != me;
 
     private string EmptyText => _statusFilter == ""

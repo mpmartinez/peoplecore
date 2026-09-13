@@ -111,6 +111,45 @@ public class LeaveRequestServiceTests
     }
 
     [Fact]
+    public async Task RejectAsync_OwnRequest_ThrowsDomainException_WithoutRejectingIt()
+    {
+        // Same rule as approving: an approver does not decide their own leave either way.
+        var emp = MakeEmployee();
+        var request = new LeaveRequest
+        {
+            Id = Guid.NewGuid(), EmployeeId = emp.Id, LeaveTypeId = Guid.NewGuid(),
+            StartDate = new DateOnly(2026, 10, 5), EndDate = new DateOnly(2026, 10, 6),
+            TotalDays = 2, Status = LeaveStatus.Pending
+        };
+        _leaveRepo.Setup(r => r.GetByIdAsync(request.Id, default)).ReturnsAsync(request);
+
+        var act = () => _sut.RejectAsync(request.Id, emp.Id, new RejectLeaveDto("Changed plans"));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("*your own leave*");
+        request.Status.Should().Be(LeaveStatus.Pending);
+        request.RejectionReason.Should().BeNull();
+        _leaveRepo.Verify(r => r.UpdateAsync(It.IsAny<LeaveRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RejectAsync_SomeoneElsesRequest_RecordsTheReason()
+    {
+        var request = new LeaveRequest
+        {
+            Id = Guid.NewGuid(), EmployeeId = Guid.NewGuid(), LeaveTypeId = Guid.NewGuid(),
+            StartDate = new DateOnly(2026, 10, 5), EndDate = new DateOnly(2026, 10, 6),
+            TotalDays = 2, Status = LeaveStatus.Pending
+        };
+        _leaveRepo.Setup(r => r.GetByIdAsync(request.Id, default)).ReturnsAsync(request);
+
+        var result = await _sut.RejectAsync(request.Id, Guid.NewGuid(), new RejectLeaveDto("Peak season"));
+
+        result.Status.Should().Be(LeaveStatus.Rejected);
+        result.RejectionReason.Should().Be("Peak season");
+        _leaveRepo.Verify(r => r.UpdateAsync(request, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task CreateAsync_WhenInsufficientBalance_ThrowsDomainException()
     {
         var emp = MakeEmployee();

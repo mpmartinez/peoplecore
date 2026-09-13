@@ -109,25 +109,25 @@ public class LeaveApprovalsTests : BunitContext
     }
 
     [Fact]
-    public void AnAccountWithoutAnEmployeeLink_CanRejectButNotApprove()
+    public void AnAccountWithoutAnEmployeeLink_CannotDecideAnything()
     {
-        // The API records the approver as the account's employee and refuses an account with none.
+        // The API decides as the account's employee and refuses an account with none.
         var cut = RenderPage(linkedToEmployee: false);
 
-        ButtonsIn(RowFor(cut, "Maria Santos")).Should().Equal("Reject");
+        ButtonsIn(RowFor(cut, "Maria Santos")).Should().BeEmpty();
     }
 
     [Fact]
-    public void TheSignedInManagersOwnRequest_CanBeRejectedButNotApproved()
+    public void TheSignedInManagersOwnRequest_CannotBeDecidedByThem()
     {
-        // The API refuses anyone approving their own leave; somebody else has to sign it off.
+        // The API refuses anyone approving or rejecting their own leave; somebody else decides it.
         _requests = Paged(
             Request(PendingId, "Maria Santos", "Pending", "Family event"),
             Request(Guid.NewGuid(), "Signed-in Manager", "Pending", "Conference", SignedInEmployeeId));
 
         var cut = RenderPage();
 
-        ButtonsIn(RowFor(cut, "Signed-in Manager")).Should().Equal("Reject");
+        ButtonsIn(RowFor(cut, "Signed-in Manager")).Should().BeEmpty();
         ButtonsIn(RowFor(cut, "Maria Santos")).Should().Equal("Approve", "Reject");
     }
 

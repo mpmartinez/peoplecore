@@ -9,6 +9,6 @@ public interface ILeaveRequestService
     Task<LeaveRequestDto> GetByIdAsync(Guid id, CancellationToken ct = default);
     Task<LeaveRequestDto> CreateAsync(CreateLeaveRequestDto dto, CancellationToken ct = default);
     Task<LeaveRequestDto> ApproveAsync(Guid id, Guid approverId, CancellationToken ct = default);
-    Task<LeaveRequestDto> RejectAsync(Guid id, RejectLeaveDto dto, CancellationToken ct = default);
+    Task<LeaveRequestDto> RejectAsync(Guid id, Guid rejecterId, RejectLeaveDto dto, CancellationToken ct = default);
     Task CancelAsync(Guid id, Guid requestingEmployeeId, CancellationToken ct = default);
 }

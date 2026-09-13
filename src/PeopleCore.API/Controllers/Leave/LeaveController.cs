@@ -141,10 +141,20 @@ public class LeaveController : ControllerBase
         return Ok(await _requestService.ApproveAsync(id, approverId.Value, ct));
     }
 
+    /// <summary>
+    /// Rejects as the employee in the caller's employee_id claim, so the service can refuse anyone
+    /// rejecting their own leave. An account with no employee record cannot be checked and is refused.
+    /// </summary>
     [HttpPut("leave-requests/{id:guid}/reject")]
     [Authorize(Roles = "Admin,HRManager,Manager")]
     public async Task<IActionResult> Reject(Guid id, [FromBody] RejectLeaveDto dto, CancellationToken ct = default)
-        => Ok(await _requestService.RejectAsync(id, dto, ct));
+    {
+        var rejecterId = _currentUser.EmployeeId;
+        if (rejecterId is null)
+            return Forbid();
+
+        return Ok(await _requestService.RejectAsync(id, rejecterId.Value, dto, ct));
+    }
 
     /// <summary>
     /// Takes no employee id. It used to read one from the query string and hand it to the

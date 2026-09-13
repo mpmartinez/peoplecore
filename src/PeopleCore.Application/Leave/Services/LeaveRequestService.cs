@@ -94,10 +94,7 @@ public class LeaveRequestService : ILeaveRequestService
         if (request.Status != LeaveStatus.Pending)
             throw new DomainException("Only pending leave requests can be approved.");
 
-        // Every approver role could otherwise sign off its own leave. approverId comes from the
-        // caller's employee_id claim, so this cannot be dodged by naming someone else.
-        if (request.EmployeeId == approverId)
-            throw new DomainException("You cannot approve your own leave request.");
+        EnsureNotOwnRequest(request, approverId, "approve");
 
         var balance = await _balanceRepo.GetByEmployeeAndTypeAsync(
             request.EmployeeId, request.LeaveTypeId, request.StartDate.Year, ct)
@@ -116,7 +113,7 @@ public class LeaveRequestService : ILeaveRequestService
         return ToDto(request);
     }
 
-    public async Task<LeaveRequestDto> RejectAsync(Guid id, RejectLeaveDto dto, CancellationToken ct = default)
+    public async Task<LeaveRequestDto> RejectAsync(Guid id, Guid rejecterId, RejectLeaveDto dto, CancellationToken ct = default)
     {
         var request = await _leaveRepo.GetByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Leave request {id} not found.");
@@ -124,12 +121,25 @@ public class LeaveRequestService : ILeaveRequestService
         if (request.Status != LeaveStatus.Pending)
             throw new DomainException("Only pending leave requests can be rejected.");
 
+        EnsureNotOwnRequest(request, rejecterId, "reject");
+
         request.Status = LeaveStatus.Rejected;
         request.RejectionReason = dto.RejectionReason;
         request.UpdatedAt = DateTime.UtcNow;
 
         await _leaveRepo.UpdateAsync(request, ct);
         return ToDto(request);
+    }
+
+    /// <summary>
+    /// Every approver role could otherwise decide its own leave. <paramref name="deciderId"/> must
+    /// come from the caller's employee_id claim, so this cannot be dodged by naming someone else.
+    /// An employee withdrawing their own request uses <see cref="CancelAsync"/> instead.
+    /// </summary>
+    private static void EnsureNotOwnRequest(LeaveRequest request, Guid deciderId, string decision)
+    {
+        if (request.EmployeeId == deciderId)
+            throw new DomainException($"You cannot {decision} your own leave request.");
     }
 
     public async Task CancelAsync(Guid id, Guid requestingEmployeeId, CancellationToken ct = default)

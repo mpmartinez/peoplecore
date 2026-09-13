@@ -247,6 +247,45 @@ public class LeaveControllerAuthorizationTests
         VerifyNoServiceReached();
     }
 
+    // ---- PUT api/leave-requests/{id}/reject ------------------------------------------------
+
+    [Fact]
+    public void Reject_TakesNoEmployeeIdFromTheCaller()
+    {
+        var parameters = typeof(LeaveController)
+            .GetMethod(nameof(LeaveController.Reject), BindingFlags.Public | BindingFlags.Instance)!
+            .GetParameters().Select(p => p.Name);
+
+        parameters.Should().BeEquivalentTo(["id", "dto", "ct"]);
+        typeof(RejectLeaveDto).GetProperties().Select(p => p.Name).Should().Equal(nameof(RejectLeaveDto.RejectionReason));
+    }
+
+    [Theory]
+    [MemberData(nameof(LeaveReaderRoles))]
+    public async Task Reject_RejectsAsTheEmployeeInTheClaim(string role)
+    {
+        SignInAs(Caller, role);
+        var dto = new RejectLeaveDto("Peak season");
+
+        var result = await _sut.Reject(RequestId, dto, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+        _requests.Verify(s => s.RejectAsync(RequestId, Caller, dto, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Reject_ForACallerWithNoEmployeeIdClaim_ReturnsForbid()
+    {
+        // Without an employee there is no way to tell whether the leave being rejected is the
+        // caller's own.
+        SignInAs(null, "Admin");
+
+        var result = await _sut.Reject(RequestId, new RejectLeaveDto("Peak season"), CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+        VerifyNoServiceReached();
+    }
+
     // ---- PUT api/leave-requests/{id}/cancel ------------------------------------------------
 
     [Fact]
