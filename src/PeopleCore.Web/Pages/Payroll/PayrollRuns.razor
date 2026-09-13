@@ -17,7 +17,17 @@
     <CardContent Class="p-0">
         @if (_runs is null)
         {
-            <div class="p-6 flex justify-center"><Spinner /></div>
+            @if (_error is not null)
+            {
+                <div class="p-6">
+                    <Alert Variant="destructive" Title="Couldn't load payroll runs">@_error</Alert>
+                    <Button Variant="outline" Size="sm" Class="mt-3" OnClick="LoadRuns">Retry</Button>
+                </div>
+            }
+            else
+            {
+                <div class="p-6 flex justify-center"><Spinner /></div>
+            }
         }
         else if (!_runs.Items.Any())
         {
@@ -55,11 +65,6 @@
         }
     </CardContent>
 </Card>
-
-@if (_error is not null)
-{
-    <Alert Variant="destructive" Class="mt-4">@_error</Alert>
-}
 
 <Dialog IsOpen="@_showCreateDialog" Title="Create Payroll Run"
         Description="Period dates, pay date and the employees to include. Days worked, overtime and holiday pay are always derived from attendance."
@@ -148,14 +153,19 @@
 
     private void GoToRun(Guid id) => Nav.NavigateTo($"/payroll-runs/{id}");
 
+    // A failed load shows its error in place of the list; while _runs is null the card would
+    // otherwise sit on its spinner forever. Clearing the error first shows the spinner again
+    // while a Retry is in flight.
     private async Task LoadRuns()
     {
+        _error = null;
         try
         {
             _runs = await Api.GetPayrollRunsAsync(page: 1, pageSize: 50);
         }
         catch (Exception ex)
         {
+            _runs = null;
             _error = ex.Message;
         }
     }

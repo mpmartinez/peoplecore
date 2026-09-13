@@ -96,13 +96,30 @@ public class PayrollRunsTests : BunitContext
     }
 
     [Fact]
-    public void AFailedLoad_ShowsTheError()
+    public void AFailedLoad_ShowsTheErrorInPlaceOfTheList_NotAnEndlessSpinner()
     {
         _api.On(HttpMethod.Get, RunsPath, HttpStatusCode.InternalServerError);
 
-        var cut = Render<PayrollRuns>();
+        var cut = RenderPage();
 
-        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("500"));
+        cut.Find("[role=alert]").TextContent.Should().Contain("Couldn't load payroll runs")
+            .And.Contain("The server ran into a problem (500). Please try again.");
+        cut.Markup.Should().NotContain("No payroll runs yet.");
+    }
+
+    [Fact]
+    public void AFailedLoad_OffersARetry_ThatLoadsTheRuns()
+    {
+        var attempts = 0;
+        _api.On(HttpMethod.Get, RunsPath, () => ++attempts == 1
+            ? new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            : Json(Runs(RunSummary(Guid.NewGuid(), "PR-2026-0017", "Draft", 12))));
+        var cut = RenderPage();
+
+        Button(cut, "Retry").Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("tbody tr").Should().ContainSingle());
+        cut.FindAll("[role=alert]").Should().BeEmpty();
     }
 
     [Fact]
@@ -188,4 +205,7 @@ public class PayrollRunsTests : BunitContext
         CurrentUri.Should().Be(before);
         Button(cut, "Create").HasAttribute("disabled").Should().BeFalse("the user has to be able to fix and retry");
     }
+
+    private static HttpResponseMessage Json(string json) =>
+        new(HttpStatusCode.OK) { Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json") };
 }
