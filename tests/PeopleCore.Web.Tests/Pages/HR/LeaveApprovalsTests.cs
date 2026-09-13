@@ -24,19 +24,32 @@ public class LeaveApprovalsTests : BunitContext
         Request(PendingId, "Maria Santos", "Pending", "Family event"),
         Request(ApprovedId, "Jose Rizal", "Approved", reason: null));
 
+    // When set, the first page of the list fails with this explanation instead.
+    private string? _loadFailure;
+
+    private bool _decided;
+
     public LeaveApprovalsTests()
     {
         Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(_api)));
         AddAuthorization().SetAuthorized("manager@company.test");
 
-        _api.On(HttpMethod.Get, RequestsPath, () => Json(_requests));
+        _api.On(HttpMethod.Get, RequestsPath, () => _loadFailure is null ? Json(_requests) : ServerError(_loadFailure));
     }
 
     private static HttpResponseMessage Json(string json) =>
         new(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
 
-    private static string Paged(params string[] items) =>
-        $$"""{"items":[{{string.Join(",", items)}}],"totalCount":{{items.Length}},"page":1,"pageSize":50,"totalPages":1}""";
+    private static HttpResponseMessage ServerError(string detail) =>
+        new(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent($$"""{"detail":"{{detail}}"}""", Encoding.UTF8, "application/json")
+        };
+
+    private static string Paged(params string[] items) => PageOf(1, 1, items);
+
+    private static string PageOf(int page, int totalPages, params string[] items) =>
+        $$"""{"items":[{{string.Join(",", items)}}],"totalCount":{{items.Length}},"page":{{page}},"pageSize":50,"totalPages":{{totalPages}}}""";
 
     private static string Request(Guid id, string employee, string status, string? reason) =>
         $$"""
@@ -63,6 +76,14 @@ public class LeaveApprovalsTests : BunitContext
 
     private int PutIndex => _api.Requests.FindIndex(r => r.Method == HttpMethod.Put);
 
+    private List<string> ListRequests =>
+        _api.Requests.Where(r => r.Method == HttpMethod.Get).Select(r => r.RequestUri!.PathAndQuery).ToList();
+
+    private static IElement StatusFilter(IRenderedComponent<LeaveApprovals> cut) => cut.Find("select");
+
+    private static IElement PagerButton(IRenderedComponent<LeaveApprovals> cut, string text) =>
+        cut.Find("nav:not([aria-label=breadcrumb])").QuerySelectorAll("button").Single(b => b.TextContent.Trim() == text);
+
     [Fact]
     public void ListsTheRequests_AndOnlyPendingOnesCanBeDecided()
     {
@@ -81,11 +102,145 @@ public class LeaveApprovalsTests : BunitContext
     [Fact]
     public void NoRequests_ShowsTheEmptyState()
     {
+        // The page opens on every status, so "no pending requests" would claim more than it knows.
         _requests = Paged();
 
         var cut = RenderPage();
 
-        cut.Markup.Should().Contain("No pending leave requests.");
+        cut.Markup.Should().Contain("No leave requests.").And.NotContain("pending");
+        cut.FindAll("table").Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("Pending", "No pending leave requests.")]
+    [InlineData("Approved", "No approved leave requests.")]
+    [InlineData("Rejected", "No rejected leave requests.")]
+    public void TheEmptyState_SaysWhichStatusHasNothing(string status, string expected)
+    {
+        _api.On(HttpMethod.Get, $"{RequestsPath}&status={status}", () => Json(Paged()));
+        var cut = RenderPage();
+
+        StatusFilter(cut).Change(status);
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain(expected));
+    }
+
+    [Theory]
+    [InlineData("Pending")]
+    [InlineData("Approved")]
+    [InlineData("Rejected")]
+    public void TheStatusFilter_AsksTheApiForThatStatusOnly(string status)
+    {
+        _api.On(HttpMethod.Get, $"{RequestsPath}&status={status}", () =>
+            Json(Paged(Request(Guid.NewGuid(), "Andres Bonifacio", status, "Filtered"))));
+        var cut = RenderPage();
+
+        StatusFilter(cut).Change(status);
+
+        cut.WaitForAssertion(() => cut.FindAll("tbody tr").Should().ContainSingle()
+            .Which.QuerySelector("td")!.TextContent.Trim().Should().Be("Andres Bonifacio"));
+    }
+
+    [Fact]
+    public void ChoosingAllStatusesAgain_DropsTheStatusFromTheQuery()
+    {
+        _api.On(HttpMethod.Get, $"{RequestsPath}&status=Pending", () => Json(Paged()));
+        var cut = RenderPage();
+        StatusFilter(cut).Change("Pending");
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain("No pending leave requests."));
+
+        StatusFilter(cut).Change("");
+
+        cut.WaitForAssertion(() => cut.FindAll("tbody tr").Should().HaveCount(2));
+        ListRequests.Last().Should().Be(RequestsPath);
+    }
+
+    [Fact]
+    public void MoreThanOnePage_OffersAPager_ThatAsksForTheChosenPage()
+    {
+        _requests = PageOf(1, 2, Request(PendingId, "Maria Santos", "Pending", "Family event"));
+        _api.On(HttpMethod.Get, "/api/leave-requests?page=2&pageSize=50", () =>
+            Json(PageOf(2, 2, Request(Guid.NewGuid(), "Andres Bonifacio", "Pending", "Checkup"))));
+        var cut = RenderPage();
+
+        PagerButton(cut, "2").Click();
+
+        cut.WaitForAssertion(() => RowFor(cut, "Andres Bonifacio"));
+        cut.Find("nav:not([aria-label=breadcrumb])").TextContent.Should().Contain("Page 2 of 2");
+    }
+
+    [Fact]
+    public void ChangingTheStatus_StartsAgainFromPageOne()
+    {
+        _requests = PageOf(1, 2, Request(PendingId, "Maria Santos", "Pending", "Family event"));
+        _api.On(HttpMethod.Get, "/api/leave-requests?page=2&pageSize=50", () =>
+                Json(PageOf(2, 2, Request(Guid.NewGuid(), "Andres Bonifacio", "Pending", "Checkup"))))
+            .On(HttpMethod.Get, $"{RequestsPath}&status=Approved", () => Json(Paged()));
+        var cut = RenderPage();
+        PagerButton(cut, "2").Click();
+        cut.WaitForAssertion(() => RowFor(cut, "Andres Bonifacio"));
+
+        StatusFilter(cut).Change("Approved");
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain("No approved leave requests."));
+        ListRequests.Last().Should().Be($"{RequestsPath}&status=Approved");
+    }
+
+    [Fact]
+    public void DecidingTheLastRequestOnTheLastPage_MovesBackToAPageThatHasRequests()
+    {
+        // With the Pending filter on, a decided request drops out of the list. Staying on a page
+        // that no longer exists would show "no pending requests" while page 1 still has some.
+        _api.On(HttpMethod.Get, $"{RequestsPath}&status=Pending", () =>
+                Json(PageOf(1, _decided ? 1 : 2, Request(PendingId, "Maria Santos", "Pending", "Family event"))))
+            .On(HttpMethod.Get, "/api/leave-requests?page=2&pageSize=50&status=Pending", () =>
+                Json(_decided ? PageOf(2, 1) : PageOf(2, 2, Request(ApprovedId, "Jose Rizal", "Pending", reason: null))))
+            .On(HttpMethod.Put, $"/api/leave-requests/{ApprovedId}/approve", () =>
+            {
+                _decided = true;
+                return Json(Request(ApprovedId, "Jose Rizal", "Approved", reason: null));
+            });
+        var cut = RenderPage();
+        StatusFilter(cut).Change("Pending");
+        cut.WaitForAssertion(() => cut.FindAll("nav").Should().NotBeEmpty());
+        PagerButton(cut, "2").Click();
+        cut.WaitForAssertion(() => RowFor(cut, "Jose Rizal"));
+
+        ButtonIn(RowFor(cut, "Jose Rizal"), "Approve").Click();
+
+        cut.WaitForAssertion(() => RowFor(cut, "Maria Santos"));
+        ListRequests.Last().Should().Be($"{RequestsPath}&status=Pending");
+    }
+
+    [Fact]
+    public void AFailedLoad_ShowsWhy_InsteadOfSpinningForever()
+    {
+        _loadFailure = "Leave requests are unavailable.";
+
+        var cut = Render<LeaveApprovals>();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Leave requests are unavailable."));
+        cut.FindAll(".animate-spin").Should().BeEmpty();
+        cut.FindAll("table").Should().BeEmpty();
+        cut.Markup.Should().NotContain("No leave requests.", "a failure is not the same as having nothing to decide");
+    }
+
+    [Fact]
+    public void AFailedReload_AfterADecision_DropsTheRowsItWasShowing_AndDoesNotBlameTheDecision()
+    {
+        // The approval went through. Reporting it as failed invites a second attempt; leaving the
+        // old rows up would still offer Approve on a request that is already approved.
+        _api.On(HttpMethod.Put, $"/api/leave-requests/{PendingId}/approve", () =>
+        {
+            _loadFailure = "Leave requests are unavailable.";
+            return Json(Request(PendingId, "Maria Santos", "Approved", "Family event"));
+        });
+        var cut = RenderPage();
+
+        ButtonIn(RowFor(cut, "Maria Santos"), "Approve").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Leave requests are unavailable."));
+        cut.FindAll("[role=alert]").Should().ContainSingle();
         cut.FindAll("table").Should().BeEmpty();
     }
 
@@ -130,14 +285,17 @@ public class LeaveApprovalsTests : BunitContext
     {
         // The API refuses, e.g. the employee no longer has the balance. The manager has to see
         // that nothing happened; a silent failure reads as an approval that went through.
-        _api.On(HttpMethod.Put, $"/api/leave-requests/{PendingId}/approve", HttpStatusCode.Conflict)
+        _api.On(HttpMethod.Put, $"/api/leave-requests/{PendingId}/approve", HttpStatusCode.Conflict,
+                """{"detail":"Insufficient leave balance. Available: 1, Requested: 3."}""")
             .On(HttpMethod.Put, $"/api/leave-requests/{PendingId}/reject", HttpStatusCode.OK,
                 Request(PendingId, "Maria Santos", "Rejected", "Family event"));
         var cut = RenderPage();
 
         ButtonIn(RowFor(cut, "Maria Santos"), "Approve").Click();
 
-        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("409"));
+        // The API's own reason, not a status code the manager can do nothing with.
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Trim()
+            .Should().Be("Insufficient leave balance. Available: 1, Requested: 3."));
         ButtonsIn(RowFor(cut, "Maria Santos")).Should().Equal("Approve", "Reject");
         _api.Requests.Count(r => r.Method == HttpMethod.Get).Should().Be(1, "nothing changed, so there is nothing to reload");
 

@@ -1,7 +1,6 @@
 @page "/leave-approvals"
 @attribute [Authorize(Roles = "Admin,HRManager,Manager")]
 @inject ApiClient Api
-@inject AuthenticationStateProvider AuthStateProvider
 
 <PageTitle>Leave Approvals</PageTitle>
 
@@ -9,7 +8,7 @@
     <Actions>
         <div class="w-[160px]">
             <Select TValue="string" Value="@_statusFilter"
-                    ValueChanged="@(async v => { _statusFilter = v; await LoadRequests(); })">
+                    ValueChanged="@(async v => { _statusFilter = v; _page = 1; await LoadRequests(); })">
                 <option value="">All Statuses</option>
                 <option value="Pending">Pending</option>
                 <option value="Approved">Approved</option>
@@ -21,13 +20,17 @@
 
 <Card>
     <CardContent Class="p-0">
-        @if (_requests is null)
+        @if (_loadError is not null)
+        {
+            <div class="p-4"><Alert Variant="destructive">@_loadError</Alert></div>
+        }
+        else if (_requests is null)
         {
             <div class="p-6 flex justify-center"><Spinner /></div>
         }
         else if (!_requests.Items.Any())
         {
-            <div class="p-6 text-center text-muted-foreground text-sm">No pending leave requests.</div>
+            <div class="p-6 text-center text-muted-foreground text-sm">@EmptyText</div>
         }
         else
         {
@@ -70,6 +73,13 @@
                     }
                 </TableBody>
             </Table>
+
+            @if (_requests.TotalPages > 1)
+            {
+                <div class="border-t px-4 py-3">
+                    <Pagination CurrentPage="@_page" TotalPages="@_requests.TotalPages" OnPageChange="@HandlePageChange" />
+                </div>
+            }
         }
     </CardContent>
 </Card>
@@ -81,37 +91,64 @@
 
 @code {
     private PagedResult<LeaveRequestDto>? _requests;
-    private string? _message;
+    private string? _loadError;
     private string? _error;
     private string _statusFilter = "";
+    private int _page = 1;
+    private const int _pageSize = 50;
+
+    private string EmptyText => _statusFilter == ""
+        ? "No leave requests."
+        : $"No {_statusFilter.ToLowerInvariant()} leave requests.";
 
     protected override async Task OnInitializedAsync() => await LoadRequests();
 
     private async Task LoadRequests()
-        => _requests = await Api.GetLeaveRequestsAsync(page: 1, pageSize: 50);
-
-    private async Task Approve(Guid requestId)
     {
         try
         {
-            await Api.ApproveLeaveAsync(requestId);
-            _message = "Leave request approved.";
-            _error = null;
+            _requests = await Api.GetLeaveRequestsAsync(page: _page, pageSize: _pageSize, status: _statusFilter);
+            _loadError = null;
+        }
+        catch (Exception ex)
+        {
+            _requests = null;
+            _loadError = ex.Message;
+            return;
+        }
+
+        // Deciding the last request on the last page of a filtered list can leave that page empty
+        // while earlier pages still have requests.
+        if (_requests is { Items.Count: 0, TotalPages: > 0 } && _page > _requests.TotalPages)
+        {
+            _page = _requests.TotalPages;
             await LoadRequests();
         }
-        catch (Exception ex) { _message = ex.Message; _error = ex.Message; }
+    }
+
+    private async Task HandlePageChange(int page)
+    {
+        _page = page;
+        await LoadRequests();
+    }
+
+    private async Task Approve(Guid requestId)
+    {
+        try { await Api.ApproveLeaveAsync(requestId); }
+        catch (Exception ex) { _error = ex.Message; return; }
+
+        // Decided, so any earlier failure no longer applies. A failed reload is the list's error.
+        _error = null;
+        await LoadRequests();
     }
 
     private async Task Reject(Guid requestId)
     {
-        try
-        {
-            await Api.RejectLeaveAsync(requestId, "Rejected by manager.");
-            _message = "Leave request rejected.";
-            _error = null;
-            await LoadRequests();
-        }
-        catch (Exception ex) { _message = ex.Message; _error = ex.Message; }
+        try { await Api.RejectLeaveAsync(requestId, "Rejected by manager."); }
+        catch (Exception ex) { _error = ex.Message; return; }
+
+        _error = null;
+        await LoadRequests();
     }
 
     private static string LeaveStatusVariant(string s) => s switch
