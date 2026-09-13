@@ -22,9 +22,9 @@
                            AutoComplete="username" Placeholder="you@company.com" />
                 </FormField>
                 <FormField LabelText="Password" Id="password" Class="mb-6">
-                    <Input TValue="string" Id="password" Type="password" @bind-Value="_password"
-                           AutoComplete="current-password"
-                           OnKeyDown="@(async e => { if (e.Key == "Enter") await HandleLogin(); })" />
+                    <PasswordInput Id="password" @bind-Value="_password"
+                                   AutoComplete="current-password"
+                                   OnKeyDown="@(async e => { if (e.Key == "Enter") await HandleLogin(); })" />
                 </FormField>
                 <Button Variant="primary" Class="w-full" OnClick="HandleLogin" Loading="@_loading">
                     Sign In

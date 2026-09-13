@@ -29,7 +29,7 @@ public class LoginTests : BunitContext
     {
         cut.Find("#email").Input(email);
         cut.Find("#password").Input(password);
-        cut.Find("button").Click();
+        cut.Find("button:not([data-password-toggle])").Click();
     }
 
     [Theory]
@@ -71,7 +71,7 @@ public class LoginTests : BunitContext
 
         cut.WaitForAssertion(() =>
             cut.Find("[role=alert]").TextContent.Should().Contain("Invalid email or password."));
-        cut.Find("button").HasAttribute("disabled").Should().BeFalse("the user has to be able to try again");
+        cut.Find("button:not([data-password-toggle])").HasAttribute("disabled").Should().BeFalse("the user has to be able to try again");
     }
 
     [Fact]

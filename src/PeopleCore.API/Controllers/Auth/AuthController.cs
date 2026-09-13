@@ -1,6 +1,7 @@
 ﻿using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
@@ -42,6 +43,39 @@ public class AuthController : ControllerBase
         return Ok(new { token, email = user.Email, roles });
     }
 
+    // Self-service only: the account is the one the bearer token names, never one the body picks.
+    // The current password goes through CheckPasswordSignInAsync rather than straight into
+    // ChangePasswordAsync, because only the former counts failures towards lockout - without it a
+    // stolen token could guess the current password as many times as it liked.
+    [Authorize]
+    [HttpPost("change-password")]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
+    {
+        if (string.IsNullOrEmpty(request.CurrentPassword) || string.IsNullOrEmpty(request.NewPassword))
+            return PasswordProblem("Enter both your current password and a new password.");
+        if (request.NewPassword == request.CurrentPassword)
+            return PasswordProblem("Your new password must be different from your current password.");
+
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var user = userId is null ? null : await _userManager.FindByIdAsync(userId);
+        if (user is null) return Unauthorized();
+
+        var check = await _signInManager.CheckPasswordSignInAsync(user, request.CurrentPassword, lockoutOnFailure: true);
+        if (check.IsLockedOut)
+            return PasswordProblem("Too many incorrect attempts. Your account is locked for a few minutes; try again later.");
+        if (!check.Succeeded)
+            return PasswordProblem("Your current password is incorrect.");
+
+        var result = await _userManager.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
+        if (!result.Succeeded)
+            return PasswordProblem(string.Join(" ", result.Errors.Select(e => e.Description)));
+
+        return NoContent();
+    }
+
+    private BadRequestObjectResult PasswordProblem(string detail) =>
+        BadRequest(new ProblemDetails { Title = "Password not changed", Detail = detail, Status = StatusCodes.Status400BadRequest });
+
     private string GenerateJwtToken(ApplicationUser user, IList<string> roles)
     {
         var key = new SymmetricSecurityKey(ServiceExtensions.ResolveJwtSigningKey(_configuration));
@@ -67,3 +101,5 @@ public class AuthController : ControllerBase
 }
 
 public record LoginRequest(string Email, string Password);
+
+public record ChangePasswordRequest(string CurrentPassword, string NewPassword);

@@ -23,6 +23,13 @@ public class ApiClient
         return await response.Content.ReadFromJsonAsync<LoginResponse>(JsonOptions);
     }
 
+    /// <summary>
+    /// Changes the signed-in account's own password. A wrong current password or one the password
+    /// policy rejects comes back as a 400 whose message says which, ready to show as it is.
+    /// </summary>
+    public async Task ChangePasswordAsync(string currentPassword, string newPassword)
+        => await EnsureSuccessAsync(await _http.PostAsJsonAsync("api/auth/change-password", new { currentPassword, newPassword }));
+
     // Employees
     public async Task<PagedResult<EmployeeListDto>?> GetEmployeesAsync(int page = 1, int pageSize = 20, string? search = null, bool? isActive = null)
     {
