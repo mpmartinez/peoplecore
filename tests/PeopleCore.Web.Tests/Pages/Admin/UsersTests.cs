@@ -25,8 +25,10 @@ public class UsersTests : BunitContext
         var auth = AddAuthorization();
         auth.SetAuthorized("hr@company.test");
         auth.SetRoles("HRManager");
-        _api.On(HttpMethod.Get, "/api/users/assignable-roles", HttpStatusCode.OK, """["Manager","Employee","PayrollService"]""");
     }
+
+    private void AssignableRolesLoad() =>
+        _api.On(HttpMethod.Get, "/api/users/assignable-roles", HttpStatusCode.OK, """["Manager","Employee","PayrollService"]""");
 
     private static string Json(bool value) => value ? "true" : "false";
 
@@ -40,8 +42,15 @@ public class UsersTests : BunitContext
     private static string Paged(params string[] items) =>
         $$"""{"items":[{{string.Join(",", items)}}],"totalCount":{{items.Length}},"page":1,"pageSize":20,"totalPages":1}""";
 
-    private IRenderedComponent<Users> RenderPage(string firstPage)
+    /// <summary>
+    /// Renders the page with the assignable-roles load already stubbed to succeed. A test that
+    /// wants that load to fail instead registers its own failing stub first and passes
+    /// <paramref name="assignableRolesOk"/>: false, since the stub answers with the first route
+    /// registered for a path.
+    /// </summary>
+    private IRenderedComponent<Users> RenderPage(string firstPage, bool assignableRolesOk = true)
     {
+        if (assignableRolesOk) AssignableRolesLoad();
         _api.On(HttpMethod.Get, FirstPage, HttpStatusCode.OK, firstPage);
         var cut = Render<Users>();
         cut.WaitForAssertion(() => cut.FindAll(".animate-spin").Should().BeEmpty());
@@ -113,6 +122,21 @@ public class UsersTests : BunitContext
 
         cut.WaitForAssertion(() => cut.FindAll("[data-roles-dialog]").Should().BeEmpty());
         Strings(BodyOf(HttpMethod.Put, "/api/users/u1/roles").GetProperty("roles")).Should().BeEquivalentTo("Employee", "Manager");
+    }
+
+    [Fact]
+    public void WhenAssignableRolesFailedToLoad_SaveRolesIsDisabled_AndNothingIsSent()
+    {
+        _api.On(HttpMethod.Get, "/api/users/assignable-roles", HttpStatusCode.InternalServerError);
+        var cut = RenderPage(Paged(Account("u1", ["Employee", "Manager"])), assignableRolesOk: false);
+
+        ButtonIn(RowFor(cut, "u1@company.test"), "Roles").Click();
+        cut.WaitForAssertion(() => cut.Find("[data-roles-dialog]").TextContent.Should().Contain("Roles could not be loaded"));
+        var saveRoles = ButtonIn(cut.Find("[data-roles-dialog]"), "Save Roles");
+
+        saveRoles.HasAttribute("disabled").Should().BeTrue();
+        saveRoles.Click();
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Put && r.RequestUri!.AbsolutePath == "/api/users/u1/roles");
     }
 
     [Fact]

@@ -137,7 +137,7 @@
             <p class="text-xs text-muted-foreground">Changes apply straight away. The user will need to sign in again.</p>
             <div class="flex justify-end gap-2">
                 <Button Variant="outline" Size="sm" OnClick="CloseRoles">Cancel</Button>
-                <Button Variant="primary" Size="sm" Loading="@_busy" OnClick="SaveRoles">Save Roles</Button>
+                <Button Variant="primary" Size="sm" Loading="@_busy" Disabled="@(_assignableError is not null || _assignable.Count == 0)" OnClick="SaveRoles">Save Roles</Button>
             </div>
         </div>
     </ChildContent>
@@ -287,11 +287,19 @@
         await LoadAccounts();
     }
 
-    private void OpenRoles(UserAccountDto account)
+    private async Task OpenRoles(UserAccountDto account)
     {
         _dialogError = null;
         _rolesSelected = account.Roles.ToHashSet();
         _rolesFor = account;
+
+        // A load that failed earlier (e.g. the first page visit had no network) shouldn't keep
+        // Save Roles disabled forever - try again each time the dialog opens.
+        if (_assignableError is not null)
+        {
+            _assignableError = null;
+            await LoadAssignableRoles();
+        }
     }
 
     private void CloseRoles() => _rolesFor = null;
@@ -299,6 +307,9 @@
     private Task SaveRoles()
     {
         if (_rolesFor is not { } account) return Task.CompletedTask;
+        // Without the assignable roles, every ticked role would look unassignable below and get
+        // filtered out, sending just ["Employee"] and stripping every other role from the account.
+        if (_assignableError is not null || _assignable.Count == 0) return Task.CompletedTask;
 
         // Only roles this user may grant are sent; any others the account holds are the API's to keep.
         var roles = _rolesSelected.Where(r => _assignable.Contains(r)).Append("Employee").Distinct().ToList();
