@@ -141,6 +141,12 @@ public class UsersController : ControllerBase
             return AccountProblem(Describe(removed));
         }
 
+        // Nothing was actually added or removed - e.g. the request just restates the roles the
+        // account already holds. Replacing the stamp here would revoke every token the account
+        // holds, including the caller's own if an admin re-saves their own row unchanged, for a
+        // change that never happened.
+        if (!added && toRemove.Count == 0) return await AccountAsync(user.Id, ct);
+
         return await SaveAndRevokeAsync(user, ct);
     }
 

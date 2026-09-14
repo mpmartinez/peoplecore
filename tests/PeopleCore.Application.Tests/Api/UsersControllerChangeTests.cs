@@ -56,14 +56,31 @@ public class UsersControllerChangeTests : UsersControllerTestBase
     }
 
     [Fact]
-    public async Task SetRoles_LeavesARoleNobodyCanAssignInPlace()
+    public async Task SetRoles_LeavesARoleNobodyCanAssignInPlace_AndChangesNothing()
     {
         var user = Account("Employee", "Service");
 
-        await Sut.SetRoles(TargetId, new SetRolesRequest(["Employee"]), CancellationToken.None);
+        var result = await Sut.SetRoles(TargetId, new SetRolesRequest(["Employee"]), CancellationToken.None);
 
+        result.Result.Should().BeOfType<OkObjectResult>();
         Users.Verify(u => u.RemoveFromRolesAsync(It.IsAny<ApplicationUser>(), It.IsAny<IEnumerable<string>>()), Times.Never);
-        StampWasReplaced(user);
+        Users.Verify(u => u.AddToRolesAsync(It.IsAny<ApplicationUser>(), It.IsAny<IEnumerable<string>>()), Times.Never);
+        // Nothing about the account actually changed (Service was never touched), so there is
+        // nothing to revoke - replacing the stamp here would only sign the caller out for free.
+        StampWasNotReplaced();
+    }
+
+    [Fact]
+    public async Task SetRoles_IdenticalToTheHeldRoles_IsANoOp_AndDoesNotRevokeTokens()
+    {
+        var user = Account("Employee", "Manager");
+
+        var result = await Sut.SetRoles(TargetId, new SetRolesRequest(["Manager"]), CancellationToken.None);
+
+        result.Result.Should().BeOfType<OkObjectResult>();
+        Users.Verify(u => u.AddToRolesAsync(It.IsAny<ApplicationUser>(), It.IsAny<IEnumerable<string>>()), Times.Never);
+        Users.Verify(u => u.RemoveFromRolesAsync(It.IsAny<ApplicationUser>(), It.IsAny<IEnumerable<string>>()), Times.Never);
+        StampWasNotReplaced();
     }
 
     [Fact]
