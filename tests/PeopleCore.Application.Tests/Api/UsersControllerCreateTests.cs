@@ -157,4 +157,32 @@ public class UsersControllerCreateTests : UsersControllerTestBase
         BadRequestDetail(await Create(Request([]))).Should().Be("Username is invalid.");
         Users.Verify(u => u.AddToRolesAsync(It.IsAny<ApplicationUser>(), It.IsAny<IEnumerable<string>>()), Times.Never);
     }
+
+    [Fact]
+    public async Task WhenRolesCannotBeGranted_TheHalfMadeAccountIsDeleted()
+    {
+        Users.Setup(u => u.AddToRolesAsync(It.IsAny<ApplicationUser>(), It.IsAny<IEnumerable<string>>()))
+             .ReturnsAsync(IdentityResult.Failed(new IdentityError { Description = "Role Service does not exist." }));
+        Users.Setup(u => u.DeleteAsync(It.IsAny<ApplicationUser>())).ReturnsAsync(IdentityResult.Success);
+
+        var result = await Create(Request(["Manager"]));
+
+        BadRequestDetail(result).Should().Be("Role Service does not exist.");
+        Users.Verify(u => u.DeleteAsync(It.Is<ApplicationUser>(a => a == _created)), Times.Once);
+    }
+
+    [Fact]
+    public async Task WhenRolesCannotBeGranted_AndDeletingItAlsoFails_TheProblemNamesBothFailures()
+    {
+        Users.Setup(u => u.AddToRolesAsync(It.IsAny<ApplicationUser>(), It.IsAny<IEnumerable<string>>()))
+             .ReturnsAsync(IdentityResult.Failed(new IdentityError { Description = "Role Service does not exist." }));
+        Users.Setup(u => u.DeleteAsync(It.IsAny<ApplicationUser>()))
+             .ReturnsAsync(IdentityResult.Failed(new IdentityError { Description = "Concurrency failure." }));
+
+        var result = await Create(Request(["Manager"]));
+
+        BadRequestDetail(result).Should().Be(
+            "The account new.hire@company.test was created but its roles could not be assigned (Role Service does not exist.), " +
+            "and removing it failed (Concurrency failure.). Delete or fix it before trying again.");
+    }
 }

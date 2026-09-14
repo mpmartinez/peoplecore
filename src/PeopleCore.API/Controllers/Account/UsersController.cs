@@ -95,9 +95,14 @@ public class UsersController : ControllerBase
         var granted = await _users.AddToRolesAsync(user, roles);
         if (!granted.Succeeded)
         {
-            // An account with no roles is not what was asked for; do not leave one behind.
-            await _users.DeleteAsync(user);
-            return AccountProblem(Describe(granted));
+            // An account with no roles is not what was asked for; do not leave one behind. But if
+            // the delete itself fails, say so - an active, roleless account left silently behind
+            // is worse than a verbose error.
+            var deleted = await _users.DeleteAsync(user);
+            return AccountProblem(deleted.Succeeded
+                ? Describe(granted)
+                : $"The account {email} was created but its roles could not be assigned ({Describe(granted)}), " +
+                  $"and removing it failed ({Describe(deleted)}). Delete or fix it before trying again.");
         }
 
         var row = await _directory.GetAsync(user.Id, ct);
