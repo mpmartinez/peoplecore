@@ -76,6 +76,7 @@ public static class ServiceExtensions
 
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
+        services.AddScoped<IUserAccountDirectory, UserAccountDirectory>();
 
         // Organization
         services.AddScoped<IDepartmentRepository, DepartmentRepository>();
