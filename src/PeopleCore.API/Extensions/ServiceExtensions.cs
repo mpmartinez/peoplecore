@@ -49,15 +49,7 @@ public static class ServiceExtensions
             options.UseNpgsql(configuration.GetConnectionString("Default"))
                    .UseSnakeCaseNamingConvention());
 
-        services.AddIdentity<ApplicationUser, IdentityRole>(options =>
-        {
-            options.Password.RequireDigit = true;
-            options.Password.RequiredLength = 8;
-            options.Password.RequireNonAlphanumeric = false;
-            options.Lockout.MaxFailedAccessAttempts = 5;
-            options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
-            options.Lockout.AllowedForNewUsers = true;
-        })
+        services.AddIdentity<ApplicationUser, IdentityRole>(ConfigureIdentityOptions)
         .AddEntityFrameworkStores<AppDbContext>()
         .AddDefaultTokenProviders();
 
@@ -199,6 +191,21 @@ public static class ServiceExtensions
         services.AddScoped<IPayrollExportService, PayrollExportService>();
 
         return services;
+    }
+
+    /// <summary>
+    /// The password and lockout rules every account is held to. A method rather than a lambda so
+    /// the test that proves a generated temporary password always passes them uses these rules,
+    /// not a copy that could drift.
+    /// </summary>
+    public static void ConfigureIdentityOptions(IdentityOptions options)
+    {
+        options.Password.RequireDigit = true;
+        options.Password.RequiredLength = 8;
+        options.Password.RequireNonAlphanumeric = false;
+        options.Lockout.MaxFailedAccessAttempts = 5;
+        options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
+        options.Lockout.AllowedForNewUsers = true;
     }
 
     /// <summary>
