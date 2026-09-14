@@ -125,10 +125,21 @@ public class UsersController : ControllerBase
         var toAdd = roles.Except(held).ToList();
         var toRemove = held.Where(role => AccountRoles.Assignable.Contains(role)).Except(roles).ToList();
 
-        if (toAdd.Count > 0 && await _users.AddToRolesAsync(user, toAdd) is { Succeeded: false } added)
-            return AccountProblem(Describe(added));
+        var added = false;
+        if (toAdd.Count > 0)
+        {
+            var addResult = await _users.AddToRolesAsync(user, toAdd);
+            if (!addResult.Succeeded) return AccountProblem(Describe(addResult));
+            added = true;
+        }
+
         if (toRemove.Count > 0 && await _users.RemoveFromRolesAsync(user, toRemove) is { Succeeded: false } removed)
+        {
+            // The add already went through even though the remove failed, so the account's roles
+            // really did change; its existing tokens must be revoked even though this call fails.
+            if (added) await _users.UpdateSecurityStampAsync(user);
             return AccountProblem(Describe(removed));
+        }
 
         return await SaveAndRevokeAsync(user, ct);
     }
@@ -165,14 +176,17 @@ public class UsersController : ControllerBase
         var decision = AccountManagementPolicy.CanResetPassword(Caller, Target(user, await _users.GetRolesAsync(user)));
         if (!decision.Allowed) return Refused(decision);
 
+        // A user locked out by failed guesses is usually why the reset was asked for. Clear that
+        // first, so a failure here never hides a temporary password the caller has not received.
+        var lockoutCleared = await _users.SetLockoutEndDateAsync(user, null);
+        if (!lockoutCleared.Succeeded) return AccountProblem(Describe(lockoutCleared));
+        var failedCountReset = await _users.ResetAccessFailedCountAsync(user);
+        if (!failedCountReset.Succeeded) return AccountProblem(Describe(failedCountReset));
+
         var password = TemporaryPasswordGenerator.Generate();
         var token = await _users.GeneratePasswordResetTokenAsync(user);
         var reset = await _users.ResetPasswordAsync(user, token, password);
         if (!reset.Succeeded) return AccountProblem(Describe(reset));
-
-        // A user locked out by failed guesses is usually why the reset was asked for.
-        await _users.SetLockoutEndDateAsync(user, null);
-        await _users.ResetAccessFailedCountAsync(user);
 
         user.MustChangePassword = true;
         var saved = await _users.UpdateSecurityStampAsync(user);

@@ -106,6 +106,19 @@ public class UsersControllerChangeTests : UsersControllerTestBase
         (await Sut.SetRoles("nobody", new SetRolesRequest([]), CancellationToken.None)).Result.Should().BeOfType<NotFoundResult>();
     }
 
+    [Fact]
+    public async Task SetRoles_WhereAddSucceedsButRemoveFails_StillRevokesTokens()
+    {
+        var user = Account("Employee", "PayrollService");
+        Users.Setup(u => u.RemoveFromRolesAsync(user, It.IsAny<IEnumerable<string>>()))
+             .ReturnsAsync(IdentityResult.Failed(new IdentityError { Description = "Could not remove role." }));
+
+        var result = await Sut.SetRoles(TargetId, new SetRolesRequest(["Manager"]), CancellationToken.None);
+
+        BadRequestDetail(result).Should().Be("Could not remove role.");
+        StampWasReplaced(user);
+    }
+
     // --- Employee link --------------------------------------------------------------------------
 
     [Fact]
@@ -247,11 +260,26 @@ public class UsersControllerChangeTests : UsersControllerTestBase
     public async Task ResetPassword_ThatIdentityRejects_LeavesTheAccountAsItWas()
     {
         var user = Account("Employee");
+        Users.Setup(u => u.SetLockoutEndDateAsync(user, null)).ReturnsAsync(IdentityResult.Success);
+        Users.Setup(u => u.ResetAccessFailedCountAsync(user)).ReturnsAsync(IdentityResult.Success);
         Users.Setup(u => u.GeneratePasswordResetTokenAsync(user)).ReturnsAsync("reset-token");
         Users.Setup(u => u.ResetPasswordAsync(user, "reset-token", It.IsAny<string>()))
              .ReturnsAsync(IdentityResult.Failed(new IdentityError { Description = "Invalid token." }));
 
         BadRequestDetail(await Sut.ResetPassword(TargetId, CancellationToken.None)).Should().Be("Invalid token.");
+        user.MustChangePassword.Should().BeFalse();
+        StampWasNotReplaced();
+    }
+
+    [Fact]
+    public async Task ResetPassword_WhenClearingTheLockoutFails_LeavesTheAccountAsItWas()
+    {
+        var user = Account("Employee");
+        Users.Setup(u => u.SetLockoutEndDateAsync(user, null))
+             .ReturnsAsync(IdentityResult.Failed(new IdentityError { Description = "Could not clear lockout." }));
+
+        BadRequestDetail(await Sut.ResetPassword(TargetId, CancellationToken.None)).Should().Be("Could not clear lockout.");
+        Users.Verify(u => u.ResetPasswordAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         user.MustChangePassword.Should().BeFalse();
         StampWasNotReplaced();
     }
