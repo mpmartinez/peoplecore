@@ -10,12 +10,14 @@ namespace PeopleCore.API.Accounts;
 /// Enforced here rather than only in the web client, or the API would honour a temporary password
 /// for as long as nobody used the browser.
 ///
-/// Never blocks an anonymous endpoint - one with an <see cref="IAllowAnonymous"/> metadata entry, or
-/// with no <see cref="IAuthorizeData"/> at all. Those endpoints let anyone through regardless of
-/// what a bearer token claims, so refusing them here would not add security, only break them: a
-/// still-valid temporary-password token attached to a request for one of them (the web client's
-/// AuthTokenHandler attaches the stored token to every request, /login included) must not stop a
-/// user who abandoned the "set a new password" screen from signing in again.
+/// Never blocks an endpoint marked <see cref="IAllowAnonymous"/>. Those let anyone through regardless
+/// of what a bearer token claims, so refusing them would add no security, only break them: the web
+/// client's AuthTokenHandler attaches the stored token to every request, /login included, and a
+/// still-valid temporary-password token must not stop a user who abandoned the "set a new password"
+/// screen from signing in again. Only an explicit [AllowAnonymous] counts - an action without
+/// [Authorize] of its own may still require sign-in through a fallback policy or
+/// RequireAuthorization() on the route, which this metadata does not show. ControllerAuthorizationCoverageTests
+/// keeps every endpoint declaring one or the other.
 /// </summary>
 public sealed class PasswordChangeRequiredFilter : IActionFilter
 {
@@ -24,9 +26,7 @@ public sealed class PasswordChangeRequiredFilter : IActionFilter
         if (!context.HttpContext.User.HasClaim(c => c.Type == AccountClaims.MustChangePassword)) return;
         if (context.ActionDescriptor.EndpointMetadata.OfType<AllowDuringPasswordChangeAttribute>().Any()) return;
 
-        var metadata = context.ActionDescriptor.EndpointMetadata;
-        if (metadata.OfType<IAllowAnonymous>().Any()) return;
-        if (!metadata.OfType<IAuthorizeData>().Any()) return;
+        if (context.ActionDescriptor.EndpointMetadata.OfType<IAllowAnonymous>().Any()) return;
 
         context.Result = new ObjectResult(new ProblemDetails
         {

@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Cors;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.Application.Careers.DTOs;
@@ -6,7 +7,9 @@ using PeopleCore.Application.Careers.Interfaces;
 
 namespace PeopleCore.API.Controllers.Careers;
 
+// The public careers portal: job listings and applications from people with no account at all.
 [ApiController]
+[AllowAnonymous]
 [Route("api/careers")]
 [EnableCors("CareersPortal")]
 public class CareersController : ControllerBase

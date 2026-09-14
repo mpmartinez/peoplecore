@@ -59,11 +59,22 @@ public class PasswordChangeRequiredFilterTests
     }
 
     [Fact]
-    public void OnATemporaryPassword_AnActionWithNoAuthorizeMetadata_Runs()
+    public void OnATemporaryPassword_AnActionThatDeclaresNeitherAuthorizeNorAllowAnonymous_IsRefused()
     {
-        // No [Authorize] anywhere means the endpoint is anonymous - refusing it here would block a
-        // door the rest of the app never locked in the first place, /login being the case in point.
+        // Fails closed. An action with no [Authorize] of its own may still require sign-in through
+        // a fallback policy or RequireAuthorization() on the route - neither shows up in this
+        // metadata - so only an explicit [AllowAnonymous] opens the way.
         var context = Request(SignedIn(mustChangePassword: true));
+
+        new PasswordChangeRequiredFilter().OnActionExecuting(context);
+
+        context.Result.Should().BeOfType<ObjectResult>().Which.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+    }
+
+    [Fact]
+    public void OnATemporaryPassword_AnActionMarkedAllowAnonymous_Runs()
+    {
+        var context = Request(SignedIn(mustChangePassword: true), new AllowAnonymousAttribute());
 
         new PasswordChangeRequiredFilter().OnActionExecuting(context);
 
@@ -99,12 +110,12 @@ public class PasswordChangeRequiredFilterTests
     }
 
     [Fact]
-    public void LoggingIn_CarriesNoAuthorizeAttribute_SoTheFilterNeverBlocksIt()
+    public void LoggingIn_IsExplicitlyAnonymous_SoTheFilterNeverBlocksIt()
     {
-        // Deliberate: /login must stay reachable by a bearer token that still carries
-        // must_change_password, or someone who abandons the "set a new password" screen can never
-        // sign in again to get back to it.
+        // /login must stay reachable by a bearer token that still carries must_change_password, or
+        // someone who abandons the "set a new password" screen can never sign in again to get back
+        // to it. The web client attaches the stored token to every request, /login included.
         typeof(AuthController).GetMethod(nameof(AuthController.Login))!
-            .GetCustomAttribute<AuthorizeAttribute>().Should().BeNull();
+            .GetCustomAttribute<AllowAnonymousAttribute>().Should().NotBeNull();
     }
 }
