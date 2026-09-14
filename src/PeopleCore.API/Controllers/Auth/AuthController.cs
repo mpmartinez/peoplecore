@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
+using PeopleCore.API.Accounts;
 using PeopleCore.API.Extensions;
 using PeopleCore.Infrastructure.Identity;
 
@@ -32,15 +33,15 @@ public class AuthController : ControllerBase
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
-        if (user is null) return Unauthorized(new { message = "Invalid credentials." });
+        // A deactivated account gets the same answer as a wrong password, so the response never
+        // confirms that an email belongs to an account. Checked before the password so a
+        // deactivated account's lockout counter is left alone.
+        if (user is null || !user.IsActive) return Unauthorized(new { message = "Invalid credentials." });
 
         var result = await _signInManager.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
         if (!result.Succeeded) return Unauthorized(new { message = "Invalid credentials." });
 
-        var roles = await _userManager.GetRolesAsync(user);
-        var token = GenerateJwtToken(user, roles);
-
-        return Ok(new { token, email = user.Email, roles });
+        return Ok(await IssueTokenAsync(user));
     }
 
     // Self-service only: the account is the one the bearer token names, never one the body picks.
@@ -70,11 +71,27 @@ public class AuthController : ControllerBase
         if (!result.Succeeded)
             return PasswordProblem(string.Join(" ", result.Errors.Select(e => e.Description)));
 
-        return NoContent();
+        // ChangePasswordAsync has just replaced the security stamp, revoking the token this request
+        // came with. Hand back a fresh one so the user stays signed in.
+        if (user.MustChangePassword)
+        {
+            user.MustChangePassword = false;
+            var cleared = await _userManager.UpdateAsync(user);
+            if (!cleared.Succeeded)
+                return PasswordProblem(string.Join(" ", cleared.Errors.Select(e => e.Description)));
+        }
+
+        return Ok(await IssueTokenAsync(user));
     }
 
     private BadRequestObjectResult PasswordProblem(string detail) =>
         BadRequest(new ProblemDetails { Title = "Password not changed", Detail = detail, Status = StatusCodes.Status400BadRequest });
+
+    private async Task<AuthTokenResponse> IssueTokenAsync(ApplicationUser user)
+    {
+        var roles = await _userManager.GetRolesAsync(user);
+        return new AuthTokenResponse(GenerateJwtToken(user, roles), user.Email, roles.ToList(), user.MustChangePassword);
+    }
 
     private string GenerateJwtToken(ApplicationUser user, IList<string> roles)
     {
@@ -83,10 +100,13 @@ public class AuthController : ControllerBase
         {
             new(ClaimTypes.NameIdentifier, user.Id),
             new(ClaimTypes.Email, user.Email!),
-            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new(AccountClaims.SecurityStamp, user.SecurityStamp ?? string.Empty)
         };
         if (user.EmployeeId.HasValue)
             claims.Add(new Claim("employee_id", user.EmployeeId.Value.ToString()));
+        if (user.MustChangePassword)
+            claims.Add(new Claim(AccountClaims.MustChangePassword, "true"));
         claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
 
         var token = new JwtSecurityToken(
@@ -103,3 +123,5 @@ public class AuthController : ControllerBase
 public record LoginRequest(string Email, string Password);
 
 public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
+
+public record AuthTokenResponse(string Token, string? Email, IReadOnlyList<string> Roles, bool MustChangePassword);

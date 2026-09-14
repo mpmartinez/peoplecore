@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Minio;
+using PeopleCore.API.Accounts;
 using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Application.Attendance.Services;
 using PeopleCore.Application.Common.Interfaces;
@@ -72,11 +73,13 @@ public static class ServiceExtensions
                 ValidAudience = configuration["Jwt:Audience"],
                 IssuerSigningKey = new SymmetricSecurityKey(signingKey)
             };
+            options.Events = CreateJwtBearerEvents();
         });
 
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
         services.AddScoped<IUserAccountDirectory, UserAccountDirectory>();
+        services.AddScoped<AccountTokenValidator>();
 
         // Organization
         services.AddScoped<IDepartmentRepository, DepartmentRepository>();
@@ -193,6 +196,20 @@ public static class ServiceExtensions
 
         return services;
     }
+
+    /// <summary>
+    /// Re-checks the account behind every token, so deactivating an account or changing its roles
+    /// takes effect on its next request rather than when the token expires.
+    /// </summary>
+    public static JwtBearerEvents CreateJwtBearerEvents() => new()
+    {
+        OnTokenValidated = async context =>
+        {
+            var validator = context.HttpContext.RequestServices.GetRequiredService<AccountTokenValidator>();
+            if (await validator.FindRejectionAsync(context.Principal!) is { } reason)
+                context.Fail(reason);
+        }
+    };
 
     /// <summary>
     /// The password and lockout rules every account is held to. A method rather than a lambda so

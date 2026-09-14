@@ -5,7 +5,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
 using Moq;
 using PeopleCore.API.Controllers.Auth;
 using PeopleCore.Infrastructure.Identity;
@@ -42,8 +41,9 @@ public class ChangePasswordTests
         _signIn.Setup(s => s.CheckPasswordSignInAsync(_user, Current, true)).ReturnsAsync(SignInResult.Success);
         _signIn.Setup(s => s.CheckPasswordSignInAsync(_user, It.Is<string>(p => p != Current), true)).ReturnsAsync(SignInResult.Failed);
         _users.Setup(u => u.ChangePasswordAsync(_user, Current, Next)).ReturnsAsync(IdentityResult.Success);
+        _users.Setup(u => u.GetRolesAsync(_user)).ReturnsAsync(new List<string> { "Employee" });
 
-        _sut = new AuthController(_users.Object, _signIn.Object, Mock.Of<IConfiguration>());
+        _sut = new AuthController(_users.Object, _signIn.Object, TestJwtConfiguration.Create());
         SignInAs(UserId);
     }
 
@@ -70,11 +70,15 @@ public class ChangePasswordTests
     }
 
     [Fact]
-    public async Task TheRightCurrentPassword_ChangesThePasswordOfTheTokensOwnAccount()
+    public async Task TheRightCurrentPassword_ChangesThePasswordOfTheTokensOwnAccount_AndReturnsAFreshToken()
     {
+        // Changing a password replaces the security stamp, which revokes the token the request came
+        // with - so the response has to carry a new one or the user would be signed out.
         var result = await _sut.ChangePassword(new ChangePasswordRequest(Current, Next));
 
-        result.Should().BeOfType<NoContentResult>();
+        result.Should().BeOfType<OkObjectResult>()
+              .Which.Value.Should().BeOfType<AuthTokenResponse>()
+              .Which.Token.Should().NotBeNullOrEmpty();
         _users.Verify(u => u.ChangePasswordAsync(_user, Current, Next), Times.Once);
     }
 

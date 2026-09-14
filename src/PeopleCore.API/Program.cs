@@ -181,7 +181,7 @@ using (var scope = app.Services.CreateScope())
         var created = await userManager.CreateAsync(admin, adminPassword);
         if (created.Succeeded)
         {
-            await userManager.AddToRoleAsync(admin, "Admin");
+            await userManager.AddToRolesAsync(admin, ["Admin", "Employee"]);
         }
         else
         {
@@ -195,6 +195,10 @@ using (var scope = app.Services.CreateScope())
                 string.Join("; ", created.Errors.Select(e => e.Description)));
         }
     }
+
+    // Every account holds Employee (see AccountRoles). An admin seeded before that rule gets it here.
+    if (existingAdmin is not null && !await userManager.IsInRoleAsync(existingAdmin, "Employee"))
+        await userManager.AddToRoleAsync(existingAdmin, "Employee");
 
     if (!await dbContext.Companies.AnyAsync())
     {
