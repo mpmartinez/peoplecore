@@ -1,10 +1,13 @@
 using System.Net;
 using System.Security.Claims;
 using System.Text;
+using Blazored.LocalStorage;
 using Bunit;
 using Bunit.TestDoubles;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using Moq;
+using PeopleCore.Web.Auth;
 using PeopleCore.Web.Pages.ESS;
 using PeopleCore.Web.Services;
 using PeopleCore.Web.Tests.TestSupport;
@@ -16,6 +19,7 @@ public class MyProfileTests : BunitContext
     private static readonly Guid EmployeeId = Guid.Parse("9c4e1a7b-3d2f-4b8a-8e6c-0f5d2a9b7c44");
 
     private readonly StubHttpHandler _api = new();
+    private readonly Mock<ILocalStorageService> _storage = new();
     private readonly BunitAuthorizationContext _auth;
 
     private const string ProfileRoute = "/api/profile";
@@ -27,6 +31,7 @@ public class MyProfileTests : BunitContext
     public MyProfileTests()
     {
         Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(_api)));
+        Services.AddSingleton(new JwtAuthStateProvider(_storage.Object));
         _auth = AddAuthorization();
         _auth.SetAuthorized("ana@company.test");
         _api.On(HttpMethod.Get, ProfileRoute, () => new HttpResponseMessage(_profileStatus)
@@ -162,9 +167,10 @@ public class MyProfileTests : BunitContext
     }
 
     [Fact]
-    public void AValidChange_IsSentToTheApi_ConfirmedAndTheFieldsCleared()
+    public void AValidChange_IsSentToTheApi_ConfirmedAndTheFieldsCleared_AndTheFreshTokenKept()
     {
-        _api.On(HttpMethod.Post, ChangePasswordRoute, HttpStatusCode.NoContent);
+        _api.On(HttpMethod.Post, ChangePasswordRoute, HttpStatusCode.OK,
+            """{"token":"fresh-token","email":"ana@company.test","roles":["Employee"],"mustChangePassword":false}""");
         var cut = RenderUnlinked();
 
         FillAndSubmit(cut, "OldPassw0rd", "NewPassw0rd", "NewPassw0rd");
@@ -175,6 +181,8 @@ public class MyProfileTests : BunitContext
             .Which.Should().Be("""{"currentPassword":"OldPassw0rd","newPassword":"NewPassw0rd"}""");
         foreach (var id in new[] { "current-password", "new-password", "confirm-password" })
             cut.Find($"#{id}").GetAttribute("value").Should().BeEmpty();
+        // Changing the password revoked the old token; without the new one the next request signs the user out.
+        _storage.Verify(s => s.SetItemAsync("auth_token", "fresh-token"), Times.Once);
     }
 
     [Theory]

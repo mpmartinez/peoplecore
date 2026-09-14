@@ -23,10 +23,6 @@ public class ApiClient
         return await response.Content.ReadFromJsonAsync<LoginResponse>(JsonOptions);
     }
 
-    /// <summary>
-    /// Changes the signed-in account's own password. A wrong current password or one the password
-    /// policy rejects comes back as a 400 whose message says which, ready to show as it is.
-    /// </summary>
     // The signed-in account's own profile. Not under api/auth: a 401 here is an expired session.
     public async Task<UserProfileDto?> GetMyProfileAsync()
         => await GetJsonAsync<UserProfileDto>("api/profile");
@@ -38,8 +34,51 @@ public class ApiClient
         return await response.Content.ReadFromJsonAsync<UserProfileDto>(JsonOptions);
     }
 
-    public async Task ChangePasswordAsync(string currentPassword, string newPassword)
-        => await EnsureSuccessAsync(await _http.PostAsJsonAsync("api/auth/change-password", new { currentPassword, newPassword }));
+    /// <summary>
+    /// Changes the signed-in account's own password. A wrong current password or one the password
+    /// policy rejects comes back as a 400 whose message says which, ready to show as it is. On
+    /// success the API returns a fresh token: changing a password revokes the one the request used.
+    /// </summary>
+    public async Task<LoginResponse?> ChangePasswordAsync(string currentPassword, string newPassword)
+    {
+        var response = await _http.PostAsJsonAsync("api/auth/change-password", new { currentPassword, newPassword });
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<LoginResponse>(JsonOptions);
+    }
+
+    // Accounts (Admin and HR)
+    public async Task<PagedResult<UserAccountDto>?> GetUserAccountsAsync(int page = 1, int pageSize = 20, string? search = null)
+    {
+        var url = $"api/users?page={page}&pageSize={pageSize}";
+        if (!string.IsNullOrWhiteSpace(search)) url += $"&search={Uri.EscapeDataString(search)}";
+        return await GetJsonAsync<PagedResult<UserAccountDto>>(url);
+    }
+
+    public async Task<IReadOnlyList<string>?> GetAssignableRolesAsync()
+        => await GetJsonAsync<List<string>>("api/users/assignable-roles");
+
+    public async Task<IReadOnlyList<EmployeeLinkDto>?> GetEmployeeLinksAsync()
+        => await GetJsonAsync<List<EmployeeLinkDto>>("api/users/employee-links");
+
+    public Task<CreatedUserAccountDto?> CreateUserAccountAsync(CreateUserAccountRequest request)
+        => SendJsonAsync<CreatedUserAccountDto>(HttpMethod.Post, "api/users", request);
+
+    public Task<UserAccountDto?> SetUserRolesAsync(string userId, IReadOnlyList<string> roles)
+        => SendJsonAsync<UserAccountDto>(HttpMethod.Put, $"{UserPath(userId)}/roles", new { roles });
+
+    public Task<UserAccountDto?> LinkUserEmployeeAsync(string userId, Guid? employeeId)
+        => SendJsonAsync<UserAccountDto>(HttpMethod.Put, $"{UserPath(userId)}/employee", new { employeeId });
+
+    public Task<UserAccountDto?> DeactivateUserAsync(string userId)
+        => SendJsonAsync<UserAccountDto>(HttpMethod.Post, $"{UserPath(userId)}/deactivate");
+
+    public Task<UserAccountDto?> ReactivateUserAsync(string userId)
+        => SendJsonAsync<UserAccountDto>(HttpMethod.Post, $"{UserPath(userId)}/reactivate");
+
+    public async Task<string?> ResetUserPasswordAsync(string userId)
+        => (await SendJsonAsync<TemporaryPasswordDto>(HttpMethod.Post, $"{UserPath(userId)}/reset-password"))?.TemporaryPassword;
+
+    private static string UserPath(string userId) => $"api/users/{Uri.EscapeDataString(userId)}";
 
     // Employees
     public async Task<PagedResult<EmployeeListDto>?> GetEmployeesAsync(int page = 1, int pageSize = 20, string? search = null, bool? isActive = null)
@@ -428,6 +467,14 @@ public class ApiClient
         return await response.Content.ReadFromJsonAsync<T>(JsonOptions);
     }
 
+    private async Task<T?> SendJsonAsync<T>(HttpMethod method, string url, object? body = null)
+    {
+        using var request = new HttpRequestMessage(method, url) { Content = body is null ? null : JsonContent.Create(body) };
+        var response = await _http.SendAsync(request);
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<T>(JsonOptions);
+    }
+
     private static async Task EnsureSuccessAsync(HttpResponseMessage response)
     {
         if (response.IsSuccessStatusCode) return;
@@ -460,7 +507,12 @@ public class ApiClient
 }
 
 // Client-side DTO copies
-public record LoginResponse(string Token, string Email, IReadOnlyList<string> Roles);
+public record LoginResponse(string Token, string Email, IReadOnlyList<string> Roles, bool MustChangePassword = false);
+public record UserAccountDto(string Id, string Email, string? FirstName, string? LastName, IReadOnlyList<string> Roles, bool IsActive, bool MustChangePassword, Guid? EmployeeId, string? EmployeeName, bool CanManage);
+public record CreateUserAccountRequest(string Email, string FirstName, string LastName, Guid? EmployeeId, IReadOnlyList<string> Roles);
+public record CreatedUserAccountDto(UserAccountDto Account, string TemporaryPassword);
+public record EmployeeLinkDto(Guid EmployeeId, string UserId, bool IsActive);
+public record TemporaryPasswordDto(string TemporaryPassword);
 public record UserProfileDto(string? FirstName, string? LastName, string? Email);
 public record PagedResult<T>(IReadOnlyList<T> Items, int TotalCount, int Page, int PageSize, int TotalPages);
 public record EmployeeListDto(Guid Id, string EmployeeNumber, string FirstName, string LastName, string FullName, string WorkEmail, string? DepartmentName, string? PositionTitle, string EmploymentStatus, bool IsActive);
