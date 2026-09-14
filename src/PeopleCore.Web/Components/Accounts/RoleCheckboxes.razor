@@ -1,0 +1,45 @@
+@*
+    Tick-boxes for the roles the signed-in user may grant. Employee is on every account, so it is
+    shown ticked and cannot be unticked - the API adds it back anyway.
+*@
+
+<div class="space-y-2" data-role-checkboxes>
+    @foreach (var role in Roles)
+    {
+        var locked = role == EmployeeRole;
+        <Checkbox Value="@(locked || Selected.Contains(role))"
+                  Disabled="@(locked || Disabled)"
+                  ValueChanged="@(on => Toggle(role, on))"
+                  data-role="@role">
+            @Label(role)
+            @if (locked)
+            {
+                <span class="ml-1 text-xs font-normal text-muted-foreground">(every account)</span>
+            }
+        </Checkbox>
+    }
+</div>
+
+@code {
+    private const string EmployeeRole = "Employee";
+
+    [Parameter] public IReadOnlyList<string> Roles { get; set; } = [];
+
+    /// <summary>The ticked roles. Changed in place, so the owner reads it when saving.</summary>
+    [Parameter] public HashSet<string> Selected { get; set; } = [];
+
+    [Parameter] public bool Disabled { get; set; }
+
+    public static string Label(string role) => role switch
+    {
+        "HRManager" => "HR Manager",
+        "PayrollService" => "Payroll",
+        _ => role
+    };
+
+    private void Toggle(string role, bool on)
+    {
+        if (on) Selected.Add(role);
+        else Selected.Remove(role);
+    }
+}

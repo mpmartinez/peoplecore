@@ -1,0 +1,83 @@
+@inject ApiClient Api
+
+@*
+    Choose one employee by typing part of their name or number. Only HR can list employees, which
+    is fine: only HR and Admins reach the screens that use this.
+*@
+
+<div class="space-y-2" data-employee-picker>
+    @if (Selected is not null)
+    {
+        <div class="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
+            <span data-selected-employee>
+                @Selected.FullName <span class="text-muted-foreground">(@Selected.EmployeeNumber)</span>
+            </span>
+            <Button Variant="ghost" Size="sm" OnClick="Clear">Change</Button>
+        </div>
+    }
+    else
+    {
+        <Input TValue="string" Id="@Id" Value="@_search"
+               ValueChanged="@(async v => { _search = v; await SearchAsync(); })"
+               Placeholder="Search by name or employee number..." AutoComplete="off" />
+        @if (_error is not null)
+        {
+            <p class="text-sm text-destructive">@_error</p>
+        }
+        @foreach (var employee in _results)
+        {
+            <button type="button" data-employee-option="@employee.Id"
+                    class="block w-full rounded-md px-3 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                    @onclick="() => Select(employee)">
+                @employee.FullName <span class="text-muted-foreground">(@employee.EmployeeNumber)</span>
+            </button>
+        }
+    }
+</div>
+
+@code {
+    private const int MaxResults = 10;
+
+    [Parameter] public string? Id { get; set; }
+    [Parameter] public EmployeeListDto? Selected { get; set; }
+    [Parameter] public EventCallback<EmployeeListDto?> SelectedChanged { get; set; }
+
+    private string _search = string.Empty;
+    private List<EmployeeListDto> _results = [];
+    private string? _error;
+    private int _searchVersion;
+
+    private async Task SearchAsync()
+    {
+        // Answers to earlier keystrokes can arrive after later ones; only the latest may show.
+        var version = ++_searchVersion;
+        if (string.IsNullOrWhiteSpace(_search))
+        {
+            _results = [];
+            return;
+        }
+
+        try
+        {
+            var page = await Api.GetEmployeesAsync(1, MaxResults, _search.Trim());
+            if (version != _searchVersion) return;
+            _results = page?.Items.ToList() ?? [];
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            if (version != _searchVersion) return;
+            _results = [];
+            _error = ex.Message;
+        }
+    }
+
+    private async Task Select(EmployeeListDto employee)
+    {
+        _search = string.Empty;
+        _results = [];
+        await SelectedChanged.InvokeAsync(employee);
+    }
+
+    private Task Clear() => SelectedChanged.InvokeAsync(null);
+}

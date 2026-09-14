@@ -1,0 +1,376 @@
+@page "/admin/users"
+@attribute [Authorize(Roles = "Admin,HRManager")]
+@inject ApiClient Api
+
+<PageTitle>Users</PageTitle>
+
+<PageHeader Title="Users" Section="Administration" Description="Sign-in accounts, the roles they hold, and the employee each belongs to.">
+    <Actions>
+        <Button Variant="primary" OnClick="() => _showCreate = true">
+            <i class="bi bi-plus-lg mr-1"></i> New Account
+        </Button>
+    </Actions>
+</PageHeader>
+
+<Card Class="mb-4">
+    <CardContent Class="pt-4">
+        <Input TValue="string" Id="account-search" Value="@_search"
+               ValueChanged="@(async v => { _search = v; _page = 1; await LoadAccounts(); })"
+               Placeholder="Search by email or name..." Type="text" Class="max-w-xs" />
+    </CardContent>
+</Card>
+
+@if (_actionError is not null)
+{
+    <Alert Variant="destructive" Class="mb-4" data-action-error>@_actionError</Alert>
+}
+
+<Card>
+    <CardContent Class="p-0">
+        @if (_loadError is not null)
+        {
+            <div class="p-4"><Alert Variant="destructive">@_loadError</Alert></div>
+        }
+        else if (_accounts is null)
+        {
+            <div class="p-6 flex justify-center"><Spinner /></div>
+        }
+        else if (!_accounts.Items.Any())
+        {
+            <div class="p-6 text-center text-muted-foreground text-sm">No accounts found.</div>
+        }
+        else
+        {
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead Class="px-4">Account</TableHead>
+                        <TableHead Class="px-4">Roles</TableHead>
+                        <TableHead Class="px-4">Employee</TableHead>
+                        <TableHead Class="px-4">Status</TableHead>
+                        <TableHead Class="px-4">Actions</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    @foreach (var account in _accounts.Items)
+                    {
+                        <TableRow>
+                            <TableCell Class="px-4 py-3">
+                                <div class="font-medium">@account.Email</div>
+                                <div class="text-xs text-muted-foreground">@FullName(account)</div>
+                            </TableCell>
+                            <TableCell Class="px-4 py-3">
+                                <div class="flex flex-wrap gap-1">
+                                    @foreach (var role in account.Roles)
+                                    {
+                                        <Badge Variant="outline">@RoleCheckboxes.Label(role)</Badge>
+                                    }
+                                </div>
+                            </TableCell>
+                            <TableCell Class="px-4 py-3 text-muted-foreground">@(account.EmployeeName ?? "--")</TableCell>
+                            <TableCell Class="px-4 py-3">
+                                @if (!account.IsActive)
+                                {
+                                    <Badge Variant="secondary">Deactivated</Badge>
+                                }
+                                else if (account.MustChangePassword)
+                                {
+                                    <Badge Variant="warning">Must change password</Badge>
+                                }
+                                else
+                                {
+                                    <Badge Variant="success">Active</Badge>
+                                }
+                            </TableCell>
+                            <TableCell Class="px-4 py-3">
+                                <div class="flex flex-wrap gap-1">
+                                    <Button Variant="ghost" Size="sm" Disabled="@(!account.CanManage)" Title="@LockedReason(account)"
+                                            OnClick="() => OpenRoles(account)">Roles</Button>
+                                    <Button Variant="ghost" Size="sm" Disabled="@(!account.CanManage)" Title="@LockedReason(account)"
+                                            OnClick="() => OpenLink(account)">Employee</Button>
+                                    <Button Variant="ghost" Size="sm" Disabled="@(!account.CanManage)" Title="@LockedReason(account)"
+                                            OnClick="() => _confirm = new PendingConfirm(account, ConfirmAction.ResetPassword)">Reset Password</Button>
+                                    @if (account.IsActive)
+                                    {
+                                        <Button Variant="ghost" Size="sm" Disabled="@(!account.CanManage)" Title="@LockedReason(account)"
+                                                OnClick="() => _confirm = new PendingConfirm(account, ConfirmAction.Deactivate)">Deactivate</Button>
+                                    }
+                                    else
+                                    {
+                                        <Button Variant="ghost" Size="sm" Disabled="@(!account.CanManage)" Title="@LockedReason(account)"
+                                                OnClick="() => Reactivate(account)">Reactivate</Button>
+                                    }
+                                </div>
+                            </TableCell>
+                        </TableRow>
+                    }
+                </TableBody>
+            </Table>
+
+            @if (_accounts.TotalPages > 1)
+            {
+                <div class="border-t px-4 py-3">
+                    <Pagination CurrentPage="@_page" TotalPages="@_accounts.TotalPages" OnPageChange="@HandlePageChange" />
+                </div>
+            }
+        }
+    </CardContent>
+</Card>
+
+<CreateAccountDialog IsOpen="@_showCreate" IsOpenChanged="@(open => _showCreate = open)" OnCreated="OnAccountCreated" />
+
+<Dialog IsOpen="@(_rolesFor is not null)" OnClose="CloseRoles" Title="Edit roles" Description="@_rolesFor?.Email">
+    <ChildContent>
+        <div class="space-y-4" data-roles-dialog>
+            @if (_dialogError is not null)
+            {
+                <Alert Variant="destructive">@_dialogError</Alert>
+            }
+            @if (_assignableError is not null)
+            {
+                <Alert Variant="destructive">Roles could not be loaded: @_assignableError</Alert>
+            }
+            else
+            {
+                <RoleCheckboxes Roles="@_assignable" Selected="@_rolesSelected" Disabled="@_busy" />
+            }
+            <p class="text-xs text-muted-foreground">Changes apply straight away. The user will need to sign in again.</p>
+            <div class="flex justify-end gap-2">
+                <Button Variant="outline" Size="sm" OnClick="CloseRoles">Cancel</Button>
+                <Button Variant="primary" Size="sm" Loading="@_busy" OnClick="SaveRoles">Save Roles</Button>
+            </div>
+        </div>
+    </ChildContent>
+</Dialog>
+
+<Dialog IsOpen="@(_linkFor is not null)" OnClose="CloseLink" Title="Employee record" Description="@_linkFor?.Email">
+    <ChildContent>
+        <div class="space-y-4" data-link-dialog>
+            @if (_dialogError is not null)
+            {
+                <Alert Variant="destructive">@_dialogError</Alert>
+            }
+            @if (_linkFor?.EmployeeName is { } current)
+            {
+                <p class="text-sm">Currently linked to <span class="font-medium">@current</span>.</p>
+            }
+            <EmployeePicker Id="link-employee" @bind-Selected="_linkEmployee" />
+            <div class="flex justify-end gap-2">
+                @if (_linkFor?.EmployeeId is not null)
+                {
+                    <Button Variant="outline" Size="sm" Loading="@_busy" OnClick="() => SaveLink(null)">Unlink</Button>
+                }
+                <Button Variant="primary" Size="sm" Disabled="@(_linkEmployee is null)" Loading="@_busy"
+                        OnClick="() => SaveLink(_linkEmployee?.Id)">Link Employee</Button>
+            </div>
+        </div>
+    </ChildContent>
+</Dialog>
+
+<AlertDialog IsOpen="@(_confirm is not null)"
+             Title="@ConfirmTitle"
+             Description="@ConfirmDescription"
+             ConfirmText="@ConfirmButtonText"
+             ConfirmVariant="destructive"
+             Loading="@_busy"
+             OnConfirm="RunConfirmed"
+             OnCancel="() => _confirm = null" />
+
+<TemporaryPasswordDialog Password="@_temporaryPassword" Email="@_temporaryPasswordFor" OnClosed="ClearTemporaryPassword" />
+
+@code {
+    private enum ConfirmAction { Deactivate, ResetPassword }
+
+    private sealed record PendingConfirm(UserAccountDto Account, ConfirmAction Action);
+
+    private const int PageSize = 20;
+
+    /// <summary>A search to start with, e.g. from an employee's Account button.</summary>
+    [SupplyParameterFromQuery] public string? Search { get; set; }
+
+    private PagedResult<UserAccountDto>? _accounts;
+    private string? _loadError;
+    private string _search = string.Empty;
+    private int _page = 1;
+    private int _loadVersion;
+
+    private IReadOnlyList<string> _assignable = [];
+    private string? _assignableError;
+
+    private string? _actionError;
+    private string? _dialogError;
+    private bool _busy;
+
+    private bool _showCreate;
+    private UserAccountDto? _rolesFor;
+    private HashSet<string> _rolesSelected = [];
+    private UserAccountDto? _linkFor;
+    private EmployeeListDto? _linkEmployee;
+    private PendingConfirm? _confirm;
+    private string? _temporaryPassword;
+    private string? _temporaryPasswordFor;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _search = Search ?? string.Empty;
+        await Task.WhenAll(LoadAccounts(), LoadAssignableRoles());
+    }
+
+    private async Task LoadAssignableRoles()
+    {
+        try
+        {
+            _assignable = await Api.GetAssignableRolesAsync() ?? [];
+        }
+        catch (Exception ex)
+        {
+            _assignableError = ex.Message;
+        }
+    }
+
+    private async Task LoadAccounts()
+    {
+        // Every keystroke in the search box starts a load; only the latest may touch the list.
+        var version = ++_loadVersion;
+        try
+        {
+            var result = await Api.GetUserAccountsAsync(_page, PageSize, _search);
+            if (version != _loadVersion) return;
+            _accounts = result;
+            _loadError = null;
+        }
+        catch (Exception ex)
+        {
+            if (version != _loadVersion) return;
+            _accounts = null;
+            _loadError = ex.Message;
+        }
+    }
+
+    private async Task HandlePageChange(int page)
+    {
+        _page = page;
+        await LoadAccounts();
+    }
+
+    private static string FullName(UserAccountDto account) =>
+        string.Join(" ", new[] { account.FirstName, account.LastName }.Where(n => !string.IsNullOrWhiteSpace(n)));
+
+    private static string? LockedReason(UserAccountDto account) =>
+        account.CanManage ? null : "Only an administrator can change an Admin or HR Manager account.";
+
+    /// <summary>Runs a change, then refreshes the list. A failure is shown in the open dialog, or above the list.</summary>
+    private async Task RunAsync(Func<Task> change, bool inDialog)
+    {
+        _busy = true;
+        _dialogError = null;
+        _actionError = null;
+        try
+        {
+            await change();
+            await LoadAccounts();
+        }
+        catch (Exception ex)
+        {
+            if (inDialog) _dialogError = ex.Message;
+            else _actionError = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OnAccountCreated(CreatedUserAccountDto created)
+    {
+        ShowTemporaryPassword(created.Account.Email, created.TemporaryPassword);
+        await LoadAccounts();
+    }
+
+    private void OpenRoles(UserAccountDto account)
+    {
+        _dialogError = null;
+        _rolesSelected = account.Roles.ToHashSet();
+        _rolesFor = account;
+    }
+
+    private void CloseRoles() => _rolesFor = null;
+
+    private Task SaveRoles()
+    {
+        if (_rolesFor is not { } account) return Task.CompletedTask;
+
+        // Only roles this user may grant are sent; any others the account holds are the API's to keep.
+        var roles = _rolesSelected.Where(r => _assignable.Contains(r)).Append("Employee").Distinct().ToList();
+        return RunAsync(async () =>
+        {
+            await Api.SetUserRolesAsync(account.Id, roles);
+            _rolesFor = null;
+        }, inDialog: true);
+    }
+
+    private void OpenLink(UserAccountDto account)
+    {
+        _dialogError = null;
+        _linkEmployee = null;
+        _linkFor = account;
+    }
+
+    private void CloseLink() => _linkFor = null;
+
+    private Task SaveLink(Guid? employeeId)
+    {
+        if (_linkFor is not { } account) return Task.CompletedTask;
+
+        return RunAsync(async () =>
+        {
+            await Api.LinkUserEmployeeAsync(account.Id, employeeId);
+            _linkFor = null;
+        }, inDialog: true);
+    }
+
+    private Task Reactivate(UserAccountDto account) => RunAsync(() => Api.ReactivateUserAsync(account.Id), inDialog: false);
+
+    private string? ConfirmTitle => _confirm switch
+    {
+        { Action: ConfirmAction.Deactivate } c => $"Deactivate {c.Account.Email}?",
+        { Action: ConfirmAction.ResetPassword } c => $"Reset the password for {c.Account.Email}?",
+        _ => null
+    };
+
+    private string? ConfirmDescription => _confirm?.Action switch
+    {
+        ConfirmAction.Deactivate => "They are signed out straight away and can't sign in again until the account is reactivated.",
+        ConfirmAction.ResetPassword => "Their current password stops working and they are signed out. You'll get a temporary password to give them.",
+        _ => null
+    };
+
+    private string ConfirmButtonText => _confirm?.Action == ConfirmAction.ResetPassword ? "Reset Password" : "Deactivate";
+
+    private async Task RunConfirmed()
+    {
+        if (_confirm is not { } pending) return;
+
+        await RunAsync(async () =>
+        {
+            if (pending.Action == ConfirmAction.Deactivate)
+                await Api.DeactivateUserAsync(pending.Account.Id);
+            else
+                ShowTemporaryPassword(pending.Account.Email, await Api.ResetUserPasswordAsync(pending.Account.Id));
+        }, inDialog: false);
+
+        _confirm = null;
+    }
+
+    private void ShowTemporaryPassword(string email, string? password)
+    {
+        _temporaryPasswordFor = email;
+        _temporaryPassword = password;
+    }
+
+    private void ClearTemporaryPassword()
+    {
+        _temporaryPassword = null;
+        _temporaryPasswordFor = null;
+    }
+}

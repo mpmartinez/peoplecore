@@ -1,0 +1,128 @@
+@inject ApiClient Api
+
+<Dialog IsOpen="@IsOpen" OnClose="Close" Title="New account"
+        Description="The account gets a temporary password, shown to you once, which the user replaces when they first sign in.">
+    <ChildContent>
+        <form class="space-y-4" data-create-account @onsubmit="Submit" @onsubmit:preventDefault>
+            @if (_error is not null)
+            {
+                <Alert Variant="destructive" data-create-account-error>@_error</Alert>
+            }
+
+            <FormField LabelText="Email" Id="account-email" Description="What they sign in with.">
+                <Input TValue="string" Id="account-email" Type="email" @bind-Value="_email" AutoComplete="off" Disabled="@_saving" />
+            </FormField>
+            <div class="grid gap-4 sm:grid-cols-2">
+                <FormField LabelText="First name" Id="account-first-name">
+                    <Input TValue="string" Id="account-first-name" @bind-Value="_firstName" MaxLength="@NameMaxLength" Disabled="@_saving" />
+                </FormField>
+                <FormField LabelText="Last name" Id="account-last-name">
+                    <Input TValue="string" Id="account-last-name" @bind-Value="_lastName" MaxLength="@NameMaxLength" Disabled="@_saving" />
+                </FormField>
+            </div>
+            <FormField LabelText="Employee record" Id="account-employee"
+                       Description="Optional. Links the login to an employee, so they see their own attendance, leave and payslips.">
+                <EmployeePicker Id="account-employee" @bind-Selected="_employee" />
+            </FormField>
+            <div class="space-y-2">
+                <span class="block text-sm font-medium leading-none">Roles</span>
+                @if (_rolesError is not null)
+                {
+                    <p class="text-sm text-destructive">Roles could not be loaded: @_rolesError</p>
+                }
+                else
+                {
+                    <RoleCheckboxes Roles="@_assignable" Selected="@_roles" Disabled="@_saving" />
+                }
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+                <Button Variant="outline" Size="sm" OnClick="Close">Cancel</Button>
+                <Button Type="submit" Variant="primary" Size="sm" Loading="@_saving">Create Account</Button>
+            </div>
+        </form>
+    </ChildContent>
+</Dialog>
+
+@code {
+    // The API's column width (ApplicationUser.NameMaxLength).
+    private const int NameMaxLength = 100;
+
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public EventCallback<bool> IsOpenChanged { get; set; }
+
+    /// <summary>The employee the login is for, when opened from the Employees page.</summary>
+    [Parameter] public EmployeeListDto? ForEmployee { get; set; }
+
+    [Parameter] public EventCallback<CreatedUserAccountDto> OnCreated { get; set; }
+
+    private string _email = string.Empty;
+    private string _firstName = string.Empty;
+    private string _lastName = string.Empty;
+    private EmployeeListDto? _employee;
+    private HashSet<string> _roles = [];
+    private IReadOnlyList<string> _assignable = [];
+    private string? _rolesError;
+    private string? _error;
+    private bool _saving;
+    private bool _wasOpen;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var opening = IsOpen && !_wasOpen;
+        _wasOpen = IsOpen;
+        if (!opening) return;
+
+        // Start from the employee, or blank, each time it opens - never from the last account.
+        _email = ForEmployee?.WorkEmail ?? string.Empty;
+        _firstName = ForEmployee?.FirstName ?? string.Empty;
+        _lastName = ForEmployee?.LastName ?? string.Empty;
+        _employee = ForEmployee;
+        _roles = [];
+        _error = null;
+
+        if (_assignable.Count == 0 && _rolesError is null)
+            await LoadRolesAsync();
+    }
+
+    private async Task LoadRolesAsync()
+    {
+        try
+        {
+            _assignable = await Api.GetAssignableRolesAsync() ?? [];
+        }
+        catch (Exception ex)
+        {
+            _rolesError = ex.Message;
+        }
+    }
+
+    private async Task Submit()
+    {
+        _error = string.IsNullOrWhiteSpace(_email) ? "Enter an email address."
+            : string.IsNullOrWhiteSpace(_firstName) ? "Enter a first name."
+            : string.IsNullOrWhiteSpace(_lastName) ? "Enter a last name."
+            : null;
+        if (_error is not null) return;
+
+        _saving = true;
+        try
+        {
+            var created = await Api.CreateUserAccountAsync(new CreateUserAccountRequest(
+                _email.Trim(), _firstName.Trim(), _lastName.Trim(), _employee?.Id, [.. _roles, "Employee"]));
+
+            await IsOpenChanged.InvokeAsync(false);
+            if (created is not null)
+                await OnCreated.InvokeAsync(created);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private Task Close() => IsOpenChanged.InvokeAsync(false);
+}
