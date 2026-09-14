@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Accounts;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Infrastructure.Identity;
 
@@ -26,6 +27,7 @@ public class ProfileController : ControllerBase
         _employees = employees;
     }
 
+    [AllowDuringPasswordChange]
     [HttpGet]
     public async Task<ActionResult<UserProfileDto>> Get(CancellationToken ct)
     {

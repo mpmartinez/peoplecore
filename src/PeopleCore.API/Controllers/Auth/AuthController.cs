@@ -49,6 +49,7 @@ public class AuthController : ControllerBase
     // ChangePasswordAsync, because only the former counts failures towards lockout - without it a
     // stolen token could guess the current password as many times as it liked.
     [Authorize]
+    [AllowDuringPasswordChange]
     [HttpPost("change-password")]
     public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
     {

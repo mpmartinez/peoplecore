@@ -9,6 +9,7 @@ using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using PeopleCore.API;
+using PeopleCore.API.Accounts;
 using PeopleCore.API.Extensions;
 using PeopleCore.API.Middleware;
 using PeopleCore.Application.Common.Options;
@@ -22,7 +23,7 @@ var builder = WebApplication.CreateBuilder(args);
 // server with what every client DTO already expects. It's also more resilient over time:
 // a numeric enum value silently changes meaning if a new member is ever inserted in the
 // middle of the enum, whereas a string value keeps its meaning regardless of member order.
-builder.Services.AddControllers()
+builder.Services.AddControllers(options => options.Filters.Add<PasswordChangeRequiredFilter>())
     .AddJsonOptions(options =>
         options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddEndpointsApiExplorer();
