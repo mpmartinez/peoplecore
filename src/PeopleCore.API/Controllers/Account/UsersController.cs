@@ -109,6 +109,78 @@ public class UsersController : ControllerBase
         return CreatedAtAction(nameof(Get), new { id = user.Id }, new CreatedUserAccountDto(ToDto(row!), password));
     }
 
+    [HttpPut("{id}/roles")]
+    public async Task<ActionResult<UserAccountDto>> SetRoles(string id, [FromBody] SetRolesRequest request, CancellationToken ct)
+    {
+        if (NormalizeRoles(request.Roles, out var roles) is { } roleProblem) return AccountProblem(roleProblem);
+
+        var user = await _users.FindByIdAsync(id);
+        if (user is null) return NotFound();
+        var held = await _users.GetRolesAsync(user);
+
+        var decision = AccountManagementPolicy.CanSetRoles(Caller, Target(user, held), roles, await ActiveAdminsAsync(ct));
+        if (!decision.Allowed) return Refused(decision);
+
+        // Only assignable roles are compared, so a role nobody can assign (Service) is left alone.
+        var toAdd = roles.Except(held).ToList();
+        var toRemove = held.Where(role => AccountRoles.Assignable.Contains(role)).Except(roles).ToList();
+
+        if (toAdd.Count > 0 && await _users.AddToRolesAsync(user, toAdd) is { Succeeded: false } added)
+            return AccountProblem(Describe(added));
+        if (toRemove.Count > 0 && await _users.RemoveFromRolesAsync(user, toRemove) is { Succeeded: false } removed)
+            return AccountProblem(Describe(removed));
+
+        return await SaveAndRevokeAsync(user, ct);
+    }
+
+    [HttpPut("{id}/employee")]
+    public async Task<ActionResult<UserAccountDto>> LinkEmployee(string id, [FromBody] LinkEmployeeRequest request, CancellationToken ct)
+    {
+        var user = await _users.FindByIdAsync(id);
+        if (user is null) return NotFound();
+
+        var decision = AccountManagementPolicy.CanLinkEmployee(Caller, Target(user, await _users.GetRolesAsync(user)));
+        if (!decision.Allowed) return Refused(decision);
+
+        if (request.EmployeeId is { } employeeId && await ValidateEmployeeLinkAsync(employeeId, exceptUserId: id, ct) is { } linkProblem)
+            return AccountProblem(linkProblem);
+
+        // The employee_id claim in the account's tokens is now wrong, so they are revoked too.
+        user.EmployeeId = request.EmployeeId;
+        return await SaveAndRevokeAsync(user, ct);
+    }
+
+    [HttpPost("{id}/deactivate")]
+    public Task<ActionResult<UserAccountDto>> Deactivate(string id, CancellationToken ct) => SetActiveAsync(id, active: false, ct);
+
+    [HttpPost("{id}/reactivate")]
+    public Task<ActionResult<UserAccountDto>> Reactivate(string id, CancellationToken ct) => SetActiveAsync(id, active: true, ct);
+
+    [HttpPost("{id}/reset-password")]
+    public async Task<ActionResult<TemporaryPasswordDto>> ResetPassword(string id, CancellationToken ct)
+    {
+        var user = await _users.FindByIdAsync(id);
+        if (user is null) return NotFound();
+
+        var decision = AccountManagementPolicy.CanResetPassword(Caller, Target(user, await _users.GetRolesAsync(user)));
+        if (!decision.Allowed) return Refused(decision);
+
+        var password = TemporaryPasswordGenerator.Generate();
+        var token = await _users.GeneratePasswordResetTokenAsync(user);
+        var reset = await _users.ResetPasswordAsync(user, token, password);
+        if (!reset.Succeeded) return AccountProblem(Describe(reset));
+
+        // A user locked out by failed guesses is usually why the reset was asked for.
+        await _users.SetLockoutEndDateAsync(user, null);
+        await _users.ResetAccessFailedCountAsync(user);
+
+        user.MustChangePassword = true;
+        var saved = await _users.UpdateSecurityStampAsync(user);
+        if (!saved.Succeeded) return AccountProblem(Describe(saved));
+
+        return Ok(new TemporaryPasswordDto(password));
+    }
+
     // --- Shared by every action ---------------------------------------------------------------
 
     // Roles come from the token. That is safe to trust because AccountTokenValidator rejects any
@@ -130,6 +202,34 @@ public class UsersController : ControllerBase
         var row = await _directory.GetAsync(id, ct);
         return row is null ? NotFound() : Ok(ToDto(row));
     }
+
+    private async Task<ActionResult<UserAccountDto>> SetActiveAsync(string id, bool active, CancellationToken ct)
+    {
+        var user = await _users.FindByIdAsync(id);
+        if (user is null) return NotFound();
+
+        var target = Target(user, await _users.GetRolesAsync(user));
+        var decision = active
+            ? AccountManagementPolicy.CanReactivate(Caller, target)
+            : AccountManagementPolicy.CanDeactivate(Caller, target, await ActiveAdminsAsync(ct));
+        if (!decision.Allowed) return Refused(decision);
+
+        user.IsActive = active;
+        return await SaveAndRevokeAsync(user, ct);
+    }
+
+    /// <summary>
+    /// Replaces the security stamp, which revokes every token the account holds. UpdateSecurityStampAsync
+    /// saves the whole user, so any field set just before it is written in the same update.
+    /// </summary>
+    private async Task<ActionResult<UserAccountDto>> SaveAndRevokeAsync(ApplicationUser user, CancellationToken ct)
+    {
+        var saved = await _users.UpdateSecurityStampAsync(user);
+        if (!saved.Succeeded) return AccountProblem(Describe(saved));
+        return await AccountAsync(user.Id, ct);
+    }
+
+    private Task<int> ActiveAdminsAsync(CancellationToken ct) => _directory.CountActiveInRoleAsync(AccountRoles.Admin, ct);
 
     /// <summary>
     /// The requested roles in <see cref="AccountRoles.Assignable"/> order, always with Employee.
@@ -197,3 +297,9 @@ public record CreateUserAccountRequest(string? Email, string? FirstName, string?
 public record CreatedUserAccountDto(UserAccountDto Account, string TemporaryPassword);
 
 public record EmployeeLinkDto(Guid EmployeeId, string UserId, bool IsActive);
+
+public record SetRolesRequest(IReadOnlyList<string>? Roles);
+
+public record LinkEmployeeRequest(Guid? EmployeeId);
+
+public record TemporaryPasswordDto(string TemporaryPassword);
