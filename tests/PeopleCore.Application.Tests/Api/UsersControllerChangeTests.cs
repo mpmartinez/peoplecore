@@ -230,20 +230,20 @@ public class UsersControllerChangeTests : UsersControllerTestBase
     public async Task ResetPassword_SetsAGeneratedPassword_ThatMustBeChanged_AndClearsAnyLockout()
     {
         var user = Account("Employee");
+        user.LockoutEnd = DateTimeOffset.UtcNow.AddMinutes(10);
+        user.AccessFailedCount = 5;
         string? newPassword = null;
         Users.Setup(u => u.GeneratePasswordResetTokenAsync(user)).ReturnsAsync("reset-token");
         Users.Setup(u => u.ResetPasswordAsync(user, "reset-token", It.IsAny<string>()))
              .Callback<ApplicationUser, string, string>((_, _, password) => newPassword = password)
              .ReturnsAsync(IdentityResult.Success);
-        Users.Setup(u => u.SetLockoutEndDateAsync(user, null)).ReturnsAsync(IdentityResult.Success);
-        Users.Setup(u => u.ResetAccessFailedCountAsync(user)).ReturnsAsync(IdentityResult.Success);
 
         var result = await Sut.ResetPassword(TargetId, CancellationToken.None);
 
         OkValue(result).TemporaryPassword.Should().Be(newPassword).And.HaveLength(16);
+        user.LockoutEnd.Should().BeNull();
+        user.AccessFailedCount.Should().Be(0);
         user.MustChangePassword.Should().BeTrue();
-        Users.Verify(u => u.SetLockoutEndDateAsync(user, null), Times.Once);
-        Users.Verify(u => u.ResetAccessFailedCountAsync(user), Times.Once);
         StampWasReplaced(user);
     }
 
@@ -257,30 +257,32 @@ public class UsersControllerChangeTests : UsersControllerTestBase
     }
 
     [Fact]
-    public async Task ResetPassword_ThatIdentityRejects_LeavesTheAccountAsItWas()
+    public async Task ResetPassword_ThatIdentityRejects_LeavesTheAccountLocked()
     {
         var user = Account("Employee");
-        Users.Setup(u => u.SetLockoutEndDateAsync(user, null)).ReturnsAsync(IdentityResult.Success);
-        Users.Setup(u => u.ResetAccessFailedCountAsync(user)).ReturnsAsync(IdentityResult.Success);
+        var lockoutEnd = DateTimeOffset.UtcNow.AddMinutes(10);
+        user.LockoutEnd = lockoutEnd;
+        user.AccessFailedCount = 5;
         Users.Setup(u => u.GeneratePasswordResetTokenAsync(user)).ReturnsAsync("reset-token");
         Users.Setup(u => u.ResetPasswordAsync(user, "reset-token", It.IsAny<string>()))
              .ReturnsAsync(IdentityResult.Failed(new IdentityError { Description = "Invalid token." }));
 
         BadRequestDetail(await Sut.ResetPassword(TargetId, CancellationToken.None)).Should().Be("Invalid token.");
+        user.LockoutEnd.Should().Be(lockoutEnd);
+        user.AccessFailedCount.Should().Be(5);
         user.MustChangePassword.Should().BeFalse();
         StampWasNotReplaced();
     }
 
     [Fact]
-    public async Task ResetPassword_WhenClearingTheLockoutFails_LeavesTheAccountAsItWas()
+    public async Task ResetPassword_WhenTheFinalSaveFails_ReportsIt()
     {
         var user = Account("Employee");
-        Users.Setup(u => u.SetLockoutEndDateAsync(user, null))
-             .ReturnsAsync(IdentityResult.Failed(new IdentityError { Description = "Could not clear lockout." }));
+        Users.Setup(u => u.GeneratePasswordResetTokenAsync(user)).ReturnsAsync("reset-token");
+        Users.Setup(u => u.ResetPasswordAsync(user, "reset-token", It.IsAny<string>())).ReturnsAsync(IdentityResult.Success);
+        Users.Setup(u => u.UpdateSecurityStampAsync(user))
+             .ReturnsAsync(IdentityResult.Failed(new IdentityError { Description = "Could not save." }));
 
-        BadRequestDetail(await Sut.ResetPassword(TargetId, CancellationToken.None)).Should().Be("Could not clear lockout.");
-        Users.Verify(u => u.ResetPasswordAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
-        user.MustChangePassword.Should().BeFalse();
-        StampWasNotReplaced();
+        BadRequestDetail(await Sut.ResetPassword(TargetId, CancellationToken.None)).Should().Be("Could not save.");
     }
 }

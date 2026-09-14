@@ -176,18 +176,19 @@ public class UsersController : ControllerBase
         var decision = AccountManagementPolicy.CanResetPassword(Caller, Target(user, await _users.GetRolesAsync(user)));
         if (!decision.Allowed) return Refused(decision);
 
-        // A user locked out by failed guesses is usually why the reset was asked for. Clear that
-        // first, so a failure here never hides a temporary password the caller has not received.
-        var lockoutCleared = await _users.SetLockoutEndDateAsync(user, null);
-        if (!lockoutCleared.Succeeded) return AccountProblem(Describe(lockoutCleared));
-        var failedCountReset = await _users.ResetAccessFailedCountAsync(user);
-        if (!failedCountReset.Succeeded) return AccountProblem(Describe(failedCountReset));
-
+        // Fails closed: nothing about the account changes until the reset itself succeeds, so a
+        // rejected reset leaves it exactly as locked (or not) as it was.
         var password = TemporaryPasswordGenerator.Generate();
         var token = await _users.GeneratePasswordResetTokenAsync(user);
         var reset = await _users.ResetPasswordAsync(user, token, password);
         if (!reset.Succeeded) return AccountProblem(Describe(reset));
 
+        // A user locked out by failed guesses is usually why the reset was asked for. Set every
+        // field before the one save, so the lockout clear, the flag and the new stamp are all
+        // written together - and if that save fails, the old password is already gone, so a
+        // retried reset still recovers the account.
+        user.LockoutEnd = null;
+        user.AccessFailedCount = 0;
         user.MustChangePassword = true;
         var saved = await _users.UpdateSecurityStampAsync(user);
         if (!saved.Succeeded) return AccountProblem(Describe(saved));
