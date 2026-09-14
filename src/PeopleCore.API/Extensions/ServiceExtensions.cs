@@ -33,6 +33,7 @@ using PeopleCore.Application.Scheduling.Services;
 using PeopleCore.Domain.Interfaces;
 using PeopleCore.Domain.Entities.Recruitment;
 using PeopleCore.Infrastructure.Identity;
+using PeopleCore.Infrastructure.Identity.UserAccounts;
 using PeopleCore.Infrastructure.BackgroundJobs;
 using PeopleCore.Infrastructure.Persistence;
 using PeopleCore.Infrastructure.Persistence.Repositories;
@@ -84,6 +85,7 @@ public static class ServiceExtensions
 
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
+        services.AddScoped<IUserAccountService, UserAccountService>();
 
         // Organization
         services.AddScoped<IDepartmentRepository, DepartmentRepository>();

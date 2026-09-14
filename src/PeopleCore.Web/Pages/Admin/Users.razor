@@ -1,0 +1,511 @@
+@page "/users"
+@attribute [Authorize(Roles = "Admin")]
+@using System.Security.Claims
+@inject ApiClient Api
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>Users</PageTitle>
+
+<PageHeader Title="Users" Section="Administration" Description="Who can sign in, with which roles, and as which employee.">
+    <Actions>
+        <Button Variant="primary" OnClick="OpenAddForm">
+            <i class="bi bi-plus-lg mr-1"></i> Add User
+        </Button>
+    </Actions>
+</PageHeader>
+
+@if (_notice is not null)
+{
+    <Alert Variant="success" Class="mb-4" data-users-notice>@_notice</Alert>
+}
+@if (_deleteError is not null)
+{
+    <Alert Variant="destructive" Class="mb-4" data-delete-error>@_deleteError</Alert>
+}
+
+<Card Class="mb-4">
+    <CardContent Class="pt-4">
+        <Input TValue="string" Value="@_search"
+               ValueChanged="@(async v => { _search = v; await OnSearch(); })"
+               Placeholder="Search by email or name..."
+               Type="text"
+               Class="max-w-xs" />
+    </CardContent>
+</Card>
+
+<Card>
+    <CardContent Class="p-0">
+        @if (_loadError is not null)
+        {
+            <div class="p-4"><Alert Variant="destructive">@_loadError</Alert></div>
+        }
+        else if (_users is null)
+        {
+            <div class="p-6 flex justify-center"><Spinner /></div>
+        }
+        else if (!_users.Items.Any())
+        {
+            <div class="p-6 text-center text-muted-foreground text-sm">No users found.</div>
+        }
+        else
+        {
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead Class="px-4">User</TableHead>
+                        <TableHead Class="px-4">Roles</TableHead>
+                        <TableHead Class="px-4">Employee</TableHead>
+                        <TableHead Class="px-4 text-right">Actions</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    @foreach (var user in _users.Items)
+                    {
+                        var isSelf = user.Id == _callerId;
+                        <TableRow data-user-id="@user.Id">
+                            <TableCell Class="px-4 py-3">
+                                <div class="font-medium">@FullName(user)</div>
+                                <div class="text-xs text-muted-foreground">@user.Email</div>
+                            </TableCell>
+                            <TableCell Class="px-4 py-3">
+                                @if (user.Roles.Count == 0)
+                                {
+                                    <span class="text-muted-foreground">--</span>
+                                }
+                                else
+                                {
+                                    <div class="flex flex-wrap gap-1">
+                                        @foreach (var role in user.Roles)
+                                        {
+                                            <Badge Variant="@(role == "Admin" ? "default" : "secondary")" data-role-badge>@role</Badge>
+                                        }
+                                    </div>
+                                }
+                            </TableCell>
+                            <TableCell Class="px-4 py-3 text-muted-foreground">
+                                @if (user.EmployeeId is null)
+                                {
+                                    <span>Not linked</span>
+                                }
+                                else
+                                {
+                                    <div class="text-foreground">@(user.EmployeeName ?? "Unknown employee")</div>
+                                    <div class="text-xs font-mono">@user.EmployeeNumber</div>
+                                }
+                            </TableCell>
+                            <TableCell Class="px-4 py-3 text-right whitespace-nowrap">
+                                <Button Variant="ghost" Size="sm" OnClick="() => OpenEditForm(user)">Edit</Button>
+                                <Button Variant="ghost" Size="sm" Class="text-destructive"
+                                        Disabled="@isSelf"
+                                        Title="@(isSelf ? "You cannot delete the account you are signed in with." : null)"
+                                        OnClick="() => AskDelete(user)">Delete</Button>
+                            </TableCell>
+                        </TableRow>
+                    }
+                </TableBody>
+            </Table>
+
+            @if (_users.TotalPages > 1)
+            {
+                <div class="border-t px-4 py-3">
+                    <Pagination CurrentPage="@_page" TotalPages="@_users.TotalPages" OnPageChange="@HandlePageChange" />
+                </div>
+            }
+        }
+    </CardContent>
+</Card>
+
+<Sheet IsOpen="@_showForm"
+       IsOpenChanged="@(v => _showForm = v)"
+       Title="@(_editing is null ? "Add User" : "Edit User")"
+       Description="@(_editing is null ? "Create an account someone can sign in with." : _editing.Email)"
+       Side="right"
+       Class="overflow-y-auto sm:max-w-md">
+    <ChildContent>
+        <form id="user-form" class="mt-4" @onsubmit="SubmitForm" @onsubmit:preventDefault>
+            @if (_formError is not null)
+            {
+                <Alert Variant="destructive" Class="mb-4" data-form-error>@_formError</Alert>
+            }
+
+            <div class="grid grid-cols-2 gap-4">
+                <FormField LabelText="First name" Id="user-first-name" Required="true">
+                    <Input TValue="string" Id="user-first-name" @bind-Value="_form.FirstName" MaxLength="100" />
+                </FormField>
+                <FormField LabelText="Last name" Id="user-last-name" Required="true">
+                    <Input TValue="string" Id="user-last-name" @bind-Value="_form.LastName" MaxLength="100" />
+                </FormField>
+                <FormField LabelText="Email" Id="user-email" Required="true" Class="col-span-2"
+                           Description="This is the username they sign in with.">
+                    <Input TValue="string" Id="user-email" Type="email" @bind-Value="_form.Email" AutoComplete="off" />
+                </FormField>
+                <FormField LabelText="@(_editing is null ? "Password" : "New password")" Id="user-password"
+                           Required="@(_editing is null)" Class="col-span-2"
+                           Description="@(_editing is null ? "At least 8 characters, including a digit." : "Leave blank to keep their current password.")">
+                    <PasswordInput Id="user-password" @bind-Value="_form.Password" AutoComplete="new-password" />
+                </FormField>
+            </div>
+
+            <fieldset class="mt-6">
+                <legend class="text-sm font-medium mb-2">Roles</legend>
+                @if (_rolesError is not null)
+                {
+                    <Alert Variant="destructive">Roles could not be loaded: @_rolesError</Alert>
+                }
+                else if (_roles is null)
+                {
+                    <Spinner />
+                }
+                else
+                {
+                    <div class="grid grid-cols-2 gap-2" data-roles>
+                        @foreach (var role in _roles)
+                        {
+                            <Checkbox Value="@_form.Roles.Contains(role)" ValueChanged="@(on => ToggleRole(role, on))"
+                                      data-role="@role">@role</Checkbox>
+                        }
+                    </div>
+                    <p class="text-[0.8rem] text-muted-foreground mt-2">An account with no roles can still use My HR.</p>
+                }
+            </fieldset>
+
+            <fieldset class="mt-6">
+                <legend class="text-sm font-medium mb-2">Employee record</legend>
+                @if (_form.EmployeeId is not null)
+                {
+                    <div class="flex items-center justify-between rounded-md border px-3 py-2 text-sm" data-linked-employee>
+                        <span>@_form.EmployeeLabel</span>
+                        <Button Variant="ghost" Size="sm" OnClick="UnlinkEmployee">Unlink</Button>
+                    </div>
+                }
+                else
+                {
+                    <Input TValue="string" Value="@_employeeSearch"
+                           ValueChanged="@(async v => { _employeeSearch = v; await SearchEmployees(); })"
+                           Placeholder="Search employees by name or number..."
+                           Type="text" data-employee-search />
+                    @if (_employeeSearchError is not null)
+                    {
+                        <p class="text-[0.8rem] font-medium text-destructive mt-2">@_employeeSearchError</p>
+                    }
+                    else if (_employeeResults is { Count: > 0 })
+                    {
+                        <ul class="mt-2 rounded-md border divide-y">
+                            @foreach (var employee in _employeeResults)
+                            {
+                                <li>
+                                    <button type="button" class="w-full text-left px-3 py-2 text-sm hover:bg-muted"
+                                            data-employee-option="@employee.Id"
+                                            @onclick="() => LinkEmployee(employee)">
+                                        @employee.FullName <span class="text-xs text-muted-foreground font-mono">@employee.EmployeeNumber</span>
+                                    </button>
+                                </li>
+                            }
+                        </ul>
+                    }
+                    else if (_employeeResults is not null)
+                    {
+                        <p class="text-[0.8rem] text-muted-foreground mt-2">No employees match.</p>
+                    }
+                    else
+                    {
+                        <p class="text-[0.8rem] text-muted-foreground mt-2">Optional. Linking gives the account that employee's attendance, leave and payslips.</p>
+                    }
+                }
+            </fieldset>
+        </form>
+    </ChildContent>
+    <FooterContent>
+        <Button Variant="outline" Size="sm" OnClick="CloseForm">Cancel</Button>
+        <Button Variant="primary" Size="sm" Type="submit" form="user-form" Loading="@_saving" Disabled="@_saving">
+            @(_editing is null ? "Create User" : "Save Changes")
+        </Button>
+    </FooterContent>
+</Sheet>
+
+<AlertDialog IsOpen="@(_deleting is not null)"
+             Title="@($"Delete {_deleting?.Email}?")"
+             Description="They will no longer be able to sign in. Their employee record, if any, is kept."
+             ConfirmText="Delete"
+             ConfirmVariant="destructive"
+             Loading="@_deletingInFlight"
+             OnConfirm="ConfirmDelete"
+             OnCancel="CancelDelete"
+             data-delete-dialog>
+</AlertDialog>
+
+@code {
+    private const int PageSize = 20;
+
+    private PagedResult<UserAccountDto>? _users;
+    private string? _loadError;
+    private string _search = string.Empty;
+    private int _page = 1;
+    private int _loadVersion;
+    private string? _callerId;
+    private string? _notice;
+
+    private IReadOnlyList<string>? _roles;
+    private string? _rolesError;
+
+    private bool _showForm;
+    private bool _saving;
+    private string? _formError;
+    private UserAccountDto? _editing;
+    private UserForm _form = new();
+
+    private string _employeeSearch = string.Empty;
+    private List<EmployeeListDto>? _employeeResults;
+    private string? _employeeSearchError;
+    private int _employeeSearchVersion;
+
+    private UserAccountDto? _deleting;
+    private bool _deletingInFlight;
+    private string? _deleteError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+        // The token is read as written, so the id may sit under the short JWT name rather than the URI.
+        _callerId = auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? auth.User.FindFirst("nameid")?.Value;
+
+        await Task.WhenAll(LoadUsers(), LoadRoles());
+    }
+
+    private async Task LoadRoles()
+    {
+        // Only the form needs these, so a failure is explained there and the list still loads.
+        try
+        {
+            _roles = await Api.GetUserRolesAsync() ?? [];
+        }
+        catch (Exception ex)
+        {
+            _rolesError = ex.Message;
+        }
+    }
+
+    private async Task LoadUsers()
+    {
+        // Every keystroke in the search box starts a load; only the latest may touch the list.
+        var version = ++_loadVersion;
+        try
+        {
+            var result = await Api.GetUsersAsync(_page, PageSize, _search);
+            if (version != _loadVersion) return;
+            _users = result;
+            _loadError = null;
+        }
+        catch (Exception ex)
+        {
+            if (version != _loadVersion) return;
+            _users = null;
+            _loadError = ex.Message;
+        }
+    }
+
+    private async Task OnSearch()
+    {
+        _page = 1;
+        await LoadUsers();
+    }
+
+    private async Task HandlePageChange(int page)
+    {
+        _page = page;
+        await LoadUsers();
+    }
+
+    private static string FullName(UserAccountDto user)
+    {
+        var name = $"{user.FirstName} {user.LastName}".Trim();
+        return name.Length == 0 ? "--" : name;
+    }
+
+    private void OpenAddForm()
+    {
+        _editing = null;
+        _form = new UserForm();
+        OpenForm();
+    }
+
+    private void OpenEditForm(UserAccountDto user)
+    {
+        _editing = user;
+        _form = new UserForm
+        {
+            FirstName = user.FirstName ?? "",
+            LastName = user.LastName ?? "",
+            Email = user.Email,
+            Roles = [.. user.Roles],
+            EmployeeId = user.EmployeeId,
+            EmployeeLabel = user.EmployeeId is null ? null : Describe(user.EmployeeName, user.EmployeeNumber)
+        };
+        OpenForm();
+    }
+
+    private void OpenForm()
+    {
+        _formError = null;
+        _notice = null;
+        _deleteError = null;
+        _employeeSearch = string.Empty;
+        _employeeResults = null;
+        _employeeSearchError = null;
+        _showForm = true;
+    }
+
+    private void CloseForm() => _showForm = false;
+
+    private void ToggleRole(string role, bool on)
+    {
+        if (on) _form.Roles.Add(role);
+        else _form.Roles.Remove(role);
+    }
+
+    private async Task SearchEmployees()
+    {
+        var version = ++_employeeSearchVersion;
+        if (string.IsNullOrWhiteSpace(_employeeSearch))
+        {
+            _employeeResults = null;
+            _employeeSearchError = null;
+            return;
+        }
+
+        try
+        {
+            var result = await Api.GetEmployeesAsync(page: 1, pageSize: 10, search: _employeeSearch.Trim());
+            if (version != _employeeSearchVersion) return;
+            _employeeResults = result?.Items.ToList() ?? [];
+            _employeeSearchError = null;
+        }
+        catch (Exception ex)
+        {
+            if (version != _employeeSearchVersion) return;
+            _employeeResults = null;
+            _employeeSearchError = $"Employees could not be searched: {ex.Message}";
+        }
+    }
+
+    private void LinkEmployee(EmployeeListDto employee)
+    {
+        _form.EmployeeId = employee.Id;
+        _form.EmployeeLabel = Describe(employee.FullName, employee.EmployeeNumber);
+    }
+
+    private void UnlinkEmployee()
+    {
+        _form.EmployeeId = null;
+        _form.EmployeeLabel = null;
+        _employeeSearch = string.Empty;
+        _employeeResults = null;
+    }
+
+    private static string Describe(string? name, string? number) =>
+        number is null ? name ?? "Unknown employee" : $"{name ?? "Unknown employee"} ({number})";
+
+    private async Task SubmitForm()
+    {
+        _formError = MissingField();
+        if (_formError is not null) return;
+
+        _saving = true;
+        UserAccountDto? saved;
+        try
+        {
+            // The form's own set, not the ticked subset of the loaded role list: were that list to fail
+            // to load, an edit would otherwise save the account with every role stripped.
+            var roles = _form.Roles.Order(StringComparer.Ordinal).ToList();
+            saved = _editing is null
+                ? await Api.CreateUserAsync(new
+                {
+                    email = _form.Email.Trim(),
+                    password = _form.Password,
+                    firstName = _form.FirstName.Trim(),
+                    lastName = _form.LastName.Trim(),
+                    roles,
+                    employeeId = _form.EmployeeId
+                })
+                : await Api.UpdateUserAsync(_editing.Id, new
+                {
+                    email = _form.Email.Trim(),
+                    firstName = _form.FirstName.Trim(),
+                    lastName = _form.LastName.Trim(),
+                    roles,
+                    employeeId = _form.EmployeeId,
+                    newPassword = string.IsNullOrEmpty(_form.Password) ? null : _form.Password
+                });
+        }
+        catch (Exception ex)
+        {
+            _formError = ex.Message;
+            return;
+        }
+        finally
+        {
+            _saving = false;
+        }
+
+        // Saved. If the reload fails, that is the list's error to show, not a failed save.
+        _notice = _editing is null ? $"Created {saved?.Email}." : $"Saved {saved?.Email}.";
+        CloseForm();
+        await LoadUsers();
+    }
+
+    private string? MissingField()
+    {
+        if (string.IsNullOrWhiteSpace(_form.FirstName)) return "Enter a first name.";
+        if (string.IsNullOrWhiteSpace(_form.LastName)) return "Enter a last name.";
+        if (string.IsNullOrWhiteSpace(_form.Email)) return "Enter an email address.";
+        if (_editing is null && string.IsNullOrEmpty(_form.Password)) return "Enter a password.";
+        return null;
+    }
+
+    private void AskDelete(UserAccountDto user)
+    {
+        _notice = null;
+        _deleteError = null;
+        _deleting = user;
+    }
+
+    private void CancelDelete() => _deleting = null;
+
+    private async Task ConfirmDelete()
+    {
+        if (_deleting is null) return;
+
+        var user = _deleting;
+        _deletingInFlight = true;
+        try
+        {
+            await Api.DeleteUserAsync(user.Id);
+        }
+        catch (Exception ex)
+        {
+            _deleting = null;
+            _deleteError = $"{user.Email} was not deleted. {ex.Message}";
+            return;
+        }
+        finally
+        {
+            _deletingInFlight = false;
+        }
+
+        _deleting = null;
+        _notice = $"Deleted {user.Email}.";
+        if (_users is { Items.Count: 1 } && _page > 1) _page--;
+        await LoadUsers();
+    }
+
+    private sealed class UserForm
+    {
+        public string FirstName { get; set; } = "";
+        public string LastName { get; set; } = "";
+        public string Email { get; set; } = "";
+        public string Password { get; set; } = "";
+        public HashSet<string> Roles { get; set; } = [];
+        public Guid? EmployeeId { get; set; }
+        public string? EmployeeLabel { get; set; }
+    }
+}

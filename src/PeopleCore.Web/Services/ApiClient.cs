@@ -41,6 +41,35 @@ public class ApiClient
     public async Task ChangePasswordAsync(string currentPassword, string newPassword)
         => await EnsureSuccessAsync(await _http.PostAsJsonAsync("api/auth/change-password", new { currentPassword, newPassword }));
 
+    // User accounts (Admin only). Refusals - a taken email, a weak password, deleting yourself or the
+    // last Admin - come back as problem details whose message is ready to show as it is.
+    public async Task<PagedResult<UserAccountDto>?> GetUsersAsync(int page = 1, int pageSize = 20, string? search = null)
+    {
+        var url = $"api/users?page={page}&pageSize={pageSize}";
+        if (!string.IsNullOrWhiteSpace(search)) url += $"&search={Uri.EscapeDataString(search)}";
+        return await GetJsonAsync<PagedResult<UserAccountDto>>(url);
+    }
+
+    public async Task<IReadOnlyList<string>?> GetUserRolesAsync()
+        => await GetJsonAsync<IReadOnlyList<string>>("api/users/roles");
+
+    public async Task<UserAccountDto?> CreateUserAsync(object request)
+    {
+        var response = await _http.PostAsJsonAsync("api/users", request);
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<UserAccountDto>(JsonOptions);
+    }
+
+    public async Task<UserAccountDto?> UpdateUserAsync(string id, object request)
+    {
+        var response = await _http.PutAsJsonAsync($"api/users/{Uri.EscapeDataString(id)}", request);
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<UserAccountDto>(JsonOptions);
+    }
+
+    public async Task DeleteUserAsync(string id)
+        => await EnsureSuccessAsync(await _http.DeleteAsync($"api/users/{Uri.EscapeDataString(id)}"));
+
     // Employees
     public async Task<PagedResult<EmployeeListDto>?> GetEmployeesAsync(int page = 1, int pageSize = 20, string? search = null, bool? isActive = null)
     {
@@ -462,6 +491,7 @@ public class ApiClient
 // Client-side DTO copies
 public record LoginResponse(string Token, string Email, IReadOnlyList<string> Roles);
 public record UserProfileDto(string? FirstName, string? LastName, string? Email);
+public record UserAccountDto(string Id, string Email, string? FirstName, string? LastName, IReadOnlyList<string> Roles, Guid? EmployeeId, string? EmployeeNumber, string? EmployeeName);
 public record PagedResult<T>(IReadOnlyList<T> Items, int TotalCount, int Page, int PageSize, int TotalPages);
 public record EmployeeListDto(Guid Id, string EmployeeNumber, string FirstName, string LastName, string FullName, string WorkEmail, string? DepartmentName, string? PositionTitle, string EmploymentStatus, bool IsActive);
 public record LeaveBalanceDto(Guid Id, Guid EmployeeId, string EmployeeName, Guid LeaveTypeId, string LeaveTypeName, int Year, decimal TotalDays, decimal UsedDays, decimal CarriedOverDays, decimal RemainingDays);

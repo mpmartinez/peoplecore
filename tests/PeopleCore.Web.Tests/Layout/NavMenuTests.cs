@@ -54,8 +54,23 @@ public class NavMenuTests : BunitContext
     {
         var cut = RenderAs("Admin");
 
-        cut.FindAll("a[href]").Should().HaveCount(16);
+        cut.FindAll("a[href]").Should().HaveCount(17);
         Links(cut).Should().OnlyHaveUniqueItems();
+    }
+
+    [Theory]
+    [InlineData("HRManager")]
+    [InlineData("Manager")]
+    [InlineData("PayrollService")]
+    public void OnlyAnAdmin_SeesUserAdministration(string role)
+    {
+        Links(RenderAs(role)).Should().NotContain("/users");
+    }
+
+    [Fact]
+    public void AnAdmin_SeesUserAdministration()
+    {
+        Links(RenderAs("Admin")).Should().Contain("/users");
     }
 
     [Fact]
