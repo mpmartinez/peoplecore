@@ -6,6 +6,12 @@
       "runtimeExecutable": "dotnet",
       "runtimeArgs": ["run", "--project", "src/PeopleCore.Web/PeopleCore.Web.csproj", "--launch-profile", "http"],
       "port": 5199
+    },
+    {
+      "name": "peoplecore-api",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "src/PeopleCore.API/PeopleCore.API.csproj", "--launch-profile", "http"],
+      "port": 5180
     }
   ]
 }
