@@ -20,9 +20,13 @@ public class EmployeesTests : BunitContext
     private static readonly Guid AccountantId = Guid.Parse("a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d");
     private static readonly Guid CounselId = Guid.Parse("b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e");
     private static readonly Guid MariaId = Guid.Parse("7b0e3c52-5d1f-4a44-9b5e-2f7c1d9a6e10");
+    private static readonly Guid JuanId = Guid.Parse("c3d4e5f6-a7b8-4c9d-8e0f-2a3b4c5d6e7f");
 
     private readonly StubHttpHandler _api = new();
     private readonly BunitAuthorizationContext _auth;
+
+    // Read when the request arrives, so a test can say which employees have logins before rendering.
+    private string _linksJson = "[]";
 
     public EmployeesTests()
     {
@@ -36,7 +40,12 @@ public class EmployeesTests : BunitContext
             .On(HttpMethod.Get, $"/api/positions?page=1&pageSize=100&departmentId={FinanceId}", HttpStatusCode.OK,
                 Paged(1, Position(AccountantId, FinanceId, "Accountant")))
             .On(HttpMethod.Get, $"/api/positions?page=1&pageSize=100&departmentId={LegalId}", HttpStatusCode.OK,
-                Paged(1, Position(CounselId, LegalId, "Counsel")));
+                Paged(1, Position(CounselId, LegalId, "Counsel")))
+            .On(HttpMethod.Get, "/api/users/employee-links", () => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(_linksJson, Encoding.UTF8, "application/json")
+            })
+            .On(HttpMethod.Get, "/api/users/assignable-roles", HttpStatusCode.OK, """["Manager","Employee","PayrollService"]""");
     }
 
     private string CurrentUri => Services.GetRequiredService<NavigationManager>().Uri;
@@ -160,6 +169,61 @@ public class EmployeesTests : BunitContext
         ButtonNamed(cut, "Compensation").Click();
 
         CurrentUri.Should().Be($"http://localhost/employees/{MariaId}/compensation");
+    }
+
+    private static IElement RowNamed(IRenderedComponent<Employees> cut, string name) =>
+        cut.FindAll("tbody tr").Single(r => r.TextContent.Contains(name));
+
+    private static List<string> ButtonsIn(IElement row) =>
+        row.QuerySelectorAll("button").Select(b => b.TextContent.Trim()).ToList();
+
+    [Fact]
+    public void EachEmployee_OffersToCreateALogin_OrOpensTheOneTheyHave()
+    {
+        _linksJson = $$"""[{"employeeId":"{{MariaId}}","userId":"u-1","isActive":true}]""";
+
+        var cut = RenderPage(Paged(1, Employee("EMP-1", "Maria Santos", id: MariaId), Employee("EMP-2", "Juan Cruz", id: JuanId)));
+
+        ButtonsIn(RowNamed(cut, "Maria Santos")).Should().Contain("Account").And.NotContain("Create login");
+        ButtonsIn(RowNamed(cut, "Juan Cruz")).Should().Contain("Create login").And.NotContain("Account");
+    }
+
+    [Fact]
+    public void Account_OpensTheUsersPage_SearchingForTheirEmail()
+    {
+        _linksJson = $$"""[{"employeeId":"{{MariaId}}","userId":"u-1","isActive":true}]""";
+        var cut = RenderPage(Paged(1, Employee("EMP-1", "Maria Santos", id: MariaId)));
+
+        RowNamed(cut, "Maria Santos").QuerySelectorAll("button").Single(b => b.TextContent.Trim() == "Account").Click();
+
+        CurrentUri.Should().EndWith("/admin/users?search=maria%40company.test");
+    }
+
+    [Fact]
+    public void CreateLogin_StartsFromTheEmployee_AndShowsTheTemporaryPasswordOnce()
+    {
+        _api.On(HttpMethod.Post, "/api/users", HttpStatusCode.Created,
+            $$"""
+            {"account":{"id":"u-9","email":"juan@company.test","firstName":"Juan","lastName":"Cruz","roles":["Employee"],
+              "isActive":true,"mustChangePassword":true,"employeeId":"{{JuanId}}","employeeName":"Juan Cruz","canManage":true},
+             "temporaryPassword":"Kx7mPq2RtW9zNb4s"}
+            """);
+        var cut = RenderPage(Paged(1, Employee("EMP-2", "Juan Cruz", id: JuanId)));
+
+        RowNamed(cut, "Juan Cruz").QuerySelectorAll("button").Single(b => b.TextContent.Trim() == "Create login").Click();
+        cut.WaitForAssertion(() => cut.Find("#account-email").GetAttribute("value").Should().Be("juan@company.test"));
+        cut.Find("#account-first-name").GetAttribute("value").Should().Be("Juan");
+        cut.Find("#account-last-name").GetAttribute("value").Should().Be("Cruz");
+        cut.Find("[data-selected-employee]").TextContent.Should().Contain("Juan Cruz");
+
+        cut.Find("form[data-create-account]").Submit();
+
+        cut.WaitForAssertion(() => cut.Find("[data-temporary-password]").TextContent.Trim().Should().Be("Kx7mPq2RtW9zNb4s"));
+        var postIndex = _api.Requests.FindIndex(r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == "/api/users");
+        System.Text.Json.JsonDocument.Parse(_api.RequestBodies[postIndex]!).RootElement
+            .GetProperty("employeeId").GetGuid().Should().Be(JuanId);
+        _api.Requests.Count(r => r.RequestUri!.AbsolutePath == "/api/users/employee-links").Should().Be(2,
+            "the list learns that Juan now has a login");
     }
 
     [Theory]

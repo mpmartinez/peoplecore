@@ -31,6 +31,11 @@
     </CardContent>
 </Card>
 
+@if (_linksError is not null)
+{
+    <p class="mb-2 text-sm text-muted-foreground">Who has a login could not be loaded: @_linksError</p>
+}
+
 <Card>
     <CardContent Class="p-0">
         @if (_loadError is not null)
@@ -78,6 +83,19 @@
                                 <AuthorizeView Roles="Admin,HRManager,PayrollService">
                                     <Button Variant="ghost" Size="sm" OnClick="() => GoToCompensation(emp.Id)">Compensation</Button>
                                 </AuthorizeView>
+                                @if (_links is not null)
+                                {
+                                    if (_links.TryGetValue(emp.Id, out var link))
+                                    {
+                                        <Button Variant="ghost" Size="sm" Class="@(link.IsActive ? null : "text-muted-foreground")"
+                                                Title="@(link.IsActive ? "Open their sign-in account" : "Their sign-in account is deactivated")"
+                                                OnClick="() => GoToAccount(emp)">Account</Button>
+                                    }
+                                    else
+                                    {
+                                        <Button Variant="ghost" Size="sm" OnClick="() => _createLoginFor = emp">Create login</Button>
+                                    }
+                                }
                             </TableCell>
                         </TableRow>
                     }
@@ -221,6 +239,13 @@
     </FooterContent>
 </Sheet>
 
+<CreateAccountDialog IsOpen="@(_createLoginFor is not null)"
+                     IsOpenChanged="@(open => { if (!open) _createLoginFor = null; })"
+                     ForEmployee="@_createLoginFor"
+                     OnCreated="OnLoginCreated" />
+
+<TemporaryPasswordDialog Password="@_temporaryPassword" Email="@_temporaryPasswordFor" OnClosed="ClearTemporaryPassword" />
+
 @code {
     private PagedResult<EmployeeListDto>? _employees;
     private string? _loadError;
@@ -236,10 +261,15 @@
     private bool _saving;
     private string? _formError;
     private EmployeeFormModel _form = new();
+    private Dictionary<Guid, EmployeeLinkDto>? _links;
+    private string? _linksError;
+    private EmployeeListDto? _createLoginFor;
+    private string? _temporaryPassword;
+    private string? _temporaryPasswordFor;
 
     protected override async Task OnInitializedAsync()
     {
-        await Task.WhenAll(LoadEmployees(), LoadDepartments());
+        await Task.WhenAll(LoadEmployees(), LoadDepartments(), LoadLinks());
     }
 
     private async Task LoadDepartments()
@@ -255,6 +285,37 @@
         {
             _departmentsError = ex.Message;
         }
+    }
+
+    private async Task LoadLinks()
+    {
+        // Only the login buttons need these, so a failure hides them rather than the employee list.
+        try
+        {
+            _links = (await Api.GetEmployeeLinksAsync() ?? []).ToDictionary(link => link.EmployeeId);
+            _linksError = null;
+        }
+        catch (Exception ex)
+        {
+            _links = null;
+            _linksError = ex.Message;
+        }
+    }
+
+    private void GoToAccount(EmployeeListDto employee) =>
+        Nav.NavigateTo($"/admin/users?search={Uri.EscapeDataString(employee.WorkEmail)}");
+
+    private async Task OnLoginCreated(CreatedUserAccountDto created)
+    {
+        _temporaryPasswordFor = created.Account.Email;
+        _temporaryPassword = created.TemporaryPassword;
+        await LoadLinks();
+    }
+
+    private void ClearTemporaryPassword()
+    {
+        _temporaryPassword = null;
+        _temporaryPasswordFor = null;
     }
 
     private async Task LoadEmployees()
