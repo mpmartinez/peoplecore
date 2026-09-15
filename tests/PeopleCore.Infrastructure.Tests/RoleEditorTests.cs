@@ -14,7 +14,7 @@ public class RoleEditorTests : DatabaseTestBase
 {
     public RoleEditorTests(PostgresFixture fixture) : base(fixture) { }
 
-    private RoleEditor Editor() => new(NewContext());
+    private RoleEditor Editor() => new(NewContext(), new UpperInvariantLookupNormalizer());
 
     private async Task<List<string>> PermissionsOfAsync(string roleId)
     {
@@ -97,6 +97,23 @@ public class RoleEditorTests : DatabaseTestBase
         await using var read = NewContext();
         (await read.Roles.AnyAsync(r => r.Id == id)).Should().BeFalse();
         (await read.RoleClaims.AnyAsync(c => c.RoleId == id)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Names_AreNormalisedAsIdentityNormalisesThem()
+    {
+        // "Cafe" plus a combining acute accent, and the single precomposed "e-acute", are one name to Identity.
+        const string decomposed = "Cafe\u0301";
+        const string precomposed = "Caf\u00E9";
+        var id = await Editor().CreateAsync(decomposed, null, []);
+
+        await using (var read = NewContext())
+            (await read.Roles.SingleAsync(r => r.Id == id)).NormalizedName.Should().Be(new UpperInvariantLookupNormalizer().NormalizeName(precomposed));
+        (await Editor().NameTakenAsync(precomposed, exceptRoleId: null)).Should().BeTrue();
+
+        await Editor().UpdateAsync(id, "Te\u0301a", null, []);
+        await using (var read = NewContext())
+            (await read.Roles.SingleAsync(r => r.Id == id)).NormalizedName.Should().Be("T\u00C9A");
     }
 
     [Fact]

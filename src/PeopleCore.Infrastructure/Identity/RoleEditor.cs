@@ -9,12 +9,17 @@ namespace PeopleCore.Infrastructure.Identity;
 public class RoleEditor : IRoleEditor
 {
     private readonly AppDbContext _db;
+    private readonly ILookupNormalizer _normalizer;
 
-    public RoleEditor(AppDbContext db) => _db = db;
+    public RoleEditor(AppDbContext db, ILookupNormalizer normalizer)
+    {
+        _db = db;
+        _normalizer = normalizer;
+    }
 
     public async Task<string> CreateAsync(string name, string? description, IReadOnlyCollection<string> permissions, CancellationToken ct = default)
     {
-        var role = new ApplicationRole { Name = name, NormalizedName = name.ToUpperInvariant(), Description = description };
+        var role = new ApplicationRole { Name = name, NormalizedName = _normalizer.NormalizeName(name), Description = description };
         _db.Roles.Add(role);
         AddPermissions(role.Id, permissions);
         await _db.SaveChangesAsync(ct);
@@ -25,7 +30,7 @@ public class RoleEditor : IRoleEditor
     {
         var role = await _db.Roles.SingleAsync(r => r.Id == roleId, ct);
         role.Name = name;
-        role.NormalizedName = name.ToUpperInvariant();
+        role.NormalizedName = _normalizer.NormalizeName(name);
         role.Description = description;
 
         var stored = await _db.RoleClaims.Where(c => c.RoleId == roleId && c.ClaimType == Permissions.ClaimType).ToListAsync(ct);
@@ -63,7 +68,7 @@ public class RoleEditor : IRoleEditor
 
     public Task<bool> NameTakenAsync(string name, string? exceptRoleId, CancellationToken ct = default)
     {
-        var normalized = name.ToUpperInvariant();
+        var normalized = _normalizer.NormalizeName(name);
         return _db.Roles.AnyAsync(r => r.NormalizedName == normalized && r.Id != exceptRoleId, ct);
     }
 
