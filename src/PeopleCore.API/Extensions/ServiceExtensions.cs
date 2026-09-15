@@ -1,12 +1,14 @@
 ﻿using System.Text;
 using Amazon.S3;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Minio;
 using PeopleCore.API.Accounts;
+using PeopleCore.API.Authorization;
 using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Application.Attendance.Services;
 using PeopleCore.Application.Common.Interfaces;
@@ -81,6 +83,7 @@ public static class ServiceExtensions
         services.AddScoped<IUserAccountDirectory, UserAccountDirectory>();
         services.AddScoped<IRolePermissionReader, RolePermissionReader>();
         services.AddScoped<AccountTokenValidator>();
+        services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
 
         // Organization
         services.AddScoped<IDepartmentRepository, DepartmentRepository>();
