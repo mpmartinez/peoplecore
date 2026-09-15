@@ -8,7 +8,10 @@ namespace PeopleCore.API.Accounts;
 /// <summary>
 /// Checks, on every request, that the account a token names still exists, is active, and has not
 /// changed since the token was issued. Without it a deactivated account, or one whose roles were
-/// just removed, would keep working until its token expired - up to eight hours.
+/// just removed, would keep working until its token expired - up to eight hours. Also rejects a
+/// token issued before permissions existed (no <see cref="Permissions.VersionClaimType"/> claim at
+/// <see cref="Permissions.CurrentVersion"/>): such a token predates every permission check, so
+/// nothing it carries can be trusted to grant access correctly.
 /// </summary>
 public class AccountTokenValidator
 {

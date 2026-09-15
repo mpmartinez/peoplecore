@@ -18,7 +18,10 @@ public interface IEmployeeAccessService
     /// </summary>
     Task<bool> CanManageAsync(Guid employeeId, CancellationToken ct = default);
 
-    /// <summary>True when the caller is <paramref name="employeeId"/> or may manage them.</summary>
+    /// <summary>
+    /// True when the caller is <paramref name="employeeId"/> themselves, a caller who may view all
+    /// employees, or a caller who may manage them.
+    /// </summary>
     Task<bool> CanViewAsync(Guid employeeId, CancellationToken ct = default);
 
     /// <summary>
