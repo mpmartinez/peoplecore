@@ -43,7 +43,7 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
 
             UPDATE "AspNetRoles" SET description = CASE normalized_name
                 WHEN 'ADMIN' THEN 'Every permission, always. Cannot be edited or deleted.'
-                WHEN 'HRMANAGER' THEN 'Runs HR: employees, organisation, time, approvals, performance, payroll, recruitment, schedules, analytics and user accounts.'
+                WHEN 'HRMANAGER' THEN 'Runs HR: employees, organization, time, approvals, performance, payroll, recruitment, schedules, analytics and user accounts.'
                 WHEN 'MANAGER' THEN 'Approves leave, overtime and performance reviews for their direct reports.'
                 WHEN 'EMPLOYEE' THEN 'Self-service: their own profile, attendance, leave and payslips. Every account holds it.'
                 WHEN 'PAYROLLSERVICE' THEN 'Runs payroll.'

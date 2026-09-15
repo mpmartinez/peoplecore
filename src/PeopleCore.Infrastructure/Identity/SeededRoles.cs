@@ -25,7 +25,7 @@ public static class SeededRoles
     public static readonly IReadOnlyDictionary<string, string> Descriptions = new Dictionary<string, string>
     {
         [Admin] = "Every permission, always. Cannot be edited or deleted.",
-        [HRManager] = "Runs HR: employees, organisation, time, approvals, performance, payroll, recruitment, schedules, analytics and user accounts.",
+        [HRManager] = "Runs HR: employees, organization, time, approvals, performance, payroll, recruitment, schedules, analytics and user accounts.",
         [Manager] = "Approves leave, overtime and performance reviews for their direct reports.",
         [Employee] = "Self-service: their own profile, attendance, leave and payslips. Every account holds it.",
         [PayrollService] = "Runs payroll.",

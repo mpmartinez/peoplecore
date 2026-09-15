@@ -30,6 +30,13 @@ public class RoleSeedingTests : DatabaseTestBase
             .Where(r => SeededRoles.StoredPermissions(r).Count > 0)
             .ToDictionary(r => r, r => SeededRoles.StoredPermissions(r).Order().ToList());
 
+    private async Task<Dictionary<string, string?>> StoredDescriptionsByRoleAsync()
+    {
+        await using var read = NewContext();
+        var roles = await read.Roles.ToListAsync();
+        return roles.ToDictionary(r => r.Name!, r => r.Description);
+    }
+
     [Fact]
     public async Task OnAFreshDatabase_TheSeederCreatesEveryRole_WithItsPermissions_AndMarksTheSystemRoles()
     {
@@ -41,6 +48,8 @@ public class RoleSeedingTests : DatabaseTestBase
         roles.Where(r => r.IsSystem).Select(r => r.Name).Should().BeEquivalentTo("Admin", "Employee", "Service");
         roles.Should().OnlyContain(r => !string.IsNullOrWhiteSpace(r.Description));
         (await StoredPermissionsByRoleAsync()).Should().BeEquivalentTo(Expected());
+        foreach (var role in roles)
+            role.Description.Should().Be(SeededRoles.Descriptions[role.Name!], $"{role.Name}'s description must match SeededRoles");
     }
 
     [Fact]
@@ -72,5 +81,9 @@ public class RoleSeedingTests : DatabaseTestBase
         await using var read = NewContext();
         (await read.Roles.Where(r => r.IsSystem).Select(r => r.Name).ToListAsync())
             .Should().BeEquivalentTo("Admin", "Employee", "Service");
+
+        var descriptions = await StoredDescriptionsByRoleAsync();
+        foreach (var name in SeededRoles.All)
+            descriptions[name].Should().Be(SeededRoles.Descriptions[name], $"{name}'s description must match SeededRoles");
     }
 }
