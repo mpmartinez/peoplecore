@@ -1,5 +1,5 @@
 @page "/positions"
-@attribute [Authorize(Roles = "Admin,HRManager")]
+@attribute [RequirePermission(Permissions.OrganizationManage)]
 @inject ApiClient Api
 
 <PageTitle>Positions</PageTitle>

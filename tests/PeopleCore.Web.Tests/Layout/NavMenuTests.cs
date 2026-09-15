@@ -4,6 +4,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using PeopleCore.Web.Layout;
+using PeopleCore.Web.Tests.TestSupport;
 
 namespace PeopleCore.Web.Tests.Layout;
 
@@ -16,7 +17,7 @@ public class NavMenuTests : BunitContext
     private IRenderedComponent<NavMenu> RenderAs(params string[] roles)
     {
         _auth.SetAuthorized("someone@company.test");
-        _auth.SetRoles(roles);
+        _auth.SetClaims(SeededPermissions.ClaimsFor(roles));
         return Render<NavMenu>();
     }
 

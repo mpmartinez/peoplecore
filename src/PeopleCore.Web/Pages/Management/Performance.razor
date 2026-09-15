@@ -1,5 +1,5 @@
 @page "/performance"
-@attribute [Authorize(Roles = "Admin,HRManager,Manager")]
+@attribute [RequirePermission(Permissions.ApprovalsTeam, Permissions.ApprovalsAll)]
 @inject ApiClient Api
 
 <PageTitle>Performance</PageTitle>

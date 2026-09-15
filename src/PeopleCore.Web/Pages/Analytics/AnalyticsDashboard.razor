@@ -1,5 +1,5 @@
 @page "/analytics"
-@attribute [Authorize(Roles = "Admin,HRManager")]
+@attribute [RequirePermission(Permissions.AnalyticsHr)]
 @inject ApiClient Api
 @inject AuthenticationStateProvider AuthStateProvider
 
@@ -325,8 +325,8 @@
     </Card>
 </div>
 
-<!-- Executive Section (Admin only) -->
-@if (isAdmin)
+<!-- Executive Section (executive analytics permission) -->
+@if (showExecutive)
 {
     <Separator Class="my-6" />
     <h3 class="text-xl font-semibold text-foreground mb-4">Executive Analytics</h3>
@@ -579,7 +579,7 @@
     private DateOnly fromDate = DateOnly.FromDateTime(DateTime.Today.AddMonths(-12));
     private DateOnly toDate = DateOnly.FromDateTime(DateTime.Today);
     private bool isLoading;
-    private bool isAdmin;
+    private bool showExecutive;
     private string? errorMessage;
 
     // HR Analytics data
@@ -606,7 +606,7 @@
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-        isAdmin = authState.User.IsInRole("Admin");
+        showExecutive = authState.User.HasAnyPermission(Permissions.AnalyticsExecutive);
 
         await LoadData();
     }
@@ -639,7 +639,7 @@
             LoadSection("Performance Distribution", async () => perfDistData = await Api.GetPerformanceDistributionAnalyticsAsync(fromDate, toDate))
         };
 
-        if (isAdmin)
+        if (showExecutive)
         {
             sections.Add(LoadSection("Workforce Summary", async () => workforceSummary = await Api.GetWorkforceSummaryAsync(fromDate, toDate)));
             sections.Add(LoadSection("Hiring Trend", async () => hiringTrend = await Api.GetHiringTrendAsync(fromDate, toDate)));

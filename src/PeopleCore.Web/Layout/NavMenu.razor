@@ -11,24 +11,23 @@
 
 @foreach (var section in Sections)
 {
-    if (section.Roles is null)
+    if (section.AnyOf is null)
     {
         @RenderSection(section)
     }
     else
     {
-        <AuthorizeView Roles="@section.Roles" Context="authContext">
-            <Authorized>
-                @RenderSection(section)
-            </Authorized>
-        </AuthorizeView>
+        <PermissionView AnyOf="@section.AnyOf">
+            @RenderSection(section)
+        </PermissionView>
     }
 }
 
 @code {
     private sealed record NavEntry(string Href, string Label, string Icon, bool Exact = false);
 
-    private sealed record NavSection(string Label, string? Roles, NavEntry[] Entries);
+    /// <summary>A menu section, shown to anyone holding any of <paramref name="AnyOf"/>, or to everyone when null.</summary>
+    private sealed record NavSection(string Label, string[]? AnyOf, NavEntry[] Entries);
 
     private static readonly NavSection[] Sections =
     [
@@ -40,36 +39,36 @@
             new("/my-leave", "Leave", "bi-calendar-check"),
             new("/my-payslips", "Payslips", "bi-receipt")
         ]),
-        new("Organization", "Admin,HRManager",
+        new("Organization", [Permissions.OrganizationManage],
         [
             new("/departments", "Departments", "bi-building"),
             new("/positions", "Positions", "bi-briefcase")
         ]),
-        new("Employees", "Admin,HRManager",
+        new("Employees", [Permissions.EmployeesViewAll],
         [
             new("/employees", "All Employees", "bi-people")
         ]),
-        new("Management", "Admin,HRManager,Manager",
+        new("Management", [Permissions.ApprovalsTeam, Permissions.ApprovalsAll],
         [
             new("/leave-approvals", "Leave Approvals", "bi-check-square"),
             new("/overtime-approvals", "OT Approvals", "bi-clock-history"),
             new("/performance", "Performance", "bi-bar-chart")
         ]),
-        new("Payroll", "Admin,HRManager,PayrollService",
+        new("Payroll", [Permissions.PayrollManage],
         [
             new("/payroll-runs", "Payroll Runs", "bi-cash-stack"),
             new("/bir-2316", "BIR Form 2316", "bi-file-earmark-text")
         ]),
-        new("Recruitment", "Admin,HRManager",
+        new("Recruitment", [Permissions.RecruitmentManage],
         [
             new("/job-postings", "Job Postings", "bi-file-text"),
             new("/applicants", "Applicants", "bi-person-plus")
         ]),
-        new("Analytics", "Admin,HRManager",
+        new("Analytics", [Permissions.AnalyticsHr],
         [
             new("/analytics", "Analytics", "bi-graph-up")
         ]),
-        new("Administration", "Admin,HRManager",
+        new("Administration", [Permissions.UsersManage],
         [
             new("/admin/users", "Users", "bi-person-gear")
         ])

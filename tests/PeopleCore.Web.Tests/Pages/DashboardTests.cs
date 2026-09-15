@@ -194,7 +194,7 @@ public class DashboardTests : BunitContext
         // An HR or admin login is not necessarily an employee. Asking for balances or attendance
         // without an id would fail, and waiting for them would spin forever; the pending count is
         // the organisation's instead.
-        _auth.SetRoles(role);
+        _auth.SetClaims(SeededPermissions.ClaimsFor(role));
         _api.On(HttpMethod.Get, AllPendingPath, HttpStatusCode.OK, Pending(3));
 
         var cut = RenderPage();
@@ -214,7 +214,7 @@ public class DashboardTests : BunitContext
         // The API refuses the organisation's leave requests to anyone but HR staff, and a Manager
         // with no employee record has no direct reports, so asking would only put a 403 in the
         // pending card. There is nothing of the caller's own to count.
-        _auth.SetRoles(role);
+        _auth.SetClaims(SeededPermissions.ClaimsFor(role));
 
         var cut = RenderPage();
 

@@ -31,19 +31,19 @@
             <div class="mx-auto mb-3 h-1 w-10 rounded-full bg-border"></div>
             @foreach (var group in MoreGroups)
             {
-                <AuthorizeView Roles="@group.Roles" Context="moreContext">
-                    <Authorized>
-                        <p class="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">@group.Label</p>
-                        @foreach (var link in group.Links)
-                        {
-                            <NavLink href="@link.Href"
-                                     class="block rounded-md px-3 py-2.5 text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                                     ActiveClass="bg-accent text-accent-foreground">
-                                @link.Label
-                            </NavLink>
-                        }
-                    </Authorized>
-                </AuthorizeView>
+                <PermissionView AnyOf="@group.AnyOf">
+                    <p class="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">@group.Label</p>
+                </PermissionView>
+                @foreach (var link in group.Links)
+                {
+                    <PermissionView AnyOf="@link.AnyOf">
+                        <NavLink href="@link.Href"
+                                 class="block rounded-md px-3 py-2.5 text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                                 ActiveClass="bg-accent text-accent-foreground">
+                            @link.Label
+                        </NavLink>
+                    </PermissionView>
+                }
             }
         </div>
     </div>
@@ -52,9 +52,14 @@
 @code {
     private sealed record Tab(string Href, string Label, string Icon);
 
-    private sealed record MoreLink(string Href, string Label);
+    /// <summary>A link shown to anyone holding any of <paramref name="AnyOf"/>.</summary>
+    private sealed record MoreLink(string Href, string Label, string[] AnyOf);
 
-    private sealed record MoreGroup(string Label, string Roles, MoreLink[] Links);
+    /// <summary>A group whose heading shows when any of its links would.</summary>
+    private sealed record MoreGroup(string Label, MoreLink[] Links)
+    {
+        public string[] AnyOf { get; } = Links.SelectMany(l => l.AnyOf).Distinct().ToArray();
+    }
 
     private static readonly Tab[] Tabs =
     [
@@ -66,32 +71,32 @@
 
     private static readonly MoreGroup[] MoreGroups =
     [
-        new("Organization", "Admin,HRManager",
+        new("Organization",
         [
-            new("employees", "Employees"),
-            new("departments", "Departments"),
-            new("positions", "Positions"),
-            new("analytics", "Analytics")
+            new("employees", "Employees", [Permissions.EmployeesViewAll]),
+            new("departments", "Departments", [Permissions.OrganizationManage]),
+            new("positions", "Positions", [Permissions.OrganizationManage]),
+            new("analytics", "Analytics", [Permissions.AnalyticsHr])
         ]),
-        new("Management", "Admin,HRManager,Manager",
+        new("Management",
         [
-            new("leave-approvals", "Leave Approvals"),
-            new("overtime-approvals", "OT Approvals"),
-            new("performance", "Performance")
+            new("leave-approvals", "Leave Approvals", [Permissions.ApprovalsTeam, Permissions.ApprovalsAll]),
+            new("overtime-approvals", "OT Approvals", [Permissions.ApprovalsTeam, Permissions.ApprovalsAll]),
+            new("performance", "Performance", [Permissions.ApprovalsTeam, Permissions.ApprovalsAll])
         ]),
-        new("Payroll", "Admin,HRManager,PayrollService",
+        new("Payroll",
         [
-            new("payroll-runs", "Payroll Runs"),
-            new("bir-2316", "BIR Form 2316")
+            new("payroll-runs", "Payroll Runs", [Permissions.PayrollManage]),
+            new("bir-2316", "BIR Form 2316", [Permissions.PayrollManage])
         ]),
-        new("Recruitment", "Admin,HRManager",
+        new("Recruitment",
         [
-            new("job-postings", "Job Postings"),
-            new("applicants", "Applicants")
+            new("job-postings", "Job Postings", [Permissions.RecruitmentManage]),
+            new("applicants", "Applicants", [Permissions.RecruitmentManage])
         ]),
-        new("Administration", "Admin,HRManager",
+        new("Administration",
         [
-            new("admin/users", "Users")
+            new("admin/users", "Users", [Permissions.UsersManage])
         ])
     ];
 
