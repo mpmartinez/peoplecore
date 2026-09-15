@@ -1,7 +1,8 @@
 @*
     Create or change a role: its name, description and permissions. A permission the signed-in user
     doesn't hold can't be ticked - the API refuses it anyway - and a role they may not change opens
-    read-only, so they can still see what it allows.
+    read-only, so they can still see what it allows. So does every role while the permission list is
+    empty: a save sends only the ticked permissions it lists, and with none listed it would strip the role.
 *@
 
 <Dialog IsOpen="@IsOpen" OnClose="Close" Title="@Title" Description="@Subtitle" Size="lg">
@@ -78,7 +79,7 @@
     private HashSet<string> _permissions = [];
     private bool _wasOpen;
 
-    private bool ReadOnly => Role is { CanEdit: false };
+    private bool ReadOnly => Role is { CanEdit: false } || Catalogue.Count == 0;
 
     private string Title => Role is null ? "New role" : ReadOnly ? Role.Name : $"Edit {Role.Name}";
 
@@ -86,6 +87,7 @@
     {
         { IsSystem: true } => "System roles can't be changed.",
         { CanEdit: false } => "This role allows things you can't do yourself, so you can't change it.",
+        _ when Catalogue.Count == 0 => "The permission list didn't load, so this role can't be changed.",
         _ => null
     };
 
@@ -108,10 +110,12 @@
     }
 
     private Task Submit() =>
-        OnSave.InvokeAsync(new SaveRoleRequest(
-            _name.Trim(),
-            string.IsNullOrWhiteSpace(_description) ? null : _description.Trim(),
-            Catalogue.Select(p => p.Key).Where(_permissions.Contains).ToList()));
+        ReadOnly
+            ? Task.CompletedTask
+            : OnSave.InvokeAsync(new SaveRoleRequest(
+                _name.Trim(),
+                string.IsNullOrWhiteSpace(_description) ? null : _description.Trim(),
+                Catalogue.Select(p => p.Key).Where(_permissions.Contains).ToList()));
 
     private Task Close() => OnClose.InvokeAsync();
 }

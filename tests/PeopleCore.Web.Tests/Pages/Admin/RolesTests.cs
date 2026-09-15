@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using AngleSharp.Dom;
 using Bunit;
@@ -33,6 +34,25 @@ public class RolesTests : BunitContext
         _auth.SetAuthorized("admin@company.test");
         _auth.SetClaims(SeededPermissions.ClaimsFor("Admin"));
         _api.On(HttpMethod.Get, "/api/roles/permissions", HttpStatusCode.OK, Catalogue);
+    }
+
+    /// <summary>
+    /// A JSON body that arrives only after a pause, so a request answered with it finishes after one
+    /// sent alongside it - the order a slow roles response and a quick failure arrive in for real.
+    /// </summary>
+    private sealed class SlowJsonContent(string json) : HttpContent
+    {
+        protected override async Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context)
+        {
+            await Task.Delay(50);
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(json));
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = -1;
+            return false;
+        }
     }
 
     private IRenderedComponent<Roles> RenderPage(string roles)
@@ -125,5 +145,35 @@ public class RolesTests : BunitContext
         cut.FindAll("button").Last(b => b.TextContent.Trim() == "Delete").Click();
 
         cut.WaitForAssertion(() => cut.Find("[data-action-error]").TextContent.Should().Contain("3 accounts still have Recruiter"));
+    }
+
+    [Fact]
+    public void WhenThePermissionListFailsToLoad_ButTheRolesLoadAfterIt_TheErrorStays_AndNoRoleCanBeSaved()
+    {
+        // The catalogue route registered in the constructor would answer first, so start from a fresh stub.
+        var api = new StubHttpHandler();
+        Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(api)));
+        api.On(HttpMethod.Get, "/api/roles/permissions", HttpStatusCode.InternalServerError,
+            """{"title":"Server error","status":500,"detail":"The permission list is unavailable."}""");
+        api.On(HttpMethod.Get, "/api/roles", () => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new SlowJsonContent(TwoRoles) { Headers = { ContentType = new("application/json") } }
+        });
+        api.On(HttpMethod.Put, "/api/roles/r1", HttpStatusCode.OK, Role("r1", "Recruiter", false, [], 3, true));
+        api.On(HttpMethod.Post, "/api/roles", HttpStatusCode.Created, Role("r2", "Blank", false, [], 0, true));
+
+        var cut = Render<Roles>();
+        cut.WaitForAssertion(() => cut.FindAll("[data-role-row]").Should().NotBeEmpty());
+
+        cut.Find("[data-catalogue-error]").TextContent.Should().Contain("The permission list is unavailable.");
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "New Role").HasAttribute("disabled").Should().BeTrue();
+
+        var recruiter = cut.Find("[data-role-row=Recruiter]");
+        recruiter.QuerySelectorAll("button").Should().NotContain(b => b.TextContent.Trim() == "Edit");
+        ButtonIn(recruiter, "View").Click();
+        cut.Find("[data-role-editor]").QuerySelectorAll("button").Should().NotContain(b => b.TextContent.Trim() == "Save Role");
+        cut.Find("form[data-role-editor]").Submit();
+
+        api.Requests.Should().NotContain(r => r.Method == HttpMethod.Put || r.Method == HttpMethod.Post);
     }
 }

@@ -6,11 +6,16 @@
 
 <PageHeader Title="Roles" Section="Administration" Description="What each role allows. An account can hold several roles and may do everything they allow together.">
     <Actions>
-        <Button Variant="primary" OnClick="OpenNew">
+        <Button Variant="primary" OnClick="OpenNew" Disabled="@(!CanChangeRoles)">
             <i class="bi bi-plus-lg mr-1"></i> New Role
         </Button>
     </Actions>
 </PageHeader>
+
+@if (_catalogueError is not null)
+{
+    <Alert Variant="destructive" Class="mb-4" data-catalogue-error>Permissions could not be loaded, so roles can't be added or changed: @_catalogueError</Alert>
+}
 
 @if (_actionError is not null)
 {
@@ -19,9 +24,9 @@
 
 <Card>
     <CardContent Class="p-0">
-        @if (_loadError is not null)
+        @if (_rolesError is not null)
         {
-            <div class="p-4"><Alert Variant="destructive">@_loadError</Alert></div>
+            <div class="p-4"><Alert Variant="destructive">@_rolesError</Alert></div>
         }
         else if (_roles is null)
         {
@@ -56,7 +61,7 @@
                             <TableCell Class="px-4 py-3">@role.AccountCount</TableCell>
                             <TableCell Class="px-4 py-3">
                                 <div class="flex gap-1">
-                                    <Button Variant="ghost" Size="sm" OnClick="() => OpenExisting(role)">@(role.CanEdit ? "Edit" : "View")</Button>
+                                    <Button Variant="ghost" Size="sm" OnClick="() => OpenExisting(role)">@(role.CanEdit && CanChangeRoles ? "Edit" : "View")</Button>
                                     <Button Variant="ghost" Size="sm" Disabled="@(!role.CanEdit)"
                                             Title="@(role.CanEdit ? null : role.IsSystem ? "System roles can't be changed." : "This role allows things you can't do yourself.")"
                                             OnClick="() => _deleting = role">Delete</Button>
@@ -94,7 +99,8 @@
     private IReadOnlyList<RoleDto>? _roles;
     private IReadOnlyList<PermissionDto> _catalogue = [];
     private IReadOnlyCollection<string> _held = [];
-    private string? _loadError;
+    private string? _rolesError;
+    private string? _catalogueError;
     private string? _actionError;
     private string? _dialogError;
     private bool _busy;
@@ -115,11 +121,11 @@
         try
         {
             _roles = await Api.GetRolesAsync() ?? [];
-            _loadError = null;
+            _rolesError = null;
         }
         catch (Exception ex)
         {
-            _loadError = ex.Message;
+            _rolesError = ex.Message;
         }
     }
 
@@ -131,9 +137,13 @@
         }
         catch (Exception ex)
         {
-            _loadError = ex.Message;
+            _catalogueError = ex.Message;
         }
     }
+
+    // A role is saved with exactly the permissions ticked against the catalogue, so without the
+    // catalogue a save would send none and strip the role bare. Until it loads, roles are view-only.
+    private bool CanChangeRoles => _catalogueError is null && _catalogue.Count > 0;
 
     private void OpenNew()
     {
@@ -153,6 +163,8 @@
 
     private async Task Save(SaveRoleRequest request)
     {
+        if (!CanChangeRoles) return;
+
         _busy = true;
         _dialogError = null;
         try
