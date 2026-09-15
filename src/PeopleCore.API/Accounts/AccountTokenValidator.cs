@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Identity;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Infrastructure.Identity;
 
 namespace PeopleCore.API.Accounts;
@@ -22,6 +23,8 @@ public class AccountTokenValidator
         var stamp = principal.FindFirstValue(AccountClaims.SecurityStamp);
         if (string.IsNullOrEmpty(userId) || string.IsNullOrEmpty(stamp))
             return "The token was issued before revocation checks existed.";
+        if (principal.FindFirstValue(Permissions.VersionClaimType) != Permissions.CurrentVersion)
+            return "The token was issued before permissions existed.";
 
         var user = await _users.FindByIdAsync(userId);
         if (user is null) return "The account no longer exists.";

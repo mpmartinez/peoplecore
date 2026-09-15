@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 using PeopleCore.API.Controllers.Auth;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Infrastructure.Identity;
 using Xunit;
 using SignInResult = Microsoft.AspNetCore.Identity.SignInResult;
@@ -23,6 +24,7 @@ public class AuthTokenTests
     private readonly ApplicationUser _user = new() { Id = "u1", Email = Email, SecurityStamp = "stamp-1", IsActive = true };
     private readonly Mock<UserManager<ApplicationUser>> _users;
     private readonly Mock<SignInManager<ApplicationUser>> _signIn;
+    private readonly Mock<IRolePermissionReader> _permissions = new();
     private readonly AuthController _sut;
 
     public AuthTokenTests()
@@ -36,8 +38,10 @@ public class AuthTokenTests
         _users.Setup(u => u.FindByEmailAsync(Email)).ReturnsAsync(_user);
         _users.Setup(u => u.GetRolesAsync(_user)).ReturnsAsync(new List<string> { "Employee" });
         _signIn.Setup(s => s.CheckPasswordSignInAsync(_user, Password, true)).ReturnsAsync(SignInResult.Success);
+        _permissions.Setup(p => p.GetPermissionsAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync([]);
 
-        _sut = new AuthController(_users.Object, _signIn.Object, TestJwtConfiguration.Create());
+        _sut = new AuthController(_users.Object, _signIn.Object, TestJwtConfiguration.Create(), _permissions.Object);
     }
 
     private static AuthTokenResponse Session(IActionResult result) =>
@@ -46,6 +50,10 @@ public class AuthTokenTests
     private static Dictionary<string, string> ClaimsOf(AuthTokenResponse session) =>
         new JwtSecurityTokenHandler().ReadJwtToken(session.Token).Claims
             .GroupBy(c => c.Type).ToDictionary(g => g.Key, g => g.First().Value);
+
+    private static List<string> PermissionsIn(AuthTokenResponse session) =>
+        new JwtSecurityTokenHandler().ReadJwtToken(session.Token).Claims
+            .Where(c => c.Type == "permission").Select(c => c.Value).ToList();
 
     [Fact]
     public async Task SigningInToADeactivatedAccount_IsRefused_ExactlyLikeAWrongPassword()
@@ -101,5 +109,29 @@ public class AuthTokenTests
         _user.MustChangePassword.Should().BeFalse();
         _users.Verify(u => u.UpdateAsync(_user), Times.Once);
         ClaimsOf(session).Should().Contain("sec_stamp", "stamp-2").And.NotContainKey("must_change_password");
+    }
+
+    [Fact]
+    public async Task AToken_CarriesEveryPermissionTheAccountsRolesGrant_AndThePermissionsVersion()
+    {
+        _users.Setup(u => u.GetRolesAsync(_user)).ReturnsAsync(new List<string> { "Employee", "Manager" });
+        _permissions.Setup(p => p.GetPermissionsAsync(
+                It.Is<IEnumerable<string>>(r => r.OrderBy(x => x).SequenceEqual(new[] { "Employee", "Manager" })),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([Permissions.ApprovalsTeam, Permissions.AnalyticsHr]);
+
+        var session = Session(await _sut.Login(new LoginRequest(Email, Password)));
+
+        PermissionsIn(session).Should().Equal("approvals.team", "analytics.hr");
+        ClaimsOf(session).Should().Contain("perm_v", "1");
+    }
+
+    [Fact]
+    public async Task AnAccountWhoseRolesGrantNothing_StillGetsThePermissionsVersion()
+    {
+        var session = Session(await _sut.Login(new LoginRequest(Email, Password)));
+
+        PermissionsIn(session).Should().BeEmpty();
+        ClaimsOf(session).Should().Contain("perm_v", "1");
     }
 }

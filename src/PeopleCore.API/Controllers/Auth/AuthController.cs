@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using PeopleCore.API.Accounts;
 using PeopleCore.API.Extensions;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Infrastructure.Identity;
 
 namespace PeopleCore.API.Controllers.Auth;
@@ -18,15 +19,18 @@ public class AuthController : ControllerBase
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly IConfiguration _configuration;
+    private readonly IRolePermissionReader _permissions;
 
     public AuthController(
         UserManager<ApplicationUser> userManager,
         SignInManager<ApplicationUser> signInManager,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IRolePermissionReader permissions)
     {
         _userManager = userManager;
         _signInManager = signInManager;
         _configuration = configuration;
+        _permissions = permissions;
     }
 
     [AllowAnonymous]
@@ -92,10 +96,11 @@ public class AuthController : ControllerBase
     private async Task<AuthTokenResponse> IssueTokenAsync(ApplicationUser user)
     {
         var roles = await _userManager.GetRolesAsync(user);
-        return new AuthTokenResponse(GenerateJwtToken(user, roles), user.Email, roles.ToList(), user.MustChangePassword);
+        var permissions = await _permissions.GetPermissionsAsync(roles);
+        return new AuthTokenResponse(GenerateJwtToken(user, roles, permissions), user.Email, roles.ToList(), user.MustChangePassword);
     }
 
-    private string GenerateJwtToken(ApplicationUser user, IList<string> roles)
+    private string GenerateJwtToken(ApplicationUser user, IList<string> roles, IReadOnlyList<string> permissions)
     {
         var key = new SymmetricSecurityKey(ServiceExtensions.ResolveJwtSigningKey(_configuration));
         var claims = new List<Claim>
@@ -110,6 +115,11 @@ public class AuthController : ControllerBase
         if (user.MustChangePassword)
             claims.Add(new Claim(AccountClaims.MustChangePassword, "true"));
         claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
+        // Access is decided by these, not by the role names above - which stay only so the client can
+        // show them. Every token gets perm_v, even one granting nothing, so AccountTokenValidator can
+        // tell a token from before permissions from one that simply has none.
+        claims.AddRange(permissions.Select(p => new Claim(Permissions.ClaimType, p)));
+        claims.Add(new Claim(Permissions.VersionClaimType, Permissions.CurrentVersion));
 
         var token = new JwtSecurityToken(
             issuer: _configuration["Jwt:Issuer"],
