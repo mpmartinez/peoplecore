@@ -14,7 +14,7 @@ using PeopleCore.Infrastructure.Identity;
 
 namespace PeopleCore.Infrastructure.Persistence;
 
-public class AppDbContext : IdentityDbContext<ApplicationUser>
+public class AppDbContext : IdentityDbContext<ApplicationUser, ApplicationRole, string>
 {
     private readonly ICurrentUserService? _currentUser;
 

@@ -50,7 +50,7 @@ public static class ServiceExtensions
             options.UseNpgsql(configuration.GetConnectionString("Default"))
                    .UseSnakeCaseNamingConvention());
 
-        services.AddIdentity<ApplicationUser, IdentityRole>(ConfigureIdentityOptions)
+        services.AddIdentity<ApplicationUser, ApplicationRole>(ConfigureIdentityOptions)
         .AddEntityFrameworkStores<AppDbContext>()
         .AddDefaultTokenProviders();
 
