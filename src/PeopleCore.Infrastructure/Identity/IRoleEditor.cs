@@ -15,6 +15,7 @@ public interface IRoleEditor
     /// </returns>
     Task<int> UpdateAsync(string roleId, string name, string? description, IReadOnlyCollection<string> permissions, CancellationToken ct = default);
 
+    /// <summary>Deletes the role, replacing the security stamp of any account that still holds it in the same save.</summary>
     Task DeleteAsync(string roleId, CancellationToken ct = default);
 
     /// <summary>True when another role already has <paramref name="name"/>, ignoring case.</summary>

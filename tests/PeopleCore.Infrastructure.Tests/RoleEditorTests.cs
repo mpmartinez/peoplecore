@@ -62,12 +62,14 @@ public class RoleEditorTests : DatabaseTestBase
     {
         var id = await Editor().CreateAsync("Recruiter", null, [Permissions.RecruitmentManage]);
         var holder = await HolderOfAsync(id);
+        var bystander = await HolderOfAsync(await Editor().CreateAsync("Auditor", null, [Permissions.AnalyticsExecutive]));
 
         var signedOut = await Editor().UpdateAsync(id, "Recruiter", null, [Permissions.AnalyticsHr]);
 
         signedOut.Should().Be(1);
         (await PermissionsOfAsync(id)).Should().Equal("analytics.hr");
         (await StampOfAsync(holder.Id)).Should().NotBe("stamp-before");
+        (await StampOfAsync(bystander.Id)).Should().Be("stamp-before");
     }
 
     [Fact]
@@ -97,6 +99,23 @@ public class RoleEditorTests : DatabaseTestBase
         await using var read = NewContext();
         (await read.Roles.AnyAsync(r => r.Id == id)).Should().BeFalse();
         (await read.RoleClaims.AnyAsync(c => c.RoleId == id)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Delete_OfARoleAnAccountStillHolds_RevokesThatAccountsTokens_InTheSameSave()
+    {
+        // The controller refuses a role still in use, but a grant can land between that check and
+        // the delete; the account's token would otherwise keep listing the role's permissions.
+        var id = await Editor().CreateAsync("Recruiter", null, [Permissions.RecruitmentManage]);
+        var holder = await HolderOfAsync(id);
+        var bystander = await HolderOfAsync(await Editor().CreateAsync("Auditor", null, [Permissions.AnalyticsExecutive]));
+
+        await Editor().DeleteAsync(id);
+
+        await using var read = NewContext();
+        (await read.Roles.AnyAsync(r => r.Id == id)).Should().BeFalse();
+        (await StampOfAsync(holder.Id)).Should().NotBe("stamp-before");
+        (await StampOfAsync(bystander.Id)).Should().Be("stamp-before");
     }
 
     [Fact]

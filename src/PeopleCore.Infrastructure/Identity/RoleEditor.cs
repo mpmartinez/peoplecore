@@ -44,14 +44,7 @@ public class RoleEditor : IRoleEditor
 
             // Every holder's token still lists the old permissions. Replacing the stamps in this same
             // save means the permission change and the revocation land together or not at all.
-            var holderIds = _db.UserRoles.Where(ur => ur.RoleId == roleId).Select(ur => ur.UserId);
-            var holders = await _db.Users.Where(u => holderIds.Contains(u.Id)).ToListAsync(ct);
-            foreach (var holder in holders)
-            {
-                holder.SecurityStamp = Guid.NewGuid().ToString("N");
-                holder.ConcurrencyStamp = Guid.NewGuid().ToString();
-            }
-            signedOut = holders.Count;
+            signedOut = await RevokeHoldersTokensAsync(roleId, ct);
         }
 
         await _db.SaveChangesAsync(ct);
@@ -63,6 +56,11 @@ public class RoleEditor : IRoleEditor
         var role = await _db.Roles.SingleAsync(r => r.Id == roleId, ct);
         _db.RoleClaims.RemoveRange(await _db.RoleClaims.Where(c => c.RoleId == roleId).ToListAsync(ct));
         _db.Roles.Remove(role);
+
+        // The controller refuses a role still held, but a grant can land after that check. Whoever
+        // holds the role now has a token listing its permissions; revoke it in the same save.
+        await RevokeHoldersTokensAsync(roleId, ct);
+
         await _db.SaveChangesAsync(ct);
     }
 
@@ -70,6 +68,19 @@ public class RoleEditor : IRoleEditor
     {
         var normalized = _normalizer.NormalizeName(name);
         return _db.Roles.AnyAsync(r => r.NormalizedName == normalized && r.Id != exceptRoleId, ct);
+    }
+
+    /// <summary>Replaces the security stamp of every account holding the role, to be saved by the caller. Returns how many.</summary>
+    private async Task<int> RevokeHoldersTokensAsync(string roleId, CancellationToken ct)
+    {
+        var holderIds = _db.UserRoles.Where(ur => ur.RoleId == roleId).Select(ur => ur.UserId);
+        var holders = await _db.Users.Where(u => holderIds.Contains(u.Id)).ToListAsync(ct);
+        foreach (var holder in holders)
+        {
+            holder.SecurityStamp = Guid.NewGuid().ToString("N");
+            holder.ConcurrencyStamp = Guid.NewGuid().ToString();
+        }
+        return holders.Count;
     }
 
     private void AddPermissions(string roleId, IEnumerable<string> permissions)
