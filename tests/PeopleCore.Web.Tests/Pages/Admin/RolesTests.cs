@@ -18,6 +18,7 @@ public class RolesTests : BunitContext
 
     private const string Catalogue = """
         [{"key":"recruitment.manage","group":"Recruitment","label":"Manage recruitment","description":"Job postings, applicants and interviews."},
+         {"key":"approvals.team","group":"Approvals","label":"Approve for my team","description":"Requests from direct reports."},
          {"key":"analytics.executive","group":"Analytics","label":"Executive analytics","description":"Workforce summary."}]
         """;
 
@@ -118,6 +119,18 @@ public class RolesTests : BunitContext
 
         cut.Find("[data-permission='analytics.executive']").HasAttribute("disabled").Should().BeTrue();
         cut.Find("[data-permission='recruitment.manage']").HasAttribute("disabled").Should().BeFalse();
+    }
+
+    [Fact]
+    public void ApprovingForEveryone_LetsTheCallerTickApprovingForATeam_AsTheApiAllows()
+    {
+        // HR approves for everyone and holds no team-approval permission of its own.
+        _auth.SetClaims(SeededPermissions.ClaimsFor("HRManager"));
+        var cut = RenderPage(TwoRoles);
+
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "New Role").Click();
+
+        cut.Find("[data-permission='approvals.team']").HasAttribute("disabled").Should().BeFalse();
     }
 
     [Fact]

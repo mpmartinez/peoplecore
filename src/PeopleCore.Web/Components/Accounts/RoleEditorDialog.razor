@@ -29,7 +29,7 @@
                         <legend class="text-sm font-semibold">@group.Key</legend>
                         @foreach (var permission in group)
                         {
-                            var held = HeldPermissions.Contains(permission.Key);
+                            var held = _grantable.Contains(permission.Key);
                             <Checkbox Value="@_permissions.Contains(permission.Key)"
                                       Disabled="@(ReadOnly || Busy || !held)"
                                       ValueChanged="@(on => Toggle(permission.Key, on))"
@@ -66,7 +66,7 @@
 
     [Parameter] public IReadOnlyList<PermissionDto> Catalogue { get; set; } = [];
 
-    /// <summary>What the signed-in user may do; only these can be ticked.</summary>
+    /// <summary>What the signed-in user may do; only these, and what they imply, can be ticked.</summary>
     [Parameter] public IReadOnlyCollection<string> HeldPermissions { get; set; } = [];
 
     [Parameter] public bool Busy { get; set; }
@@ -77,6 +77,7 @@
     private string _name = string.Empty;
     private string _description = string.Empty;
     private HashSet<string> _permissions = [];
+    private HashSet<string> _grantable = [];
     private bool _wasOpen;
 
     private bool ReadOnly => Role is { CanEdit: false } || Catalogue.Count == 0;
@@ -93,6 +94,8 @@
 
     protected override void OnParametersSet()
     {
+        _grantable = Permissions.WithImplied(HeldPermissions).ToHashSet();
+
         var opening = IsOpen && !_wasOpen;
         _wasOpen = IsOpen;
         if (!opening) return;
