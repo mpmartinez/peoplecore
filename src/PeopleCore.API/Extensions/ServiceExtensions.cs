@@ -79,6 +79,7 @@ public static class ServiceExtensions
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
         services.AddScoped<IUserAccountDirectory, UserAccountDirectory>();
+        services.AddScoped<IRolePermissionReader, RolePermissionReader>();
         services.AddScoped<AccountTokenValidator>();
 
         // Organization
