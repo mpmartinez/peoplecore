@@ -1,0 +1,117 @@
+@*
+    Create or change a role: its name, description and permissions. A permission the signed-in user
+    doesn't hold can't be ticked - the API refuses it anyway - and a role they may not change opens
+    read-only, so they can still see what it allows.
+*@
+
+<Dialog IsOpen="@IsOpen" OnClose="Close" Title="@Title" Description="@Subtitle" Size="lg">
+    <ChildContent>
+        <form class="space-y-4" data-role-editor @onsubmit="Submit" @onsubmit:preventDefault>
+            @if (Error is not null)
+            {
+                <Alert Variant="destructive" data-role-editor-error>@Error</Alert>
+            }
+
+            <div class="grid gap-4 sm:grid-cols-2">
+                <FormField LabelText="Name" Id="role-name">
+                    <Input TValue="string" Id="role-name" @bind-Value="_name" MaxLength="50" Disabled="@(ReadOnly || Busy)" />
+                </FormField>
+                <FormField LabelText="Description" Id="role-description">
+                    <Input TValue="string" Id="role-description" @bind-Value="_description" MaxLength="200" Disabled="@(ReadOnly || Busy)" />
+                </FormField>
+            </div>
+
+            <div class="space-y-4">
+                @foreach (var group in Catalogue.GroupBy(p => p.Group))
+                {
+                    <fieldset class="space-y-2">
+                        <legend class="text-sm font-semibold">@group.Key</legend>
+                        @foreach (var permission in group)
+                        {
+                            var held = HeldPermissions.Contains(permission.Key);
+                            <Checkbox Value="@_permissions.Contains(permission.Key)"
+                                      Disabled="@(ReadOnly || Busy || !held)"
+                                      ValueChanged="@(on => Toggle(permission.Key, on))"
+                                      data-permission="@permission.Key"
+                                      title="@(held ? permission.Description : "You don't have this permission yourself.")">
+                                <span>@permission.Label</span>
+                                <span class="block text-xs font-normal text-muted-foreground">@permission.Description</span>
+                            </Checkbox>
+                        }
+                    </fieldset>
+                }
+            </div>
+
+            @if (!ReadOnly)
+            {
+                <p class="text-xs text-muted-foreground">Changing permissions signs out everyone who has this role, so they pick up the change straight away.</p>
+            }
+            <div class="flex justify-end gap-2 pt-2">
+                <Button Variant="outline" Size="sm" OnClick="Close">@(ReadOnly ? "Close" : "Cancel")</Button>
+                @if (!ReadOnly)
+                {
+                    <Button Type="submit" Variant="primary" Size="sm" Loading="@Busy">Save Role</Button>
+                }
+            </div>
+        </form>
+    </ChildContent>
+</Dialog>
+
+@code {
+    [Parameter] public bool IsOpen { get; set; }
+
+    /// <summary>The role being changed, or null for a new one.</summary>
+    [Parameter] public RoleDto? Role { get; set; }
+
+    [Parameter] public IReadOnlyList<PermissionDto> Catalogue { get; set; } = [];
+
+    /// <summary>What the signed-in user may do; only these can be ticked.</summary>
+    [Parameter] public IReadOnlyCollection<string> HeldPermissions { get; set; } = [];
+
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public string? Error { get; set; }
+    [Parameter] public EventCallback<SaveRoleRequest> OnSave { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private string _name = string.Empty;
+    private string _description = string.Empty;
+    private HashSet<string> _permissions = [];
+    private bool _wasOpen;
+
+    private bool ReadOnly => Role is { CanEdit: false };
+
+    private string Title => Role is null ? "New role" : ReadOnly ? Role.Name : $"Edit {Role.Name}";
+
+    private string? Subtitle => Role switch
+    {
+        { IsSystem: true } => "System roles can't be changed.",
+        { CanEdit: false } => "This role allows things you can't do yourself, so you can't change it.",
+        _ => null
+    };
+
+    protected override void OnParametersSet()
+    {
+        var opening = IsOpen && !_wasOpen;
+        _wasOpen = IsOpen;
+        if (!opening) return;
+
+        // Start from the role being edited, or blank - never from whatever was open last.
+        _name = Role?.Name ?? string.Empty;
+        _description = Role?.Description ?? string.Empty;
+        _permissions = Role?.Permissions.ToHashSet() ?? [];
+    }
+
+    private void Toggle(string key, bool on)
+    {
+        if (on) _permissions.Add(key);
+        else _permissions.Remove(key);
+    }
+
+    private Task Submit() =>
+        OnSave.InvokeAsync(new SaveRoleRequest(
+            _name.Trim(),
+            string.IsNullOrWhiteSpace(_description) ? null : _description.Trim(),
+            Catalogue.Select(p => p.Key).Where(_permissions.Contains).ToList()));
+
+    private Task Close() => OnClose.InvokeAsync();
+}

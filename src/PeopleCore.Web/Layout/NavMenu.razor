@@ -24,7 +24,8 @@
 }
 
 @code {
-    private sealed record NavEntry(string Href, string Label, string Icon, bool Exact = false);
+    /// <summary>A menu link, shown to anyone who can see its section - or, when <paramref name="AnyOf"/> is set, only to holders of one of those.</summary>
+    private sealed record NavEntry(string Href, string Label, string Icon, bool Exact = false, string[]? AnyOf = null);
 
     /// <summary>A menu section, shown to anyone holding any of <paramref name="AnyOf"/>, or to everyone when null.</summary>
     private sealed record NavSection(string Label, string[]? AnyOf, NavEntry[] Entries);
@@ -68,9 +69,10 @@
         [
             new("/analytics", "Analytics", "bi-graph-up")
         ]),
-        new("Administration", [Permissions.UsersManage],
+        new("Administration", [Permissions.UsersManage, Permissions.RolesManage],
         [
-            new("/admin/users", "Users", "bi-person-gear")
+            new("/admin/users", "Users", "bi-person-gear", AnyOf: [Permissions.UsersManage]),
+            new("/admin/roles", "Roles", "bi-shield-lock", AnyOf: [Permissions.RolesManage])
         ])
     ];
 
@@ -98,15 +100,25 @@
                 <ShadcnSidebarMenu>
                     @foreach (var entry in section.Entries)
                     {
-                        <ShadcnSidebarMenuItem>
-                            <ShadcnSidebarMenuButton Href="@entry.Href" IsActive="@IsActive(entry)">
-                                <Icon><i class="bi @entry.Icon text-base"></i></Icon>
-                                <TooltipContent>@entry.Label</TooltipContent>
-                                <ChildContent>@entry.Label</ChildContent>
-                            </ShadcnSidebarMenuButton>
-                        </ShadcnSidebarMenuItem>
+                        if (entry.AnyOf is null)
+                        {
+                            @RenderEntry(entry)
+                        }
+                        else
+                        {
+                            <PermissionView AnyOf="@entry.AnyOf">@RenderEntry(entry)</PermissionView>
+                        }
                     }
                 </ShadcnSidebarMenu>
             </ShadcnSidebarGroupContent>
         </ShadcnSidebarGroup>;
+
+    private RenderFragment RenderEntry(NavEntry entry) =>
+        @<ShadcnSidebarMenuItem>
+            <ShadcnSidebarMenuButton Href="@entry.Href" IsActive="@IsActive(entry)">
+                <Icon><i class="bi @entry.Icon text-base"></i></Icon>
+                <TooltipContent>@entry.Label</TooltipContent>
+                <ChildContent>@entry.Label</ChildContent>
+            </ShadcnSidebarMenuButton>
+        </ShadcnSidebarMenuItem>;
 }
