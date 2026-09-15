@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Authorization;
 using PeopleCore.Application.Attendance.DTOs;
 using PeopleCore.Application.Attendance.Interfaces;
+using PeopleCore.Application.Common.Authorization;
 
 namespace PeopleCore.API.Controllers.Attendance;
 
@@ -18,12 +20,12 @@ public class HolidaysController : ControllerBase
         => Ok(await _service.GetByYearAsync(year ?? DateTime.UtcNow.Year, ct));
 
     [HttpPost]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.AttendanceManage)]
     public async Task<IActionResult> Create([FromBody] CreateHolidayDto dto, CancellationToken ct = default)
         => StatusCode(201, await _service.CreateAsync(dto, ct));
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.AttendanceManage)]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct = default)
     {
         await _service.DeleteAsync(id, ct);

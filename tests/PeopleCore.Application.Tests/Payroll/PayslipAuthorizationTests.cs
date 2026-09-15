@@ -1,7 +1,9 @@
 using System.Reflection;
 using FluentAssertions;
 using Microsoft.AspNetCore.Authorization;
+using PeopleCore.API.Authorization;
 using PeopleCore.API.Controllers.Payroll;
+using PeopleCore.Application.Common.Authorization;
 
 namespace PeopleCore.Application.Tests.Payroll;
 
@@ -48,12 +50,11 @@ public class PayslipAuthorizationTests
     [Theory]
     [InlineData("GetPayslip")]
     [InlineData("GetRunPayslips")]
-    public void HrActions_AdmitOnlyPayrollRoles(string actionName)
+    public void HrActions_RequirePayrollManage(string actionName)
     {
-        var attribute = Action(actionName).GetCustomAttribute<AuthorizeAttribute>();
+        var attribute = Action(actionName).GetCustomAttribute<RequirePermissionAttribute>();
 
-        attribute.Should().NotBeNull("HR payslip actions must be role-restricted");
-        attribute!.Roles!.Split(',', StringSplitOptions.TrimEntries)
-            .Should().BeEquivalentTo(["Admin", "HRManager", "PayrollService"]);
+        attribute.Should().NotBeNull("HR payslip actions must require a permission");
+        attribute!.AnyOf.Should().BeEquivalentTo([Permissions.PayrollManage]);
     }
 }

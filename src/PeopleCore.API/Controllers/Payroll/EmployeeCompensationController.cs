@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Authorization;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.Interfaces;
 
@@ -13,7 +15,7 @@ namespace PeopleCore.API.Controllers.Payroll;
 /// </summary>
 [ApiController]
 [Route("api/employee-compensation")]
-[Authorize(Roles = "Admin,HRManager,PayrollService")]
+[RequirePermission(Permissions.PayrollManage)]
 public class EmployeeCompensationController : ControllerBase
 {
     private readonly IEmployeeCompensationService _service;

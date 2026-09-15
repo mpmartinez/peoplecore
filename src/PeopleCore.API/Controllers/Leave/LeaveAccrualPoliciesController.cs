@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Authorization;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Leave.DTOs;
 using PeopleCore.Application.Leave.Interfaces;
 
@@ -7,7 +9,7 @@ namespace PeopleCore.API.Controllers.Leave;
 
 [ApiController]
 [Route("api/leave-accrual-policies")]
-[Authorize(Roles = "Admin,HRManager")]
+[RequirePermission(Permissions.LeaveManage)]
 public class LeaveAccrualPoliciesController : ControllerBase
 {
     private readonly ILeaveAccrualService _accrualService;

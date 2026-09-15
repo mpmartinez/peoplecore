@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Authorization;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Scheduling.DTOs;
 using PeopleCore.Application.Scheduling.Interfaces;
 
@@ -7,7 +9,7 @@ namespace PeopleCore.API.Controllers.Scheduling;
 
 [ApiController]
 [Route("api/rotating-patterns")]
-[Authorize(Roles = "Admin,HRManager")]
+[RequirePermission(Permissions.SchedulingManage)]
 public class RotatingPatternsController : ControllerBase
 {
     private readonly IShiftService _service;

@@ -1,7 +1,9 @@
 using System.Reflection;
 using FluentAssertions;
 using Microsoft.AspNetCore.Authorization;
+using PeopleCore.API.Authorization;
 using PeopleCore.API.Controllers.Payroll;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Payroll.DTOs;
 
 namespace PeopleCore.Application.Tests.Payroll;
@@ -32,17 +34,16 @@ public class Bir2316AuthorizationTests
     }
 
     [Fact]
-    public void ClassLevelAuthorize_AdmitsOnlyPayrollRoles()
+    public void ClassLevelRequirePermission_RequiresPayrollManage()
     {
         // Bir2316Controller, unlike ReportsController, has no self-service action - an employee's
         // own 2316 is handed over by HR, not self-served - so the class-level attribute is the
         // one thing guarding every action here. Nothing else would notice it being loosened or
         // dropped from a single action, or the whole class.
-        var attribute = typeof(Bir2316Controller).GetCustomAttribute<AuthorizeAttribute>();
+        var attribute = typeof(Bir2316Controller).GetCustomAttribute<RequirePermissionAttribute>();
 
-        attribute.Should().NotBeNull("Bir2316Controller must be role-restricted at class level");
-        attribute!.Roles!.Split(',', StringSplitOptions.TrimEntries)
-            .Should().BeEquivalentTo(["Admin", "HRManager", "PayrollService"]);
+        attribute.Should().NotBeNull("Bir2316Controller must require a permission at class level");
+        attribute!.AnyOf.Should().BeEquivalentTo([Permissions.PayrollManage]);
     }
 
     [Theory]
@@ -53,10 +54,11 @@ public class Bir2316AuthorizationTests
     public void EveryAction_CarriesNoActionLevelAuthorizeOfItsOwn(string actionName)
     {
         // The class-level attribute is the only guard - no action here should carry its own
-        // [Authorize], which would only ever narrow it accidentally (e.g. to a single role) and
-        // make the class-level attribute misleading about what actually protects each action.
+        // [RequirePermission], which would only ever narrow it accidentally (e.g. to a single
+        // permission) and make the class-level attribute misleading about what actually protects
+        // each action.
         var attribute = Action(actionName).GetCustomAttribute<AuthorizeAttribute>();
 
-        attribute.Should().BeNull($"{actionName} should rely on the class-level [Authorize], not its own");
+        attribute.Should().BeNull($"{actionName} should rely on the class-level [RequirePermission], not its own");
     }
 }

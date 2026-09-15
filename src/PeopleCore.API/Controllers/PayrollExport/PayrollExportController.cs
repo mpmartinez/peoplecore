@@ -1,12 +1,14 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Authorization;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.PayrollIntegration.Interfaces;
 
 namespace PeopleCore.API.Controllers.PayrollExport;
 
 [ApiController]
 [Route("api/payroll-export")]
-[Authorize(Roles = "Admin,HRManager,PayrollService")]
+[RequirePermission(Permissions.PayrollManage)]
 public class PayrollExportController : ControllerBase
 {
     private readonly IPayrollExportService _service;

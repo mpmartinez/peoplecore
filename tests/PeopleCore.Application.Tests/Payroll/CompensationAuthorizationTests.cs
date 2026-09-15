@@ -1,7 +1,8 @@
 using System.Reflection;
 using FluentAssertions;
-using Microsoft.AspNetCore.Authorization;
+using PeopleCore.API.Authorization;
 using PeopleCore.API.Controllers.Payroll;
+using PeopleCore.Application.Common.Authorization;
 
 namespace PeopleCore.Application.Tests.Payroll;
 
@@ -16,15 +17,11 @@ public class CompensationAuthorizationTests
 
     [Theory]
     [MemberData(nameof(PayrollControllers))]
-    public void PayrollController_AdmitsOnlyPayrollRoles(Type controller)
+    public void PayrollController_RequiresPayrollManage(Type controller)
     {
-        var attribute = controller.GetCustomAttribute<AuthorizeAttribute>();
+        var attribute = controller.GetCustomAttribute<RequirePermissionAttribute>();
 
-        attribute.Should().NotBeNull("every payroll controller must be role-restricted");
-
-        var roles = attribute!.Roles!.Split(',', StringSplitOptions.TrimEntries);
-        roles.Should().BeEquivalentTo(["Admin", "HRManager", "PayrollService"]);
-        roles.Should().NotContain("Manager");
-        roles.Should().NotContain("Employee");
+        attribute.Should().NotBeNull("every payroll controller must require a permission");
+        attribute!.AnyOf.Should().BeEquivalentTo([Permissions.PayrollManage]);
     }
 }

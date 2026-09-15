@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Authorization;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Leave.DTOs;
@@ -46,17 +48,17 @@ public class LeaveController : ControllerBase
         => Ok(await _typeService.GetAllAsync(ct));
 
     [HttpPost("leave-types")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.LeaveManage)]
     public async Task<IActionResult> CreateLeaveType([FromBody] CreateLeaveTypeDto dto, CancellationToken ct = default)
         => StatusCode(201, await _typeService.CreateAsync(dto, ct));
 
     [HttpPut("leave-types/{id:guid}")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.LeaveManage)]
     public async Task<IActionResult> UpdateLeaveType(Guid id, [FromBody] CreateLeaveTypeDto dto, CancellationToken ct = default)
         => Ok(await _typeService.UpdateAsync(id, dto, ct));
 
     [HttpDelete("leave-types/{id:guid}")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.LeaveManage)]
     public async Task<IActionResult> DeleteLeaveType(Guid id, CancellationToken ct = default)
     {
         await _typeService.DeleteAsync(id, ct);
@@ -127,7 +129,7 @@ public class LeaveController : ControllerBase
     /// its reason.
     /// </summary>
     [HttpPut("leave-requests/{id:guid}/approve")]
-    [Authorize(Roles = "Admin,HRManager,Manager")]
+    [RequirePermission(Permissions.ApprovalsTeam, Permissions.ApprovalsAll)]
     public async Task<IActionResult> Approve(Guid id, CancellationToken ct = default)
     {
         var approverId = _currentUser.EmployeeId;
@@ -139,7 +141,7 @@ public class LeaveController : ControllerBase
 
     /// <summary>Held to the same rules as <see cref="Approve"/>.</summary>
     [HttpPut("leave-requests/{id:guid}/reject")]
-    [Authorize(Roles = "Admin,HRManager,Manager")]
+    [RequirePermission(Permissions.ApprovalsTeam, Permissions.ApprovalsAll)]
     public async Task<IActionResult> Reject(Guid id, [FromBody] RejectLeaveDto dto, CancellationToken ct = default)
     {
         var rejecterId = _currentUser.EmployeeId;

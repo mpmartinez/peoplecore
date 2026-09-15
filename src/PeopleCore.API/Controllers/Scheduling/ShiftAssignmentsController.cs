@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Authorization;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Scheduling.DTOs;
 using PeopleCore.Application.Scheduling.Interfaces;
@@ -39,7 +41,7 @@ public class ShiftAssignmentsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.SchedulingManage)]
     public async Task<IActionResult> AssignShift([FromBody] AssignShiftRequest request, CancellationToken ct = default)
     {
         await _service.AssignShiftAsync(request, ct);
@@ -47,7 +49,7 @@ public class ShiftAssignmentsController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.SchedulingManage)]
     public async Task<IActionResult> RemoveAssignment(Guid id, CancellationToken ct = default)
     {
         await _service.RemoveAssignmentAsync(id, ct);

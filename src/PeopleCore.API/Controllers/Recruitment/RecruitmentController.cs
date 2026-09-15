@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Authorization;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Recruitment.DTOs;
 using PeopleCore.Application.Recruitment.Interfaces;
 
@@ -39,7 +41,7 @@ public class RecruitmentController : ControllerBase
         => Ok(await _jobService.GetByIdAsync(id, ct));
 
     [HttpPost("job-postings")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.RecruitmentManage)]
     public async Task<IActionResult> CreatePosting([FromBody] CreateJobPostingDto dto, CancellationToken ct)
     {
         var result = await _jobService.CreateAsync(dto, ct);
@@ -47,17 +49,17 @@ public class RecruitmentController : ControllerBase
     }
 
     [HttpPut("job-postings/{id:guid}")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.RecruitmentManage)]
     public async Task<IActionResult> UpdatePosting(Guid id, [FromBody] UpdateJobPostingDto dto, CancellationToken ct)
         => Ok(await _jobService.UpdateAsync(id, dto, ct));
 
     [HttpPut("job-postings/{id:guid}/publish")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.RecruitmentManage)]
     public async Task<IActionResult> PublishPosting(Guid id, CancellationToken ct)
         => Ok(await _jobService.PublishAsync(id, ct));
 
     [HttpPut("job-postings/{id:guid}/close")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.RecruitmentManage)]
     public async Task<IActionResult> ClosePosting(Guid id, CancellationToken ct)
         => Ok(await _jobService.CloseAsync(id, ct));
 
@@ -77,7 +79,7 @@ public class RecruitmentController : ControllerBase
         => Ok(await _applicantService.GetByIdAsync(id, ct));
 
     [HttpPost("applicants")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.RecruitmentManage)]
     public async Task<IActionResult> CreateApplicant([FromBody] CreateApplicantDto dto, CancellationToken ct)
     {
         var result = await _applicantService.CreateAsync(dto, ct);
@@ -85,12 +87,12 @@ public class RecruitmentController : ControllerBase
     }
 
     [HttpPut("applicants/{id:guid}/status")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.RecruitmentManage)]
     public async Task<IActionResult> UpdateApplicantStatus(Guid id, [FromBody] UpdateApplicantStatusDto dto, CancellationToken ct)
         => Ok(await _applicantService.UpdateStatusAsync(id, dto, ct));
 
     [HttpPost("applicants/{id:guid}/convert-to-employee")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.RecruitmentManage)]
     public async Task<IActionResult> ConvertToEmployee(Guid id, [FromBody] ConvertToEmployeeDto dto, CancellationToken ct)
         => Ok(await _applicantService.ConvertToEmployeeAsync(id, dto, ct));
 
@@ -105,7 +107,7 @@ public class RecruitmentController : ControllerBase
         => Ok(await _interviewService.GetByIdAsync(id, ct));
 
     [HttpPost("interviews")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.RecruitmentManage)]
     public async Task<IActionResult> CreateInterview([FromBody] CreateInterviewStageDto dto, CancellationToken ct)
     {
         var result = await _interviewService.CreateAsync(dto, ct);
@@ -113,12 +115,12 @@ public class RecruitmentController : ControllerBase
     }
 
     [HttpPut("interviews/{id:guid}")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.RecruitmentManage)]
     public async Task<IActionResult> UpdateInterview(Guid id, [FromBody] UpdateInterviewStageDto dto, CancellationToken ct)
         => Ok(await _interviewService.UpdateAsync(id, dto, ct));
 
     [HttpDelete("interviews/{id:guid}")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.RecruitmentManage)]
     public async Task<IActionResult> DeleteInterview(Guid id, CancellationToken ct)
     {
         await _interviewService.DeleteAsync(id, ct);
