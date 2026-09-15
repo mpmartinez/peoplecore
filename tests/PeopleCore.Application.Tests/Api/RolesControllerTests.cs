@@ -108,6 +108,24 @@ public class RolesControllerTests
         Detail(await _sut.Create(new SaveRoleRequest(name, null, []), CancellationToken.None), 400).Should().Be(message);
     }
 
+    [Theory]
+    [InlineData("Admin​")]      // zero-width space: looks exactly like Admin
+    [InlineData("Re‍cruiter")]  // zero-width joiner
+    [InlineData("Payroll")]    // a control character
+    public async Task Create_WithAnInvisibleCharacterInTheName_IsRejected(string name)
+    {
+        Detail(await _sut.Create(new SaveRoleRequest(name, null, []), CancellationToken.None), 400)
+            .Should().Be("A role name can't contain invisible characters.");
+        _editor.Verify(e => e.CreateAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Update_WithAnInvisibleCharacterInTheName_IsRejected()
+    {
+        Detail(await _sut.Update("recruiter", new SaveRoleRequest("Recruiter⁠", null, [Permissions.RecruitmentManage]), CancellationToken.None), 400)
+            .Should().Be("A role name can't contain invisible characters.");
+    }
+
     [Fact]
     public async Task Create_WithAnUnknownPermission_IsRejected()
     {

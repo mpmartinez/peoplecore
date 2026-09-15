@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Accounts;
@@ -129,6 +130,9 @@ public class RolesController : ControllerBase
 
         if (name.Length == 0) return "Enter a role name.";
         if (name.Length > NameMaxLength) return $"A role name must be {NameMaxLength} characters or fewer.";
+        // "Admin" followed by a zero-width space reads as Admin everywhere it's shown, yet is another role.
+        if (name.Any(c => char.GetUnicodeCategory(c) is UnicodeCategory.Control or UnicodeCategory.Format))
+            return "A role name can't contain invisible characters.";
         if (description?.Length > ApplicationRole.DescriptionMaxLength)
             return $"A description must be {ApplicationRole.DescriptionMaxLength} characters or fewer.";
         if (permissions.Any(string.IsNullOrWhiteSpace)) return "A permission can't be blank.";
