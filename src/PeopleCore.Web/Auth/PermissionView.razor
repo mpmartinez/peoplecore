@@ -1,0 +1,25 @@
+@*
+    Shows its content only to a signed-in user holding any of AnyOf. Used for menus and buttons in
+    place of role-name authorization: access follows permissions, which roles merely bundle.
+*@
+
+@if (_allowed)
+{
+    @ChildContent
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthenticationState { get; set; }
+
+    [Parameter, EditorRequired] public string[] AnyOf { get; set; } = [];
+
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private bool _allowed;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = AuthenticationState is null ? null : await AuthenticationState;
+        _allowed = state?.User.HasAnyPermission(AnyOf) ?? false;
+    }
+}

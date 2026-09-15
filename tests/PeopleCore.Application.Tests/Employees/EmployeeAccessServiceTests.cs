@@ -3,6 +3,7 @@ using Moq;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Employees.Services;
+using PeopleCore.Infrastructure.Identity;
 using Xunit;
 
 namespace PeopleCore.Application.Tests.Employees;
@@ -30,8 +31,9 @@ public class EmployeeAccessServiceTests
 
     private void SignInAs(Guid? employeeId, params string[] roles)
     {
+        var granted = SeededRoles.PermissionsOf(roles);
         _currentUser.Setup(c => c.EmployeeId).Returns(employeeId);
-        _currentUser.Setup(c => c.IsInRole(It.IsAny<string>())).Returns((string r) => roles.Contains(r));
+        _currentUser.Setup(c => c.HasPermission(It.IsAny<string>())).Returns((string key) => granted.Contains(key));
     }
 
     public static TheoryData<string> HrRoles => new() { "Admin", "HRManager" };
@@ -44,7 +46,7 @@ public class EmployeeAccessServiceTests
     {
         SignInAs(null, role);
 
-        _sut.IsHrStaff.Should().BeTrue();
+        _sut.CanReachEveryone.Should().BeTrue();
         (await _sut.CanManageAsync(Stranger)).Should().BeTrue();
         (await _sut.CanViewAsync(Stranger)).Should().BeTrue();
         _sut.GetUnfilteredListScope().Should().Be(EmployeeListScope.Everyone);
@@ -67,7 +69,7 @@ public class EmployeeAccessServiceTests
     {
         SignInAs(Caller, "Manager");
 
-        _sut.IsHrStaff.Should().BeFalse();
+        _sut.CanReachEveryone.Should().BeFalse();
         (await _sut.CanManageAsync(DirectReport)).Should().BeTrue();
         (await _sut.CanViewAsync(DirectReport)).Should().BeTrue();
     }
@@ -130,5 +132,43 @@ public class EmployeeAccessServiceTests
 
         (await _sut.CanViewAsync(Stranger)).Should().BeFalse();
         _sut.GetUnfilteredListScope().IsAllowed.Should().BeFalse();
+    }
+
+    // ---- Permissions, independent of the seeded roles ---------------------------------------
+
+    private void Holding(Guid? employeeId, params string[] permissions)
+    {
+        _currentUser.Setup(c => c.EmployeeId).Returns(employeeId);
+        _currentUser.Setup(c => c.HasPermission(It.IsAny<string>())).Returns((string key) => permissions.Contains(key));
+    }
+
+    [Fact]
+    public async Task ViewingEveryone_WithoutApprovingForEveryone_SeesButDecidesNothing()
+    {
+        Holding(Caller, "employees.view-all");
+
+        (await _sut.CanViewAsync(Stranger)).Should().BeTrue();
+        (await _sut.CanManageAsync(Stranger)).Should().BeFalse();
+        _sut.GetUnfilteredListScope().Should().Be(EmployeeListScope.Everyone);
+    }
+
+    [Fact]
+    public async Task ApprovingForEveryone_ReachesEveryone()
+    {
+        Holding(null, "approvals.all");
+
+        (await _sut.CanManageAsync(Stranger)).Should().BeTrue();
+        (await _sut.CanViewAsync(Stranger)).Should().BeTrue();
+        _sut.CanReachEveryone.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ApprovingForTheTeam_ReachesOnlyDirectReports()
+    {
+        Holding(Caller, "approvals.team");
+
+        (await _sut.CanManageAsync(DirectReport)).Should().BeTrue();
+        (await _sut.CanManageAsync(Stranger)).Should().BeFalse();
+        _sut.GetUnfilteredListScope().Should().Be(EmployeeListScope.DirectReportsOf(Caller));
     }
 }

@@ -1,13 +1,15 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
+using PeopleCore.API.Authorization;
 using PeopleCore.Application.Analytics.Interfaces;
+using PeopleCore.Application.Common.Authorization;
 
 namespace PeopleCore.API.Controllers.Analytics;
 
 [ApiController]
 [Route("api/analytics/hr")]
-[Authorize(Roles = "Admin,HRManager")]
+[RequirePermission(Permissions.AnalyticsHr)]
 public class HRAnalyticsController : ControllerBase
 {
     private readonly IHRAnalyticsService _service;

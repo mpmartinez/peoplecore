@@ -1,5 +1,5 @@
 @page "/employees"
-@attribute [Authorize(Roles = "Admin,HRManager")]
+@attribute [RequirePermission(Permissions.EmployeesViewAll)]
 @inject ApiClient Api
 @inject NavigationManager Nav
 
@@ -80,9 +80,9 @@
                             </TableCell>
                             <TableCell Class="px-4 py-3 text-muted-foreground">@emp.EmploymentStatus</TableCell>
                             <TableCell Class="px-4 py-3">
-                                <AuthorizeView Roles="Admin,HRManager,PayrollService">
+                                <PermissionView AnyOf="@(new[] { Permissions.PayrollManage })">
                                     <Button Variant="ghost" Size="sm" OnClick="() => GoToCompensation(emp.Id)">Compensation</Button>
-                                </AuthorizeView>
+                                </PermissionView>
                                 @if (_links is not null)
                                 {
                                     if (_links.TryGetValue(emp.Id, out var link))

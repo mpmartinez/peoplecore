@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Accounts;
+using PeopleCore.API.Authorization;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Infrastructure.Identity;
@@ -17,7 +19,7 @@ namespace PeopleCore.API.Controllers.Account;
 /// replaces the account's security stamp, which revokes the tokens that account already holds.
 /// </summary>
 [ApiController]
-[Authorize(Roles = "Admin,HRManager")]
+[RequirePermission(Permissions.UsersManage)]
 [Route("api/users")]
 public class UsersController : ControllerBase
 {

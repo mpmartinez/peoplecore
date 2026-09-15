@@ -1,9 +1,10 @@
 using System.Reflection;
 using FluentAssertions;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
+using PeopleCore.API.Authorization;
 using PeopleCore.API.Controllers.Scheduling;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Scheduling.Interfaces;
 using PeopleCore.Application.Tests.Common;
 using Xunit;
@@ -94,15 +95,20 @@ public class ShiftAssignmentsControllerAuthorizationTests
     }
 
     [Fact]
-    public void EveryActionTakingAnEmployeeId_IsGuardedByTheseTestsOrByAnHrOnlyRole()
+    public void EveryActionTakingAnEmployeeId_IsGuardedByTheseTestsOrByASchedulingOnlyPermission()
     {
-        // AssignShift carries an employee id in its body, but only HR may call it at all.
+        // AssignShift carries an employee id in its body, but only a caller who may manage
+        // scheduling can call it at all. That exemption must be narrow: an action guarded by
+        // [RequirePermission(SchedulingManage, ApprovalsTeam)] would also admit a Manager, who
+        // has no scheduling-manage permission at all - so only an action whose permission
+        // requirement is exactly [SchedulingManage] may be exempt.
         var takingAnEmployeeId = typeof(ShiftAssignmentsController)
             .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
             .Where(m => m.GetParameters().Any(p =>
                 string.Equals(p.Name, "employeeId", StringComparison.OrdinalIgnoreCase)
                 || p.ParameterType.GetProperty("EmployeeId") is not null))
-            .Where(m => m.GetCustomAttributes<AuthorizeAttribute>().All(a => a.Roles != "Admin,HRManager"))
+            .Where(m => !m.GetCustomAttributes<RequirePermissionAttribute>()
+                .Any(a => a.AnyOf.Count == 1 && a.AnyOf[0] == Permissions.SchedulingManage))
             .Select(m => m.Name);
 
         takingAnEmployeeId.Should().BeSubsetOf([nameof(ShiftAssignmentsController.GetSchedule)]);

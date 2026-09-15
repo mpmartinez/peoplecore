@@ -25,11 +25,12 @@ public class AccountTokenValidatorTests
 
     public AccountTokenValidatorTests() => _users.Setup(u => u.FindByIdAsync("u1")).ReturnsAsync(_user);
 
-    private static ClaimsPrincipal Token(string? userId = "u1", string? stamp = "stamp-1")
+    private static ClaimsPrincipal Token(string? userId = "u1", string? stamp = "stamp-1", string? permissionsVersion = "1")
     {
         var claims = new List<Claim>();
         if (userId is not null) claims.Add(new Claim(ClaimTypes.NameIdentifier, userId));
         if (stamp is not null) claims.Add(new Claim(AccountClaims.SecurityStamp, stamp));
+        if (permissionsVersion is not null) claims.Add(new Claim("perm_v", permissionsVersion));
         return new ClaimsPrincipal(new ClaimsIdentity(claims, "Bearer"));
     }
 
@@ -67,6 +68,16 @@ public class AccountTokenValidatorTests
     public async Task ATokenWithoutAStamp_IsRejected_SoTokensFromBeforeThisExistedStopWorking()
     {
         (await Check(Token(stamp: null))).Should().Be("The token was issued before revocation checks existed.");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("0")]
+    public async Task ATokenFromBeforePermissionsExisted_IsRejected(string? permissionsVersion)
+    {
+        // Such a token carries no permission claims, so every permission-protected endpoint would
+        // quietly refuse its holder. Rejecting it sends them to sign in and get a complete one.
+        (await Check(Token(permissionsVersion: permissionsVersion))).Should().Be("The token was issued before permissions existed.");
     }
 
     [Fact]

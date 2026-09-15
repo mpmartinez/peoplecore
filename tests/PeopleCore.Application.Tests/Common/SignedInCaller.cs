@@ -2,6 +2,7 @@ using Moq;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Employees.Services;
+using PeopleCore.Infrastructure.Identity;
 
 namespace PeopleCore.Application.Tests.Common;
 
@@ -34,7 +35,10 @@ internal sealed class SignedInCaller
 
     public void As(Guid? employeeId, params string[] roles)
     {
+        // Phrased in roles, granted as the seeded roles' permissions: every authorization test built
+        // on this therefore also proves the seeded roles keep the reach the old role checks gave.
+        var granted = SeededRoles.PermissionsOf(roles);
         CurrentUser.Setup(c => c.EmployeeId).Returns(employeeId);
-        CurrentUser.Setup(c => c.IsInRole(It.IsAny<string>())).Returns((string r) => roles.Contains(r));
+        CurrentUser.Setup(c => c.HasPermission(It.IsAny<string>())).Returns((string key) => granted.Contains(key));
     }
 }

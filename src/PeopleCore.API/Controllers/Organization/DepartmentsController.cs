@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Authorization;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Organization.DTOs;
 using PeopleCore.Application.Organization.Interfaces;
 
@@ -22,7 +24,7 @@ public class DepartmentsController : ControllerBase
         => Ok(await _service.GetByIdAsync(id, ct));
 
     [HttpPost]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.OrganizationManage)]
     public async Task<IActionResult> Create([FromBody] CreateDepartmentDto dto, CancellationToken ct)
     {
         var result = await _service.CreateAsync(dto, ct);
@@ -30,12 +32,12 @@ public class DepartmentsController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.OrganizationManage)]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateDepartmentDto dto, CancellationToken ct)
         => Ok(await _service.UpdateAsync(id, dto, ct));
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "Admin")]
+    [RequirePermission(Permissions.OrganizationDelete)]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
         await _service.DeleteAsync(id, ct);

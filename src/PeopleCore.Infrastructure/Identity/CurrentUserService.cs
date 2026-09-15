@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Common.Interfaces;
 
 namespace PeopleCore.Infrastructure.Identity;
@@ -37,5 +38,6 @@ public class CurrentUserService : ICurrentUserService
         _httpContextAccessor.HttpContext?.User?.FindAll(ClaimTypes.Role)
             .Select(c => c.Value).ToList() ?? [];
 
-    public bool IsInRole(string role) => Roles.Contains(role);
+    public bool HasPermission(string key) =>
+        _httpContextAccessor.HttpContext?.User?.HasClaim(Permissions.ClaimType, key) ?? false;
 }

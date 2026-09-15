@@ -14,9 +14,9 @@ public class UserAccountDirectoryTests : DatabaseTestBase
 
     private UserAccountDirectory Directory() => new(NewContext());
 
-    private async Task<IdentityRole> RoleAsync(string name)
+    private async Task<ApplicationRole> RoleAsync(string name)
     {
-        var role = new IdentityRole(name) { NormalizedName = name.ToUpperInvariant() };
+        var role = new ApplicationRole { Name = name, NormalizedName = name.ToUpperInvariant() };
         Context.Roles.Add(role);
         await Context.SaveChangesAsync();
         return role;
@@ -24,7 +24,7 @@ public class UserAccountDirectoryTests : DatabaseTestBase
 
     private async Task<ApplicationUser> AccountAsync(
         string email, string? firstName = null, string? lastName = null, Guid? employeeId = null,
-        bool active = true, IdentityRole[]? roles = null)
+        bool active = true, ApplicationRole[]? roles = null)
     {
         var user = new ApplicationUser
         {

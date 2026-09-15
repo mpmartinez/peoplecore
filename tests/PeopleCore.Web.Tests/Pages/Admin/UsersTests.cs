@@ -24,7 +24,7 @@ public class UsersTests : BunitContext
         Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(_api)));
         var auth = AddAuthorization();
         auth.SetAuthorized("hr@company.test");
-        auth.SetRoles("HRManager");
+        auth.SetClaims(SeededPermissions.ClaimsFor("HRManager"));
     }
 
     private void AssignableRolesLoad() =>

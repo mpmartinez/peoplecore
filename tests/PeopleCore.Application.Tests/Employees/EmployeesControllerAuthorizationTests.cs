@@ -11,6 +11,7 @@ using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Employees.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Domain.Enums;
+using PeopleCore.Infrastructure.Identity;
 using Xunit;
 
 namespace PeopleCore.Application.Tests.Employees;
@@ -39,14 +40,15 @@ public class EmployeesControllerAuthorizationTests
     {
         // Default caller: a rank-and-file employee holding no privileged role.
         _currentUser.Setup(c => c.EmployeeId).Returns(Caller);
-        _currentUser.Setup(c => c.IsInRole(It.IsAny<string>())).Returns(false);
+        _currentUser.Setup(c => c.HasPermission(It.IsAny<string>())).Returns(false);
         _sut = new EmployeesController(_service.Object, _documents.Object, _currentUser.Object);
     }
 
     private void SignInAs(Guid? employeeId, params string[] roles)
     {
+        var granted = SeededRoles.PermissionsOf(roles);
         _currentUser.Setup(c => c.EmployeeId).Returns(employeeId);
-        _currentUser.Setup(c => c.IsInRole(It.IsAny<string>())).Returns((string r) => roles.Contains(r));
+        _currentUser.Setup(c => c.HasPermission(It.IsAny<string>())).Returns((string key) => granted.Contains(key));
     }
 
     /// <summary>

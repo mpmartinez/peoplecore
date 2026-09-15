@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Authorization;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.Interfaces;
 
@@ -7,15 +9,15 @@ namespace PeopleCore.API.Controllers.Payroll;
 
 /// <summary>
 /// BIR Form 2316 endpoints. Unlike <see cref="ReportsController"/>, this controller carries a
-/// class-level <see cref="AuthorizeAttribute"/> restricting every action to payroll roles: there
-/// is no self-service equivalent here. An employee's own 2316 is handed over by HR after review,
-/// not self-served the way a payslip is, so there is no "my 2316" action whose safety would
-/// depend on a bare route with no employee id - every action below legitimately takes an
-/// employee id, and the role check is what keeps that safe.
+/// class-level <see cref="RequirePermissionAttribute"/> restricting every action to callers who
+/// run payroll: there is no self-service equivalent here. An employee's own 2316 is handed over
+/// by HR after review, not self-served the way a payslip is, so there is no "my 2316" action
+/// whose safety would depend on a bare route with no employee id - every action below
+/// legitimately takes an employee id, and the permission check is what keeps that safe.
 /// </summary>
 [ApiController]
 [Route("api/reports/2316")]
-[Authorize(Roles = "Admin,HRManager,PayrollService")]
+[RequirePermission(Permissions.PayrollManage)]
 public class Bir2316Controller : ControllerBase
 {
     private readonly IBir2316Service _service;

@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Authorization;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Employees.DTOs;
@@ -13,8 +15,8 @@ namespace PeopleCore.API.Controllers.Employees;
 /// documents. Every action below takes an employee id straight from the URL, so a role check on
 /// its own is not a security boundary here: "Employee" is a role every authenticated user holds,
 /// and it says nothing about WHICH employee record the caller is entitled to. The boundary is
-/// <see cref="IsSelfOr"/> - the caller must either hold a privileged role or be the employee named
-/// in the route. Without it, changing one GUID in the URL reads someone else's date of birth,
+/// <see cref="IsSelfOr"/> - the caller must either hold the permission or be the employee named in
+/// the route. Without it, changing one GUID in the URL reads someone else's date of birth,
 /// home address, SSS/TIN numbers or HR documents.
 /// </summary>
 [ApiController]
@@ -22,12 +24,6 @@ namespace PeopleCore.API.Controllers.Employees;
 [Authorize]
 public class EmployeesController : ControllerBase
 {
-    /// <summary>HR staff who administer any employee's record.</summary>
-    private const string HrRoles = "Admin,HRManager";
-
-    /// <summary>Payroll staff additionally need the employee record behind a compensation screen.</summary>
-    private const string PayrollReadRoles = "Admin,HRManager,PayrollService";
-
     private readonly IEmployeeService _service;
     private readonly IEmployeeDocumentService _documentService;
     private readonly ICurrentUserService _currentUser;
@@ -43,17 +39,15 @@ public class EmployeesController : ControllerBase
     }
 
     /// <summary>
-    /// True when the caller holds one of <paramref name="roles"/> (a comma-separated list, same
-    /// shape as <see cref="AuthorizeAttribute.Roles"/>) or is themselves the employee named by
-    /// <paramref name="employeeId"/>. A caller with no employee_id claim and no privileged role
-    /// matches nothing: <see cref="ICurrentUserService.EmployeeId"/> is null there, and a null
-    /// never equals the route's <see cref="Guid"/>.
+    /// True when the caller holds any of <paramref name="permissions"/> or is themselves the employee
+    /// named by <paramref name="employeeId"/>. A caller with no employee_id claim and none of the
+    /// permissions matches nothing: <see cref="ICurrentUserService.EmployeeId"/> is null there, and a
+    /// null never equals the route's <see cref="Guid"/>.
     /// </summary>
-    private bool IsSelfOr(string roles, Guid employeeId)
-        => HoldsAnyOf(roles) || _currentUser.EmployeeId == employeeId;
+    private bool IsSelfOr(Guid employeeId, params string[] permissions)
+        => HoldsAnyOf(permissions) || _currentUser.EmployeeId == employeeId;
 
-    private bool HoldsAnyOf(string roles)
-        => roles.Split(',', StringSplitOptions.TrimEntries).Any(_currentUser.IsInRole);
+    private bool HoldsAnyOf(params string[] permissions) => permissions.Any(_currentUser.HasPermission);
 
     /// <summary>
     /// The company directory, open to every signed-in user. Only callers who may read ANY employee's
@@ -65,7 +59,7 @@ public class EmployeesController : ControllerBase
     public async Task<IActionResult> GetAll([FromQuery] EmployeeFilterDto filter, CancellationToken ct)
     {
         var employees = await _service.GetAllAsync(filter, ct);
-        if (HoldsAnyOf(PayrollReadRoles))
+        if (HoldsAnyOf(Permissions.EmployeesViewAll, Permissions.PayrollManage))
             return Ok(employees);
 
         return Ok(PagedResult<EmployeeDirectoryEntryDto>.Create(
@@ -74,20 +68,20 @@ public class EmployeesController : ControllerBase
     }
 
     /// <summary>
-    /// A full employee record - date of birth, personal email, mobile, address. HR and payroll
-    /// staff may read anyone's; everybody else may read only their own.
+    /// A full employee record - date of birth, personal email, mobile, address. Callers who view all
+    /// employees or run payroll may read anyone's; everybody else may read only their own.
     /// </summary>
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetById(Guid id, CancellationToken ct)
     {
-        if (!IsSelfOr(PayrollReadRoles, id))
+        if (!IsSelfOr(id, Permissions.EmployeesViewAll, Permissions.PayrollManage))
             return Forbid();
 
         return Ok(await _service.GetByIdAsync(id, ct));
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.EmployeesManage)]
     public async Task<IActionResult> Create([FromBody] CreateEmployeeDto dto, CancellationToken ct)
     {
         var result = await _service.CreateAsync(dto, ct);
@@ -95,12 +89,12 @@ public class EmployeesController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.EmployeesManage)]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateEmployeeDto dto, CancellationToken ct)
         => Ok(await _service.UpdateAsync(id, dto, ct));
 
     [HttpPut("{id:guid}/deactivate")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.EmployeesManage)]
     public async Task<IActionResult> Deactivate(Guid id, [FromBody] DeactivateEmployeeRequest request, CancellationToken ct)
     {
         await _service.DeactivateAsync(id, request.SeparationDate, ct);
@@ -111,7 +105,7 @@ public class EmployeesController : ControllerBase
     [HttpGet("{id:guid}/government-ids")]
     public async Task<IActionResult> GetGovernmentIds(Guid id, CancellationToken ct)
     {
-        if (!IsSelfOr(HrRoles, id))
+        if (!IsSelfOr(id, Permissions.EmployeesViewAll))
             return Forbid();
 
         return Ok(await _service.GetGovernmentIdsAsync(id, ct));
@@ -126,7 +120,7 @@ public class EmployeesController : ControllerBase
     [HttpPut("{id:guid}/government-ids")]
     public async Task<IActionResult> UpsertGovernmentId(Guid id, [FromBody] UpsertGovernmentIdDto dto, CancellationToken ct)
     {
-        if (!IsSelfOr(HrRoles, id))
+        if (!IsSelfOr(id, Permissions.EmployeesManage))
             return Forbid();
 
         await _service.UpsertGovernmentIdAsync(id, dto, ct);
@@ -136,7 +130,7 @@ public class EmployeesController : ControllerBase
     [HttpGet("{id:guid}/emergency-contacts")]
     public async Task<IActionResult> GetEmergencyContacts(Guid id, CancellationToken ct)
     {
-        if (!IsSelfOr(HrRoles, id))
+        if (!IsSelfOr(id, Permissions.EmployeesViewAll))
             return Forbid();
 
         return Ok(await _service.GetEmergencyContactsAsync(id, ct));
@@ -145,7 +139,7 @@ public class EmployeesController : ControllerBase
     [HttpPost("{id:guid}/emergency-contacts")]
     public async Task<IActionResult> AddEmergencyContact(Guid id, [FromBody] CreateEmergencyContactDto dto, CancellationToken ct)
     {
-        if (!IsSelfOr(HrRoles, id))
+        if (!IsSelfOr(id, Permissions.EmployeesManage))
             return Forbid();
 
         var result = await _service.AddEmergencyContactAsync(id, dto, ct);
@@ -155,7 +149,7 @@ public class EmployeesController : ControllerBase
     [HttpDelete("{id:guid}/emergency-contacts/{contactId:guid}")]
     public async Task<IActionResult> DeleteEmergencyContact(Guid id, Guid contactId, CancellationToken ct)
     {
-        if (!IsSelfOr(HrRoles, id))
+        if (!IsSelfOr(id, Permissions.EmployeesManage))
             return Forbid();
 
         await _service.DeleteEmergencyContactAsync(id, contactId, ct);
@@ -165,7 +159,7 @@ public class EmployeesController : ControllerBase
     [HttpGet("{id:guid}/documents")]
     public async Task<IActionResult> GetDocuments(Guid id, CancellationToken ct)
     {
-        if (!IsSelfOr(HrRoles, id))
+        if (!IsSelfOr(id, Permissions.EmployeesViewAll))
             return Forbid();
 
         return Ok(await _documentService.GetDocumentsAsync(id, ct));
@@ -174,7 +168,7 @@ public class EmployeesController : ControllerBase
     [HttpPost("{id:guid}/documents")]
     public async Task<IActionResult> UploadDocument(Guid id, [FromForm] IFormFile file, [FromQuery] DocumentType documentType, CancellationToken ct)
     {
-        if (!IsSelfOr(HrRoles, id))
+        if (!IsSelfOr(id, Permissions.EmployeesManage))
             return Forbid();
 
         using var stream = file.OpenReadStream();
@@ -189,7 +183,7 @@ public class EmployeesController : ControllerBase
     [HttpGet("{id:guid}/documents/{documentId:guid}/download")]
     public async Task<IActionResult> GetDownloadUrl(Guid id, Guid documentId, CancellationToken ct)
     {
-        if (!IsSelfOr(HrRoles, id))
+        if (!IsSelfOr(id, Permissions.EmployeesViewAll))
             return Forbid();
 
         var url = await _documentService.GetDownloadUrlAsync(id, documentId, ct);
@@ -197,7 +191,7 @@ public class EmployeesController : ControllerBase
     }
 
     [HttpDelete("{id:guid}/documents/{documentId:guid}")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.EmployeesManage)]
     public async Task<IActionResult> DeleteDocument(Guid id, Guid documentId, CancellationToken ct)
     {
         await _documentService.DeleteDocumentAsync(id, documentId, ct);

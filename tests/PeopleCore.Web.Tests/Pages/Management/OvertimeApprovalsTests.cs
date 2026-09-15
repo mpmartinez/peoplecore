@@ -32,7 +32,7 @@ public class OvertimeApprovalsTests : BunitContext
         Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(_api)));
         _auth = AddAuthorization();
         _auth.SetAuthorized("manager@company.test");
-        _auth.SetRoles("Manager");
+        _auth.SetClaims(SeededPermissions.ClaimsFor("Manager"));
         _api.On(HttpMethod.Get, PendingPath, () => _pendingFails
             ? new HttpResponseMessage(HttpStatusCode.InternalServerError)
             : Json(_pendingJson));
@@ -53,7 +53,7 @@ public class OvertimeApprovalsTests : BunitContext
     private IRenderedComponent<OvertimeApprovals> RenderPage(bool linkedToEmployee = true)
     {
         if (linkedToEmployee)
-            _auth.SetClaims(new Claim("employee_id", ApproverId.ToString()));
+            _auth.SetClaims([.. SeededPermissions.ClaimsFor("Manager"), new Claim("employee_id", ApproverId.ToString())]);
 
         var cut = Render<OvertimeApprovals>();
         cut.WaitForAssertion(() => cut.FindAll(".animate-spin").Should().BeEmpty());
@@ -186,7 +186,7 @@ public class OvertimeApprovalsTests : BunitContext
     public void RequestsThatFailToLoad_AreReported_InsteadOfCrashingThePage()
     {
         _pendingFails = true;
-        _auth.SetClaims(new Claim("employee_id", ApproverId.ToString()));
+        _auth.SetClaims([.. SeededPermissions.ClaimsFor("Manager"), new Claim("employee_id", ApproverId.ToString())]);
 
         var cut = Render<OvertimeApprovals>();
 

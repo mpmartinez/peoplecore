@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Authorization;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Performance.DTOs;
 using PeopleCore.Application.Performance.Interfaces;
@@ -34,7 +36,7 @@ public class PerformanceController : ControllerBase
         => Ok(await _cycleService.GetByIdAsync(id, ct));
 
     [HttpPost("review-cycles")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.PerformanceManage)]
     public async Task<IActionResult> CreateCycle([FromBody] CreateReviewCycleDto dto, CancellationToken ct)
     {
         var result = await _cycleService.CreateAsync(dto, ct);
@@ -42,7 +44,7 @@ public class PerformanceController : ControllerBase
     }
 
     [HttpPut("review-cycles/{id:guid}/close")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.PerformanceManage)]
     public async Task<IActionResult> CloseCycle(Guid id, CancellationToken ct)
         => Ok(await _cycleService.CloseAsync(id, ct));
 
@@ -57,7 +59,7 @@ public class PerformanceController : ControllerBase
         => Ok(await _reviewService.GetByIdAsync(id, ct));
 
     [HttpPost("performance-reviews")]
-    [Authorize(Roles = "Admin,HRManager,Manager")]
+    [RequirePermission(Permissions.ApprovalsTeam, Permissions.ApprovalsAll)]
     public async Task<IActionResult> CreateReview([FromBody] CreatePerformanceReviewDto dto, CancellationToken ct)
     {
         var result = await _reviewService.CreateAsync(dto, ct);
@@ -74,7 +76,7 @@ public class PerformanceController : ControllerBase
     }
 
     [HttpPost("performance-reviews/{id:guid}/manager-review")]
-    [Authorize(Roles = "Admin,HRManager,Manager")]
+    [RequirePermission(Permissions.ApprovalsTeam, Permissions.ApprovalsAll)]
     public async Task<IActionResult> SubmitManagerReview(Guid id, [FromBody] SubmitManagerReviewDto dto, CancellationToken ct)
     {
         var reviewerId = _currentUser.EmployeeId;

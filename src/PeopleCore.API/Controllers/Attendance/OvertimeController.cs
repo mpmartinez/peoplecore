@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Authorization;
 using PeopleCore.Application.Attendance.DTOs;
 using PeopleCore.Application.Attendance.Interfaces;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Employees.Interfaces;
 
@@ -80,7 +82,7 @@ public class OvertimeController : ControllerBase
     /// the caller claimed to be. The approver is now the employee in the caller's employee_id claim.
     /// </summary>
     [HttpPut("{id:guid}/approve")]
-    [Authorize(Roles = "Admin,HRManager,Manager")]
+    [RequirePermission(Permissions.ApprovalsTeam, Permissions.ApprovalsAll)]
     public async Task<IActionResult> Approve(Guid id, CancellationToken ct = default)
     {
         var approverId = _currentUser.EmployeeId;
@@ -92,7 +94,7 @@ public class OvertimeController : ControllerBase
 
     /// <summary>Held to the same rule as <see cref="Approve"/>: only the direct reporting manager.</summary>
     [HttpPut("{id:guid}/reject")]
-    [Authorize(Roles = "Admin,HRManager,Manager")]
+    [RequirePermission(Permissions.ApprovalsTeam, Permissions.ApprovalsAll)]
     public async Task<IActionResult> Reject(Guid id, [FromBody] RejectOvertimeDto dto, CancellationToken ct = default)
     {
         var rejecterId = _currentUser.EmployeeId;

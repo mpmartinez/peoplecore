@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Authorization;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Leave.Interfaces;
 
@@ -20,7 +22,7 @@ public class LeaveAccrualsController : ControllerBase
     }
 
     [HttpPost("run-manual")]
-    [Authorize(Roles = "Admin")]
+    [RequirePermission(Permissions.LeaveRunAccruals)]
     public async Task<IActionResult> RunAccrualsAsync([FromQuery] int year, [FromQuery] int month, CancellationToken ct = default)
     {
         await _accrualService.RunAccrualsAsync(year, month, ct);

@@ -1,18 +1,20 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Authorization;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Payroll.Interfaces;
 
 namespace PeopleCore.API.Controllers.Payroll;
 
 /// <summary>
-/// Payslip downloads. Deliberately carries NO class-level <c>[Authorize(Roles = ...)]</c> - every
+/// Payslip downloads. Deliberately carries no class-level permission requirement - every
 /// other payroll controller does, but that would lock employees out of their own payslips.
 /// Instead the two HR actions below (<see cref="GetPayslip"/>, <see cref="GetRunPayslips"/>)
-/// each carry their own role restriction, and the two self-service actions
+/// each carry their own <see cref="RequirePermissionAttribute"/>, and the two self-service actions
 /// (<see cref="GetMyPayslip"/>, <see cref="GetMyPayslips"/>) carry a bare <see cref="AuthorizeAttribute"/>
 /// so any authenticated employee can reach them - the security boundary for those two is not the
-/// role check but the fact that they take no employee id at all (see their doc comments).
+/// permission check but the fact that they take no employee id at all (see their doc comments).
 /// </summary>
 [ApiController]
 [Route("api/reports")]
@@ -32,9 +34,9 @@ public class ReportsController : ControllerBase
         _currentUser = currentUser;
     }
 
-    /// <summary>HR/payroll staff pulling a named employee's payslip - the employee id here is a route parameter on purpose, restricted to payroll roles.</summary>
+    /// <summary>HR/payroll staff pulling a named employee's payslip - the employee id here is a route parameter on purpose, restricted to callers who run payroll.</summary>
     [HttpGet("payslip/{runId:guid}/{employeeId:guid}")]
-    [Authorize(Roles = "Admin,HRManager,PayrollService")]
+    [RequirePermission(Permissions.PayrollManage)]
     public async Task<IActionResult> GetPayslip(Guid runId, Guid employeeId, CancellationToken ct = default)
     {
         var pdf = await _payslips.GenerateAsync(runId, employeeId, ct);
@@ -48,9 +50,9 @@ public class ReportsController : ControllerBase
         return File(pdf, "application/pdf", fileName);
     }
 
-    /// <summary>HR/payroll staff pulling the whole run merged into one PDF - restricted to payroll roles.</summary>
+    /// <summary>HR/payroll staff pulling the whole run merged into one PDF - restricted to callers who run payroll.</summary>
     [HttpGet("payslips/{runId:guid}")]
-    [Authorize(Roles = "Admin,HRManager,PayrollService")]
+    [RequirePermission(Permissions.PayrollManage)]
     public async Task<IActionResult> GetRunPayslips(Guid runId, CancellationToken ct = default)
     {
         var pdf = await _payslips.GenerateForRunAsync(runId, ct);

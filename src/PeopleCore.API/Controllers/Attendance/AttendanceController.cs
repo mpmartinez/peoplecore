@@ -1,8 +1,10 @@
 using CsvHelper;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Authorization;
 using PeopleCore.Application.Attendance.DTOs;
 using PeopleCore.Application.Attendance.Interfaces;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Employees.Interfaces;
 
@@ -100,13 +102,13 @@ public class AttendanceController : ControllerBase
     }
 
     [HttpPost("sync")]
-    [Authorize(Roles = "Admin,HRManager,Service")]
+    [RequirePermission(Permissions.AttendanceDeviceSync)]
     public async Task<IActionResult> Sync(
         [FromBody] IReadOnlyList<AttendancePunchDto> punches, CancellationToken ct = default)
         => Ok(await _service.SyncPunchesAsync(punches, ct));
 
     [HttpPost("import")]
-    [Authorize(Roles = "Admin,HRManager")]
+    [RequirePermission(Permissions.AttendanceManage)]
     public async Task<IActionResult> Import(IFormFile file, CancellationToken ct = default)
     {
         if (file is null || file.Length == 0)

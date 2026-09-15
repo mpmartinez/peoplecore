@@ -1,5 +1,5 @@
 @page "/departments"
-@attribute [Authorize(Roles = "Admin,HRManager")]
+@attribute [RequirePermission(Permissions.OrganizationManage)]
 @inject ApiClient Api
 
 <PageTitle>Departments</PageTitle>

@@ -33,7 +33,7 @@ public class EmployeesTests : BunitContext
         Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(_api)));
         _auth = AddAuthorization();
         _auth.SetAuthorized("hr@company.test");
-        _auth.SetRoles("HRManager");
+        _auth.SetClaims(SeededPermissions.ClaimsFor("HRManager"));
 
         _api.On(HttpMethod.Get, "/api/departments?page=1&pageSize=100", HttpStatusCode.OK,
                 Paged(1, Department(FinanceId, "Finance"), Department(LegalId, "Legal")))
@@ -154,7 +154,7 @@ public class EmployeesTests : BunitContext
     [InlineData("Manager", false)]
     public void TheCompensationLink_IsOnlyOfferedToRolesThatManagePay(string role, bool offered)
     {
-        _auth.SetRoles(role);
+        _auth.SetClaims(SeededPermissions.ClaimsFor(role));
 
         var cut = RenderPage(Paged(1, Employee("EMP-0042", "Maria Santos", id: MariaId)));
 

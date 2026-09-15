@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PeopleCore.API.Authorization;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Scheduling.DTOs;
 using PeopleCore.Application.Scheduling.Interfaces;
 
@@ -7,7 +9,7 @@ namespace PeopleCore.API.Controllers.Scheduling;
 
 [ApiController]
 [Route("api/shift-templates")]
-[Authorize(Roles = "Admin,HRManager")]
+[RequirePermission(Permissions.SchedulingManage)]
 public class ShiftTemplatesController : ControllerBase
 {
     private readonly IShiftService _service;

@@ -1,5 +1,5 @@
 @page "/payroll-runs"
-@attribute [Authorize(Roles = "Admin,HRManager,PayrollService")]
+@attribute [RequirePermission(Permissions.PayrollManage)]
 @inject ApiClient Api
 @inject NavigationManager Nav
 

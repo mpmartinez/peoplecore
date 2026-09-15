@@ -43,7 +43,10 @@ public class ChangePasswordTests
         _users.Setup(u => u.ChangePasswordAsync(_user, Current, Next)).ReturnsAsync(IdentityResult.Success);
         _users.Setup(u => u.GetRolesAsync(_user)).ReturnsAsync(new List<string> { "Employee" });
 
-        _sut = new AuthController(_users.Object, _signIn.Object, TestJwtConfiguration.Create());
+        var permissions = new Mock<IRolePermissionReader>();
+        permissions.Setup(p => p.GetPermissionsAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+
+        _sut = new AuthController(_users.Object, _signIn.Object, TestJwtConfiguration.Create(), permissions.Object);
         SignInAs(UserId);
     }
 

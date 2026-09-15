@@ -75,7 +75,7 @@ public class AnalyticsDashboardTests : BunitContext
 
         var auth = AddAuthorization();
         auth.SetAuthorized("someone@company.test");
-        auth.SetRoles(role);
+        auth.SetClaims(SeededPermissions.ClaimsFor(role));
 
         var cut = Render<AnalyticsDashboard>();
         WaitForLoad(cut);

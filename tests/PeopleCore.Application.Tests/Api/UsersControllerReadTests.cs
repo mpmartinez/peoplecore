@@ -1,9 +1,10 @@
 using System.Reflection;
 using FluentAssertions;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
+using PeopleCore.API.Authorization;
 using PeopleCore.API.Controllers.Account;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Infrastructure.Identity;
 using Xunit;
 
@@ -12,9 +13,10 @@ namespace PeopleCore.Application.Tests.Api;
 public class UsersControllerReadTests : UsersControllerTestBase
 {
     [Fact]
-    public void TheWholeController_IsForAdminAndHrOnly()
+    public void TheWholeController_RequiresUsersManage()
     {
-        typeof(UsersController).GetCustomAttribute<AuthorizeAttribute>()!.Roles.Should().Be("Admin,HRManager");
+        typeof(UsersController).GetCustomAttribute<RequirePermissionAttribute>()!.AnyOf
+            .Should().BeEquivalentTo([Permissions.UsersManage]);
     }
 
     [Fact]

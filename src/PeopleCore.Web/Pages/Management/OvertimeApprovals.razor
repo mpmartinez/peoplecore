@@ -1,5 +1,5 @@
 @page "/overtime-approvals"
-@attribute [Authorize(Roles = "Admin,HRManager,Manager")]
+@attribute [RequirePermission(Permissions.ApprovalsTeam, Permissions.ApprovalsAll)]
 @inject ApiClient Api
 @inject AuthenticationStateProvider AuthStateProvider
 
