@@ -59,6 +59,7 @@ public static class AccountManagementPolicy
     private const string SelfDeactivation = "You can't deactivate your own account.";
     private const string SelfReset = "Use Change Password on My Profile to change your own password.";
     private const string LastAdmin = "This is the last active administrator. Make another account an Admin first.";
+    private const string StaleRoles = "This account's roles changed while you were working. Reload and try again.";
 
     public static IReadOnlyList<string> PermissionsOf(IEnumerable<string> roles, IReadOnlyList<RoleGrant> catalog)
     {
@@ -74,8 +75,12 @@ public static class AccountManagementPolicy
         if (string.Equals(role, SeededRoles.Admin, StringComparison.OrdinalIgnoreCase))
             return actor.IsAdmin ? PolicyDecision.Allow : PolicyDecision.Deny(AdminRole);
 
-        var permissions = catalog.FirstOrDefault(r => string.Equals(r.Name, role, StringComparison.OrdinalIgnoreCase))?.Permissions ?? [];
-        return ActorCoverage.Covers(actor, permissions)
+        // A role the catalogue doesn't list (deleted, or renamed, since it was read) allows nothing we
+        // know of - which is no reason to let anyone grant it.
+        if (catalog.FirstOrDefault(r => string.Equals(r.Name, role, StringComparison.OrdinalIgnoreCase)) is not { } grant)
+            return PolicyDecision.Deny(StaleRoles);
+
+        return ActorCoverage.Covers(actor, grant.Permissions)
             ? PolicyDecision.Allow
             : PolicyDecision.Deny($"You can't grant or remove the {role} role: it allows things you can't do yourself.");
     }
@@ -93,6 +98,8 @@ public static class AccountManagementPolicy
     public static PolicyDecision CanManage(AccountActor actor, AccountTarget target, IReadOnlyList<RoleGrant> catalog)
     {
         if (target.IsAdmin && !actor.IsAdmin) return PolicyDecision.Deny(AdminTarget);
+        // Nor is an account whose roles the catalogue doesn't list one whose power we can weigh.
+        if (!target.Roles.All(role => IsKnown(role, catalog))) return PolicyDecision.Deny(StaleRoles);
         return ActorCoverage.Covers(actor, PermissionsOf(target.Roles, catalog)) ? PolicyDecision.Allow : PolicyDecision.Deny(BeyondTarget);
     }
 
@@ -142,6 +149,11 @@ public static class AccountManagementPolicy
 
     public static PolicyDecision CanResetPassword(AccountActor actor, AccountTarget target, IReadOnlyList<RoleGrant> catalog) =>
         actor.UserId == target.UserId ? PolicyDecision.Deny(SelfReset) : CanManage(actor, target, catalog);
+
+    // Admin allows everything by rule rather than by what the catalogue lists for it.
+    private static bool IsKnown(string role, IReadOnlyList<RoleGrant> catalog) =>
+        string.Equals(role, SeededRoles.Admin, StringComparison.OrdinalIgnoreCase)
+        || catalog.Any(r => string.Equals(r.Name, role, StringComparison.OrdinalIgnoreCase));
 
     private static PolicyDecision FirstRefusal(AccountActor actor, IEnumerable<string> roles, IReadOnlyList<RoleGrant> catalog) =>
         roles.Select(role => CanGrant(actor, role, catalog)).FirstOrDefault(d => !d.Allowed, PolicyDecision.Allow);

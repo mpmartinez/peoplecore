@@ -84,6 +84,59 @@ public class AccountManagementPolicyTests
         AccountManagementPolicy.AssignableRoles(Hr, Catalog).Single(r => r.Name == "Manager").Grantable.Should().BeTrue();
     }
 
+    [Fact]
+    public void AnActorHoldingEveryPermission_ButNotTheAdminRole_MayNotGrantAdmin_OrManageAnAdmin()
+    {
+        var everything = new AccountActor(HrId, ["HRManager", "Employee"], Permissions.AllKeys);
+
+        AccountManagementPolicy.CanGrant(everything, "Admin", Catalog).Reason
+            .Should().Be("Only an administrator can grant or remove the Admin role.");
+        AccountManagementPolicy.CanManage(everything, Account("Admin"), Catalog).Reason
+            .Should().Be("Only an administrator can change an administrator's account.");
+    }
+
+    // --- A catalogue that no longer matches -----------------------------------------------------
+
+    private const string Stale = "This account's roles changed while you were working. Reload and try again.";
+
+    [Fact]
+    public void ARoleMissingFromTheCatalogue_IsNotGranted_AsIfItAllowedNothing()
+    {
+        AccountManagementPolicy.CanGrant(Hr, "Deleted", Catalog).Reason.Should().Be(Stale);
+        AccountManagementPolicy.CanGrant(Admin, "Deleted", Catalog).Reason.Should().Be(Stale);
+        AccountManagementPolicy.CanCreate(Hr, ["Employee", "Deleted"], Catalog).Reason.Should().Be(Stale);
+        AccountManagementPolicy.CanSetRoles(Hr, Account(), ["Employee", "Deleted"], Catalog, activeAdmins: 1).Reason.Should().Be(Stale);
+    }
+
+    [Fact]
+    public void AnAccountHoldingARoleMissingFromTheCatalogue_CannotBeManaged_UntilTheCallerReloads()
+    {
+        var target = Account("Deleted");
+
+        AccountManagementPolicy.CanManage(Hr, target, Catalog).Reason.Should().Be(Stale);
+        AccountManagementPolicy.CanManage(Admin, target, Catalog).Reason.Should().Be(Stale);
+        AccountManagementPolicy.CanDeactivate(Hr, target, Catalog, activeAdmins: 1).Reason.Should().Be(Stale);
+        AccountManagementPolicy.CanResetPassword(Hr, target, Catalog).Reason.Should().Be(Stale);
+    }
+
+    [Fact]
+    public void CatalogueLookups_IgnoreCase_SoAKnownRoleInAnotherCaseIsStillKnown()
+    {
+        AccountManagementPolicy.CanGrant(Hr, "manager", Catalog).Allowed.Should().BeTrue();
+        AccountManagementPolicy.CanManage(Hr, Account("payrollservice"), Catalog).Allowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Admin_AllowsEverythingByRule_SoItIsNeverTreatedAsMissing()
+    {
+        IReadOnlyList<RoleGrant> withoutAdmin = Catalog.Where(r => r.Name != "Admin").ToList();
+
+        AccountManagementPolicy.CanGrant(Admin, "Admin", withoutAdmin).Allowed.Should().BeTrue();
+        AccountManagementPolicy.CanManage(Admin, Account("Admin"), withoutAdmin).Allowed.Should().BeTrue();
+        AccountManagementPolicy.CanManage(Hr, Account("Admin"), withoutAdmin).Reason
+            .Should().Be("Only an administrator can change an administrator's account.");
+    }
+
     // --- Create -------------------------------------------------------------------------------
 
     [Fact]
