@@ -1852,8 +1852,14 @@ public static class RoleManagementPolicy
     /// <summary>Whether the role may be deleted as far as the caller goes; the controller separately refuses roles still held.</summary>
     public static PolicyDecision CanDelete(AccountActor actor, RoleSnapshot role) => CanEdit(actor, role);
 
-    private static bool Covers(AccountActor actor, IEnumerable<string> permissions) =>
-        actor.IsAdmin || permissions.All(actor.Permissions.Contains);
+    // "Approve for everyone" covers "Approve for my team" (Permissions.WithImplied), so a caller who
+    // may approve for everyone can put team approval on a role.
+    private static bool Covers(AccountActor actor, IEnumerable<string> permissions)
+    {
+        if (actor.IsAdmin) return true;
+        var held = Permissions.WithImplied(actor.Permissions);
+        return permissions.All(held.Contains);
+    }
 }
 ```
 
