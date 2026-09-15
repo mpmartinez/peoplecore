@@ -57,7 +57,7 @@ public static class Permissions
         new(ApprovalsTeam, "Approvals", "Approve for my team",
             "Decide direct reports' leave and overtime, write their performance reviews, and see their records."),
         new(ApprovalsAll, "Approvals", "Approve for everyone",
-            "Decide anyone's leave, write anyone's performance review, and see everyone's leave and overtime requests. Overtime itself is decided by each employee's own manager."),
+            "Decide anyone's leave, write anyone's performance review, and see everyone's attendance, leave, overtime and schedules. Overtime itself is decided by each employee's own manager."),
         new(PerformanceManage, "Performance", "Manage review cycles",
             "Create and close performance review cycles."),
         new(PayrollManage, "Payroll", "Run payroll",
