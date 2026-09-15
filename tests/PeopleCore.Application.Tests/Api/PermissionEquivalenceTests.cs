@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Routing;
 using PeopleCore.API.Authorization;
 using PeopleCore.API.Controllers.Auth;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Infrastructure.Identity;
 using Xunit;
 
@@ -85,6 +86,20 @@ public class PermissionEquivalenceTests
         ["ShiftTemplatesController.Update"] = AH, ["ShiftTemplatesController.Delete"] = AH,
     };
 
+    /// <summary>
+    /// Endpoints added after role-name checks were removed. They had no "before" to be equivalent to,
+    /// so each is pinned to exactly the permission it requires.
+    /// </summary>
+    private static readonly Dictionary<string, string[]> AddedEndpoints = new()
+    {
+        ["RolesController.List"] = [Permissions.RolesManage],
+        ["RolesController.Get"] = [Permissions.RolesManage],
+        ["RolesController.PermissionCatalogue"] = [Permissions.RolesManage],
+        ["RolesController.Create"] = [Permissions.RolesManage],
+        ["RolesController.Update"] = [Permissions.RolesManage],
+        ["RolesController.Delete"] = [Permissions.RolesManage],
+    };
+
     private static IEnumerable<(Type Controller, MethodInfo Action)> Endpoints() =>
         from controller in typeof(AuthController).Assembly.GetTypes()
         where typeof(ControllerBase).IsAssignableFrom(controller) && !controller.IsAbstract
@@ -125,11 +140,26 @@ public class PermissionEquivalenceTests
     public void EndpointsThatWereOpenToEveryone_RequireNoPermission()
     {
         var newlyGuarded = Endpoints()
-            .Where(e => !LegacyRoles.ContainsKey(KeyOf(e.Controller, e.Action)) && RequirementsOf(e.Controller, e.Action).Count > 0)
+            .Where(e => !LegacyRoles.ContainsKey(KeyOf(e.Controller, e.Action))
+                        && !AddedEndpoints.ContainsKey(KeyOf(e.Controller, e.Action))
+                        && RequirementsOf(e.Controller, e.Action).Count > 0)
             .Select(e => KeyOf(e.Controller, e.Action))
             .ToList();
 
         newlyGuarded.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void EndpointsAddedSincePermissions_RequireExactlyTheirPermission()
+    {
+        var present = Endpoints().ToDictionary(e => KeyOf(e.Controller, e.Action));
+
+        foreach (var (key, expected) in AddedEndpoints)
+        {
+            present.Should().ContainKey(key);
+            var (controller, action) = present[key];
+            RequirementsOf(controller, action).SelectMany(r => r.AnyOf).Should().Equal(expected, key);
+        }
     }
 
     [Fact]
