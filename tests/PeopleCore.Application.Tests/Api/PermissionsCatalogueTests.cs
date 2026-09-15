@@ -54,4 +54,14 @@ public class PermissionsCatalogueTests
 
         act.Should().Throw<ArgumentException>();
     }
+
+    [Fact]
+    public void APolicyForAKeyNotInTheCatalogue_CannotBeNamed()
+    {
+        // A typo here would otherwise reach the policy provider, which returns null for an
+        // unrecognised policy name and turns every request against the endpoint into a 500.
+        var act = () => PermissionPolicy.NameFor("employees.veiw-all");
+
+        act.Should().Throw<ArgumentException>().WithMessage("*employees.veiw-all*");
+    }
 }

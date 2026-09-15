@@ -34,4 +34,15 @@ public class PermissionPolicyProviderTests
     {
         new RequirePermissionAttribute(Permissions.UsersManage).Policy.Should().Be("permission:users.manage");
     }
+
+    [Fact]
+    public void APolicyForAKeyNotInTheCatalogue_CannotBeNamed()
+    {
+        // A typo here would otherwise reach the policy provider, which returns null for an
+        // unrecognised policy name: [RequirePermission] throws when it builds the page, and
+        // PermissionView would just as silently hide its content.
+        var act = () => PermissionPolicy.NameFor("employees.veiw-all");
+
+        act.Should().Throw<ArgumentException>().WithMessage("*employees.veiw-all*");
+    }
 }

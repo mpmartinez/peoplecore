@@ -91,6 +91,9 @@ public static class PermissionPolicy
     {
         if (anyOf.Length == 0)
             throw new ArgumentException("A permission policy needs at least one permission.", nameof(anyOf));
+        foreach (var key in anyOf)
+            if (!Permissions.AllKeys.Contains(key))
+                throw new ArgumentException($"'{key}' is not a known permission key.", nameof(anyOf));
         return Prefix + string.Join('|', anyOf);
     }
 
