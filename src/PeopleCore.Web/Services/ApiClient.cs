@@ -54,8 +54,26 @@ public class ApiClient
         return await GetJsonAsync<PagedResult<UserAccountDto>>(url);
     }
 
-    public async Task<IReadOnlyList<string>?> GetAssignableRolesAsync()
-        => await GetJsonAsync<List<string>>("api/users/assignable-roles");
+    /// <summary>Every role an account could be given, saying which the signed-in user may grant and, if not, why.</summary>
+    public async Task<IReadOnlyList<AssignableRoleDto>?> GetAssignableRolesAsync()
+        => await GetJsonAsync<List<AssignableRoleDto>>("api/users/assignable-roles");
+
+    // Roles (anyone with Manage roles)
+    public async Task<IReadOnlyList<RoleDto>?> GetRolesAsync()
+        => await GetJsonAsync<List<RoleDto>>("api/roles");
+
+    public async Task<IReadOnlyList<PermissionDto>?> GetPermissionCatalogueAsync()
+        => await GetJsonAsync<List<PermissionDto>>("api/roles/permissions");
+
+    public Task<RoleDto?> CreateRoleAsync(SaveRoleRequest request)
+        => SendJsonAsync<RoleDto>(HttpMethod.Post, "api/roles", request);
+
+    public Task<RoleDto?> UpdateRoleAsync(string roleId, SaveRoleRequest request)
+        => SendJsonAsync<RoleDto>(HttpMethod.Put, $"api/roles/{Uri.EscapeDataString(roleId)}", request);
+
+    // No body comes back from a delete, so there is nothing to read after the status check.
+    public async Task DeleteRoleAsync(string roleId)
+        => await EnsureSuccessAsync(await _http.DeleteAsync($"api/roles/{Uri.EscapeDataString(roleId)}"));
 
     public async Task<IReadOnlyList<EmployeeLinkDto>?> GetEmployeeLinksAsync()
         => await GetJsonAsync<List<EmployeeLinkDto>>("api/users/employee-links");
@@ -512,6 +530,10 @@ public record UserAccountDto(string Id, string Email, string? FirstName, string?
 public record CreateUserAccountRequest(string Email, string FirstName, string LastName, Guid? EmployeeId, IReadOnlyList<string> Roles);
 public record CreatedUserAccountDto(UserAccountDto Account, string TemporaryPassword);
 public record EmployeeLinkDto(Guid EmployeeId, string UserId, bool IsActive);
+public record AssignableRoleDto(string Name, bool Grantable, string? Reason);
+public record RoleDto(string Id, string Name, string? Description, bool IsSystem, IReadOnlyList<string> Permissions, int AccountCount, bool CanEdit);
+public record PermissionDto(string Key, string Group, string Label, string Description);
+public record SaveRoleRequest(string Name, string? Description, IReadOnlyList<string> Permissions);
 public record TemporaryPasswordDto(string TemporaryPassword);
 public record UserProfileDto(string? FirstName, string? LastName, string? Email);
 public record PagedResult<T>(IReadOnlyList<T> Items, int TotalCount, int Page, int PageSize, int TotalPages);

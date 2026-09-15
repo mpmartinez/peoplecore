@@ -194,7 +194,7 @@
     private int _page = 1;
     private int _loadVersion;
 
-    private IReadOnlyList<string> _assignable = [];
+    private IReadOnlyList<AssignableRoleDto> _assignable = [];
     private string? _assignableError;
 
     private string? _actionError;
@@ -311,8 +311,9 @@
         // filtered out, sending just ["Employee"] and stripping every other role from the account.
         if (_assignableError is not null || _assignable.Count == 0) return Task.CompletedTask;
 
-        // Only roles this user may grant are sent; any others the account holds are the API's to keep.
-        var roles = _rolesSelected.Where(r => _assignable.Contains(r)).Append("Employee").Distinct().ToList();
+        // Only roles an account can be given are sent; one it holds that can't be (Service) is the API's to keep.
+        var assignable = _assignable.Select(a => a.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var roles = _rolesSelected.Where(assignable.Contains).Append("Employee").Distinct().ToList();
         return RunAsync(async () =>
         {
             await Api.SetUserRolesAsync(account.Id, roles);

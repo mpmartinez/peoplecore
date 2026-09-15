@@ -28,7 +28,8 @@ public class UsersTests : BunitContext
     }
 
     private void AssignableRolesLoad() =>
-        _api.On(HttpMethod.Get, "/api/users/assignable-roles", HttpStatusCode.OK, """["Manager","Employee","PayrollService"]""");
+        _api.On(HttpMethod.Get, "/api/users/assignable-roles", HttpStatusCode.OK,
+            """[{"name":"Admin","grantable":false,"reason":"Only an administrator can grant or remove the Admin role."},{"name":"Employee","grantable":true,"reason":null},{"name":"Manager","grantable":true,"reason":null},{"name":"PayrollService","grantable":true,"reason":null}]""");
 
     private static string Json(bool value) => value ? "true" : "false";
 
@@ -122,6 +123,19 @@ public class UsersTests : BunitContext
 
         cut.WaitForAssertion(() => cut.FindAll("[data-roles-dialog]").Should().BeEmpty());
         Strings(BodyOf(HttpMethod.Put, "/api/users/u1/roles").GetProperty("roles")).Should().BeEquivalentTo("Employee", "Manager");
+    }
+
+    [Fact]
+    public void ARoleTheCallerMayNotGrant_IsShownDisabled_WithTheReason()
+    {
+        var cut = RenderPage(Paged(Account("u1", ["Employee"])));
+
+        ButtonIn(RowFor(cut, "u1@company.test"), "Roles").Click();
+
+        var admin = cut.Find("[data-roles-dialog] [data-role=Admin]");
+        admin.HasAttribute("disabled").Should().BeTrue();
+        admin.GetAttribute("title").Should().Be("Only an administrator can grant or remove the Admin role.");
+        cut.Find("[data-roles-dialog] [data-role=Manager]").HasAttribute("disabled").Should().BeFalse();
     }
 
     [Fact]

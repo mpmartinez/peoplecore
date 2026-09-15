@@ -45,7 +45,8 @@ public class EmployeesTests : BunitContext
             {
                 Content = new StringContent(_linksJson, Encoding.UTF8, "application/json")
             })
-            .On(HttpMethod.Get, "/api/users/assignable-roles", HttpStatusCode.OK, """["Manager","Employee","PayrollService"]""");
+            .On(HttpMethod.Get, "/api/users/assignable-roles", HttpStatusCode.OK,
+                """[{"name":"Employee","grantable":true,"reason":null},{"name":"Manager","grantable":true,"reason":null},{"name":"PayrollService","grantable":true,"reason":null}]""");
     }
 
     private string CurrentUri => Services.GetRequiredService<NavigationManager>().Uri;
