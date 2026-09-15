@@ -1,13 +1,14 @@
 using FluentAssertions;
 using PeopleCore.API.Accounts;
+using PeopleCore.Application.Common.Authorization;
 using Xunit;
 
 namespace PeopleCore.Application.Tests.Api;
 
 /// <summary>
-/// Who may change which account. Admins may change anything short of locking the organisation out
-/// of its own administration. HR runs everyday accounts but cannot touch, or mint, Admin or HR
-/// Manager accounts - otherwise any HR Manager could make themselves an administrator.
+/// Who may change which account, now that roles are data. The rule: nobody grants, removes or
+/// manages beyond the permissions they hold themselves, and only an Admin touches Admin. The guards
+/// against locking yourself or the organisation out still apply.
 /// </summary>
 public class AccountManagementPolicyTests
 {
@@ -15,191 +16,228 @@ public class AccountManagementPolicyTests
     private const string HrId = "hr-1";
     private const string OtherId = "other-1";
 
-    private static readonly AccountActor Admin = new(AdminId, ["Admin", "Employee"]);
-    private static readonly AccountActor Hr = new(HrId, ["HRManager", "Employee"]);
+    private static readonly string[] HrPermissions =
+    [
+        Permissions.EmployeesViewAll, Permissions.EmployeesManage, Permissions.OrganizationManage,
+        Permissions.AttendanceManage, Permissions.AttendanceDeviceSync, Permissions.LeaveManage,
+        Permissions.ApprovalsAll, Permissions.PerformanceManage, Permissions.PayrollManage,
+        Permissions.RecruitmentManage, Permissions.SchedulingManage, Permissions.AnalyticsHr,
+        Permissions.UsersManage,
+    ];
 
-    private static AccountTarget Staff(params string[] roles) => new(OtherId, ["Employee", .. roles], IsActive: true);
+    private static readonly IReadOnlyList<RoleGrant> Catalog =
+    [
+        new("Admin", Permissions.AllKeys),
+        new("Employee", []),
+        new("Service", [Permissions.AttendanceDeviceSync]),
+        new("Auditor", [Permissions.AnalyticsExecutive]),
+        new("HRManager", HrPermissions),
+        new("Manager", [Permissions.ApprovalsTeam]),
+        new("PayrollService", [Permissions.PayrollManage]),
+    ];
 
-    private static AccountTarget AdminAccount(string id = OtherId, bool active = true) => new(id, ["Admin", "Employee"], active);
+    private static readonly AccountActor Admin = new(AdminId, ["Admin", "Employee"], Permissions.AllKeys);
+    private static readonly AccountActor Hr = new(HrId, ["HRManager", "Employee"], HrPermissions);
 
-    private static AccountTarget HrAccount() => new(OtherId, ["HRManager", "Employee"], IsActive: true);
+    private static AccountTarget Account(params string[] roles) => new(OtherId, ["Employee", .. roles], IsActive: true);
 
-    // --- Assignable roles -----------------------------------------------------------------------
+    private static AccountTarget Self(AccountActor actor) => new(actor.UserId, actor.Roles, IsActive: true);
+
+    // --- Effective permissions and assignable roles -------------------------------------------
+
+    [Fact]
+    public void AnAccountsPermissions_AreTheUnionOfItsRoles_AndEverythingForAdmin()
+    {
+        AccountManagementPolicy.PermissionsOf(["Manager", "PayrollService"], Catalog)
+            .Should().BeEquivalentTo(Permissions.ApprovalsTeam, Permissions.PayrollManage);
+        AccountManagementPolicy.PermissionsOf(["Employee", "Admin"], Catalog).Should().BeEquivalentTo(Permissions.AllKeys);
+    }
+
+    [Fact]
+    public void AssignableRoles_ListEveryRoleButService_InCatalogueOrder_SayingWhichHrMayGrant()
+    {
+        var roles = AccountManagementPolicy.AssignableRoles(Hr, Catalog);
+
+        roles.Select(r => r.Name).Should().Equal("Admin", "Employee", "Auditor", "HRManager", "Manager", "PayrollService");
+        roles.Where(r => r.Grantable).Select(r => r.Name).Should().Equal("Employee", "HRManager", "Manager", "PayrollService");
+        roles.Single(r => r.Name == "Admin").Reason.Should().Be("Only an administrator can grant or remove the Admin role.");
+        roles.Single(r => r.Name == "Auditor").Reason.Should().Be("You can't grant or remove the Auditor role: it allows things you can't do yourself.");
+    }
 
     [Fact]
     public void AnAdmin_MayGrantEveryAssignableRole()
     {
-        AccountManagementPolicy.AssignableRolesFor(Admin)
-            .Should().Equal("Admin", "HRManager", "Manager", "Employee", "PayrollService");
+        AccountManagementPolicy.AssignableRoles(Admin, Catalog).Should().OnlyContain(r => r.Grantable);
     }
 
     [Fact]
-    public void HR_MayGrantOnlyTheUnprivilegedRoles()
+    public void NobodyMayGrantTheServiceRole()
     {
-        AccountManagementPolicy.AssignableRolesFor(Hr).Should().Equal("Manager", "Employee", "PayrollService");
-    }
-
-    // --- Create ---------------------------------------------------------------------------------
-
-    [Fact]
-    public void HR_MayCreateAManager()
-    {
-        AccountManagementPolicy.CanCreate(Hr, ["Employee", "Manager"]).Allowed.Should().BeTrue();
-    }
-
-    [Theory]
-    [InlineData("Admin")]
-    [InlineData("HRManager")]
-    public void HR_MayNotCreateAPrivilegedAccount(string role)
-    {
-        var decision = AccountManagementPolicy.CanCreate(Hr, ["Employee", role]);
-
-        decision.Allowed.Should().BeFalse();
-        decision.Reason.Should().Be($"Only an administrator can grant or remove the {role} role.");
+        AccountManagementPolicy.CanGrant(Admin, "Service", Catalog).Reason
+            .Should().Be("The Service role is for attendance devices and can't be assigned.");
     }
 
     [Fact]
-    public void AnAdmin_MayCreateAnotherAdmin()
+    public void HR_MayGrantManager_BecauseApprovingForEveryoneCoversTheTeam()
     {
-        AccountManagementPolicy.CanCreate(Admin, ["Employee", "Admin"]).Allowed.Should().BeTrue();
+        AccountManagementPolicy.CanCreate(Hr, ["Employee", "Manager"], Catalog).Allowed.Should().BeTrue();
+        AccountManagementPolicy.AssignableRoles(Hr, Catalog).Single(r => r.Name == "Manager").Grantable.Should().BeTrue();
     }
 
-    // --- Manage ---------------------------------------------------------------------------------
+    // --- Create -------------------------------------------------------------------------------
 
     [Fact]
-    public void HR_MayManageAnEverydayAccount()
+    public void HR_MayCreateAnHrManager_BecauseItGrantsNothingHrLacks()
     {
-        AccountManagementPolicy.CanManage(Hr, Staff("Manager")).Allowed.Should().BeTrue();
-    }
-
-    [Fact]
-    public void HR_MayNotManageAnAdminOrAnotherHrManager()
-    {
-        AccountManagementPolicy.CanManage(Hr, AdminAccount()).Reason
-            .Should().Be("Only an administrator can change an Admin or HR Manager account.");
-        AccountManagementPolicy.CanManage(Hr, HrAccount()).Allowed.Should().BeFalse();
+        AccountManagementPolicy.CanCreate(Hr, ["Employee", "HRManager"], Catalog).Allowed.Should().BeTrue();
     }
 
     [Fact]
-    public void AnAdmin_MayManageAPrivilegedAccount()
+    public void HR_MayNotCreateAnAccountWithARoleThatDoesMoreThanHr()
     {
-        AccountManagementPolicy.CanManage(Admin, HrAccount()).Allowed.Should().BeTrue();
+        AccountManagementPolicy.CanCreate(Hr, ["Employee", "Auditor"], Catalog).Reason
+            .Should().Be("You can't grant or remove the Auditor role: it allows things you can't do yourself.");
     }
 
-    // --- Set roles ------------------------------------------------------------------------------
+    [Fact]
+    public void HR_MayNotCreateAnAdmin()
+    {
+        AccountManagementPolicy.CanCreate(Hr, ["Employee", "Admin"], Catalog).Reason
+            .Should().Be("Only an administrator can grant or remove the Admin role.");
+    }
+
+    // --- Manage -------------------------------------------------------------------------------
 
     [Fact]
-    public void HR_MayGrantAndRemoveEverydayRoles()
+    public void HR_MayManageAnotherHrManager()
     {
-        AccountManagementPolicy.CanSetRoles(Hr, Staff("PayrollService"), ["Employee", "Manager"], activeAdmins: 1)
+        AccountManagementPolicy.CanManage(Hr, Account("HRManager"), Catalog).Allowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void HR_MayNotManageAnAdmin()
+    {
+        AccountManagementPolicy.CanManage(Hr, Account("Admin"), Catalog).Reason
+            .Should().Be("Only an administrator can change an administrator's account.");
+    }
+
+    [Fact]
+    public void HR_MayNotManageAnAccountWhoseRolesDoMoreThanHr()
+    {
+        AccountManagementPolicy.CanManage(Hr, Account("Auditor"), Catalog).Reason
+            .Should().Be("You can't change this account: its roles allow things you can't do yourself.");
+    }
+
+    [Fact]
+    public void AnAdmin_MayManageAnyone()
+    {
+        AccountManagementPolicy.CanManage(Admin, Account("Admin", "Auditor"), Catalog).Allowed.Should().BeTrue();
+    }
+
+    // --- Set roles ----------------------------------------------------------------------------
+
+    [Fact]
+    public void HR_MayGrantAndRemoveRolesItCovers()
+    {
+        AccountManagementPolicy.CanSetRoles(Hr, Account("PayrollService"), ["Employee", "Manager", "HRManager"], Catalog, activeAdmins: 1)
             .Allowed.Should().BeTrue();
     }
 
     [Fact]
-    public void HR_MayNotPromoteAnyoneToHrManager()
+    public void HR_MayNotGrantARoleThatDoesMoreThanHr()
     {
-        AccountManagementPolicy.CanSetRoles(Hr, Staff(), ["Employee", "HRManager"], activeAdmins: 1).Reason
-            .Should().Be("Only an administrator can grant or remove the HRManager role.");
-    }
-
-    [Fact]
-    public void HR_MayNotChangeTheRolesOfAPrivilegedAccount()
-    {
-        AccountManagementPolicy.CanSetRoles(Hr, HrAccount(), ["HRManager", "Employee", "Manager"], activeAdmins: 1)
-            .Allowed.Should().BeFalse();
+        AccountManagementPolicy.CanSetRoles(Hr, Account(), ["Employee", "Auditor"], Catalog, activeAdmins: 1).Reason
+            .Should().Be("You can't grant or remove the Auditor role: it allows things you can't do yourself.");
     }
 
     [Fact]
     public void ARoleNobodyCanAssign_ThatTheAccountAlreadyHolds_DoesNotBlockAnEdit()
     {
-        // Service is seeded but unassignable. An account holding it is still HR's to edit; the
-        // controller leaves the role in place.
         var target = new AccountTarget(OtherId, ["Employee", "Service"], IsActive: true);
 
-        AccountManagementPolicy.CanSetRoles(Hr, target, ["Employee", "Manager"], activeAdmins: 1)
+        AccountManagementPolicy.CanSetRoles(Admin, target, ["Employee", "Service", "Manager"], Catalog, activeAdmins: 2)
             .Allowed.Should().BeTrue();
     }
 
     [Fact]
-    public void AnAdmin_MayNotRemoveTheirOwnAdminRole()
+    public void NobodyMayRemoveTheirOwnPermissionToManageUsers()
     {
-        var self = AdminAccount(AdminId);
+        AccountManagementPolicy.CanSetRoles(Hr, Self(Hr), ["Employee", "Manager"], Catalog, activeAdmins: 1).Reason
+            .Should().Be("You can't remove your own permission to manage users.");
+    }
 
-        AccountManagementPolicy.CanSetRoles(Admin, self, ["Employee"], activeAdmins: 3).Reason
-            .Should().Be("You can't remove your own Admin or HR Manager role.");
+    [Fact]
+    public void RemovingOneOfYourOwnRoles_IsFine_WhileAnotherStillLetsYouManageUsers()
+    {
+        var both = new AccountActor(HrId, ["HRManager", "Manager", "Employee"], [.. HrPermissions, Permissions.ApprovalsTeam]);
+
+        AccountManagementPolicy.CanSetRoles(both, Self(both), ["HRManager", "Employee"], Catalog, activeAdmins: 1)
+            .Allowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void AnAdmin_MayDropAdmin_OnlyWhileAnotherRoleStillLetsThemManageUsers_AndAnotherAdminRemains()
+    {
+        var adminAndHr = new AccountActor(AdminId, ["Admin", "HRManager", "Employee"], Permissions.AllKeys);
+
+        AccountManagementPolicy.CanSetRoles(adminAndHr, Self(adminAndHr), ["HRManager", "Employee"], Catalog, activeAdmins: 2)
+            .Allowed.Should().BeTrue();
+        AccountManagementPolicy.CanSetRoles(Admin, Self(Admin), ["Employee"], Catalog, activeAdmins: 2).Reason
+            .Should().Be("You can't remove your own permission to manage users.");
     }
 
     [Fact]
     public void TheLastActiveAdmin_MayNotLoseTheAdminRole()
     {
-        AccountManagementPolicy.CanSetRoles(Admin, AdminAccount(), ["Employee"], activeAdmins: 1).Reason
+        AccountManagementPolicy.CanSetRoles(Admin, Account("Admin"), ["Employee"], Catalog, activeAdmins: 1).Reason
             .Should().Be("This is the last active administrator. Make another account an Admin first.");
-    }
-
-    [Fact]
-    public void AnAdmin_MayLoseTheAdminRole_WhileAnotherActiveAdminRemains()
-    {
-        AccountManagementPolicy.CanSetRoles(Admin, AdminAccount(), ["Employee"], activeAdmins: 2)
-            .Allowed.Should().BeTrue();
     }
 
     [Fact]
     public void ADeactivatedAdmin_IsNotTheLastActiveAdmin()
     {
-        AccountManagementPolicy.CanSetRoles(Admin, AdminAccount(active: false), ["Employee"], activeAdmins: 1)
-            .Allowed.Should().BeTrue();
+        var inactiveAdmin = new AccountTarget(OtherId, ["Admin", "Employee"], IsActive: false);
+
+        AccountManagementPolicy.CanSetRoles(Admin, inactiveAdmin, ["Employee"], Catalog, activeAdmins: 1).Allowed.Should().BeTrue();
     }
 
-    // --- Deactivate / reactivate ----------------------------------------------------------------
-
-    [Fact]
-    public void HR_MayDeactivateAnEverydayAccount_ButNotAPrivilegedOne()
-    {
-        AccountManagementPolicy.CanDeactivate(Hr, Staff(), activeAdmins: 1).Allowed.Should().BeTrue();
-        AccountManagementPolicy.CanDeactivate(Hr, HrAccount(), activeAdmins: 1).Allowed.Should().BeFalse();
-    }
+    // --- Deactivate, reactivate, reset, link --------------------------------------------------
 
     [Fact]
     public void NobodyMayDeactivateTheirOwnAccount()
     {
-        AccountManagementPolicy.CanDeactivate(Admin, AdminAccount(AdminId), activeAdmins: 3).Reason
+        AccountManagementPolicy.CanDeactivate(Admin, Self(Admin), Catalog, activeAdmins: 3).Reason
             .Should().Be("You can't deactivate your own account.");
     }
 
     [Fact]
     public void TheLastActiveAdmin_MayNotBeDeactivated()
     {
-        AccountManagementPolicy.CanDeactivate(Admin, AdminAccount(), activeAdmins: 1).Reason
+        AccountManagementPolicy.CanDeactivate(Admin, Account("Admin"), Catalog, activeAdmins: 1).Reason
             .Should().Be("This is the last active administrator. Make another account an Admin first.");
     }
 
     [Fact]
-    public void HR_MayReactivateAnEverydayAccount_ButNotAPrivilegedOne()
+    public void HR_MayDeactivateReactivateResetAndLink_AnAccountItCovers_ButNotOneItDoesNot()
     {
-        AccountManagementPolicy.CanReactivate(Hr, Staff() with { IsActive = false }).Allowed.Should().BeTrue();
-        AccountManagementPolicy.CanReactivate(Hr, AdminAccount(active: false)).Allowed.Should().BeFalse();
-    }
+        var covered = Account("Manager");
+        var beyond = Account("Auditor");
 
-    // --- Reset password / link employee ---------------------------------------------------------
+        AccountManagementPolicy.CanDeactivate(Hr, covered, Catalog, activeAdmins: 1).Allowed.Should().BeTrue();
+        AccountManagementPolicy.CanReactivate(Hr, covered, Catalog).Allowed.Should().BeTrue();
+        AccountManagementPolicy.CanResetPassword(Hr, covered, Catalog).Allowed.Should().BeTrue();
+        AccountManagementPolicy.CanLinkEmployee(Hr, covered, Catalog).Allowed.Should().BeTrue();
+
+        AccountManagementPolicy.CanDeactivate(Hr, beyond, Catalog, activeAdmins: 1).Allowed.Should().BeFalse();
+        AccountManagementPolicy.CanReactivate(Hr, beyond, Catalog).Allowed.Should().BeFalse();
+        AccountManagementPolicy.CanResetPassword(Hr, beyond, Catalog).Allowed.Should().BeFalse();
+        AccountManagementPolicy.CanLinkEmployee(Hr, beyond, Catalog).Allowed.Should().BeFalse();
+    }
 
     [Fact]
     public void NobodyMayResetTheirOwnPassword_ThatIsWhatChangePasswordIsFor()
     {
-        AccountManagementPolicy.CanResetPassword(Admin, AdminAccount(AdminId)).Reason
+        AccountManagementPolicy.CanResetPassword(Admin, Self(Admin), Catalog).Reason
             .Should().Be("Use Change Password on My Profile to change your own password.");
-    }
-
-    [Fact]
-    public void HR_MayResetAnEverydayPassword_ButNotAPrivilegedOne()
-    {
-        AccountManagementPolicy.CanResetPassword(Hr, Staff()).Allowed.Should().BeTrue();
-        AccountManagementPolicy.CanResetPassword(Hr, AdminAccount()).Allowed.Should().BeFalse();
-    }
-
-    [Fact]
-    public void HR_MayLinkAnEverydayAccountToAnEmployee_ButNotAPrivilegedOne()
-    {
-        AccountManagementPolicy.CanLinkEmployee(Hr, Staff()).Allowed.Should().BeTrue();
-        AccountManagementPolicy.CanLinkEmployee(Hr, HrAccount()).Allowed.Should().BeFalse();
     }
 }

@@ -95,14 +95,38 @@ public class UsersControllerChangeTests : UsersControllerTestBase
     }
 
     [Fact]
-    public async Task SetRoles_ByHrOnAnHrManager_IsRefused()
+    public async Task SetRoles_ByHrOnAnotherHrManager_IsAllowed_BecauseItGrantsNothingHrLacks()
     {
         SignInAs("HRManager", "Employee");
-        Account("HRManager", "Employee");
+        var user = Account("HRManager", "Employee");
 
         var result = await Sut.SetRoles(TargetId, new SetRolesRequest(["HRManager", "Manager"]), CancellationToken.None);
 
-        ForbiddenDetail(result).Should().Be("Only an administrator can change an Admin or HR Manager account.");
+        result.Result.Should().BeOfType<OkObjectResult>();
+        StampWasReplaced(user);
+    }
+
+    [Fact]
+    public async Task SetRoles_ByHrOnAnAdmin_IsRefused()
+    {
+        SignInAs("HRManager", "Employee");
+        Account("Admin", "Employee");
+
+        var result = await Sut.SetRoles(TargetId, new SetRolesRequest(["Admin", "Manager"]), CancellationToken.None);
+
+        ForbiddenDetail(result).Should().Be("Only an administrator can change an administrator's account.");
+        StampWasNotReplaced();
+    }
+
+    [Fact]
+    public async Task SetRoles_ThatWouldTakeAwayYourOwnPermissionToManageUsers_IsRefused()
+    {
+        SignInAs("HRManager", "Employee");
+        CallersOwnAccount("HRManager", "Employee");
+
+        var result = await Sut.SetRoles(CallerId, new SetRolesRequest(["Manager"]), CancellationToken.None);
+
+        ForbiddenDetail(result).Should().Be("You can't remove your own permission to manage users.");
         StampWasNotReplaced();
     }
 

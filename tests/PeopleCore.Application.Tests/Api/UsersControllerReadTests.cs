@@ -45,11 +45,15 @@ public class UsersControllerReadTests : UsersControllerTestBase
     }
 
     [Fact]
-    public void AssignableRoles_AreTheOnesTheCallerMayGrant()
+    public async Task AssignableRoles_ListEveryRoleButService_SayingWhichTheCallerMayGrant()
     {
         SignInAs("HRManager", "Employee");
 
-        OkValue(Sut.AssignableRoles()).Should().Equal("Manager", "Employee", "PayrollService");
+        var roles = OkValue(await Sut.AssignableRoles(CancellationToken.None));
+
+        roles.Select(r => r.Name).Should().Equal("Admin", "Employee", "HRManager", "Manager", "PayrollService");
+        roles.Where(r => r.Grantable).Select(r => r.Name).Should().Equal("Employee", "HRManager", "Manager", "PayrollService");
+        roles.Single(r => r.Name == "Admin").Reason.Should().Be("Only an administrator can grant or remove the Admin role.");
     }
 
     [Fact]

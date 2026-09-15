@@ -77,6 +77,18 @@ public static class Permissions
     ];
 
     public static readonly IReadOnlyList<string> AllKeys = All.Select(p => p.Key).ToList();
+
+    /// <summary>
+    /// <paramref name="permissions"/> plus what they imply, in catalogue order. "Approve for everyone"
+    /// covers "Approve for my team": whoever may decide anyone's requests may decide their own team's.
+    /// Used to decide what a caller may grant - access checks name both keys explicitly already.
+    /// </summary>
+    public static IReadOnlyList<string> WithImplied(IEnumerable<string> permissions)
+    {
+        var held = permissions.ToHashSet();
+        if (held.Contains(ApprovalsAll)) held.Add(ApprovalsTeam);
+        return AllKeys.Where(held.Contains).ToList();
+    }
 }
 
 /// <summary>

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 using PeopleCore.API.Controllers.Account;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Infrastructure.Identity;
 
@@ -24,6 +25,7 @@ public abstract class UsersControllerTestBase
     protected readonly Mock<UserManager<ApplicationUser>> Users;
     protected readonly Mock<IUserAccountDirectory> Directory = new();
     protected readonly Mock<IEmployeeRepository> Employees = new();
+    protected readonly Mock<IRoleCatalog> Roles = new();
     protected readonly UsersController Sut;
 
     protected UsersControllerTestBase()
@@ -33,7 +35,14 @@ public abstract class UsersControllerTestBase
         Users.Setup(u => u.UpdateSecurityStampAsync(It.IsAny<ApplicationUser>())).ReturnsAsync(IdentityResult.Success);
         Directory.Setup(d => d.CountActiveInRoleAsync("Admin", It.IsAny<CancellationToken>())).ReturnsAsync(2);
 
-        Sut = new UsersController(Users.Object, Directory.Object, Employees.Object);
+        // The seeded roles, as the catalogue returns them: system roles first, then by name.
+        Roles.Setup(r => r.GetRolesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(
+            new[] { "Admin", "Employee", "Service", "HRManager", "Manager", "PayrollService" }
+                .Select(name => new RoleRecord(name.ToLowerInvariant(), name, null, SeededRoles.System.Contains(name),
+                    SeededRoles.PermissionsOf([name]), 0))
+                .ToList());
+
+        Sut = new UsersController(Users.Object, Directory.Object, Employees.Object, Roles.Object);
         SignInAs("Admin", "Employee");
     }
 
@@ -41,6 +50,7 @@ public abstract class UsersControllerTestBase
     {
         var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, CallerId) };
         claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
+        claims.AddRange(SeededRoles.PermissionsOf(roles).Select(p => new Claim(Permissions.ClaimType, p)));
         Sut.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(claims, "Bearer")) }
