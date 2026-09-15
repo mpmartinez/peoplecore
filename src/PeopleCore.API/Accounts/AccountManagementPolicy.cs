@@ -13,6 +13,20 @@ public sealed record AccountActor(string UserId, IReadOnlyCollection<string> Rol
     public bool IsAdmin => Roles.Contains(SeededRoles.Admin);
 }
 
+/// <summary>Whether a caller holds enough to hand on, or act over, a set of permissions.</summary>
+internal static class ActorCoverage
+{
+    // An Admin covers everything. Otherwise "Approve for everyone" covers "Approve for my team"
+    // (Permissions.WithImplied): whoever may decide anyone's requests may decide their own team's, so
+    // HR - which approves for everyone - may still grant Manager or put team approval on a role.
+    internal static bool Covers(AccountActor actor, IEnumerable<string> permissions)
+    {
+        if (actor.IsAdmin) return true;
+        var held = Permissions.WithImplied(actor.Permissions);
+        return permissions.All(held.Contains);
+    }
+}
+
 /// <summary>The account being acted on, as it stands before the change.</summary>
 public sealed record AccountTarget(string UserId, IReadOnlyCollection<string> Roles, bool IsActive)
 {
@@ -61,7 +75,7 @@ public static class AccountManagementPolicy
             return actor.IsAdmin ? PolicyDecision.Allow : PolicyDecision.Deny(AdminRole);
 
         var permissions = catalog.FirstOrDefault(r => string.Equals(r.Name, role, StringComparison.OrdinalIgnoreCase))?.Permissions ?? [];
-        return Covers(actor, permissions)
+        return ActorCoverage.Covers(actor, permissions)
             ? PolicyDecision.Allow
             : PolicyDecision.Deny($"You can't grant or remove the {role} role: it allows things you can't do yourself.");
     }
@@ -79,7 +93,7 @@ public static class AccountManagementPolicy
     public static PolicyDecision CanManage(AccountActor actor, AccountTarget target, IReadOnlyList<RoleGrant> catalog)
     {
         if (target.IsAdmin && !actor.IsAdmin) return PolicyDecision.Deny(AdminTarget);
-        return Covers(actor, PermissionsOf(target.Roles, catalog)) ? PolicyDecision.Allow : PolicyDecision.Deny(BeyondTarget);
+        return ActorCoverage.Covers(actor, PermissionsOf(target.Roles, catalog)) ? PolicyDecision.Allow : PolicyDecision.Deny(BeyondTarget);
     }
 
     public static PolicyDecision CanCreate(AccountActor actor, IReadOnlyCollection<string> roles, IReadOnlyList<RoleGrant> catalog) =>
@@ -128,15 +142,6 @@ public static class AccountManagementPolicy
 
     public static PolicyDecision CanResetPassword(AccountActor actor, AccountTarget target, IReadOnlyList<RoleGrant> catalog) =>
         actor.UserId == target.UserId ? PolicyDecision.Deny(SelfReset) : CanManage(actor, target, catalog);
-
-    // "Approve for everyone" covers "Approve for my team" (Permissions.WithImplied), so HR - which
-    // approves for everyone - may still grant Manager, as it could before permissions existed.
-    private static bool Covers(AccountActor actor, IEnumerable<string> permissions)
-    {
-        if (actor.IsAdmin) return true;
-        var held = Permissions.WithImplied(actor.Permissions);
-        return permissions.All(held.Contains);
-    }
 
     private static PolicyDecision FirstRefusal(AccountActor actor, IEnumerable<string> roles, IReadOnlyList<RoleGrant> catalog) =>
         roles.Select(role => CanGrant(actor, role, catalog)).FirstOrDefault(d => !d.Allowed, PolicyDecision.Allow);

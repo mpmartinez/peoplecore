@@ -22,11 +22,11 @@ public static class RoleManagementPolicy
     public static PolicyDecision CanEdit(AccountActor actor, RoleSnapshot role)
     {
         if (role.IsSystem) return PolicyDecision.Deny(SystemRole);
-        return Covers(actor, role.Permissions) ? PolicyDecision.Allow : PolicyDecision.Deny(BeyondRole);
+        return ActorCoverage.Covers(actor, role.Permissions) ? PolicyDecision.Allow : PolicyDecision.Deny(BeyondRole);
     }
 
     public static PolicyDecision CanCreate(AccountActor actor, IReadOnlyCollection<string> permissions) =>
-        Covers(actor, permissions) ? PolicyDecision.Allow : PolicyDecision.Deny(BeyondGrant);
+        ActorCoverage.Covers(actor, permissions) ? PolicyDecision.Allow : PolicyDecision.Deny(BeyondGrant);
 
     /// <param name="actorPermissionsAfter">What the caller would be able to do once the change is saved.</param>
     public static PolicyDecision CanUpdate(
@@ -34,7 +34,7 @@ public static class RoleManagementPolicy
     {
         var edit = CanEdit(actor, role);
         if (!edit.Allowed) return edit;
-        if (!Covers(actor, newPermissions)) return PolicyDecision.Deny(BeyondGrant);
+        if (!ActorCoverage.Covers(actor, newPermissions)) return PolicyDecision.Deny(BeyondGrant);
 
         if (!actor.IsAdmin)
         {
@@ -49,13 +49,4 @@ public static class RoleManagementPolicy
 
     /// <summary>Whether the role may be deleted as far as the caller goes; the controller separately refuses roles still held.</summary>
     public static PolicyDecision CanDelete(AccountActor actor, RoleSnapshot role) => CanEdit(actor, role);
-
-    // "Approve for everyone" covers "Approve for my team" (Permissions.WithImplied), so a caller who
-    // may approve for everyone can put team approval on a role.
-    private static bool Covers(AccountActor actor, IEnumerable<string> permissions)
-    {
-        if (actor.IsAdmin) return true;
-        var held = Permissions.WithImplied(actor.Permissions);
-        return permissions.All(held.Contains);
-    }
 }
