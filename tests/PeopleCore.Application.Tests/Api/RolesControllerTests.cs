@@ -116,6 +116,13 @@ public class RolesControllerTests
     }
 
     [Fact]
+    public async Task Create_WithANullPermission_IsRejected()
+    {
+        Detail(await _sut.Create(new SaveRoleRequest("Recruiter", null, [null!]), CancellationToken.None), 400)
+            .Should().Be("A permission can't be blank.");
+    }
+
+    [Fact]
     public async Task Create_WithADescriptionOver200Characters_IsRejected()
     {
         Detail(await _sut.Create(new SaveRoleRequest("Recruiter", new string('x', 201), []), CancellationToken.None), 400)
@@ -152,6 +159,13 @@ public class RolesControllerTests
     {
         Detail(await _sut.Update("employee", new SaveRoleRequest("Staff", null, []), CancellationToken.None), 403)
             .Should().Be("System roles can't be changed.");
+    }
+
+    [Fact]
+    public async Task Update_WithANullPermission_IsRejected()
+    {
+        Detail(await _sut.Update("recruiter", new SaveRoleRequest("Recruiter", null, [null!]), CancellationToken.None), 400)
+            .Should().Be("A permission can't be blank.");
     }
 
     [Fact]

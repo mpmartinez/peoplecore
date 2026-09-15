@@ -17,6 +17,14 @@ public class RoleManagementPolicyTests
     private static readonly AccountActor Delegate = new("delegate-1", ["Delegates", "Employee"],
         [Permissions.RolesManage, Permissions.UsersManage, Permissions.RecruitmentManage]);
 
+    // Holds roles.manage and approvals.all, but never granted approvals.team directly.
+    private static readonly AccountActor ApprovalsAllDelegate = new("delegate-2", ["Delegates", "Employee"],
+        [Permissions.RolesManage, Permissions.ApprovalsAll]);
+
+    // Holds roles.manage and only approvals.team, never approvals.all.
+    private static readonly AccountActor ApprovalsTeamOnlyDelegate = new("delegate-3", ["Delegates", "Employee"],
+        [Permissions.RolesManage, Permissions.ApprovalsTeam]);
+
     private static RoleSnapshot Role(params string[] permissions) => new("Recruiter", IsSystem: false, permissions);
 
     [Fact]
@@ -80,5 +88,24 @@ public class RoleManagementPolicyTests
     {
         RoleManagementPolicy.CanUpdate(Admin, Role(Permissions.RolesManage), [], actorPermissionsAfter: Permissions.AllKeys)
             .Allowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ApprovingForEveryone_CoversApprovingForMyTeam_WhenCreatingARole()
+    {
+        RoleManagementPolicy.CanCreate(ApprovalsAllDelegate, [Permissions.ApprovalsTeam]).Allowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ApprovingForEveryone_CoversApprovingForMyTeam_WhenEditingARoleThatHasIt()
+    {
+        RoleManagementPolicy.CanEdit(ApprovalsAllDelegate, Role(Permissions.ApprovalsTeam)).Allowed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ApprovingForMyTeam_DoesNotCoverApprovingForEveryone()
+    {
+        RoleManagementPolicy.CanCreate(ApprovalsTeamOnlyDelegate, [Permissions.ApprovalsAll]).Reason
+            .Should().Be("You can't give a role permissions you don't have yourself.");
     }
 }

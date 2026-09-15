@@ -131,6 +131,7 @@ public class RolesController : ControllerBase
         if (name.Length > NameMaxLength) return $"A role name must be {NameMaxLength} characters or fewer.";
         if (description?.Length > ApplicationRole.DescriptionMaxLength)
             return $"A description must be {ApplicationRole.DescriptionMaxLength} characters or fewer.";
+        if (permissions.Any(string.IsNullOrWhiteSpace)) return "A permission can't be blank.";
         return permissions.FirstOrDefault(key => !Permissions.AllKeys.Contains(key)) is { } unknown
             ? $"{unknown} is not a permission."
             : null;
