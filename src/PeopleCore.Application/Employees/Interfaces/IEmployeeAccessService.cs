@@ -2,20 +2,19 @@ namespace PeopleCore.Application.Employees.Interfaces;
 
 /// <summary>
 /// Whose employee-scoped records (leave, attendance, overtime, schedules) the signed-in caller may
-/// see and manage. HR staff (Admin, HRManager) reach every employee. A Manager reaches their direct
-/// reports - the employees whose ReportingManagerId is the manager's own employee id. Everybody
-/// reaches themselves. The caller's employee is always the employee_id claim, so a caller with no
-/// claim reaches no one but what HR staff reach.
+/// see and manage, by permission. "View all employees" sees everyone; "Approve for everyone" sees and
+/// decides for everyone; "Approve for my team" sees and decides for the caller's direct reports - the
+/// employees whose ReportingManagerId is the caller's own employee id. Everybody reaches themselves.
 /// </summary>
 public interface IEmployeeAccessService
 {
-    /// <summary>True when the caller holds Admin or HRManager.</summary>
-    bool IsHrStaff { get; }
+    /// <summary>True when the caller may view all employees or approve for everyone.</summary>
+    bool CanReachEveryone { get; }
 
     /// <summary>
-    /// True when the caller may decide on <paramref name="employeeId"/>'s requests: HR staff for
-    /// anyone, a Manager for a direct report. Deliberately excludes the caller themselves - whether
-    /// someone may decide their own request is a separate rule.
+    /// True when the caller may decide on <paramref name="employeeId"/>'s requests: an approver for
+    /// everyone for anyone, a team approver for a direct report. Deliberately excludes the caller
+    /// themselves - whether someone may decide their own request is a separate rule.
     /// </summary>
     Task<bool> CanManageAsync(Guid employeeId, CancellationToken ct = default);
 
@@ -23,9 +22,9 @@ public interface IEmployeeAccessService
     Task<bool> CanViewAsync(Guid employeeId, CancellationToken ct = default);
 
     /// <summary>
-    /// What a list asked for with no employee filter may contain: everyone for HR staff, a
-    /// Manager's direct reports, and nothing (<see cref="EmployeeListScope.IsAllowed"/> false) for
-    /// anyone else.
+    /// What a list asked for with no employee filter may contain: everyone for a caller who reaches
+    /// everyone, a team approver's direct reports, and nothing (<see cref="EmployeeListScope.IsAllowed"/>
+    /// false) for anyone else.
     /// </summary>
     EmployeeListScope GetUnfilteredListScope();
 }
