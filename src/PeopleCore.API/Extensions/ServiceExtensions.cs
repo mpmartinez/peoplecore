@@ -82,6 +82,8 @@ public static class ServiceExtensions
         services.AddScoped<ICurrentUserService, CurrentUserService>();
         services.AddScoped<IUserAccountDirectory, UserAccountDirectory>();
         services.AddScoped<IRolePermissionReader, RolePermissionReader>();
+        services.AddScoped<IRoleCatalog, RoleCatalog>();
+        services.AddScoped<IRoleEditor, RoleEditor>();
         services.AddScoped<AccountTokenValidator>();
         services.AddSingleton<IAuthorizationPolicyProvider, PermissionPolicyProvider>();
 

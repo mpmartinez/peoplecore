@@ -86,4 +86,51 @@ public class ApiClientAccountsTests
         (await act.Should().ThrowAsync<HttpRequestException>())
             .Which.Message.Should().Be("You can't deactivate your own account.");
     }
+
+    [Fact]
+    public async Task AssignableRoles_SayWhichTheCallerMayGrant_AndWhyNot()
+    {
+        _api.On(HttpMethod.Get, "/api/users/assignable-roles", HttpStatusCode.OK,
+            """[{"name":"Admin","grantable":false,"reason":"Only an administrator can grant or remove the Admin role."},{"name":"Manager","grantable":true,"reason":null}]""");
+
+        var roles = await CreateClient().GetAssignableRolesAsync();
+
+        roles!.Select(r => (r.Name, r.Grantable)).Should().Equal(("Admin", false), ("Manager", true));
+        roles![0].Reason.Should().Contain("Only an administrator");
+    }
+
+    [Fact]
+    public async Task Roles_AreListed_Created_Updated_AndDeleted()
+    {
+        const string role = """{"id":"r1","name":"Recruiter","description":null,"isSystem":false,"permissions":["recruitment.manage"],"accountCount":0,"canEdit":true}""";
+        _api.On(HttpMethod.Get, "/api/roles", HttpStatusCode.OK, $"[{role}]")
+            .On(HttpMethod.Get, "/api/roles/permissions", HttpStatusCode.OK,
+                """[{"key":"recruitment.manage","group":"Recruitment","label":"Manage recruitment","description":"Job postings."}]""")
+            .On(HttpMethod.Post, "/api/roles", HttpStatusCode.Created, role)
+            .On(HttpMethod.Put, "/api/roles/r1", HttpStatusCode.OK, role)
+            .On(HttpMethod.Delete, "/api/roles/r1", HttpStatusCode.NoContent);
+        var client = CreateClient();
+
+        (await client.GetRolesAsync())!.Single().Permissions.Should().Equal("recruitment.manage");
+        (await client.GetPermissionCatalogueAsync())!.Single().Label.Should().Be("Manage recruitment");
+        (await client.CreateRoleAsync(new SaveRoleRequest("Recruiter", null, ["recruitment.manage"])))!.Id.Should().Be("r1");
+        (await client.UpdateRoleAsync("r1", new SaveRoleRequest("Recruiter", "Hires.", ["recruitment.manage"])))!.Name.Should().Be("Recruiter");
+        await client.DeleteRoleAsync("r1");
+
+        var post = JsonDocument.Parse(_api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)]!).RootElement;
+        post.GetProperty("name").GetString().Should().Be("Recruiter");
+        post.GetProperty("permissions").EnumerateArray().Select(p => p.GetString()).Should().Equal("recruitment.manage");
+        _api.Requests.Should().Contain(r => r.Method == HttpMethod.Delete && r.RequestUri!.AbsolutePath == "/api/roles/r1");
+    }
+
+    [Fact]
+    public async Task DeletingARoleStillInUse_ThrowsWithTheApisReason()
+    {
+        _api.On(HttpMethod.Delete, "/api/roles/r1", HttpStatusCode.BadRequest,
+            """{"title":"Role not saved","status":400,"detail":"2 accounts still have Recruiter — remove it from them first."}""");
+
+        var act = () => CreateClient().DeleteRoleAsync("r1");
+
+        (await act.Should().ThrowAsync<HttpRequestException>()).Which.Message.Should().StartWith("2 accounts still have Recruiter");
+    }
 }

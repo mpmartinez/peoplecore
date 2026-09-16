@@ -10,12 +10,14 @@ public class RolePermissionReaderTests : DatabaseTestBase
 {
     public RolePermissionReaderTests(PostgresFixture fixture) : base(fixture) { }
 
-    private RolePermissionReader Reader() => new(NewContext());
+    private static readonly ILookupNormalizer Normalizer = new UpperInvariantLookupNormalizer();
+
+    private RolePermissionReader Reader() => new(NewContext(), Normalizer);
 
     [Fact]
     public async Task TheSeededRoles_ReadBackAsSeeded()
     {
-        await new RoleSeeder(Context).SeedAsync();
+        await new RoleSeeder(Context, Normalizer).SeedAsync();
 
         foreach (var role in SeededRoles.All.Where(r => r != SeededRoles.Admin))
             (await Reader().GetPermissionsAsync([role])).Should().Equal(SeededRoles.PermissionsOf([role]), role);
@@ -24,7 +26,7 @@ public class RolePermissionReaderTests : DatabaseTestBase
     [Fact]
     public async Task SeveralRoles_GiveTheUnion_InCatalogueOrder_WithoutRepeats()
     {
-        await new RoleSeeder(Context).SeedAsync();
+        await new RoleSeeder(Context, Normalizer).SeedAsync();
 
         (await Reader().GetPermissionsAsync(["PayrollService", "Manager", "Employee"]))
             .Should().Equal(Permissions.ApprovalsTeam, Permissions.PayrollManage);
@@ -33,7 +35,7 @@ public class RolePermissionReaderTests : DatabaseTestBase
     [Fact]
     public async Task Admin_HoldsTheWholeCatalogue_ThoughNothingIsStoredForIt()
     {
-        await new RoleSeeder(Context).SeedAsync();
+        await new RoleSeeder(Context, Normalizer).SeedAsync();
 
         (await Reader().GetPermissionsAsync(["Employee", "Admin"])).Should().Equal(Permissions.AllKeys);
     }
@@ -54,5 +56,17 @@ public class RolePermissionReaderTests : DatabaseTestBase
     public async Task NoRoles_MeansNoPermissions()
     {
         (await Reader().GetPermissionsAsync([])).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ADecomposedRoleName_ReadsBackByTheSameNameIdentityWouldMatch()
+    {
+        // "Cafe" plus a combining acute accent - RoleEditor stores its NormalizedName the way
+        // Identity would: NFC-composed, then upper-invariant. The reader must build its lookup
+        // keys the same way, or a holder's token comes back without the role's permissions.
+        const string decomposed = "Cafe\u0301";
+        await new RoleEditor(Context, Normalizer).CreateAsync(decomposed, null, [Permissions.RecruitmentManage]);
+
+        (await Reader().GetPermissionsAsync([decomposed])).Should().Equal(Permissions.RecruitmentManage);
     }
 }

@@ -60,7 +60,7 @@
     private string _lastName = string.Empty;
     private EmployeeListDto? _employee;
     private HashSet<string> _roles = [];
-    private IReadOnlyList<string> _assignable = [];
+    private IReadOnlyList<AssignableRoleDto> _assignable = [];
     private string? _rolesError;
     private string? _error;
     private bool _saving;

@@ -155,7 +155,7 @@ using (var scope = app.Services.CreateScope())
 
     var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
 
-    await new RoleSeeder(dbContext).SeedAsync();
+    await new RoleSeeder(dbContext, scope.ServiceProvider.GetRequiredService<ILookupNormalizer>()).SeedAsync();
 
     // Docker Compose substitutes an empty string for an unset SEED_ADMIN_EMAIL, not an absent
     // key, so "??" never sees a null to fall back on. IsNullOrWhiteSpace catches that case too.
@@ -193,7 +193,7 @@ using (var scope = app.Services.CreateScope())
         }
     }
 
-    // Every account holds Employee (see AccountRoles). An admin seeded before that rule gets it here.
+    // Every account holds Employee (see SeededRoles). An admin seeded before that rule gets it here.
     if (existingAdmin is not null && !await userManager.IsInRoleAsync(existingAdmin, "Employee"))
         await userManager.AddToRoleAsync(existingAdmin, "Employee");
 

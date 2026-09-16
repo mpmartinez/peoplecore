@@ -71,7 +71,7 @@ public class TokenToPolicyTests
             IssuerSigningKey = new SymmetricSecurityKey(ServiceExtensions.ResolveJwtSigningKey(configuration))
         };
 
-        var result = await new JsonWebTokenHandler().ValidateTokenAsync(token, parameters);
+        var result = await new JsonWebTokenHandler { MapInboundClaims = true }.ValidateTokenAsync(token, parameters);
         result.IsValid.Should().BeTrue(result.Exception?.ToString());
         return new ClaimsPrincipal(result.ClaimsIdentity);
     }

@@ -1,0 +1,209 @@
+@page "/admin/roles"
+@attribute [RequirePermission(Permissions.RolesManage)]
+@inject ApiClient Api
+
+<PageTitle>Roles</PageTitle>
+
+<PageHeader Title="Roles" Section="Administration" Description="What each role allows. An account can hold several roles and may do everything they allow together.">
+    <Actions>
+        <Button Variant="primary" OnClick="OpenNew" Disabled="@(!CanChangeRoles)">
+            <i class="bi bi-plus-lg mr-1"></i> New Role
+        </Button>
+    </Actions>
+</PageHeader>
+
+@if (_catalogueError is not null)
+{
+    <Alert Variant="destructive" Class="mb-4" data-catalogue-error>Permissions could not be loaded, so roles can't be added or changed: @_catalogueError</Alert>
+}
+
+@if (_actionError is not null)
+{
+    <Alert Variant="destructive" Class="mb-4" data-action-error>@_actionError</Alert>
+}
+
+<Card>
+    <CardContent Class="p-0">
+        @if (_rolesError is not null)
+        {
+            <div class="p-4"><Alert Variant="destructive">@_rolesError</Alert></div>
+        }
+        else if (_roles is null)
+        {
+            <div class="p-6 flex justify-center"><Spinner /></div>
+        }
+        else
+        {
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead Class="px-4">Role</TableHead>
+                        <TableHead Class="px-4">Permissions</TableHead>
+                        <TableHead Class="px-4">Accounts</TableHead>
+                        <TableHead Class="px-4">Actions</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    @foreach (var role in _roles)
+                    {
+                        <TableRow data-role-row="@role.Name">
+                            <TableCell Class="px-4 py-3">
+                                <div class="flex items-center gap-2 font-medium">
+                                    @RoleCheckboxes.Label(role.Name)
+                                    @if (role.IsSystem)
+                                    {
+                                        <Badge Variant="secondary">System</Badge>
+                                    }
+                                </div>
+                                <div class="text-xs text-muted-foreground">@role.Description</div>
+                            </TableCell>
+                            <TableCell Class="px-4 py-3 text-muted-foreground">@role.Permissions.Count of @_catalogue.Count</TableCell>
+                            <TableCell Class="px-4 py-3">@role.AccountCount</TableCell>
+                            <TableCell Class="px-4 py-3">
+                                <div class="flex gap-1">
+                                    <Button Variant="ghost" Size="sm" OnClick="() => OpenExisting(role)">@(role.CanEdit && CanChangeRoles ? "Edit" : "View")</Button>
+                                    <Button Variant="ghost" Size="sm" Disabled="@(!role.CanEdit)"
+                                            Title="@(role.CanEdit ? null : role.IsSystem ? "System roles can't be changed." : "This role allows things you can't do yourself.")"
+                                            OnClick="() => _deleting = role">Delete</Button>
+                                </div>
+                            </TableCell>
+                        </TableRow>
+                    }
+                </TableBody>
+            </Table>
+        }
+    </CardContent>
+</Card>
+
+<RoleEditorDialog IsOpen="@_editorOpen"
+                  Role="@_editing"
+                  Catalogue="@_catalogue"
+                  HeldPermissions="@_held"
+                  Busy="@_busy"
+                  Error="@_dialogError"
+                  OnSave="Save"
+                  OnClose="CloseEditor" />
+
+<AlertDialog IsOpen="@(_deleting is not null)"
+             Title="@($"Delete {_deleting?.Name}?")"
+             Description="This can't be undone."
+             ConfirmText="Delete"
+             ConfirmVariant="destructive"
+             Loading="@_busy"
+             OnConfirm="DeleteConfirmed"
+             OnCancel="() => _deleting = null" />
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthenticationState { get; set; }
+
+    private IReadOnlyList<RoleDto>? _roles;
+    private IReadOnlyList<PermissionDto> _catalogue = [];
+    private IReadOnlyCollection<string> _held = [];
+    private string? _rolesError;
+    private string? _catalogueError;
+    private string? _actionError;
+    private string? _dialogError;
+    private bool _busy;
+    private bool _editorOpen;
+    private RoleDto? _editing;
+    private RoleDto? _deleting;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = AuthenticationState is null ? null : await AuthenticationState;
+        _held = state?.User.FindAll(Permissions.ClaimType).Select(c => c.Value).ToHashSet() ?? [];
+
+        await Task.WhenAll(LoadRoles(), LoadCatalogue());
+    }
+
+    private async Task LoadRoles()
+    {
+        try
+        {
+            _roles = await Api.GetRolesAsync() ?? [];
+            _rolesError = null;
+        }
+        catch (Exception ex)
+        {
+            _rolesError = ex.Message;
+        }
+    }
+
+    private async Task LoadCatalogue()
+    {
+        try
+        {
+            _catalogue = await Api.GetPermissionCatalogueAsync() ?? [];
+        }
+        catch (Exception ex)
+        {
+            _catalogueError = ex.Message;
+        }
+    }
+
+    // A role is saved with exactly the permissions ticked against the catalogue, so without the
+    // catalogue a save would send none and strip the role bare. Until it loads, roles are view-only.
+    private bool CanChangeRoles => _catalogueError is null && _catalogue.Count > 0;
+
+    private void OpenNew()
+    {
+        _dialogError = null;
+        _editing = null;
+        _editorOpen = true;
+    }
+
+    private void OpenExisting(RoleDto role)
+    {
+        _dialogError = null;
+        _editing = role;
+        _editorOpen = true;
+    }
+
+    private void CloseEditor() => _editorOpen = false;
+
+    private async Task Save(SaveRoleRequest request)
+    {
+        if (!CanChangeRoles) return;
+
+        _busy = true;
+        _dialogError = null;
+        try
+        {
+            if (_editing is null) await Api.CreateRoleAsync(request);
+            else await Api.UpdateRoleAsync(_editing.Id, request);
+
+            _editorOpen = false;
+            await LoadRoles();
+        }
+        catch (Exception ex)
+        {
+            _dialogError = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteConfirmed()
+    {
+        if (_deleting is not { } role) return;
+
+        _busy = true;
+        _actionError = null;
+        try
+        {
+            await Api.DeleteRoleAsync(role.Id);
+            await LoadRoles();
+        }
+        catch (Exception ex)
+        {
+            _actionError = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+            _deleting = null;
+        }
+    }
+}

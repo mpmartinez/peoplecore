@@ -64,4 +64,16 @@ public class PermissionsCatalogueTests
 
         act.Should().Throw<ArgumentException>().WithMessage("*employees.veiw-all*");
     }
+
+    [Fact]
+    public void ApprovingForEveryone_ImpliesApprovingForTheTeam()
+    {
+        Permissions.WithImplied([Permissions.ApprovalsAll]).Should().Equal(Permissions.ApprovalsTeam, Permissions.ApprovalsAll);
+    }
+
+    [Fact]
+    public void NothingElse_IsImplied()
+    {
+        Permissions.WithImplied([Permissions.PayrollManage, Permissions.ApprovalsTeam]).Should().Equal(Permissions.ApprovalsTeam, Permissions.PayrollManage);
+    }
 }

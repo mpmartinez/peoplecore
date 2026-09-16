@@ -6,22 +6,32 @@ using PeopleCore.Infrastructure.Persistence;
 namespace PeopleCore.Infrastructure.Identity;
 
 /// <summary>
-/// Creates any seeded role that does not exist yet, with its description, system flag and
-/// permissions. A role that already exists is never touched - not even to add a permission it lacks
-/// - because once roles are editable its contents are an admin's decision. Existing databases got
-/// their permissions once, from the AddRolePermissions migration.
+/// Makes sure the roles PeopleCore relies on exist. The system roles - Admin, Employee, Service - are
+/// restored whenever they are missing, because the app refers to them by name. The ordinary seeded
+/// roles (HRManager, Manager, PayrollService) are created only into an empty roles table, i.e. on a
+/// brand-new database: once roles are editable, a missing ordinary role is one an admin deleted, and
+/// bringing it back on restart would undo that. A role that exists is never touched. Existing
+/// databases got their permissions once, from the AddRolePermissions migration.
 /// </summary>
 public class RoleSeeder
 {
     private readonly AppDbContext _db;
+    private readonly ILookupNormalizer _normalizer;
 
-    public RoleSeeder(AppDbContext db) => _db = db;
+    public RoleSeeder(AppDbContext db, ILookupNormalizer normalizer)
+    {
+        _db = db;
+        _normalizer = normalizer;
+    }
 
     public async Task SeedAsync(CancellationToken ct = default)
     {
-        foreach (var name in SeededRoles.All)
+        var freshDatabase = !await _db.Roles.AnyAsync(ct);
+        var toEnsure = freshDatabase ? SeededRoles.All : SeededRoles.System;
+
+        foreach (var name in toEnsure)
         {
-            var normalized = name.ToUpperInvariant();
+            var normalized = _normalizer.NormalizeName(name);
             if (await _db.Roles.AnyAsync(r => r.NormalizedName == normalized, ct)) continue;
 
             var role = new ApplicationRole

@@ -57,7 +57,7 @@ public static class Permissions
         new(ApprovalsTeam, "Approvals", "Approve for my team",
             "Decide direct reports' leave and overtime, write their performance reviews, and see their records."),
         new(ApprovalsAll, "Approvals", "Approve for everyone",
-            "Decide anyone's leave, write anyone's performance review, and see everyone's leave and overtime requests. Overtime itself is decided by each employee's own manager."),
+            "Decide anyone's leave, write anyone's performance review, and see everyone's attendance, leave, overtime and schedules. Overtime itself is decided by each employee's own manager."),
         new(PerformanceManage, "Performance", "Manage review cycles",
             "Create and close performance review cycles."),
         new(PayrollManage, "Payroll", "Run payroll",
@@ -77,6 +77,18 @@ public static class Permissions
     ];
 
     public static readonly IReadOnlyList<string> AllKeys = All.Select(p => p.Key).ToList();
+
+    /// <summary>
+    /// <paramref name="permissions"/> plus what they imply, in catalogue order. "Approve for everyone"
+    /// covers "Approve for my team": whoever may decide anyone's requests may decide their own team's.
+    /// Used to decide what a caller may grant - access checks name both keys explicitly already.
+    /// </summary>
+    public static IReadOnlyList<string> WithImplied(IEnumerable<string> permissions)
+    {
+        var held = permissions.ToHashSet();
+        if (held.Contains(ApprovalsAll)) held.Add(ApprovalsTeam);
+        return AllKeys.Where(held.Contains).ToList();
+    }
 }
 
 /// <summary>

@@ -28,12 +28,15 @@ public class UsersController : ControllerBase
     private readonly UserManager<ApplicationUser> _users;
     private readonly IUserAccountDirectory _directory;
     private readonly IEmployeeRepository _employees;
+    private readonly IRoleCatalog _roles;
 
-    public UsersController(UserManager<ApplicationUser> users, IUserAccountDirectory directory, IEmployeeRepository employees)
+    public UsersController(
+        UserManager<ApplicationUser> users, IUserAccountDirectory directory, IEmployeeRepository employees, IRoleCatalog roles)
     {
         _users = users;
         _directory = directory;
         _employees = employees;
+        _roles = roles;
     }
 
     [HttpGet]
@@ -44,11 +47,15 @@ public class UsersController : ControllerBase
         pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
 
         var (rows, total) = await _directory.SearchAsync(search, page, pageSize, ct);
-        return Ok(PagedResult<UserAccountDto>.Create(rows.Select(ToDto).ToList(), total, page, pageSize));
+        var catalog = await CatalogAsync(ct);
+        return Ok(PagedResult<UserAccountDto>.Create(rows.Select(row => ToDto(row, catalog)).ToList(), total, page, pageSize));
     }
 
     [HttpGet("assignable-roles")]
-    public ActionResult<IReadOnlyList<string>> AssignableRoles() => Ok(AccountManagementPolicy.AssignableRolesFor(Caller));
+    public async Task<ActionResult<IReadOnlyList<AssignableRoleDto>>> AssignableRoles(CancellationToken ct) =>
+        Ok(AccountManagementPolicy.AssignableRoles(Caller, await CatalogAsync(ct))
+            .Select(role => new AssignableRoleDto(role.Name, role.Grantable, role.Reason))
+            .ToList());
 
     [HttpGet("employee-links")]
     public async Task<ActionResult<IReadOnlyList<EmployeeLinkDto>>> EmployeeLinks(CancellationToken ct) =>
@@ -68,9 +75,10 @@ public class UsersController : ControllerBase
 
         var problem = ValidateEmail(email) ?? ValidateName(firstName, "first name") ?? ValidateName(lastName, "last name");
         if (problem is not null) return AccountProblem(problem);
-        if (NormalizeRoles(request.Roles, out var roles) is { } roleProblem) return AccountProblem(roleProblem);
+        var catalog = await CatalogAsync(ct);
+        if (NormalizeRoles(request.Roles, catalog, out var roles) is { } roleProblem) return AccountProblem(roleProblem);
 
-        var decision = AccountManagementPolicy.CanCreate(Caller, roles);
+        var decision = AccountManagementPolicy.CanCreate(Caller, roles, catalog);
         if (!decision.Allowed) return Refused(decision);
 
         if (await _users.FindByEmailAsync(email!) is not null)
@@ -108,24 +116,29 @@ public class UsersController : ControllerBase
         }
 
         var row = await _directory.GetAsync(user.Id, ct);
-        return CreatedAtAction(nameof(Get), new { id = user.Id }, new CreatedUserAccountDto(ToDto(row!), password));
+        return CreatedAtAction(nameof(Get), new { id = user.Id }, new CreatedUserAccountDto(ToDto(row!, catalog), password));
     }
 
     [HttpPut("{id}/roles")]
     public async Task<ActionResult<UserAccountDto>> SetRoles(string id, [FromBody] SetRolesRequest request, CancellationToken ct)
     {
-        if (NormalizeRoles(request.Roles, out var roles) is { } roleProblem) return AccountProblem(roleProblem);
+        var catalog = await CatalogAsync(ct);
+        if (NormalizeRoles(request.Roles, catalog, out var roles) is { } roleProblem) return AccountProblem(roleProblem);
 
         var user = await _users.FindByIdAsync(id);
         if (user is null) return NotFound();
         var held = await _users.GetRolesAsync(user);
 
-        var decision = AccountManagementPolicy.CanSetRoles(Caller, Target(user, held), roles, await ActiveAdminsAsync(ct));
+        // Service can't be assigned, so the request never names it - but an account that already
+        // holds it keeps it, and the policy must judge the roles the account will actually end up with.
+        var keptService = held.Where(role => string.Equals(role, SeededRoles.Service, StringComparison.OrdinalIgnoreCase));
+        var rolesAfter = roles.Concat(keptService).ToList();
+
+        var decision = AccountManagementPolicy.CanSetRoles(Caller, Target(user, held), rolesAfter, catalog, await ActiveAdminsAsync(ct));
         if (!decision.Allowed) return Refused(decision);
 
-        // Only assignable roles are compared, so a role nobody can assign (Service) is left alone.
-        var toAdd = roles.Except(held).ToList();
-        var toRemove = held.Where(role => AccountRoles.Assignable.Contains(role)).Except(roles).ToList();
+        var toAdd = roles.Except(held, StringComparer.OrdinalIgnoreCase).ToList();
+        var toRemove = held.Except(rolesAfter, StringComparer.OrdinalIgnoreCase).ToList();
 
         var added = false;
         if (toAdd.Count > 0)
@@ -158,7 +171,7 @@ public class UsersController : ControllerBase
         var user = await _users.FindByIdAsync(id);
         if (user is null) return NotFound();
 
-        var decision = AccountManagementPolicy.CanLinkEmployee(Caller, Target(user, await _users.GetRolesAsync(user)));
+        var decision = AccountManagementPolicy.CanLinkEmployee(Caller, Target(user, await _users.GetRolesAsync(user)), await CatalogAsync(ct));
         if (!decision.Allowed) return Refused(decision);
 
         if (request.EmployeeId is { } employeeId && await ValidateEmployeeLinkAsync(employeeId, exceptUserId: id, ct) is { } linkProblem)
@@ -181,7 +194,7 @@ public class UsersController : ControllerBase
         var user = await _users.FindByIdAsync(id);
         if (user is null) return NotFound();
 
-        var decision = AccountManagementPolicy.CanResetPassword(Caller, Target(user, await _users.GetRolesAsync(user)));
+        var decision = AccountManagementPolicy.CanResetPassword(Caller, Target(user, await _users.GetRolesAsync(user)), await CatalogAsync(ct));
         if (!decision.Allowed) return Refused(decision);
 
         // Fails closed: nothing about the account changes until the reset itself succeeds, so a
@@ -206,24 +219,28 @@ public class UsersController : ControllerBase
 
     // --- Shared by every action ---------------------------------------------------------------
 
-    // Roles come from the token. That is safe to trust because AccountTokenValidator rejects any
-    // token issued before the account's roles last changed.
+    // Roles and permissions come from the token. That is safe to trust because AccountTokenValidator
+    // rejects any token issued before the account's roles, or a role's permissions, last changed.
     private AccountActor Caller => new(
         User.FindFirstValue(ClaimTypes.NameIdentifier) ?? string.Empty,
-        User.FindAll(ClaimTypes.Role).Select(c => c.Value).ToList());
+        User.FindAll(ClaimTypes.Role).Select(c => c.Value).ToList(),
+        User.FindAll(Permissions.ClaimType).Select(c => c.Value).ToList());
 
     private static AccountTarget Target(ApplicationUser user, IEnumerable<string> roles) =>
         new(user.Id, roles.ToList(), user.IsActive);
 
-    private UserAccountDto ToDto(UserAccountRow row) => new(
+    private async Task<IReadOnlyList<RoleGrant>> CatalogAsync(CancellationToken ct) =>
+        (await _roles.GetRolesAsync(ct)).Select(role => new RoleGrant(role.Name, role.Permissions)).ToList();
+
+    private UserAccountDto ToDto(UserAccountRow row, IReadOnlyList<RoleGrant> catalog) => new(
         row.Id, row.Email, row.FirstName, row.LastName, row.Roles, row.IsActive, row.MustChangePassword,
         row.EmployeeId, row.EmployeeName,
-        CanManage: AccountManagementPolicy.CanManage(Caller, new AccountTarget(row.Id, row.Roles, row.IsActive)).Allowed);
+        CanManage: AccountManagementPolicy.CanManage(Caller, new AccountTarget(row.Id, row.Roles, row.IsActive), catalog).Allowed);
 
     private async Task<ActionResult<UserAccountDto>> AccountAsync(string id, CancellationToken ct)
     {
         var row = await _directory.GetAsync(id, ct);
-        return row is null ? NotFound() : Ok(ToDto(row));
+        return row is null ? NotFound() : Ok(ToDto(row, await CatalogAsync(ct)));
     }
 
     private async Task<ActionResult<UserAccountDto>> SetActiveAsync(string id, bool active, CancellationToken ct)
@@ -232,9 +249,10 @@ public class UsersController : ControllerBase
         if (user is null) return NotFound();
 
         var target = Target(user, await _users.GetRolesAsync(user));
+        var catalog = await CatalogAsync(ct);
         var decision = active
-            ? AccountManagementPolicy.CanReactivate(Caller, target)
-            : AccountManagementPolicy.CanDeactivate(Caller, target, await ActiveAdminsAsync(ct));
+            ? AccountManagementPolicy.CanReactivate(Caller, target, catalog)
+            : AccountManagementPolicy.CanDeactivate(Caller, target, catalog, await ActiveAdminsAsync(ct));
         if (!decision.Allowed) return Refused(decision);
 
         user.IsActive = active;
@@ -252,20 +270,23 @@ public class UsersController : ControllerBase
         return await AccountAsync(user.Id, ct);
     }
 
-    private Task<int> ActiveAdminsAsync(CancellationToken ct) => _directory.CountActiveInRoleAsync(AccountRoles.Admin, ct);
+    private Task<int> ActiveAdminsAsync(CancellationToken ct) => _directory.CountActiveInRoleAsync(SeededRoles.Admin, ct);
 
     /// <summary>
-    /// The requested roles in <see cref="AccountRoles.Assignable"/> order, always with Employee.
-    /// Returns a problem naming the first role that cannot be assigned, if any.
+    /// The requested roles, spelt and ordered as the catalogue has them, always with Employee.
+    /// Returns a problem naming the first role that isn't one an account can be given - an unknown
+    /// name, or Service.
     /// </summary>
-    private static string? NormalizeRoles(IReadOnlyList<string>? requested, out IReadOnlyList<string> roles)
+    private static string? NormalizeRoles(IReadOnlyList<string>? requested, IReadOnlyList<RoleGrant> catalog, out IReadOnlyList<string> roles)
     {
         requested ??= [];
-        roles = AccountRoles.Assignable
-            .Where(role => role == AccountRoles.Employee || requested.Contains(role))
+        var assignable = catalog.Where(role => role.Name != SeededRoles.Service).Select(role => role.Name).ToList();
+
+        roles = assignable
+            .Where(name => name == SeededRoles.Employee || requested.Contains(name, StringComparer.OrdinalIgnoreCase))
             .ToList();
 
-        var unknown = requested.FirstOrDefault(role => !AccountRoles.Assignable.Contains(role));
+        var unknown = requested.FirstOrDefault(role => !assignable.Contains(role, StringComparer.OrdinalIgnoreCase));
         return unknown is null ? null : $"{unknown} is not a role that can be assigned.";
     }
 
@@ -326,3 +347,5 @@ public record SetRolesRequest(IReadOnlyList<string>? Roles);
 public record LinkEmployeeRequest(Guid? EmployeeId);
 
 public record TemporaryPasswordDto(string TemporaryPassword);
+
+public record AssignableRoleDto(string Name, bool Grantable, string? Reason);

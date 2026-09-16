@@ -55,7 +55,7 @@ public class NavMenuTests : BunitContext
     {
         var cut = RenderAs("Admin");
 
-        cut.FindAll("a[href]").Should().HaveCount(17);
+        cut.FindAll("a[href]").Should().HaveCount(18);
         Links(cut).Should().OnlyHaveUniqueItems();
     }
 
@@ -67,6 +67,15 @@ public class NavMenuTests : BunitContext
     public void TheUsersPage_IsListedOnlyForAdminAndHr(string role, bool listed)
     {
         Links(RenderAs(role)).Contains("/admin/users").Should().Be(listed);
+    }
+
+    [Theory]
+    [InlineData("Admin", true)]
+    [InlineData("HRManager", false)]
+    [InlineData("Manager", false)]
+    public void TheRolesPage_IsListedOnlyForThoseWhoManageRoles(string role, bool listed)
+    {
+        Links(RenderAs(role)).Contains("/admin/roles").Should().Be(listed);
     }
 
     [Fact]

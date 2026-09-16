@@ -35,6 +35,18 @@ public static class Permissions
         PerformanceManage, PayrollManage, RecruitmentManage, SchedulingManage, AnalyticsHr,
         AnalyticsExecutive, UsersManage, RolesManage,
     ];
+
+    /// <summary>
+    /// <paramref name="permissions"/> plus what they imply, in catalogue order - a copy of the API's
+    /// Permissions.WithImplied. "Approve for everyone" covers "Approve for my team", so the role editor
+    /// offers team approval to whoever may approve for everyone, as the API allows.
+    /// </summary>
+    public static IReadOnlyList<string> WithImplied(IEnumerable<string> permissions)
+    {
+        var held = permissions.ToHashSet();
+        if (held.Contains(ApprovalsAll)) held.Add(ApprovalsTeam);
+        return AllKeys.Where(held.Contains).ToList();
+    }
 }
 
 /// <summary>Policy names in the API's format: "permission:" and the keys, any of which will do.</summary>

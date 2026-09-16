@@ -1,17 +1,20 @@
 @*
-    Tick-boxes for the roles the signed-in user may grant. Employee is on every account, so it is
-    shown ticked and cannot be unticked - the API adds it back anyway.
+    Tick-boxes for the roles an account could be given. Employee is on every account, so it is shown
+    ticked and cannot be unticked. A role the signed-in user may not grant - one that allows more than
+    they can do, or Admin for a non-admin - is shown disabled with the reason, rather than hidden, so
+    it is clear why it can't be ticked.
 *@
 
 <div class="space-y-2" data-role-checkboxes>
     @foreach (var role in Roles)
     {
-        var locked = role == EmployeeRole;
-        <Checkbox Value="@(locked || Selected.Contains(role))"
-                  Disabled="@(locked || Disabled)"
-                  ValueChanged="@(on => Toggle(role, on))"
-                  data-role="@role">
-            @Label(role)
+        var locked = role.Name == EmployeeRole;
+        <Checkbox Value="@(locked || Selected.Contains(role.Name))"
+                  Disabled="@(locked || Disabled || !role.Grantable)"
+                  ValueChanged="@(on => Toggle(role.Name, on))"
+                  data-role="@role.Name"
+                  title="@(role.Grantable ? null : role.Reason)">
+            @Label(role.Name)
             @if (locked)
             {
                 <span class="ml-1 text-xs font-normal text-muted-foreground">(every account)</span>
@@ -23,13 +26,14 @@
 @code {
     private const string EmployeeRole = "Employee";
 
-    [Parameter] public IReadOnlyList<string> Roles { get; set; } = [];
+    [Parameter] public IReadOnlyList<AssignableRoleDto> Roles { get; set; } = [];
 
-    /// <summary>The ticked roles. Changed in place, so the owner reads it when saving.</summary>
+    /// <summary>The ticked role names. Changed in place, so the owner reads it when saving.</summary>
     [Parameter] public HashSet<string> Selected { get; set; } = [];
 
     [Parameter] public bool Disabled { get; set; }
 
+    /// <summary>Friendlier names for the seeded roles; any other role shows as it is named.</summary>
     public static string Label(string role) => role switch
     {
         "HRManager" => "HR Manager",
