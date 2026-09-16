@@ -15,12 +15,15 @@
             <span>@tab.Label</span>
         </NavLink>
     }
-    <button type="button"
-            class="flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[0.65rem] transition-colors @(_showMore ? "text-primary" : "text-muted-foreground hover:text-foreground")"
-            @onclick="ToggleMore">
-        <i class="bi bi-three-dots text-xl"></i>
-        <span>More</span>
-    </button>
+    @if (_visible.Count > 0)
+    {
+        <button type="button"
+                class="flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[0.65rem] transition-colors @(_showMore ? "text-primary" : "text-muted-foreground hover:text-foreground")"
+                @onclick="ToggleMore">
+            <i class="bi bi-three-dots text-xl"></i>
+            <span>More</span>
+        </button>
+    }
 </nav>
 
 @if (_showMore)
@@ -29,20 +32,16 @@
         <div class="absolute inset-x-0 bottom-16 max-h-[60vh] overflow-y-auto rounded-t-2xl border-t border-border bg-popover p-3 text-popover-foreground shadow-lg"
              @onclick:stopPropagation>
             <div class="mx-auto mb-3 h-1 w-10 rounded-full bg-border"></div>
-            @foreach (var group in MoreGroups)
+            @foreach (var group in _visible)
             {
-                <PermissionView AnyOf="@group.AnyOf">
-                    <p class="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">@group.Label</p>
-                </PermissionView>
+                <p class="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">@group.Label</p>
                 @foreach (var link in group.Links)
                 {
-                    <PermissionView AnyOf="@link.AnyOf">
-                        <NavLink href="@link.Href"
-                                 class="block rounded-md px-3 py-2.5 text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                                 ActiveClass="bg-accent text-accent-foreground">
-                            @link.Label
-                        </NavLink>
-                    </PermissionView>
+                    <NavLink href="@link.Href"
+                             class="block rounded-md px-3 py-2.5 text-sm text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                             ActiveClass="bg-accent text-accent-foreground">
+                        @link.Label
+                    </NavLink>
                 }
             }
         </div>
@@ -52,14 +51,11 @@
 @code {
     private sealed record Tab(string Href, string Label, string Icon);
 
-    /// <summary>A link shown to anyone holding any of <paramref name="AnyOf"/>.</summary>
+    /// <summary>A link shown to anyone holding any of <paramref name="AnyOf"/>, or to everyone when it is empty.</summary>
     private sealed record MoreLink(string Href, string Label, string[] AnyOf);
 
-    /// <summary>A group whose heading shows when any of its links would.</summary>
-    private sealed record MoreGroup(string Label, MoreLink[] Links)
-    {
-        public string[] AnyOf { get; } = Links.SelectMany(l => l.AnyOf).Distinct().ToArray();
-    }
+    /// <summary>A group and the links of it this account may see; a group with none is not shown at all.</summary>
+    private sealed record MoreGroup(string Label, MoreLink[] Links);
 
     private static readonly Tab[] Tabs =
     [
@@ -71,6 +67,11 @@
 
     private static readonly MoreGroup[] MoreGroups =
     [
+        new("My HR",
+        [
+            // The tab bar holds the other four; payslips would otherwise be out of reach on a phone.
+            new("my-payslips", "Payslips", [])
+        ]),
         new("Organization",
         [
             new("employees", "Employees", [Permissions.EmployeesViewAll]),
@@ -101,7 +102,25 @@
         ])
     ];
 
+    [CascadingParameter] private Task<AuthenticationState>? AuthenticationState { get; set; }
+
     private bool _showMore;
+
+    /// <summary>The groups and links this account may see. Empty groups are dropped, so the sheet is never blank.</summary>
+    private List<MoreGroup> _visible = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var user = AuthenticationState is null ? null : (await AuthenticationState).User;
+
+        _visible = MoreGroups
+            .Select(group => group with
+            {
+                Links = group.Links.Where(link => link.AnyOf.Length == 0 || user?.HasAnyPermission(link.AnyOf) == true).ToArray()
+            })
+            .Where(group => group.Links.Length > 0)
+            .ToList();
+    }
 
     private void ToggleMore() => _showMore = !_showMore;
 }
