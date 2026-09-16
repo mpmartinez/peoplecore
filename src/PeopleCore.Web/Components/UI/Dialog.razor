@@ -39,8 +39,10 @@
             </div>
         }
 
-        <!-- Body -->
-        <div class="flex-1 overflow-y-auto @(string.IsNullOrEmpty(BodyClass) ? "" : BodyClass)">
+        <!-- Body. The padding keeps content clear of the scrollbar a tall dialog grows; the matching
+             negative margin spends the panel's own padding on it, so nothing narrows when there is
+             no scrollbar. -->
+        <div class="flex-1 overflow-y-auto pr-4 -mr-4 @(string.IsNullOrEmpty(BodyClass) ? "" : BodyClass)">
             @ChildContent
         </div>
 

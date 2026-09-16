@@ -13,11 +13,12 @@
                 <Alert Variant="destructive" data-role-editor-error>@Error</Alert>
             }
 
-            <div class="grid gap-4 sm:grid-cols-2">
-                <FormField LabelText="Name" Id="role-name">
+            @* A name is 50 characters, a description 200, so the description takes the wider share. *@
+            <div class="grid gap-4 sm:grid-cols-3">
+                <FormField LabelText="Name" Id="role-name" Class="min-w-0">
                     <Input TValue="string" Id="role-name" @bind-Value="_name" MaxLength="50" Disabled="@(ReadOnly || Busy)" />
                 </FormField>
-                <FormField LabelText="Description" Id="role-description">
+                <FormField LabelText="Description" Id="role-description" Class="min-w-0 sm:col-span-2">
                     <Input TValue="string" Id="role-description" @bind-Value="_description" MaxLength="200" Disabled="@(ReadOnly || Busy)" />
                 </FormField>
             </div>
