@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Infrastructure.Identity;
@@ -40,7 +41,7 @@ public class RoleSeedingTests : DatabaseTestBase
     [Fact]
     public async Task OnAFreshDatabase_TheSeederCreatesEveryRole_WithItsPermissions_AndMarksTheSystemRoles()
     {
-        await new RoleSeeder(Context).SeedAsync();
+        await new RoleSeeder(Context, new UpperInvariantLookupNormalizer()).SeedAsync();
 
         await using var read = NewContext();
         var roles = await read.Roles.ToListAsync();
@@ -59,7 +60,7 @@ public class RoleSeedingTests : DatabaseTestBase
         Context.Roles.Add(new ApplicationRole { Name = "Manager", NormalizedName = "MANAGER" });
         await Context.SaveChangesAsync();
 
-        await new RoleSeeder(Context).SeedAsync();
+        await new RoleSeeder(Context, new UpperInvariantLookupNormalizer()).SeedAsync();
 
         (await StoredPermissionsByRoleAsync()).Should().NotContainKey("Manager");
     }
@@ -69,7 +70,7 @@ public class RoleSeedingTests : DatabaseTestBase
     {
         // Once roles can be deleted, recreating HRManager on restart would hand its 13 permissions -
         // users.manage among them - back to a role an admin deliberately removed.
-        await new RoleSeeder(Context).SeedAsync();
+        await new RoleSeeder(Context, new UpperInvariantLookupNormalizer()).SeedAsync();
         await using (var delete = NewContext())
         {
             var hr = await delete.Roles.SingleAsync(r => r.NormalizedName == "HRMANAGER");
@@ -78,7 +79,7 @@ public class RoleSeedingTests : DatabaseTestBase
             await delete.SaveChangesAsync();
         }
 
-        await new RoleSeeder(NewContext()).SeedAsync();
+        await new RoleSeeder(NewContext(), new UpperInvariantLookupNormalizer()).SeedAsync();
 
         await using var read = NewContext();
         (await read.Roles.AnyAsync(r => r.NormalizedName == "HRMANAGER")).Should().BeFalse();
@@ -91,7 +92,7 @@ public class RoleSeedingTests : DatabaseTestBase
         Context.Roles.Add(new ApplicationRole { Name = "Recruiter", NormalizedName = "RECRUITER" });
         await Context.SaveChangesAsync();
 
-        await new RoleSeeder(Context).SeedAsync();
+        await new RoleSeeder(Context, new UpperInvariantLookupNormalizer()).SeedAsync();
 
         await using var read = NewContext();
         var names = await read.Roles.Select(r => r.Name).ToListAsync();

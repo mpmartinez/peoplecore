@@ -127,6 +127,19 @@ public class RolesControllerTests
     }
 
     [Fact]
+    public async Task Create_WithADecomposedName_StoresItNfcComposed()
+    {
+        // "Cafe" plus a combining acute accent must reach the editor as the single precomposed
+        // "e-acute", so its stored Name is always composed and the policy's case-insensitive
+        // matching lines up with what Identity's normalizer computes from it.
+        var result = await _sut.Create(new SaveRoleRequest("Cafe\u0301", null, []), CancellationToken.None);
+
+        result.Result.Should().BeOfType<CreatedAtActionResult>();
+        _editor.Verify(e => e.CreateAsync("Caf\u00E9", null,
+            It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task Create_WithAnUnknownPermission_IsRejected()
     {
         Detail(await _sut.Create(new SaveRoleRequest("Recruiter", null, ["reports.everything"]), CancellationToken.None), 400)

@@ -29,7 +29,7 @@ public class RoleCatalogTests : DatabaseTestBase
     [Fact]
     public async Task Roles_ListSystemRolesFirst_ThenTheRestByName()
     {
-        await new RoleSeeder(Context).SeedAsync();
+        await new RoleSeeder(Context, new UpperInvariantLookupNormalizer()).SeedAsync();
         Context.Roles.Add(new ApplicationRole { Name = "Auditor", NormalizedName = "AUDITOR" });
         await Context.SaveChangesAsync();
 
@@ -40,7 +40,7 @@ public class RoleCatalogTests : DatabaseTestBase
     [Fact]
     public async Task EachRole_CarriesItsEffectivePermissions_WithAdminHoldingEverything()
     {
-        await new RoleSeeder(Context).SeedAsync();
+        await new RoleSeeder(Context, new UpperInvariantLookupNormalizer()).SeedAsync();
 
         var roles = (await Catalog().GetRolesAsync()).ToDictionary(r => r.Name);
 
@@ -55,7 +55,7 @@ public class RoleCatalogTests : DatabaseTestBase
     [Fact]
     public async Task EachRole_CountsTheAccountsHoldingIt()
     {
-        await new RoleSeeder(Context).SeedAsync();
+        await new RoleSeeder(Context, new UpperInvariantLookupNormalizer()).SeedAsync();
         await AccountWithAsync("Employee", "Manager");
         await AccountWithAsync("Employee");
 
@@ -69,7 +69,7 @@ public class RoleCatalogTests : DatabaseTestBase
     [Fact]
     public async Task OneRole_IsFoundById_OrNull()
     {
-        await new RoleSeeder(Context).SeedAsync();
+        await new RoleSeeder(Context, new UpperInvariantLookupNormalizer()).SeedAsync();
         var manager = Context.Roles.Single(r => r.Name == "Manager");
 
         (await Catalog().GetAsync(manager.Id))!.Name.Should().Be("Manager");

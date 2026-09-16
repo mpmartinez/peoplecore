@@ -155,7 +155,7 @@ using (var scope = app.Services.CreateScope())
 
     var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
 
-    await new RoleSeeder(dbContext).SeedAsync();
+    await new RoleSeeder(dbContext, scope.ServiceProvider.GetRequiredService<ILookupNormalizer>()).SeedAsync();
 
     // Docker Compose substitutes an empty string for an unset SEED_ADMIN_EMAIL, not an absent
     // key, so "??" never sees a null to fall back on. IsNullOrWhiteSpace catches that case too.

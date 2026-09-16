@@ -16,8 +16,13 @@ namespace PeopleCore.Infrastructure.Identity;
 public class RoleSeeder
 {
     private readonly AppDbContext _db;
+    private readonly ILookupNormalizer _normalizer;
 
-    public RoleSeeder(AppDbContext db) => _db = db;
+    public RoleSeeder(AppDbContext db, ILookupNormalizer normalizer)
+    {
+        _db = db;
+        _normalizer = normalizer;
+    }
 
     public async Task SeedAsync(CancellationToken ct = default)
     {
@@ -26,7 +31,7 @@ public class RoleSeeder
 
         foreach (var name in toEnsure)
         {
-            var normalized = name.ToUpperInvariant();
+            var normalized = _normalizer.NormalizeName(name);
             if (await _db.Roles.AnyAsync(r => r.NormalizedName == normalized, ct)) continue;
 
             var role = new ApplicationRole

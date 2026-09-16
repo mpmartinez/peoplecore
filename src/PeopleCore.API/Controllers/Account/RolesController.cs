@@ -133,6 +133,10 @@ public class RolesController : ControllerBase
         // "Admin" followed by a zero-width space reads as Admin everywhere it's shown, yet is another role.
         if (name.Any(c => char.GetUnicodeCategory(c) is UnicodeCategory.Control or UnicodeCategory.Format))
             return "A role name can't contain invisible characters.";
+        // Composed to NFC so the stored Name is always in the same form Identity's normalizer would
+        // reduce it to - RolePermissionReader and the case-insensitive policy checks then agree with
+        // whatever the caller originally typed, decomposed or not.
+        name = name.Normalize();
         if (description?.Length > ApplicationRole.DescriptionMaxLength)
             return $"A description must be {ApplicationRole.DescriptionMaxLength} characters or fewer.";
         if (permissions.Any(string.IsNullOrWhiteSpace)) return "A permission can't be blank.";
