@@ -140,6 +140,27 @@ public class RolesControllerTests
     }
 
     [Fact]
+    public async Task Create_WithATagCharacterInTheName_IsRejected()
+    {
+        // U+E0020 (a "tag" character): a non-BMP Format rune, encoded as a surrogate pair in UTF-16.
+        Detail(await _sut.Create(new SaveRoleRequest("Admin\U000E0020", null, []), CancellationToken.None), 400)
+            .Should().Be("A role name can't contain invisible characters.");
+        _editor.Verify(e => e.CreateAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Create_WithAnUnpairedSurrogateInTheName_IsRejected()
+    {
+        // Built at runtime, not as an InlineData constant: an unpaired surrogate is ill-formed
+        // UTF-16, and the test-platform's own data channel cannot carry it as theory data intact.
+        var name = "Admin" + '\uD800';
+
+        Detail(await _sut.Create(new SaveRoleRequest(name, null, []), CancellationToken.None), 400)
+            .Should().Be("A role name can't contain invisible characters.");
+        _editor.Verify(e => e.CreateAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task Create_WithAnUnknownPermission_IsRejected()
     {
         Detail(await _sut.Create(new SaveRoleRequest("Recruiter", null, ["reports.everything"]), CancellationToken.None), 400)

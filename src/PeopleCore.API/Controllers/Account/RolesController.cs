@@ -1,5 +1,7 @@
+using System.Buffers;
 using System.Globalization;
 using System.Security.Claims;
+using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Accounts;
 using PeopleCore.API.Authorization;
@@ -130,9 +132,11 @@ public class RolesController : ControllerBase
 
         if (name.Length == 0) return "Enter a role name.";
         if (name.Length > NameMaxLength) return $"A role name must be {NameMaxLength} characters or fewer.";
-        // "Admin" followed by a zero-width space reads as Admin everywhere it's shown, yet is another role.
-        if (name.Any(c => char.GetUnicodeCategory(c) is UnicodeCategory.Control or UnicodeCategory.Format))
-            return "A role name can't contain invisible characters.";
+        // "Admin" followed by a zero-width space reads as Admin everywhere it's shown, yet is another
+        // role. Runes (not UTF-16 units) so a non-BMP Format character - a surrogate pair - is caught
+        // too, and ill-formed text (an unpaired surrogate) is rejected outright here, before it can
+        // reach Normalize() below, which throws on ill-formed input rather than returning a 400.
+        if (HasInvisibleCharacter(name)) return "A role name can't contain invisible characters.";
         // Composed to NFC so the stored Name is always in the same form Identity's normalizer would
         // reduce it to - RolePermissionReader and the case-insensitive policy checks then agree with
         // whatever the caller originally typed, decomposed or not.
@@ -143,6 +147,24 @@ public class RolesController : ControllerBase
         return permissions.FirstOrDefault(key => !Permissions.AllKeys.Contains(key)) is { } unknown
             ? $"{unknown} is not a permission."
             : null;
+    }
+
+    /// <summary>
+    /// True if <paramref name="name"/> has a Control or Format rune, or isn't well-formed UTF-16
+    /// (an unpaired surrogate). Runes, not <c>char</c>s, so a non-BMP Format character - which UTF-16
+    /// encodes as a surrogate pair reporting <see cref="UnicodeCategory.Surrogate"/> per unit - is
+    /// still caught.
+    /// </summary>
+    private static bool HasInvisibleCharacter(string name)
+    {
+        var remaining = name.AsSpan();
+        while (!remaining.IsEmpty)
+        {
+            if (Rune.DecodeFromUtf16(remaining, out var rune, out var consumed) != OperationStatus.Done) return true;
+            if (Rune.GetUnicodeCategory(rune) is UnicodeCategory.Control or UnicodeCategory.Format) return true;
+            remaining = remaining[consumed..];
+        }
+        return false;
     }
 
     private BadRequestObjectResult RoleProblem(string detail) =>
