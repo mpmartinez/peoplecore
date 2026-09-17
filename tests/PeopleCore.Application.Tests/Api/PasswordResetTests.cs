@@ -49,8 +49,6 @@ public class PasswordResetTests
         _users.Setup(u => u.GeneratePasswordResetTokenAsync(_user)).ReturnsAsync("reset-token");
         _users.Setup(u => u.ResetPasswordAsync(_user, "reset-token", It.IsAny<string>())).ReturnsAsync(IdentityResult.Success);
         _users.Setup(u => u.UpdateAsync(_user)).ReturnsAsync(IdentityResult.Success);
-        _users.Setup(u => u.SetLockoutEndDateAsync(_user, null)).ReturnsAsync(IdentityResult.Success);
-        _users.Setup(u => u.ResetAccessFailedCountAsync(_user)).ReturnsAsync(IdentityResult.Success);
         _mailSettings.Setup(s => s.GetAccountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Account);
         _throttle.Setup(t => t.TryRequest(It.IsAny<string>(), It.IsAny<string>())).Returns(true);
 
@@ -177,13 +175,31 @@ public class PasswordResetTests
     public async Task AGoodLink_ClearsALockout_AndTheMustChangeFlag()
     {
         _user.MustChangePassword = true;
+        _user.LockoutEnd = DateTimeOffset.UtcNow.AddMinutes(10);
+        _user.AccessFailedCount = 5;
 
         await _sut.ResetPassword(new ResetPasswordRequest(Email, "reset-token", "N3wPassword"));
 
-        _users.Verify(u => u.SetLockoutEndDateAsync(_user, null), Times.Once);
-        _users.Verify(u => u.ResetAccessFailedCountAsync(_user), Times.Once);
+        _user.LockoutEnd.Should().BeNull();
+        _user.AccessFailedCount.Should().Be(0);
         _user.MustChangePassword.Should().BeFalse();
+        // One save for all three, rather than a save per field.
         _users.Verify(u => u.UpdateAsync(_user), Times.Once);
+        _users.Verify(u => u.SetLockoutEndDateAsync(It.IsAny<ApplicationUser>(), It.IsAny<DateTimeOffset?>()), Times.Never);
+        _users.Verify(u => u.ResetAccessFailedCountAsync(It.IsAny<ApplicationUser>()), Times.Never);
+    }
+
+    // By the time the clean-up is saved the password has already changed, so a failed save is logged,
+    // not reported as a failed reset.
+    [Fact]
+    public async Task AFailedCleanUpSave_StillReportsTheChangedPassword()
+    {
+        _users.Setup(u => u.UpdateAsync(_user))
+              .ReturnsAsync(IdentityResult.Failed(new IdentityError { Code = "ConcurrencyFailure", Description = "Optimistic concurrency failure." }));
+
+        var result = await _sut.ResetPassword(new ResetPasswordRequest(Email, "reset-token", "N3wPassword"));
+
+        MessageOf(result).Should().Be("Your password has been changed. Sign in with your new password.");
     }
 
     [Fact]

@@ -171,15 +171,14 @@ public class AuthController : ControllerBase
         }
 
         // ResetPasswordAsync has replaced the security stamp, so every token issued before now is
-        // dead. What is left is the state an administrator's reset also clears.
-        await _userManager.SetLockoutEndDateAsync(user, null);
-        await _userManager.ResetAccessFailedCountAsync(user);
-
-        if (user.MustChangePassword)
-        {
-            user.MustChangePassword = false;
-            await _userManager.UpdateAsync(user);
-        }
+        // dead. What is left is the state an administrator's reset also clears, set together and
+        // saved once. The password has already changed, so a failed save is logged, not reported.
+        user.LockoutEnd = null;
+        user.AccessFailedCount = 0;
+        user.MustChangePassword = false;
+        var saved = await _userManager.UpdateAsync(user);
+        if (!saved.Succeeded)
+            _log.LogWarning("Password reset for {UserId} succeeded, but clearing its lockout and flags did not save.", user.Id);
 
         _log.LogInformation("Password reset completed for {UserId}.", user.Id);
         return Ok(new { message = "Your password has been changed. Sign in with your new password." });
