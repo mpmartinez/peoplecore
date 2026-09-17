@@ -11,6 +11,7 @@ using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Entities.Performance;
 using PeopleCore.Domain.Entities.Recruitment;
 using PeopleCore.Domain.Entities.Scheduling;
+using PeopleCore.Domain.Entities.System;
 using PeopleCore.Infrastructure.Identity;
 
 namespace PeopleCore.Infrastructure.Persistence;
@@ -79,6 +80,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, ApplicationRole, 
 
     /// <summary>The Data Protection key ring. In the database so reset links survive a restart.</summary>
     public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
+
+    public DbSet<EmailSettings> EmailSettings => Set<EmailSettings>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {

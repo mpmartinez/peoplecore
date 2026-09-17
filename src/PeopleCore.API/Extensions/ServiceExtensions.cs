@@ -38,6 +38,7 @@ using PeopleCore.Domain.Interfaces;
 using PeopleCore.Domain.Entities.Recruitment;
 using PeopleCore.Infrastructure.Identity;
 using PeopleCore.Infrastructure.BackgroundJobs;
+using PeopleCore.Infrastructure.Email;
 using PeopleCore.Infrastructure.Persistence;
 using PeopleCore.Infrastructure.Persistence.Repositories;
 using PeopleCore.Infrastructure.Storage;
@@ -94,6 +95,7 @@ public static class ServiceExtensions
         services.AddScoped<ICurrentUserService, CurrentUserService>();
         services.AddScoped<IUserAccountDirectory, UserAccountDirectory>();
         services.AddScoped<IRolePermissionReader, RolePermissionReader>();
+        services.AddScoped<IEmailSettingsStore, EmailSettingsStore>();
         services.AddScoped<IRoleCatalog, RoleCatalog>();
         services.AddScoped<IRoleEditor, RoleEditor>();
         services.AddScoped<AccountTokenValidator>();
