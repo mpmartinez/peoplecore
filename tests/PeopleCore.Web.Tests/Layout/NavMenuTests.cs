@@ -55,7 +55,7 @@ public class NavMenuTests : BunitContext
     {
         var cut = RenderAs("Admin");
 
-        cut.FindAll("a[href]").Should().HaveCount(18);
+        cut.FindAll("a[href]").Should().HaveCount(19);
         Links(cut).Should().OnlyHaveUniqueItems();
     }
 
@@ -76,6 +76,15 @@ public class NavMenuTests : BunitContext
     public void TheRolesPage_IsListedOnlyForThoseWhoManageRoles(string role, bool listed)
     {
         Links(RenderAs(role)).Contains("/admin/roles").Should().Be(listed);
+    }
+
+    [Theory]
+    [InlineData("Admin", true)]
+    [InlineData("HRManager", false)]
+    [InlineData("Manager", false)]
+    public void TheEmailSettingsPage_IsListedOnlyForThoseWhoManageSettings(string role, bool listed)
+    {
+        Links(RenderAs(role)).Contains("/admin/email").Should().Be(listed);
     }
 
     [Fact]

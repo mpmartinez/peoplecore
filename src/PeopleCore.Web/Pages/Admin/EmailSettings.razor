@@ -1,0 +1,185 @@
+@page "/admin/email"
+@attribute [RequirePermission(Permissions.SettingsManage)]
+@inject ApiClient Api
+
+@*
+    The account the application sends from. The stored password is never sent back to the browser:
+    the field starts blank, and blank means "keep the one stored".
+*@
+
+<PageHeader Title="Email" Section="Administration"
+            Description="The account PeopleCore sends mail from, including password reset links." />
+
+@if (_loading)
+{
+    <p class="text-sm text-muted-foreground">Loading…</p>
+}
+else
+{
+    <Card Class="max-w-2xl">
+        <CardContent Class="pt-6">
+            <form class="space-y-4" data-email-settings @onsubmit="Save" @onsubmit:preventDefault>
+                @if (_error is not null)
+                {
+                    <Alert Variant="destructive" data-email-error>@_error</Alert>
+                }
+                else if (_result is not null)
+                {
+                    <Alert Variant="success" data-email-result>@_result</Alert>
+                }
+                else if (!_configured)
+                {
+                    <Alert Variant="warning">
+                        Mail is not set up yet, so nobody can reset a forgotten password by email.
+                    </Alert>
+                }
+
+                <div class="grid gap-4 sm:grid-cols-3">
+                    <FormField LabelText="Server" Id="smtp-host" Class="min-w-0 sm:col-span-2">
+                        <Input TValue="string" Id="smtp-host" @bind-Value="_host" Placeholder="smtp.example.com" Disabled="@_saving" />
+                    </FormField>
+                    <FormField LabelText="Port" Id="smtp-port" Class="min-w-0">
+                        <Input TValue="int" Id="smtp-port" @bind-Value="_port" Type="number" Disabled="@_saving" />
+                    </FormField>
+                </div>
+
+                <Checkbox Value="@_useStartTls" ValueChanged="@(on => _useStartTls = on)"
+                          Disabled="@_saving" id="smtp-starttls">
+                    <span>Use STARTTLS</span>
+                    <span class="block text-xs font-normal text-muted-foreground">
+                        What nearly every provider wants on port 587.
+                    </span>
+                </Checkbox>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <FormField LabelText="Username" Id="smtp-username" Class="min-w-0">
+                        <Input TValue="string" Id="smtp-username" @bind-Value="_username"
+                               AutoComplete="off" Disabled="@_saving" />
+                    </FormField>
+                    <FormField LabelText="Password" Id="smtp-password" Class="min-w-0"
+                               Description="@(_hasPassword ? "A password is stored. Leave this blank to keep it." : "")">
+                        <PasswordInput Id="smtp-password" @bind-Value="_password"
+                                       AutoComplete="new-password" Disabled="@_saving" />
+                    </FormField>
+                </div>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <FormField LabelText="Sender address" Id="from-address" Class="min-w-0">
+                        <Input TValue="string" Id="from-address" @bind-Value="_fromAddress"
+                               Placeholder="hr@example.com" Disabled="@_saving" />
+                    </FormField>
+                    <FormField LabelText="Sender name" Id="from-name" Class="min-w-0">
+                        <Input TValue="string" Id="from-name" @bind-Value="_fromName" Disabled="@_saving" />
+                    </FormField>
+                </div>
+
+                <FormField LabelText="App address" Id="app-base-url"
+                           Description="Where reset links point. The address people open PeopleCore at.">
+                    <Input TValue="string" Id="app-base-url" @bind-Value="_appBaseUrl"
+                           Placeholder="https://people.example.com" Disabled="@_saving" />
+                </FormField>
+
+                <div class="flex justify-end gap-2 pt-2">
+                    <Button Type="button" Variant="outline" data-send-test OnClick="SendTest"
+                            Disabled="@(!_configured || _saving)" Loading="@_testing">
+                        Send test email
+                    </Button>
+                    <Button Type="submit" Variant="primary" Loading="@_saving">Save</Button>
+                </div>
+            </form>
+        </CardContent>
+    </Card>
+}
+
+@code {
+    private string _host = string.Empty;
+    private int _port = 587;
+    private bool _useStartTls = true;
+    private string? _username;
+    private string _password = string.Empty;
+    private string _fromAddress = string.Empty;
+    private string _fromName = "PeopleCore";
+    private string _appBaseUrl = string.Empty;
+    private bool _hasPassword;
+    private bool _configured;
+    private bool _loading = true;
+    private bool _saving;
+    private bool _testing;
+    private string? _error;
+    private string? _result;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            if (await Api.GetEmailSettingsAsync() is { } settings) Apply(settings);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void Apply(EmailSettingsDto settings)
+    {
+        _host = settings.Host;
+        _port = settings.Port;
+        _useStartTls = settings.UseStartTls;
+        _username = settings.Username;
+        _fromAddress = settings.FromAddress;
+        _fromName = settings.FromName;
+        _appBaseUrl = settings.AppBaseUrl;
+        _hasPassword = settings.HasPassword;
+        _configured = true;
+        _password = string.Empty;
+    }
+
+    private async Task Save()
+    {
+        _error = _result = null;
+        _saving = true;
+        try
+        {
+            var saved = await Api.SaveEmailSettingsAsync(new SaveEmailSettingsRequest(
+                _host, _port, _useStartTls, _username,
+                string.IsNullOrEmpty(_password) ? null : _password,
+                _fromAddress, _fromName, _appBaseUrl));
+
+            if (saved is not null) Apply(saved);
+            _result = "Saved. Send a test message to make sure it works.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task SendTest()
+    {
+        _error = _result = null;
+        _testing = true;
+        try
+        {
+            var to = await Api.SendTestEmailAsync();
+            _result = string.IsNullOrEmpty(to)
+                ? "A test message is on its way."
+                : $"A test message is on its way to {to}.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _testing = false;
+        }
+    }
+}
