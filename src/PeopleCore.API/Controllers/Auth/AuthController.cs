@@ -127,7 +127,9 @@ public class AuthController : ControllerBase
             return Ok(new { message = ResetRequested });
         }
 
-        var account = await _mailSettings.GetAccountAsync(ct);
+        // From here on the request's token is ignored: a closed tab would otherwise lose a real user's
+        // link. The SMTP client's own timeout still bounds how long this can take.
+        var account = await _mailSettings.GetAccountAsync(CancellationToken.None);
         if (account is null)
         {
             _log.LogWarning("Password reset not sent for {UserId}: no email account is configured.", user.Id);
@@ -140,7 +142,7 @@ public class AuthController : ControllerBase
 
         try
         {
-            await _email.SendAsync(PasswordResetMail.For(user.Email!, user.FirstName ?? string.Empty, link), ct);
+            await _email.SendAsync(PasswordResetMail.For(user.Email!, user.FirstName ?? string.Empty, link), CancellationToken.None);
             _log.LogInformation("Password reset link sent to {UserId}.", user.Id);
         }
         catch (Exception ex)

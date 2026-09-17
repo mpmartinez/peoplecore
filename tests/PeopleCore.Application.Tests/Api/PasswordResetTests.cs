@@ -146,6 +146,24 @@ public class PasswordResetTests
         MessageOf(result).Should().Be(Answer);
     }
 
+    // A closed tab aborts the request. Once the throttle has let it through, the real user's link is
+    // still sent: the database read and the send both ignore the request's token.
+    [Fact]
+    public async Task AClosedBrowser_DoesNotStopTheLinkBeingSent()
+    {
+        using var closed = new CancellationTokenSource();
+        closed.Cancel();
+        _mailSettings.Setup(s => s.GetAccountAsync(It.Is<CancellationToken>(t => t.IsCancellationRequested)))
+                     .ThrowsAsync(new OperationCanceledException());
+
+        var result = await _sut.ForgotPassword(new ForgotPasswordRequest(Email), closed.Token);
+
+        MessageOf(result).Should().Be(Answer);
+        Sent().Should().NotBeNull();
+        var send = _email.Invocations.Single(i => i.Method.Name == nameof(IEmailSender.SendAsync));
+        ((CancellationToken)send.Arguments[1]).IsCancellationRequested.Should().BeFalse();
+    }
+
     [Fact]
     public async Task AGoodLink_SetsTheNewPassword()
     {
