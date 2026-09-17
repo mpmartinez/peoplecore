@@ -207,6 +207,18 @@ public class PasswordResetTests
         DetailOf(result).Should().Be("This link has expired or has already been used. Ask for a new one.");
     }
 
+    // Deactivation has to hold even against a link issued before it.
+    [Fact]
+    public async Task ADeactivatedAccount_CannotUseEvenAValidLink()
+    {
+        _user.IsActive = false;
+
+        var result = await _sut.ResetPassword(new ResetPasswordRequest(Email, "reset-token", "N3wPassword"));
+
+        DetailOf(result).Should().Be("This link has expired or has already been used. Ask for a new one.");
+        _users.Verify(u => u.ResetPasswordAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
     [Fact]
     public async Task APasswordThePolicyRefuses_ComesBackWithThePolicysReason()
     {
