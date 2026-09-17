@@ -2,6 +2,7 @@
 using Amazon.S3;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
@@ -55,6 +56,17 @@ public static class ServiceExtensions
         services.AddIdentity<ApplicationUser, ApplicationRole>(ConfigureIdentityOptions)
         .AddEntityFrameworkStores<AppDbContext>()
         .AddDefaultTokenProviders();
+
+        // The key ring protects password reset tokens and the stored SMTP password. It lives in the
+        // database, and the application name is fixed, so a redeploy does not invalidate either.
+        services.AddDataProtection()
+            .SetApplicationName("PeopleCore")
+            .PersistKeysToDbContext<AppDbContext>();
+
+        // A reset link is worth an hour. Identity's default of a day is too generous for a link
+        // that lands in a mailbox.
+        services.Configure<DataProtectionTokenProviderOptions>(options =>
+            options.TokenLifespan = TimeSpan.FromHours(1));
 
         var signingKey = ResolveJwtSigningKey(configuration);
 
