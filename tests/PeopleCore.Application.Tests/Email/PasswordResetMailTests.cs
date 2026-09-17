@@ -12,6 +12,8 @@ public class PasswordResetMailTests
 {
     private const string Link = "https://people.example.com/reset-password?email=ana%40company.test&token=abc";
 
+    private const string EncodedLink = "https://people.example.com/reset-password?email=ana%40company.test&amp;token=abc";
+
     private static EmailMessage Message() => PasswordResetMail.For("ana@company.test", "Ana", Link);
 
     [Fact]
@@ -26,7 +28,7 @@ public class PasswordResetMailTests
         var message = Message();
 
         message.Text.Should().Contain(Link);
-        message.Html.Should().Contain(Link);
+        message.Html.Should().Contain(EncodedLink);
     }
 
     [Fact]
@@ -39,9 +41,22 @@ public class PasswordResetMailTests
     }
 
     [Fact]
-    public void TheHtmlBody_EscapesTheLinkIntoItsHref()
+    public void TheHtmlBody_EncodesTheLinkInItsHref()
     {
-        Message().Html.Should().Contain($"href=\"{Link}\"");
+        Message().Html.Should().Contain($"href=\"{EncodedLink}\"");
+    }
+
+    // FirstName is editable by HR, so it must not be able to put markup - a link of its own - into a
+    // genuine PeopleCore email.
+    [Fact]
+    public void AMarkupFirstName_IsEscapedInTheHtmlBody()
+    {
+        const string name = "<a href=https://evil>x</a>";
+
+        var message = PasswordResetMail.For("ana@company.test", name, Link);
+
+        message.Html.Should().NotContain(name)
+            .And.Contain("Hello &lt;a href=https://evil&gt;x&lt;/a&gt;,");
     }
 
     [Fact]
