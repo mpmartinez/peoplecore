@@ -38,6 +38,7 @@ using PeopleCore.Domain.Interfaces;
 using PeopleCore.Domain.Entities.Recruitment;
 using PeopleCore.Infrastructure.Identity;
 using PeopleCore.Infrastructure.BackgroundJobs;
+using PeopleCore.Infrastructure.DataProtection;
 using PeopleCore.Infrastructure.Email;
 using PeopleCore.Infrastructure.Persistence;
 using PeopleCore.Infrastructure.Persistence.Repositories;
@@ -59,10 +60,13 @@ public static class ServiceExtensions
         .AddDefaultTokenProviders();
 
         // The key ring protects password reset tokens and the stored SMTP password. It lives in the
-        // database, and the application name is fixed, so a redeploy does not invalidate either.
+        // database, and the application name is fixed, so a redeploy does not invalidate either. The
+        // keys are encrypted with a secret from configuration, so a copy of the database alone cannot
+        // forge a reset link.
         services.AddDataProtection()
             .SetApplicationName("PeopleCore")
-            .PersistKeysToDbContext<AppDbContext>();
+            .PersistKeysToDbContext<AppDbContext>()
+            .ProtectKeysWithKeyRingEncryptionKey(ResolveKeyRingEncryptionKey(configuration));
 
         // A reset link is worth an hour. Identity's default of a day is too generous for a link
         // that lands in a mailbox.
@@ -271,6 +275,31 @@ public static class ServiceExtensions
                 $"Jwt:Key must be at least 32 bytes for HMAC-SHA256; the configured value is {bytes.Length}.");
 
         return bytes;
+    }
+
+    /// <summary>
+    /// Encrypts the data protection key ring, which is stored in the same database as everything it
+    /// protects. Like <see cref="ResolveJwtSigningKey"/>, it is a credential that belongs outside source
+    /// control and outside the database, and a missing one stops startup rather than writing keys in
+    /// plain text. Changing it later makes outstanding reset links and the stored SMTP password
+    /// unreadable.
+    /// </summary>
+    public static KeyRingEncryptionKey ResolveKeyRingEncryptionKey(IConfiguration configuration)
+    {
+        var secret = configuration["DataProtection:KeyEncryptionKey"];
+
+        if (string.IsNullOrWhiteSpace(secret))
+            throw new InvalidOperationException(
+                "DataProtection:KeyEncryptionKey is not configured. Set it out of source control, for example: " +
+                "dotnet user-secrets set \"DataProtection:KeyEncryptionKey\" \"<random value>\" --project src/PeopleCore.API, " +
+                "or via the DataProtection__KeyEncryptionKey environment variable.");
+
+        var length = Encoding.UTF8.GetByteCount(secret);
+        if (length < KeyRingEncryptionKey.KeySizeInBytes)
+            throw new InvalidOperationException(
+                $"DataProtection:KeyEncryptionKey must be at least 32 bytes; the configured value is {length}.");
+
+        return KeyRingEncryptionKey.FromSecret(secret);
     }
 
     /// <summary>
