@@ -97,6 +97,9 @@ public static class ServiceExtensions
         services.AddScoped<IRolePermissionReader, RolePermissionReader>();
         services.AddScoped<IEmailSettingsStore, EmailSettingsStore>();
         services.AddScoped<IEmailSender, MailKitEmailSender>();
+        // Singleton: the counts are the point, and they are per process.
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<IResetRequestThrottle, ResetRequestThrottle>();
         services.AddScoped<IRoleCatalog, RoleCatalog>();
         services.AddScoped<IRoleEditor, RoleEditor>();
         services.AddScoped<AccountTokenValidator>();
