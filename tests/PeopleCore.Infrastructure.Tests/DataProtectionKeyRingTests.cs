@@ -129,4 +129,36 @@ public class DataProtectionKeyRingTests : DatabaseTestBase
 
         protector.Unprotect(protector.Protect("new")).Should().Be("new");
     }
+
+    private static AesGcmXmlDecryptor NewDecryptor() =>
+        new(new ServiceCollection().AddSingleton(KeyRingEncryptionKey.FromSecret(Secret)).BuildServiceProvider());
+
+    // Corrupted storage - a bad row, a truncated backup - must not surface as anything other than
+    // CryptographicException: EmailSettingsStore.Reveal only catches that, and the forgot-password
+    // and password-reset-available endpoints depend on it degrading rather than 500ing.
+    [Fact]
+    public void InvalidBase64_IsReportedAsCryptographicException()
+    {
+        var element = new XElement("aesGcmEncryptedSecret",
+            new XElement("nonce", "not-valid-base64!!"),
+            new XElement("tag", Convert.ToBase64String(new byte[16])),
+            new XElement("ciphertext", Convert.ToBase64String(new byte[16])));
+
+        var decrypt = () => NewDecryptor().Decrypt(element);
+
+        decrypt.Should().Throw<CryptographicException>();
+    }
+
+    [Fact]
+    public void ATruncatedNonce_IsReportedAsCryptographicException()
+    {
+        var element = new XElement("aesGcmEncryptedSecret",
+            new XElement("nonce", Convert.ToBase64String(new byte[4])),
+            new XElement("tag", Convert.ToBase64String(new byte[16])),
+            new XElement("ciphertext", Convert.ToBase64String(new byte[16])));
+
+        var decrypt = () => NewDecryptor().Decrypt(element);
+
+        decrypt.Should().Throw<CryptographicException>();
+    }
 }

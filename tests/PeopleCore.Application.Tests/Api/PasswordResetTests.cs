@@ -78,7 +78,7 @@ public class PasswordResetTests
     [Fact]
     public async Task AKnownAddress_IsSentALinkCarryingTheToken()
     {
-        var result = await _sut.ForgotPassword(new ForgotPasswordRequest(Email), CancellationToken.None);
+        var result = await _sut.ForgotPassword(new ForgotPasswordRequest(Email));
 
         MessageOf(result).Should().Be(Answer);
         Sent()!.ToAddress.Should().Be(Email);
@@ -93,7 +93,7 @@ public class PasswordResetTests
     {
         _users.Setup(u => u.FindByEmailAsync("nobody@company.test")).ReturnsAsync((ApplicationUser?)null);
 
-        var result = await _sut.ForgotPassword(new ForgotPasswordRequest("nobody@company.test"), CancellationToken.None);
+        var result = await _sut.ForgotPassword(new ForgotPasswordRequest("nobody@company.test"));
 
         MessageOf(result).Should().Be(Answer);
         Sent().Should().BeNull();
@@ -104,7 +104,7 @@ public class PasswordResetTests
     {
         _user.IsActive = false;
 
-        var result = await _sut.ForgotPassword(new ForgotPasswordRequest(Email), CancellationToken.None);
+        var result = await _sut.ForgotPassword(new ForgotPasswordRequest(Email));
 
         MessageOf(result).Should().Be(Answer);
         Sent().Should().BeNull();
@@ -115,7 +115,7 @@ public class PasswordResetTests
     {
         _throttle.Setup(t => t.TryRequest(It.IsAny<string>(), It.IsAny<string>())).Returns(false);
 
-        var result = await _sut.ForgotPassword(new ForgotPasswordRequest(Email), CancellationToken.None);
+        var result = await _sut.ForgotPassword(new ForgotPasswordRequest(Email));
 
         MessageOf(result).Should().Be(Answer);
         Sent().Should().BeNull();
@@ -127,7 +127,7 @@ public class PasswordResetTests
     {
         _mailSettings.Setup(s => s.GetAccountAsync(It.IsAny<CancellationToken>())).ReturnsAsync((MailAccount?)null);
 
-        var result = await _sut.ForgotPassword(new ForgotPasswordRequest(Email), CancellationToken.None);
+        var result = await _sut.ForgotPassword(new ForgotPasswordRequest(Email));
 
         MessageOf(result).Should().Be(Answer);
         Sent().Should().BeNull();
@@ -139,27 +139,9 @@ public class PasswordResetTests
         _email.Setup(e => e.SendAsync(It.IsAny<EmailMessage>(), It.IsAny<CancellationToken>()))
               .ThrowsAsync(new InvalidOperationException("relay refused"));
 
-        var result = await _sut.ForgotPassword(new ForgotPasswordRequest(Email), CancellationToken.None);
+        var result = await _sut.ForgotPassword(new ForgotPasswordRequest(Email));
 
         MessageOf(result).Should().Be(Answer);
-    }
-
-    // A closed tab aborts the request. Once the throttle has let it through, the real user's link is
-    // still sent: the database read and the send both ignore the request's token.
-    [Fact]
-    public async Task AClosedBrowser_DoesNotStopTheLinkBeingSent()
-    {
-        using var closed = new CancellationTokenSource();
-        closed.Cancel();
-        _mailSettings.Setup(s => s.GetAccountAsync(It.Is<CancellationToken>(t => t.IsCancellationRequested)))
-                     .ThrowsAsync(new OperationCanceledException());
-
-        var result = await _sut.ForgotPassword(new ForgotPasswordRequest(Email), closed.Token);
-
-        MessageOf(result).Should().Be(Answer);
-        Sent().Should().NotBeNull();
-        var send = _email.Invocations.Single(i => i.Method.Name == nameof(IEmailSender.SendAsync));
-        ((CancellationToken)send.Arguments[1]).IsCancellationRequested.Should().BeFalse();
     }
 
     [Fact]

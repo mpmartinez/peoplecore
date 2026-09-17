@@ -109,7 +109,7 @@ public class AuthController : ControllerBase
 
     [AllowAnonymous]
     [HttpPost("forgot-password")]
-    public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request, CancellationToken ct)
+    public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
     {
         var email = (request.Email ?? string.Empty).Trim();
         var caller = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -127,8 +127,8 @@ public class AuthController : ControllerBase
             return Ok(new { message = ResetRequested });
         }
 
-        // From here on the request's token is ignored: a closed tab would otherwise lose a real user's
-        // link. The SMTP client's own timeout still bounds how long this can take.
+        // From here on nothing is tied to the request's own lifetime: a closed tab would otherwise
+        // lose a real user's link. The SMTP client's own timeout still bounds how long this can take.
         var account = await _mailSettings.GetAccountAsync(CancellationToken.None);
         if (account is null)
         {
