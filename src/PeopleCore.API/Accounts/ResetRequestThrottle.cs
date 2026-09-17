@@ -9,7 +9,7 @@ namespace PeopleCore.API.Accounts;
 public class ResetRequestThrottle : IResetRequestThrottle
 {
     private const int PerEmailAnHour = 3;
-    private const int PerAddressAnHour = 10;
+    private const int PerIpAnHour = 10;
     private static readonly TimeSpan Window = TimeSpan.FromHours(1);
 
     private readonly TimeProvider _time;
@@ -30,7 +30,7 @@ public class ResetRequestThrottle : IResetRequestThrottle
         lock (_gate)
         {
             if (Count(_byEmail, key, now) >= PerEmailAnHour) return false;
-            if (Count(_byIp, ipAddress, now) >= PerAddressAnHour) return false;
+            if (Count(_byIp, ipAddress, now) >= PerIpAnHour) return false;
 
             Add(_byEmail, key, now);
             Add(_byIp, ipAddress, now);
