@@ -10,6 +10,10 @@ namespace PeopleCore.Infrastructure.Email;
 /// </summary>
 public class MailKitEmailSender : IEmailSender
 {
+    // A later task calls SendAsync inline within an HTTP request, so a slow or wrong SMTP host
+    // must not hold that request open for MailKit's default (multi-minute) timeout.
+    private const int TimeoutMilliseconds = 15_000;
+
     private readonly IEmailSettingsStore _settings;
 
     public MailKitEmailSender(IEmailSettingsStore settings) => _settings = settings;
@@ -19,8 +23,15 @@ public class MailKitEmailSender : IEmailSender
         var account = await _settings.GetAccountAsync(ct)
             ?? throw new InvalidOperationException("No email account is configured.");
 
+        if (!string.IsNullOrWhiteSpace(account.Username) && string.IsNullOrEmpty(account.Password))
+            throw new InvalidOperationException(
+                "No SMTP password is available. Re-enter it on the Email settings page.");
+
         using var client = new SmtpClient();
+        client.Timeout = TimeoutMilliseconds;
         // StartTls on 587 is what nearly every provider wants, and port 25 is blocked by many hosts.
+        // Auto (used when the box is unticked) gives implicit TLS on port 465 and opportunistic
+        // STARTTLS everywhere else, so unticking it never forces plain text when the server offers encryption.
         var security = account.UseStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.Auto;
         await client.ConnectAsync(account.Host, account.Port, security, ct);
 
