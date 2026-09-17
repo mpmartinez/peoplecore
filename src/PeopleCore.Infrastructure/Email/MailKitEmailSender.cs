@@ -10,8 +10,8 @@ namespace PeopleCore.Infrastructure.Email;
 /// </summary>
 public class MailKitEmailSender : IEmailSender
 {
-    // A later task calls SendAsync inline within an HTTP request, so a slow or wrong SMTP host
-    // must not hold that request open for MailKit's default (multi-minute) timeout.
+    // The forgot-password request waits on this send, so a slow or wrong SMTP host must not hold it
+    // open for MailKit's default (multi-minute) timeout.
     private const int TimeoutMilliseconds = 15_000;
 
     private readonly IEmailSettingsStore _settings;
