@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using PeopleCore.Domain.Entities.System;
 using PeopleCore.Infrastructure.Persistence;
+using System.Security.Cryptography;
 
 namespace PeopleCore.Infrastructure.Email;
 
@@ -15,11 +17,13 @@ public class EmailSettingsStore : IEmailSettingsStore
 
     private readonly AppDbContext _db;
     private readonly IDataProtector _protector;
+    private readonly ILogger<EmailSettingsStore> _logger;
 
-    public EmailSettingsStore(AppDbContext db, IDataProtectionProvider protection)
+    public EmailSettingsStore(AppDbContext db, IDataProtectionProvider protection, ILogger<EmailSettingsStore> logger)
     {
         _db = db;
         _protector = protection.CreateProtector(Purpose);
+        _logger = logger;
     }
 
     public async Task<MailAccount?> GetAccountAsync(CancellationToken ct = default)
@@ -27,7 +31,7 @@ public class EmailSettingsStore : IEmailSettingsStore
         var row = await _db.EmailSettings.AsNoTracking().FirstOrDefaultAsync(ct);
         if (row is null || string.IsNullOrWhiteSpace(row.Host)) return null;
 
-        return new MailAccount(row.Host, row.Port, row.UseStartTls, row.Username, Reveal(row.PasswordProtected),
+        return new MailAccount(row.Host, row.Port, row.UseStartTls, row.Username, Reveal(row.PasswordProtected, row.Host),
             row.FromAddress, row.FromName, row.AppBaseUrl);
     }
 
@@ -67,15 +71,18 @@ public class EmailSettingsStore : IEmailSettingsStore
     /// A payload the current key ring cannot read - keys wiped, or a password written by another
     /// deployment - is treated as no password rather than crashing every send.
     /// </summary>
-    private string? Reveal(string? protectedPassword)
+    private string? Reveal(string? protectedPassword, string? host)
     {
         if (string.IsNullOrEmpty(protectedPassword)) return null;
         try
         {
             return _protector.Unprotect(protectedPassword);
         }
-        catch (Exception)
+        catch (CryptographicException)
         {
+            _logger.LogWarning(
+                "The stored SMTP password for {Host} could not be decrypted with the current key ring. " +
+                "It should be re-entered on the Email settings page.", host);
             return null;
         }
     }

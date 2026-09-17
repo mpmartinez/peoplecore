@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using PeopleCore.Infrastructure.Email;
 
 namespace PeopleCore.Infrastructure.Tests;
@@ -18,7 +19,7 @@ public class EmailSettingsStoreTests : DatabaseTestBase
         "hr@example.com", "PeopleCore", "https://people.example.com");
 
     private EmailSettingsStore Store() =>
-        new(NewContext(), DataProtectionProvider.Create("PeopleCore.Tests"));
+        new(NewContext(), DataProtectionProvider.Create("PeopleCore.Tests"), NullLogger<EmailSettingsStore>.Instance);
 
     [Fact]
     public async Task WithNothingConfigured_ThereIsNoAccount()
@@ -77,5 +78,21 @@ public class EmailSettingsStoreTests : DatabaseTestBase
 
         await using var read = NewContext();
         (await read.EmailSettings.CountAsync()).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task APasswordTheKeyRingCannotRead_IsTreatedAsNoPassword()
+    {
+        await Store().SaveAsync(Account);
+
+        await using (var write = NewContext())
+        {
+            var row = await write.EmailSettings.SingleAsync();
+            row.PasswordProtected = "not-a-protected-payload";
+            await write.SaveChangesAsync();
+        }
+
+        var account = await Store().GetAccountAsync();
+        account.Should().BeEquivalentTo(Account with { Password = null });
     }
 }
