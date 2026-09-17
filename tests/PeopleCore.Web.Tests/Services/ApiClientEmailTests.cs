@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using FluentAssertions;
 using PeopleCore.Web.Services;
 using PeopleCore.Web.Tests.TestSupport;
@@ -11,6 +12,9 @@ public class ApiClientEmailTests
     private readonly StubHttpHandler _api = new();
 
     private ApiClient CreateClient() => new(StubHttpHandler.ClientFor(_api));
+
+    private string BodyField(string name) =>
+        JsonDocument.Parse(_api.RequestBodies.Single(b => b is not null)!).RootElement.GetProperty(name).ToString();
 
     [Fact]
     public async Task WhetherResetsAreAvailable_ComesFromTheApi()
@@ -35,7 +39,7 @@ public class ApiClientEmailTests
 
         await CreateClient().ForgotPasswordAsync("ana@company.test");
 
-        _api.RequestBodies.Single().Should().Contain("ana@company.test");
+        BodyField("email").Should().Be("ana@company.test");
     }
 
     [Fact]
@@ -45,7 +49,9 @@ public class ApiClientEmailTests
 
         await CreateClient().ResetPasswordAsync("ana@company.test", "tok", "N3wPassword");
 
-        _api.RequestBodies.Single().Should().Contain("tok").And.Contain("N3wPassword");
+        BodyField("email").Should().Be("ana@company.test");
+        BodyField("token").Should().Be("tok");
+        BodyField("newPassword").Should().Be("N3wPassword");
     }
 
     [Fact]
@@ -81,6 +87,12 @@ public class ApiClientEmailTests
             "smtp.example.com", 587, true, "mailer@example.com", "s3cret", "hr@example.com", "PeopleCore", "https://people.example.com"));
 
         saved!.Host.Should().Be("smtp.example.com");
+        BodyField("host").Should().Be("smtp.example.com");
+        BodyField("port").Should().Be("587");
+        BodyField("useStartTls").Should().Be("True");
+        BodyField("password").Should().Be("s3cret");
+        BodyField("fromAddress").Should().Be("hr@example.com");
+        BodyField("appBaseUrl").Should().Be("https://people.example.com");
     }
 
     [Fact]
