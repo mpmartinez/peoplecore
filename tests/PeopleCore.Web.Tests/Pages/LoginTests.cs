@@ -43,7 +43,9 @@ public class LoginTests : BunitContext
         SignIn(cut, email, password);
 
         cut.Find("[role=alert]").TextContent.Should().Contain("Please enter your email and password.");
-        _api.Requests.Should().BeEmpty();
+        // Login also asks whether a reset link can be sent, on every render - that call is unrelated
+        // to this sign-in attempt, so it is excluded rather than asserting no requests happened at all.
+        _api.Requests.Should().NotContain(r => r.RequestUri!.PathAndQuery.Contains("/api/auth/login"));
     }
 
     [Fact]
@@ -99,6 +101,32 @@ public class LoginTests : BunitContext
         cut.Find("#password").Input("secret");
         cut.Find("#password").KeyDown(Key.Enter);
 
-        cut.WaitForAssertion(() => _api.Requests.Should().ContainSingle());
+        cut.WaitForAssertion(() =>
+            _api.Requests.Should().ContainSingle(r => r.RequestUri!.PathAndQuery.Contains("/api/auth/login")));
+    }
+
+    [Fact]
+    public void TheForgotPasswordLink_ShowsOnlyWhenTheApiCanSendMail()
+    {
+        _api.On(HttpMethod.Get, "/api/auth/password-reset-available", HttpStatusCode.OK, """{"available":true}""");
+
+        Render<Login>().FindAll("a[href='/forgot-password']").Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public void WithNoMailConfigured_ThereIsNoForgotPasswordLink()
+    {
+        _api.On(HttpMethod.Get, "/api/auth/password-reset-available", HttpStatusCode.OK, """{"available":false}""");
+
+        Render<Login>().FindAll("a[href='/forgot-password']").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AfterAReset_TheLoginPageSaysSo()
+    {
+        Services.GetRequiredService<NavigationManager>().NavigateTo("/login?reset=1");
+
+        Render<Login>().Find("[data-reset-done]").TextContent
+            .Should().Contain("Your password has been changed. Sign in with your new password.");
     }
 }
