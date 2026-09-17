@@ -3,9 +3,12 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using PeopleCore.API.Accounts;
 using PeopleCore.API.Controllers.Auth;
 using PeopleCore.Application.Common.Authorization;
+using PeopleCore.Infrastructure.Email;
 using PeopleCore.Infrastructure.Identity;
 using Xunit;
 using SignInResult = Microsoft.AspNetCore.Identity.SignInResult;
@@ -41,7 +44,9 @@ public class AuthTokenTests
         _permissions.Setup(p => p.GetPermissionsAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
                     .ReturnsAsync([]);
 
-        _sut = new AuthController(_users.Object, _signIn.Object, TestJwtConfiguration.Create(), _permissions.Object);
+        _sut = new AuthController(_users.Object, _signIn.Object, TestJwtConfiguration.Create(), _permissions.Object,
+            Mock.Of<IEmailSender>(), Mock.Of<IEmailSettingsStore>(), Mock.Of<IResetRequestThrottle>(),
+            NullLogger<AuthController>.Instance);
     }
 
     private static AuthTokenResponse Session(IActionResult result) =>
