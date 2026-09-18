@@ -29,6 +29,7 @@ public sealed partial class Seeder
             name = "Day Shift 8-5", startTime = new TimeOnly(8, 0), endTime = new TimeOnly(17, 0),
             breakMinutes = 60, isNightShift = false,
         }, admin));
+        Count("shift templates");
 
         foreach (var person in plan.People)
         {
@@ -45,12 +46,15 @@ public sealed partial class Seeder
 
     /// <summary>
     /// Reads the holidays already on the site. HolidaysController's GET (api/holidays, filtered by
-    /// year, defaulting to the current year) returns a plain array of HolidayDto, carrying holidayDate.
-    /// The paged-shape fallback below is kept only for robustness against a future change.
+    /// the "year" query parameter, defaulting to the current year when omitted) returns a plain array
+    /// of HolidayDto, carrying holidayDate. The year is passed explicitly here as the demo's own
+    /// Calendar.Start.Year, so a run in a later calendar year still checks the year the demo seeds
+    /// rather than whatever year the server clock happens to be in. The paged-shape fallback below is
+    /// kept only for robustness against a future change.
     /// </summary>
     private async Task<HashSet<DateOnly>> ExistingHolidayDatesAsync(string admin)
     {
-        var node = await api.GetAsync("Read existing holidays", "api/holidays", admin);
+        var node = await api.GetAsync("Read existing holidays", $"api/holidays?year={Calendar.Start.Year}", admin);
         var items = node is JsonArray array ? array : node?["items"]?.AsArray() ?? [];
         return items.Select(h => DateOnly.Parse(h!["holidayDate"]!.GetValue<string>()[..10])).ToHashSet();
     }
@@ -67,9 +71,17 @@ public sealed partial class Seeder
     }
 
     /// <summary>
-    /// The leave plan assumes 15 days a year per type, accruing monthly for everyone. An existing
-    /// VL or SL type is reused. Its accrual policy must match that assumption, or the run stops before
-    /// anything is created.
+    /// The leave plan assumes 15 days a year per type, accruing monthly from day one for everyone,
+    /// with no tenure ceiling. An existing VL or SL type is reused. The accrual engine
+    /// (LeaveAccrualService.RunAccrualsAsync) only ever loads <em>active</em> policies and skips one
+    /// once an employee's tenure exceeds its TenureMonthsMax, so an inactive policy is invisible to it
+    /// and a tenure cap would silently stop long-tenured demo staff from accruing. A policy is usable
+    /// only when it is active, Monthly, at least 15 days a year, has no minimum tenure, and has no
+    /// maximum tenure at all. Decision:
+    ///   - no active policy for the type: fine, CreateLeaveSetupAsync will create one;
+    ///   - exactly one active policy and it is usable: reuse it;
+    ///   - anything else (an active policy that isn't usable, or more than one active policy, which
+    ///     would double-accrue): refuse before anything is written.
     /// </summary>
     private async Task CheckLeaveSetupAsync()
     {
@@ -82,17 +94,28 @@ public sealed partial class Seeder
             if (type is null) continue;
 
             _leaveTypeIds[code] = IdOf(type);
-            var theirs = await AccrualPoliciesForAsync(_leaveTypeIds[code], admin);
-            var usable = theirs.Any(p =>
-                p!["accrualFrequency"]!.GetValue<string>() == "Monthly"
-                && p["daysPerYear"]!.GetValue<decimal>() >= 15
-                && p["tenureMonthsMin"]!.GetValue<int>() == 0);
+            var active = (await AccrualPoliciesForAsync(_leaveTypeIds[code], admin))
+                .Where(p => p!["isActive"]!.GetValue<bool>())
+                .ToList();
 
-            if (theirs.Count > 0 && !usable)
+            if (active.Count == 0) continue;
+
+            if (active.Count > 1)
                 throw new SeedException("Check leave setup", "GET", "api/leave-accrual-policies", 200,
-                    $"The existing {code} accrual policy is not monthly at 15 days a year from day one, so the demo's leave would be refused. Nothing was changed.");
+                    $"The existing {code} accrual policies include more than one active policy, which would double-accrue. Nothing was changed.");
+
+            if (!IsUsablePolicy(active[0]!))
+                throw new SeedException("Check leave setup", "GET", "api/leave-accrual-policies", 200,
+                    $"The existing active {code} accrual policy is not monthly at 15+ days a year from day one with no tenure cap, so the demo's leave would be refused. Nothing was changed.");
         }
     }
+
+    /// <summary>See the decision table on <see cref="CheckLeaveSetupAsync"/>.</summary>
+    private static bool IsUsablePolicy(JsonNode policy) =>
+        policy["accrualFrequency"]!.GetValue<string>() == "Monthly"
+        && policy["daysPerYear"]!.GetValue<decimal>() >= 15
+        && policy["tenureMonthsMin"]!.GetValue<int>() == 0
+        && policy["tenureMonthsMax"] is null;
 
     private async Task CreateLeaveSetupAsync()
     {
@@ -109,8 +132,12 @@ public sealed partial class Seeder
                 Count("leave types");
             }
 
-            var theirs = await AccrualPoliciesForAsync(_leaveTypeIds[code], admin);
-            if (theirs.Count > 0) continue;
+            // CheckLeaveSetupAsync already refused any active policy that would not accrue as the
+            // demo needs. An inactive policy is invisible to the accrual engine, so its mere presence
+            // must never suppress creation of the active one the demo relies on.
+            var hasActivePolicy = (await AccrualPoliciesForAsync(_leaveTypeIds[code], admin))
+                .Any(p => p!["isActive"]!.GetValue<bool>());
+            if (hasActivePolicy) continue;
 
             await api.PostAsync($"Create the {code} accrual policy", "api/leave-accrual-policies", new
             {

@@ -13,14 +13,18 @@ public sealed partial class Seeder
 
     /// <summary>
     /// Refuses before changing anything if the site already holds the demo, or holds leave setup
-    /// the demo's leave plan could not live with.
+    /// the demo's leave plan could not live with. The employee scan narrows the server-side search
+    /// to "DEMO-" (EmployeeRepository.GetPagedAsync matches it against EmployeeNumber, FirstName,
+    /// LastName and WorkEmail via Contains), so the DEMO- check does not depend on paging landing
+    /// every existing employee on some page before an earlier demo's pages are reached. The
+    /// StartsWith check on the results still guards against a false hit inside another field.
     /// </summary>
     private async Task PreflightAsync()
     {
         const string step = "Check for an earlier demo";
         for (var page = 1; ; page++)
         {
-            var result = await api.GetAsync(step, $"api/employees?page={page}&pageSize=100", await AdminAsync());
+            var result = await api.GetAsync(step, $"api/employees?page={page}&pageSize=100&search=DEMO-", await AdminAsync());
             var items = result!["items"]!.AsArray();
             if (items.Any(e => e!["employeeNumber"]!.GetValue<string>().StartsWith("DEMO-", StringComparison.Ordinal)))
                 throw new AlreadySeededException("This site already has DEMO- employees. Nothing was changed.");
