@@ -95,13 +95,39 @@ public class EmailSettingsControllerTests
     }
 
     [Fact]
-    public async Task ATestMessage_GoesToTheSignedInAdministrator()
+    public async Task ATestMessage_GoesToTheAddressGiven()
     {
-        var result = await _sut.SendTest(CancellationToken.None);
+        var result = await _sut.SendTest(new SendTestEmailRequest("someone@example.com"), CancellationToken.None);
 
-        result.Should().BeOfType<OkObjectResult>();
+        result.Should().BeOfType<OkObjectResult>().Which.Value!.Should().BeEquivalentTo(new { sent = true, to = "someone@example.com" });
         _sender.Verify(s => s.SendAsync(It.Is<EmailMessage>(m =>
-            m.ToAddress == "admin@company.test" && m.Subject == "PeopleCore test message"), It.IsAny<CancellationToken>()), Times.Once);
+            m.ToAddress == "someone@example.com" && m.Subject == "PeopleCore test message"), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task WithNoAddressGiven_ATestMessage_GoesToTheSignedInAdministrator()
+    {
+        var withNoBody = await _sut.SendTest(null, CancellationToken.None);
+        withNoBody.Should().BeOfType<OkObjectResult>();
+
+        var withBlankTo = await _sut.SendTest(new SendTestEmailRequest("  "), CancellationToken.None);
+        withBlankTo.Should().BeOfType<OkObjectResult>();
+
+        _sender.Verify(s => s.SendAsync(It.Is<EmailMessage>(m =>
+            m.ToAddress == "admin@company.test" && m.Subject == "PeopleCore test message"), It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Theory]
+    [InlineData("not-an-address")]
+    [InlineData("a@b.com, c@d.com")]
+    [InlineData("Evil <a@b.com>")]
+    [InlineData("a@b.com\r\nBcc: x@y.com")]
+    public async Task AnInvalidAddress_IsRefused(string to)
+    {
+        var result = await _sut.SendTest(new SendTestEmailRequest(to), CancellationToken.None);
+
+        DetailOf(result).Should().Be("Enter a valid email address to send the test to.");
+        _sender.Verify(s => s.SendAsync(It.IsAny<EmailMessage>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -110,7 +136,7 @@ public class EmailSettingsControllerTests
         _sender.Setup(s => s.SendAsync(It.IsAny<EmailMessage>(), It.IsAny<CancellationToken>()))
                .ThrowsAsync(new InvalidOperationException("535 authentication failed"));
 
-        var result = await _sut.SendTest(CancellationToken.None);
+        var result = await _sut.SendTest(null, CancellationToken.None);
 
         DetailOf(result).Should().Contain("535 authentication failed");
     }

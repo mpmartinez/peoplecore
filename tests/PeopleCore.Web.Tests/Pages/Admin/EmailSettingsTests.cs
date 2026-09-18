@@ -105,4 +105,17 @@ public class EmailSettingsTests : BunitContext
 
         cut.Find("[data-email-error]").TextContent.Should().Contain("535 authentication failed");
     }
+
+    [Fact]
+    public void TheTestMessage_GoesToTheAddressTyped()
+    {
+        _api.On(HttpMethod.Get, "/api/email-settings", HttpStatusCode.OK, Configured)
+            .On(HttpMethod.Post, "/api/email-settings/test", HttpStatusCode.OK, """{"sent":true,"to":"someone@example.com"}""");
+
+        var cut = Render<EmailSettings>();
+        cut.Find("#test-recipient").Input("someone@example.com");
+        cut.Find("button[data-send-test]").Click();
+
+        _api.RequestBodies.Last().Should().Contain("someone@example.com");
+    }
 }

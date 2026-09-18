@@ -100,7 +100,9 @@ public class ApiClientEmailTests
     {
         _api.On(HttpMethod.Post, "/api/email-settings/test", HttpStatusCode.OK, """{"sent":true,"to":"admin@company.test"}""");
 
-        (await CreateClient().SendTestEmailAsync()).Should().Be("admin@company.test");
+        (await CreateClient().SendTestEmailAsync("someone@example.com")).Should().Be("admin@company.test");
+
+        BodyField("to").Should().Be("someone@example.com");
     }
 
     [Fact]
