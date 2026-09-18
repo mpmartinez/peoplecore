@@ -1,4 +1,3 @@
-using CsvHelper;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
@@ -7,6 +6,7 @@ using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Employees.Interfaces;
+using PeopleCore.Infrastructure.Attendance;
 
 namespace PeopleCore.API.Controllers.Attendance;
 
@@ -107,6 +107,11 @@ public class AttendanceController : ControllerBase
         [FromBody] IReadOnlyList<AttendancePunchDto> punches, CancellationToken ct = default)
         => Ok(await _service.SyncPunchesAsync(punches, ct));
 
+    /// <summary>
+    /// Imports punches from a CSV (see <see cref="AttendanceCsv"/> for the format). Always 200 with
+    /// the counts: a row the parser refuses is reported in <c>errors</c> and counted once in
+    /// <c>skipped</c>, alongside whatever the punches it did read made of the sync.
+    /// </summary>
     [HttpPost("import")]
     [RequirePermission(Permissions.AttendanceManage)]
     public async Task<IActionResult> Import(IFormFile file, CancellationToken ct = default)
@@ -115,34 +120,12 @@ public class AttendanceController : ControllerBase
             return BadRequest("No file provided.");
 
         using var stream = file.OpenReadStream();
-        var punches = ParseCsv(stream);
-        return Ok(await _service.SyncPunchesAsync(punches, ct));
-    }
+        var parsed = AttendanceCsv.Parse(stream);
+        var synced = await _service.SyncPunchesAsync(parsed.Punches, ct);
 
-    private static List<AttendancePunchDto> ParseCsv(Stream stream)
-    {
-        // CSV format: employee_number,date,time_in,time_out
-        // Example row: EMP-001,2026-03-10,08:02,17:05
-        using var reader = new StreamReader(stream);
-        using var csv = new CsvReader(reader, System.Globalization.CultureInfo.InvariantCulture);
-        var punches = new List<AttendancePunchDto>();
-        csv.Read();
-        csv.ReadHeader();
-        while (csv.Read())
-        {
-            var empNum = csv.GetField("employee_number");
-            var date = csv.GetField("date");
-            var timeIn = csv.GetField("time_in");
-            var timeOut = csv.GetField("time_out");
-
-            if (string.IsNullOrWhiteSpace(empNum) || string.IsNullOrWhiteSpace(date))
-                continue;
-
-            if (!string.IsNullOrWhiteSpace(timeIn))
-                punches.Add(new AttendancePunchDto(empNum, DateTime.Parse($"{date} {timeIn}")));
-            if (!string.IsNullOrWhiteSpace(timeOut))
-                punches.Add(new AttendancePunchDto(empNum, DateTime.Parse($"{date} {timeOut}")));
-        }
-        return punches;
+        return Ok(new AttendanceImportResultDto(
+            synced.Imported,
+            synced.Skipped + parsed.Errors.Count,
+            [.. parsed.Errors, .. synced.Errors]));
     }
 }
