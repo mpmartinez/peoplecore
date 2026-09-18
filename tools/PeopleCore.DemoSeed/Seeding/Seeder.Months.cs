@@ -78,6 +78,11 @@ public sealed partial class Seeder
         var person = plan.PersonNumber(filing.PersonNumber);
         var step = $"{person.EmployeeNumber} files overtime for {filing.Date:yyyy-MM-dd}";
 
+        // Checked before filing, so a plan that can't be approved never leaves a stray request behind.
+        int? approver = filing.Decision != Decision.Approved ? null
+            : person.ManagerNumber ?? throw new SeedException(step, "POST", "api/overtime-requests", 0,
+                $"{person.EmployeeNumber} has no manager to approve their overtime. Nothing was filed for this day.");
+
         var id = IdOf(await api.PostAsync(step, "api/overtime-requests", new
         {
             employeeId = EmployeeId(person.Number), overtimeDate = filing.Date,
@@ -86,14 +91,9 @@ public sealed partial class Seeder
             reason = filing.Reason,
         }, await TokenOfAsync(person.Number)));
 
-        if (filing.Decision == Decision.Approved)
+        if (approver is { } managerNumber)
         {
-            var approveStep = $"{step}: approve";
-            if (person.ManagerNumber is not { } managerNumber)
-                throw new SeedException(approveStep, "PUT", $"api/overtime-requests/{id}/approve", 0,
-                    $"{person.EmployeeNumber} has no manager to approve their overtime.");
-
-            await api.PutAsync(approveStep, $"api/overtime-requests/{id}/approve", null, await TokenOfAsync(managerNumber));
+            await api.PutAsync($"{step}: approve", $"api/overtime-requests/{id}/approve", null, await TokenOfAsync(managerNumber));
             Count("overtime approved");
         }
         else
