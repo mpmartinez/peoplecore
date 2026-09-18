@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FluentAssertions;
 using PeopleCore.DemoSeed.Plan;
 
@@ -68,5 +69,40 @@ public class AttendancePlannerTests
     public void TheSameMonth_IsTheSameEveryTime()
     {
         DemoPlan.Build(20260918, Plan.Today).AttendanceFor(5).Should().Equal(Plan.AttendanceFor(5));
+    }
+
+    [Fact]
+    public void PunchesFor_GivesTwoUtcLabelledPunchesPerRow_InOrder_WithTheWallClockUnchanged()
+    {
+        var rows = new[]
+        {
+            new AttendanceRow("DEMO-0001", new DateOnly(2026, 3, 12), new TimeOnly(8, 7), new TimeOnly(17, 3)),
+            new AttendanceRow("DEMO-0002", new DateOnly(2026, 3, 13), new TimeOnly(7, 55), new TimeOnly(18, 0)),
+        };
+
+        var punches = AttendancePlanner.PunchesFor(rows);
+
+        punches.Should().HaveCount(4);
+        punches.Should().OnlyContain(p => p.PunchTime.Kind == DateTimeKind.Utc);
+
+        punches[0].EmployeeNumber.Should().Be("DEMO-0001");
+        punches[0].PunchTime.Should().Be(new DateTime(2026, 3, 12, 8, 7, 0, DateTimeKind.Utc));
+        punches[1].EmployeeNumber.Should().Be("DEMO-0001");
+        punches[1].PunchTime.Should().Be(new DateTime(2026, 3, 12, 17, 3, 0, DateTimeKind.Utc));
+
+        punches[2].EmployeeNumber.Should().Be("DEMO-0002");
+        punches[2].PunchTime.Should().Be(new DateTime(2026, 3, 13, 7, 55, 0, DateTimeKind.Utc));
+        punches[3].EmployeeNumber.Should().Be("DEMO-0002");
+        punches[3].PunchTime.Should().Be(new DateTime(2026, 3, 13, 18, 0, 0, DateTimeKind.Utc));
+    }
+
+    [Fact]
+    public void PunchesFor_Serializes_WithATrailingZ()
+    {
+        var rows = new[] { new AttendanceRow("DEMO-0001", new DateOnly(2026, 3, 12), new TimeOnly(8, 7), new TimeOnly(17, 3)) };
+
+        var json = JsonSerializer.Serialize(AttendancePlanner.PunchesFor(rows), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        json.Should().Contain("\"punchTime\":\"2026-03-12T08:07:00Z\"");
     }
 }

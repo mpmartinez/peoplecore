@@ -6,6 +6,13 @@ namespace PeopleCore.DemoSeed.Plan;
 public record AttendanceRow(string EmployeeNumber, DateOnly Date, TimeOnly TimeIn, TimeOnly TimeOut);
 
 /// <summary>
+/// One device punch in the shape api/attendance/sync reads. <see cref="PunchTime"/> is Philippine
+/// wall-clock time labelled UTC: the server stores it as-is and Npgsql refuses anything that isn't
+/// UTC-kind, so the kind is set without shifting the clock.
+/// </summary>
+public record AttendancePunch(string EmployeeNumber, DateTime PunchTime);
+
+/// <summary>
 /// One month of clock-ins in the shape api/attendance/import reads. About one day in fifty is an
 /// absence, one in ten a late arrival, one in thirty an early exit. A day of approved leave has no
 /// row. An overtime day clocks out after the overtime ends. Each month has its own random stream,
@@ -53,6 +60,18 @@ public static class AttendancePlanner
         }
 
         return rows;
+    }
+
+    /// <summary>Each row becomes a time-in punch followed by a time-out punch, both UTC-labelled wall clock.</summary>
+    public static IReadOnlyList<AttendancePunch> PunchesFor(IEnumerable<AttendanceRow> rows)
+    {
+        var punches = new List<AttendancePunch>();
+        foreach (var row in rows)
+        {
+            punches.Add(new AttendancePunch(row.EmployeeNumber, DateTime.SpecifyKind(row.Date.ToDateTime(row.TimeIn), DateTimeKind.Utc)));
+            punches.Add(new AttendancePunch(row.EmployeeNumber, DateTime.SpecifyKind(row.Date.ToDateTime(row.TimeOut), DateTimeKind.Utc)));
+        }
+        return punches;
     }
 
     public static string ToCsv(IEnumerable<AttendanceRow> rows)

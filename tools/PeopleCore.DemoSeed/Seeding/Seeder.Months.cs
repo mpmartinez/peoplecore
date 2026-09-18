@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+using PeopleCore.DemoSeed.Api;
 using PeopleCore.DemoSeed.Plan;
 
 namespace PeopleCore.DemoSeed.Seeding;
@@ -28,9 +30,12 @@ public sealed partial class Seeder
         var rows = plan.AttendanceFor(month);
         if (rows.Count > 0)
         {
-            await api.PostCsvAsync($"Import {month:00}/2026 attendance", "api/attendance/import",
-                AttendancePlanner.ToCsv(rows), await AdminAsync());
-            Count("attendance days", rows.Count);
+            var monthStart = new DateOnly(2026, month, 1);
+            var monthEnd = monthStart.AddMonths(1).AddDays(-1);
+            var midpoint = new DateOnly(2026, month, 15);
+
+            await SyncAttendanceAsync(rows.Where(r => r.Date <= midpoint).ToList(), monthStart, midpoint);
+            await SyncAttendanceAsync(rows.Where(r => r.Date > midpoint).ToList(), midpoint.AddDays(1), monthEnd);
         }
 
         foreach (var period in plan.PayPeriods.Where(p => p.End.Month == month))
@@ -76,20 +81,51 @@ public sealed partial class Seeder
         var id = IdOf(await api.PostAsync(step, "api/overtime-requests", new
         {
             employeeId = EmployeeId(person.Number), overtimeDate = filing.Date,
-            startTime = filing.Date.ToDateTime(filing.Start), endTime = filing.Date.ToDateTime(filing.End),
+            startTime = DateTime.SpecifyKind(filing.Date.ToDateTime(filing.Start), DateTimeKind.Utc),
+            endTime = DateTime.SpecifyKind(filing.Date.ToDateTime(filing.End), DateTimeKind.Utc),
             reason = filing.Reason,
         }, await TokenOfAsync(person.Number)));
 
         if (filing.Decision == Decision.Approved)
         {
-            await api.PutAsync($"{step}: approve", $"api/overtime-requests/{id}/approve", null,
-                await TokenOfAsync(person.ManagerNumber!.Value));
+            var approveStep = $"{step}: approve";
+            if (person.ManagerNumber is not { } managerNumber)
+                throw new SeedException(approveStep, "PUT", $"api/overtime-requests/{id}/approve", 0,
+                    $"{person.EmployeeNumber} has no manager to approve their overtime.");
+
+            await api.PutAsync(approveStep, $"api/overtime-requests/{id}/approve", null, await TokenOfAsync(managerNumber));
             Count("overtime approved");
         }
         else
         {
             Count("overtime pending");
         }
+    }
+
+    /// <summary>
+    /// Sends one half-month of punches through api/attendance/sync (admin token; the admin holds
+    /// attendance.device-sync). A skip or an error stops the run: a silently imported gap would
+    /// otherwise lead to payroll that is marked paid with false absences.
+    /// </summary>
+    private async Task SyncAttendanceAsync(IReadOnlyList<AttendanceRow> rows, DateOnly start, DateOnly end)
+    {
+        if (rows.Count == 0) return;
+
+        var step = $"Attendance {start:yyyy-MM-dd} to {end:yyyy-MM-dd}";
+        var result = await api.PostAsync(step, "api/attendance/sync", AttendancePlanner.PunchesFor(rows), await AdminAsync());
+
+        var imported = result?["imported"]?.GetValue<int>() ?? 0;
+        var skipped = result?["skipped"]?.GetValue<int>() ?? 0;
+        var errors = (result?["errors"] as JsonArray)?.Select(e => e?.ToString() ?? "").ToList() ?? [];
+
+        if (skipped > 0 || errors.Count > 0)
+        {
+            var detail = errors.Count > 0 ? string.Join(" | ", errors.Take(3)) : "no error detail returned";
+            throw new SeedException(step, "POST", "api/attendance/sync", 200,
+                $"{imported} imported, {skipped} skipped: {detail}");
+        }
+
+        Count("attendance punches", imported);
     }
 
     private async Task RunPayrollAsync(PayPeriod period)
