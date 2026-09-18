@@ -1,6 +1,5 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -23,14 +22,6 @@ public sealed class ApiClient(HttpClient http)
 
     public Task<JsonNode?> PutAsync(string step, string path, object? body, string token) =>
         SendAsync(step, HttpMethod.Put, path, body is null ? null : JsonContent.Create(body, options: Json), token);
-
-    public Task<JsonNode?> PostCsvAsync(string step, string path, string csv, string token)
-    {
-        var file = new ByteArrayContent(Encoding.UTF8.GetBytes(csv));
-        file.Headers.ContentType = new MediaTypeHeaderValue("text/csv");
-        var form = new MultipartFormDataContent { { file, "file", "attendance.csv" } };
-        return SendAsync(step, HttpMethod.Post, path, form, token);
-    }
 
     public async Task<string> SignInAsync(string email, string password)
     {

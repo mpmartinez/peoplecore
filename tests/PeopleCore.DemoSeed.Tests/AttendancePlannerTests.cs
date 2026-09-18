@@ -54,18 +54,6 @@ public class AttendancePlannerTests
     }
 
     [Fact]
-    public void TheCsv_HasTheImportHeader_AndOneLinePerRow()
-    {
-        var rows = Plan.AttendanceFor(1).Take(2).ToList();
-
-        var csv = AttendancePlanner.ToCsv(rows).Split('\n', StringSplitOptions.RemoveEmptyEntries);
-
-        csv[0].Should().Be("employee_number,date,time_in,time_out");
-        csv[1].Should().MatchRegex(@"^DEMO-\d{4},2026-01-\d{2},\d{2}:\d{2},\d{2}:\d{2}$");
-        csv.Should().HaveCount(3);
-    }
-
-    [Fact]
     public void TheSameMonth_IsTheSameEveryTime()
     {
         DemoPlan.Build(20260918, Plan.Today).AttendanceFor(5).Should().Equal(Plan.AttendanceFor(5));

@@ -1,6 +1,3 @@
-using System.Globalization;
-using System.Text;
-
 namespace PeopleCore.DemoSeed.Plan;
 
 public record AttendanceRow(string EmployeeNumber, DateOnly Date, TimeOnly TimeIn, TimeOnly TimeOut);
@@ -13,7 +10,8 @@ public record AttendanceRow(string EmployeeNumber, DateOnly Date, TimeOnly TimeI
 public record AttendancePunch(string EmployeeNumber, DateTime PunchTime);
 
 /// <summary>
-/// One month of clock-ins in the shape api/attendance/import reads. About one day in fifty is an
+/// One month of clock-ins, each a time-in and a time-out that <see cref="PunchesFor"/> turns into
+/// the punches api/attendance/sync reads. About one day in fifty is an
 /// absence, one in ten a late arrival, one in thirty an early exit. A day of approved leave has no
 /// row. An overtime day clocks out after the overtime ends. Each month has its own random stream,
 /// so building a month never depends on having built another.
@@ -72,16 +70,5 @@ public static class AttendancePlanner
             punches.Add(new AttendancePunch(row.EmployeeNumber, DateTime.SpecifyKind(row.Date.ToDateTime(row.TimeOut), DateTimeKind.Utc)));
         }
         return punches;
-    }
-
-    public static string ToCsv(IEnumerable<AttendanceRow> rows)
-    {
-        var csv = new StringBuilder("employee_number,date,time_in,time_out\n");
-        foreach (var row in rows)
-            csv.Append(row.EmployeeNumber).Append(',')
-               .Append(row.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)).Append(',')
-               .Append(row.TimeIn.ToString("HH:mm", CultureInfo.InvariantCulture)).Append(',')
-               .Append(row.TimeOut.ToString("HH:mm", CultureInfo.InvariantCulture)).Append('\n');
-        return csv.ToString();
     }
 }

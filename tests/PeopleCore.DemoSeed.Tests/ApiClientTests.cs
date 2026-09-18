@@ -89,17 +89,6 @@ public class ApiClientTests
     }
 
     [Fact]
-    public async Task ACsvUpload_IsAMultipartFileNamedFile()
-    {
-        var (client, handler) = Client(HttpStatusCode.OK, "{}");
-
-        await client.PostCsvAsync("Import", "api/attendance/import", "employee_number,date,time_in,time_out\n", "t");
-
-        handler.Last!.Content!.Headers.ContentType!.MediaType.Should().Be("multipart/form-data");
-        handler.LastBody.Should().Contain("name=file").And.Contain("filename=attendance.csv");
-    }
-
-    [Fact]
     public void GeneratedPasswords_MeetThePolicy_AndDiffer()
     {
         var a = Logins.NewPassword();
