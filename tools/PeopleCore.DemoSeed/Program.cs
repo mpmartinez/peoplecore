@@ -44,7 +44,7 @@ try
     Console.WriteLine("  They set their own password when they first sign in.");
     return 0;
 }
-catch (AlreadySeededException e)
+catch (PreflightRefusedException e)
 {
     Console.Error.WriteLine(e.Message);
     return 2;

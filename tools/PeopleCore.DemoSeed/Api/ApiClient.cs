@@ -23,12 +23,20 @@ public sealed class ApiClient(HttpClient http)
     public Task<JsonNode?> PutAsync(string step, string path, object? body, string token) =>
         SendAsync(step, HttpMethod.Put, path, body is null ? null : JsonContent.Create(body, options: Json), token);
 
-    public async Task<string> SignInAsync(string email, string password)
+    /// <summary>
+    /// Signs in and returns the token with the roles and must-change-password flag the login response
+    /// carries (AuthController's AuthTokenResponse), so the caller can check who it is signed in as.
+    /// </summary>
+    public async Task<SignIn> SignInAsync(string email, string password)
     {
-        var node = await SendAsync($"Sign in as {email}", HttpMethod.Post, "api/auth/login",
+        var step = $"Sign in as {email}";
+        var node = await SendAsync(step, HttpMethod.Post, "api/auth/login",
             JsonContent.Create(new { email, password }, options: Json), token: null);
-        return node?["token"]?.GetValue<string>()
-            ?? throw new SeedException($"Sign in as {email}", "POST", "api/auth/login", 200, "No token in the response.");
+        var token = StringValue(node?["token"])
+            ?? throw new SeedException(step, "POST", "api/auth/login", 200, "No token in the response.");
+        var roles = (node?["roles"] as JsonArray)?.Select(StringValue).OfType<string>().ToList() ?? [];
+        var mustChange = node?["mustChangePassword"] is JsonValue flag && flag.TryGetValue<bool>(out var b) && b;
+        return new SignIn(token, roles, mustChange);
     }
 
     private async Task<JsonNode?> SendAsync(string step, HttpMethod method, string path, HttpContent? content, string? token)

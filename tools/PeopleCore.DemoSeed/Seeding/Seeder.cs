@@ -25,10 +25,10 @@ public sealed partial class Seeder(ApiClient api, DemoPlan plan, TextWriter log)
 
     public async Task<SeedResult> RunAsync(string adminEmail, string adminPassword)
     {
-        await _logins.AddAdminAsync(adminEmail, adminPassword);
-        Say("Signed in as the administrator.");
+        var signIn = await _logins.AddAdminAsync(adminEmail, adminPassword);
+        Say("Signed in.");
 
-        await PreflightAsync();
+        await PreflightAsync(signIn);
         await CreateOrganizationAsync();
         await CreateEmployeesAsync();
         await CreateHolidaysAndScheduleAsync();

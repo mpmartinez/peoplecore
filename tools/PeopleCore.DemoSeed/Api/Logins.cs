@@ -20,8 +20,13 @@ public sealed class Logins(ApiClient api)
 
     private readonly Dictionary<int, Session> _sessions = new();
 
-    public async Task AddAdminAsync(string email, string password) =>
-        _sessions[Admin] = new Session(email, password, null, await api.SignInAsync(email, password), DateTimeOffset.UtcNow);
+    /// <summary>Signs the administrator in, and returns the sign-in so the caller can check its roles.</summary>
+    public async Task<SignIn> AddAdminAsync(string email, string password)
+    {
+        var signIn = await api.SignInAsync(email, password);
+        _sessions[Admin] = new Session(email, password, null, signIn.Token, DateTimeOffset.UtcNow);
+        return signIn;
+    }
 
     public async Task CreateAsync(int personNumber, Guid employeeId, string email, string firstName, string lastName, string role)
     {
@@ -36,7 +41,7 @@ public sealed class Logins(ApiClient api)
         var password = NewPassword();
 
         // A new account must replace its temporary password before it can do anything else.
-        var temporaryToken = await api.SignInAsync(email, temporary);
+        var temporaryToken = (await api.SignInAsync(email, temporary)).Token;
         var session = await api.PostAsync($"First password change for DEMO-{personNumber:0000}", "api/auth/change-password",
             new { currentPassword = temporary, newPassword = password }, temporaryToken);
 
@@ -48,7 +53,7 @@ public sealed class Logins(ApiClient api)
         var session = _sessions[key];
         if (DateTimeOffset.UtcNow - session.IssuedAt < Refresh) return session.Token;
 
-        var token = await api.SignInAsync(session.Email, session.Password);
+        var token = (await api.SignInAsync(session.Email, session.Password)).Token;
         _sessions[key] = session with { Token = token, IssuedAt = DateTimeOffset.UtcNow };
         return token;
     }

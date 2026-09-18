@@ -12,15 +12,19 @@ public sealed partial class Seeder
     ];
 
     /// <summary>
-    /// Refuses before changing anything if the site already holds the demo, or holds leave setup
+    /// Refuses before changing anything if the account is not an Admin with its own password (checked
+    /// first, and without a request), if the site already holds the demo, or holds leave setup
     /// the demo's leave plan could not live with. The employee scan narrows the server-side search
     /// to "DEMO-" (EmployeeRepository.GetPagedAsync matches it against EmployeeNumber, FirstName,
     /// LastName and WorkEmail via Contains), so the DEMO- check does not depend on paging landing
     /// every existing employee on some page before an earlier demo's pages are reached. The
     /// StartsWith check on the results still guards against a false hit inside another field.
     /// </summary>
-    private async Task PreflightAsync()
+    private async Task PreflightAsync(SignIn signIn)
     {
+        if (Preflight.AdminProblem(signIn) is { } notAdmin)
+            throw new PreflightRefusedException($"{notAdmin} Nothing was changed.");
+
         const string step = "Check for an earlier demo";
         for (var page = 1; ; page++)
         {

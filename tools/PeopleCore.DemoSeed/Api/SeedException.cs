@@ -11,5 +11,8 @@ public sealed class SeedException(string step, string method, string path, int s
     public string ApiMessage { get; } = apiMessage;
 }
 
+/// <summary>A preflight check refused the site or the account, before anything was written. Nothing was changed.</summary>
+public class PreflightRefusedException(string message) : Exception(message);
+
 /// <summary>The site already holds the demo company. Nothing was changed.</summary>
-public sealed class AlreadySeededException(string message) : Exception(message);
+public sealed class AlreadySeededException(string message) : PreflightRefusedException(message);

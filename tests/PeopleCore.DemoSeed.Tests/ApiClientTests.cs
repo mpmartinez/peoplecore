@@ -89,6 +89,19 @@ public class ApiClientTests
     }
 
     [Fact]
+    public async Task SigningIn_ReturnsTheToken_TheRoles_AndWhetherThePasswordMustChange()
+    {
+        var (client, _) = Client(HttpStatusCode.OK,
+            """{"token":"tok","email":"a@b.test","roles":["Employee","HRManager"],"mustChangePassword":true}""");
+
+        var signIn = await client.SignInAsync("a@b.test", "pw");
+
+        signIn.Token.Should().Be("tok");
+        signIn.Roles.Should().Equal("Employee", "HRManager");
+        signIn.MustChangePassword.Should().BeTrue();
+    }
+
+    [Fact]
     public void GeneratedPasswords_MeetThePolicy_AndDiffer()
     {
         var a = Logins.NewPassword();
