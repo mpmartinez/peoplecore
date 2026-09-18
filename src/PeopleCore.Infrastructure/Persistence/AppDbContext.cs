@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+﻿using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Domain.Entities;
@@ -10,11 +11,12 @@ using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Entities.Performance;
 using PeopleCore.Domain.Entities.Recruitment;
 using PeopleCore.Domain.Entities.Scheduling;
+using PeopleCore.Domain.Entities.System;
 using PeopleCore.Infrastructure.Identity;
 
 namespace PeopleCore.Infrastructure.Persistence;
 
-public class AppDbContext : IdentityDbContext<ApplicationUser, ApplicationRole, string>
+public class AppDbContext : IdentityDbContext<ApplicationUser, ApplicationRole, string>, IDataProtectionKeyContext
 {
     private readonly ICurrentUserService? _currentUser;
 
@@ -75,6 +77,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, ApplicationRole, 
     public DbSet<RotatingPattern> RotatingPatterns => Set<RotatingPattern>();
     public DbSet<RotatingPatternSlot> RotatingPatternSlots => Set<RotatingPatternSlot>();
     public DbSet<EmployeeShiftAssignment> ShiftAssignments => Set<EmployeeShiftAssignment>();
+
+    /// <summary>The Data Protection key ring. In the database so reset links survive a restart.</summary>
+    public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
+
+    public DbSet<EmailSettings> EmailSettings => Set<EmailSettings>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {

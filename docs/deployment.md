@@ -91,6 +91,7 @@ Environment tab from `.env.example`:
 |---|---|
 | `PEOPLECORE_DB_CONNECTION` | Step 1 |
 | `JWT_KEY` | `openssl rand -base64 32` |
+| `DATA_PROTECTION_KEY` | `openssl rand -base64 32`; a different value from `JWT_KEY`, and kept: see Troubleshooting |
 | `SEED_ADMIN_EMAIL` | the address that should own the first admin account |
 | `SEED_ADMIN_PASSWORD` | chosen now; the API refuses to start without it on a fresh database |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`, `R2_BUCKET_NAME`, `R2_RESUMES_BUCKET_NAME` | Step 2 |
@@ -124,6 +125,16 @@ redeploy.
 
 **The API container crash-loops with `InvalidOperationException` naming `Jwt:Key`.**
 `JWT_KEY` is unset or shorter than 32 bytes.
+
+**The API container crash-loops with `InvalidOperationException` naming `DataProtection:KeyEncryptionKey`.**
+`DATA_PROTECTION_KEY` is unset or shorter than 32 bytes. It encrypts the data protection key
+ring, which lives in the database and protects password reset links and the stored SMTP
+password; without it a copy of the database would be enough to forge a reset link.
+
+Set it once and keep it. Changing the value later makes every outstanding reset link and the
+stored SMTP password unreadable. The API still starts and creates a new key, but password
+resets stop being sent until an administrator re-enters the SMTP password on the Email
+settings page.
 
 **The log shows `MigrateAsync failed (connection pooler limitation)`.**
 The pooler interrupted the migration lock. If the database was already migrated, this is

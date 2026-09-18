@@ -42,7 +42,7 @@ public class MobileFooterNavTests : BunitContext
     {
         var links = MoreLinks(WithMoreOpen(RenderAs("Admin")));
 
-        links.Should().Contain(["my-payslips", "employees", "leave-approvals", "payroll-runs", "job-postings", "admin/users", "admin/roles"]);
+        links.Should().Contain(["my-payslips", "employees", "leave-approvals", "payroll-runs", "job-postings", "admin/users", "admin/roles", "admin/email"]);
         links.Should().OnlyHaveUniqueItems();
     }
 

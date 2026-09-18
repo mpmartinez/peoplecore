@@ -69,10 +69,11 @@
         [
             new("/analytics", "Analytics", "bi-graph-up")
         ]),
-        new("Administration", [Permissions.UsersManage, Permissions.RolesManage],
+        new("Administration", [Permissions.UsersManage, Permissions.RolesManage, Permissions.SettingsManage],
         [
             new("/admin/users", "Users", "bi-person-gear", AnyOf: [Permissions.UsersManage]),
-            new("/admin/roles", "Roles", "bi-shield-lock", AnyOf: [Permissions.RolesManage])
+            new("/admin/roles", "Roles", "bi-shield-lock", AnyOf: [Permissions.RolesManage]),
+            new("/admin/email", "Email", "bi-envelope", AnyOf: [Permissions.SettingsManage])
         ])
     ];
 

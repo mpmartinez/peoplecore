@@ -21,6 +21,7 @@ services:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__Default: ${PEOPLECORE_DB_CONNECTION}
       Jwt__Key: ${JWT_KEY}
+      DataProtection__KeyEncryptionKey: ${DATA_PROTECTION_KEY}
       Jwt__Issuer: peoplecore-api
       Jwt__Audience: peoplecore-web
       AllowedOrigins: https://peoplecore.m2netsolutions.com

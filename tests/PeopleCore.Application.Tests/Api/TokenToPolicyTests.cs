@@ -4,13 +4,16 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using Moq;
+using PeopleCore.API.Accounts;
 using PeopleCore.API.Authorization;
 using PeopleCore.API.Controllers.Auth;
 using PeopleCore.API.Extensions;
 using PeopleCore.Application.Common.Authorization;
+using PeopleCore.Infrastructure.Email;
 using PeopleCore.Infrastructure.Identity;
 using Xunit;
 using SignInResult = Microsoft.AspNetCore.Identity.SignInResult;
@@ -44,7 +47,9 @@ public class TokenToPolicyTests
         permissionReader.Setup(p => p.GetPermissionsAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
                         .ReturnsAsync(permissions);
 
-        var sut = new AuthController(users.Object, signIn.Object, TestJwtConfiguration.Create(), permissionReader.Object);
+        var sut = new AuthController(users.Object, signIn.Object, TestJwtConfiguration.Create(), permissionReader.Object,
+            Mock.Of<IEmailSender>(), Mock.Of<IEmailSettingsStore>(), Mock.Of<IResetRequestThrottle>(),
+            NullLogger<AuthController>.Instance);
 
         var result = await sut.Login(new LoginRequest(Email, Password));
         var session = result.Should().BeOfType<Microsoft.AspNetCore.Mvc.OkObjectResult>()

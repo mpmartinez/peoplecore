@@ -98,6 +98,10 @@ public class PermissionEquivalenceTests
         ["RolesController.Create"] = [Permissions.RolesManage],
         ["RolesController.Update"] = [Permissions.RolesManage],
         ["RolesController.Delete"] = [Permissions.RolesManage],
+
+        ["EmailSettingsController.Get"] = [Permissions.SettingsManage],
+        ["EmailSettingsController.Save"] = [Permissions.SettingsManage],
+        ["EmailSettingsController.SendTest"] = [Permissions.SettingsManage],
     };
 
     private static IEnumerable<(Type Controller, MethodInfo Action)> Endpoints() =>

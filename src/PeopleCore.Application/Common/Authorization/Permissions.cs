@@ -35,6 +35,7 @@ public static class Permissions
     public const string AnalyticsExecutive = "analytics.executive";
     public const string UsersManage = "users.manage";
     public const string RolesManage = "roles.manage";
+    public const string SettingsManage = "settings.manage";
 
     public static readonly IReadOnlyList<PermissionDefinition> All =
     [
@@ -74,6 +75,8 @@ public static class Permissions
             "Create sign-in accounts, change their roles and employee links, deactivate them and reset passwords."),
         new(RolesManage, "Administration", "Manage roles",
             "Create, rename, edit and delete roles."),
+        new(SettingsManage, "Administration", "Manage system settings",
+            "The email account the app sends from, and whether a forgotten password can be reset by email."),
     ];
 
     public static readonly IReadOnlyList<string> AllKeys = All.Select(p => p.Key).ToList();

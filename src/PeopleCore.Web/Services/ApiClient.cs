@@ -46,6 +46,53 @@ public class ApiClient
         return await response.Content.ReadFromJsonAsync<LoginResponse>(JsonOptions);
     }
 
+    /// <summary>
+    /// Whether the login page should offer a password reset. A failure counts as "no": better a
+    /// missing link than one that leads nowhere.
+    /// </summary>
+    public async Task<bool> IsPasswordResetAvailableAsync()
+    {
+        try
+        {
+            var response = await _http.GetAsync("api/auth/password-reset-available");
+            if (!response.IsSuccessStatusCode) return false;
+            return (await response.Content.ReadFromJsonAsync<ResetAvailability>(JsonOptions))?.Available ?? false;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Asks for a reset link. The answer is the same whether or not the address has an account.</summary>
+    public async Task ForgotPasswordAsync(string email)
+        => await EnsureSuccessAsync(await _http.PostAsJsonAsync("api/auth/forgot-password", new { email }));
+
+    /// <summary>Sets a new password from a link. A stale link throws with the API's own sentence.</summary>
+    public async Task ResetPasswordAsync(string email, string token, string newPassword)
+        => await EnsureSuccessAsync(await _http.PostAsJsonAsync("api/auth/reset-password", new { email, token, newPassword }));
+
+    // Email settings
+    public async Task<EmailSettingsDto?> GetEmailSettingsAsync()
+    {
+        var response = await _http.GetAsync("api/email-settings");
+        if (response.StatusCode == HttpStatusCode.NoContent) return null;
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<EmailSettingsDto>(JsonOptions);
+    }
+
+    public Task<EmailSettingsDto?> SaveEmailSettingsAsync(SaveEmailSettingsRequest request)
+        => SendJsonAsync<EmailSettingsDto>(HttpMethod.Put, "api/email-settings", request);
+
+    /// <summary>Sends a test message to the signed-in administrator, returning where it went.</summary>
+    public async Task<string> SendTestEmailAsync()
+    {
+        var response = await _http.PostAsync("api/email-settings/test", content: null);
+        await EnsureSuccessAsync(response);
+        var sent = await response.Content.ReadFromJsonAsync<TestEmailResult>(JsonOptions);
+        return sent?.To ?? string.Empty;
+    }
+
     // Accounts (Admin and HR)
     public async Task<PagedResult<UserAccountDto>?> GetUserAccountsAsync(int page = 1, int pageSize = 20, string? search = null)
     {
@@ -536,6 +583,12 @@ public record PermissionDto(string Key, string Group, string Label, string Descr
 public record SaveRoleRequest(string Name, string? Description, IReadOnlyList<string> Permissions);
 public record TemporaryPasswordDto(string TemporaryPassword);
 public record UserProfileDto(string? FirstName, string? LastName, string? Email);
+public record EmailSettingsDto(string Host, int Port, bool UseStartTls, string? Username, bool HasPassword,
+    string FromAddress, string FromName, string AppBaseUrl, DateTime? UpdatedAt);
+public record SaveEmailSettingsRequest(string Host, int Port, bool UseStartTls, string? Username, string? Password,
+    string FromAddress, string FromName, string AppBaseUrl);
+internal record ResetAvailability(bool Available);
+internal record TestEmailResult(bool Sent, string? To);
 public record PagedResult<T>(IReadOnlyList<T> Items, int TotalCount, int Page, int PageSize, int TotalPages);
 public record EmployeeListDto(Guid Id, string EmployeeNumber, string FirstName, string LastName, string FullName, string WorkEmail, string? DepartmentName, string? PositionTitle, string EmploymentStatus, bool IsActive);
 public record LeaveBalanceDto(Guid Id, Guid EmployeeId, string EmployeeName, Guid LeaveTypeId, string LeaveTypeName, int Year, decimal TotalDays, decimal UsedDays, decimal CarriedOverDays, decimal RemainingDays);

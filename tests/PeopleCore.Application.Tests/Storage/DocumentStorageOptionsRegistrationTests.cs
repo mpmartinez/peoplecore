@@ -23,6 +23,7 @@ public class DocumentStorageOptionsRegistrationTests
         {
             ["ConnectionStrings:Default"] = "Host=localhost;Database=peoplecore;Username=postgres;Password=postgres",
             ["Jwt:Key"] = new string('k', 32),
+            ["DataProtection:KeyEncryptionKey"] = new string('d', 32),
             ["Storage:Provider"] = "Minio",
             ["Minio:Endpoint"] = "localhost:9000",
             ["Minio:AccessKey"] = "minioadmin",
@@ -66,6 +67,7 @@ public class DocumentStorageOptionsRegistrationTests
         {
             ["ConnectionStrings:Default"] = "Host=localhost;Database=peoplecore;Username=postgres;Password=postgres",
             ["Jwt:Key"] = new string('k', 32),
+            ["DataProtection:KeyEncryptionKey"] = new string('d', 32),
             ["Storage:Provider"] = provider,
             ["Minio:Endpoint"] = "localhost:9000",
             ["Minio:AccessKey"] = "minioadmin",

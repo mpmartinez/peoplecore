@@ -8,6 +8,7 @@ using Microsoft.IdentityModel.Tokens;
 using PeopleCore.API.Accounts;
 using PeopleCore.API.Extensions;
 using PeopleCore.Application.Common.Authorization;
+using PeopleCore.Infrastructure.Email;
 using PeopleCore.Infrastructure.Identity;
 
 namespace PeopleCore.API.Controllers.Auth;
@@ -20,17 +21,29 @@ public class AuthController : ControllerBase
     private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly IConfiguration _configuration;
     private readonly IRolePermissionReader _permissions;
+    private readonly IEmailSender _email;
+    private readonly IEmailSettingsStore _mailSettings;
+    private readonly IResetRequestThrottle _throttle;
+    private readonly ILogger<AuthController> _log;
 
     public AuthController(
         UserManager<ApplicationUser> userManager,
         SignInManager<ApplicationUser> signInManager,
         IConfiguration configuration,
-        IRolePermissionReader permissions)
+        IRolePermissionReader permissions,
+        IEmailSender email,
+        IEmailSettingsStore mailSettings,
+        IResetRequestThrottle throttle,
+        ILogger<AuthController> log)
     {
         _userManager = userManager;
         _signInManager = signInManager;
         _configuration = configuration;
         _permissions = permissions;
+        _email = email;
+        _mailSettings = mailSettings;
+        _throttle = throttle;
+        _log = log;
     }
 
     [AllowAnonymous]
@@ -90,6 +103,101 @@ public class AuthController : ControllerBase
         return Ok(await IssueTokenAsync(user));
     }
 
+    // Every outcome answers the same way. An answer that varied - "no such account", "too many
+    // tries" - would turn this endpoint into a way to find out which addresses are real.
+    private const string ResetRequested = "If that address has an account, we've sent a link to reset the password.";
+
+    [AllowAnonymous]
+    [HttpPost("forgot-password")]
+    public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
+    {
+        var email = (request.Email ?? string.Empty).Trim();
+        var caller = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+        if (email.Length == 0 || !_throttle.TryRequest(email, caller))
+        {
+            _log.LogInformation("Password reset not sent: empty address or rate limit reached.");
+            return Ok(new { message = ResetRequested });
+        }
+
+        var user = await _userManager.FindByEmailAsync(email);
+        if (user is null || !user.IsActive)
+        {
+            _log.LogInformation("Password reset not sent: no active account for the address given.");
+            return Ok(new { message = ResetRequested });
+        }
+
+        // From here on nothing is tied to the request's own lifetime: a closed tab would otherwise
+        // lose a real user's link. The SMTP client's own timeout still bounds how long this can take.
+        var account = await _mailSettings.GetAccountAsync(CancellationToken.None);
+        if (account is null)
+        {
+            _log.LogWarning("Password reset not sent for {UserId}: no email account is configured.", user.Id);
+            return Ok(new { message = ResetRequested });
+        }
+
+        var token = await _userManager.GeneratePasswordResetTokenAsync(user);
+        var link = $"{account.AppBaseUrl.TrimEnd('/')}/reset-password" +
+                   $"?email={Uri.EscapeDataString(user.Email!)}&token={Uri.EscapeDataString(token)}";
+
+        try
+        {
+            await _email.SendAsync(PasswordResetMail.For(user.Email!, user.FirstName ?? string.Empty, link), CancellationToken.None);
+            _log.LogInformation("Password reset link sent to {UserId}.", user.Id);
+        }
+        catch (Exception ex)
+        {
+            // The user is told nothing either way; an administrator finds out here.
+            _log.LogError(ex, "Sending the password reset link to {UserId} failed.", user.Id);
+        }
+
+        return Ok(new { message = ResetRequested });
+    }
+
+    [AllowAnonymous]
+    [HttpPost("reset-password")]
+    public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest request)
+    {
+        var user = await _userManager.FindByEmailAsync((request.Email ?? string.Empty).Trim());
+        // An address with no account is answered like a stale link, so a link is not a way to ask
+        // whether an account exists either.
+        if (user is null || !user.IsActive || string.IsNullOrEmpty(request.Token)) return StaleLink();
+
+        var result = await _userManager.ResetPasswordAsync(user, request.Token, request.NewPassword ?? string.Empty);
+        if (!result.Succeeded)
+        {
+            if (result.Errors.Any(e => e.Code == "InvalidToken")) return StaleLink();
+            return PasswordProblem(string.Join(" ", result.Errors.Select(e => e.Description)));
+        }
+
+        // ResetPasswordAsync has replaced the security stamp, so every token issued before now is
+        // dead. What is left is the state an administrator's reset also clears, set together and
+        // saved once. The password has already changed, so a failed save is logged, not reported.
+        user.LockoutEnd = null;
+        user.AccessFailedCount = 0;
+        user.MustChangePassword = false;
+        var saved = await _userManager.UpdateAsync(user);
+        if (!saved.Succeeded)
+            _log.LogWarning("Password reset for {UserId} succeeded, but clearing its lockout and flags did not save.", user.Id);
+
+        _log.LogInformation("Password reset completed for {UserId}.", user.Id);
+        return Ok(new { message = "Your password has been changed. Sign in with your new password." });
+    }
+
+    /// <summary>Lets the login page hide the link rather than send people to a page that cannot deliver.</summary>
+    [AllowAnonymous]
+    [HttpGet("password-reset-available")]
+    public async Task<IActionResult> PasswordResetAvailable(CancellationToken ct) =>
+        Ok(new { available = await _mailSettings.GetAccountAsync(ct) is not null });
+
+    private BadRequestObjectResult StaleLink() =>
+        BadRequest(new ProblemDetails
+        {
+            Title = "Link no longer valid",
+            Detail = "This link has expired or has already been used. Ask for a new one.",
+            Status = StatusCodes.Status400BadRequest
+        });
+
     private BadRequestObjectResult PasswordProblem(string detail) =>
         BadRequest(new ProblemDetails { Title = "Password not changed", Detail = detail, Status = StatusCodes.Status400BadRequest });
 
@@ -135,5 +243,9 @@ public class AuthController : ControllerBase
 public record LoginRequest(string Email, string Password);
 
 public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
+
+public record ForgotPasswordRequest(string Email);
+
+public record ResetPasswordRequest(string Email, string Token, string NewPassword);
 
 public record AuthTokenResponse(string Token, string? Email, IReadOnlyList<string> Roles, bool MustChangePassword);

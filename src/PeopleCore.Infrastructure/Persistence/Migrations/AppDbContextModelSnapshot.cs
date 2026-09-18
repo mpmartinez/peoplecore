@@ -17,10 +17,33 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.3")
+                .HasAnnotation("ProductVersion", "10.0.12")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("Microsoft.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionKey", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("FriendlyName")
+                        .HasColumnType("text")
+                        .HasColumnName("friendly_name");
+
+                    b.Property<string>("Xml")
+                        .HasColumnType("text")
+                        .HasColumnName("xml");
+
+                    b.HasKey("Id")
+                        .HasName("pk_data_protection_keys");
+
+                    b.ToTable("data_protection_keys", (string)null);
+                });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
                 {
@@ -2479,6 +2502,67 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .HasName("pk_shift_templates");
 
                     b.ToTable("shift_templates", (string)null);
+                });
+
+            modelBuilder.Entity("PeopleCore.Domain.Entities.System.EmailSettings", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AppBaseUrl")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("app_base_url");
+
+                    b.Property<string>("FromAddress")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("from_address");
+
+                    b.Property<string>("FromName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("from_name");
+
+                    b.Property<string>("Host")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("host");
+
+                    b.Property<string>("PasswordProtected")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("password_protected");
+
+                    b.Property<int>("Port")
+                        .HasColumnType("integer")
+                        .HasColumnName("port");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<bool>("UseStartTls")
+                        .HasColumnType("boolean")
+                        .HasColumnName("use_start_tls");
+
+                    b.Property<string>("Username")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("username");
+
+                    b.HasKey("Id")
+                        .HasName("pk_email_settings");
+
+                    b.ToTable("email_settings", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_email_settings_single_row", "id = 1");
+                        });
                 });
 
             modelBuilder.Entity("PeopleCore.Infrastructure.Identity.ApplicationRole", b =>

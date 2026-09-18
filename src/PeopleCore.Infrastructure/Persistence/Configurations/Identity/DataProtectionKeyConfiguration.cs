@@ -1,0 +1,16 @@
+using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace PeopleCore.Infrastructure.Persistence.Configurations.Identity;
+
+public class DataProtectionKeyConfiguration : IEntityTypeConfiguration<DataProtectionKey>
+{
+    public void Configure(EntityTypeBuilder<DataProtectionKey> builder)
+    {
+        builder.ToTable("data_protection_keys");
+        builder.Property(k => k.Id).HasColumnName("id");
+        builder.Property(k => k.FriendlyName).HasColumnName("friendly_name");
+        builder.Property(k => k.Xml).HasColumnName("xml");
+    }
+}

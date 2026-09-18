@@ -11,6 +11,12 @@
             <p class="text-sm text-muted-foreground text-center mt-1">Sign in to your account</p>
         </CardHeader>
         <CardContent>
+            @if (_resetDone)
+            {
+                <Alert Variant="success" Class="mb-4" data-reset-done>
+                    Your password has been changed. Sign in with your new password.
+                </Alert>
+            }
             @if (_error != null)
             {
                 <Alert Variant="destructive" Class="mb-4">@_error</Alert>
@@ -26,6 +32,12 @@
                                    AutoComplete="current-password"
                                    OnKeyDown="@(async e => { if (e.Key == "Enter") await HandleLogin(); })" />
                 </FormField>
+                @if (_resetAvailable)
+                {
+                    <p class="text-sm text-right -mt-2">
+                        <a class="text-primary hover:underline" href="/forgot-password">Forgot password?</a>
+                    </p>
+                }
                 <Button Variant="primary" Class="w-full" OnClick="HandleLogin" Loading="@_loading">
                     Sign In
                 </Button>
@@ -39,6 +51,18 @@
     private string _password = string.Empty;
     private string? _error;
     private bool _loading;
+    private bool _resetAvailable;
+    private bool _resetDone;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Parsed rather than Contains("reset=1"), so ?reset=10 does not also match.
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(Nav.Uri).Query);
+        _resetDone = query.TryGetValue("reset", out var reset) && reset == "1";
+
+        // No link at all is better than one that leads to a page which cannot send anything.
+        _resetAvailable = await Api.IsPasswordResetAvailableAsync();
+    }
 
     private async Task HandleLogin()
     {
