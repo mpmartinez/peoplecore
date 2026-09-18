@@ -38,14 +38,19 @@ public class Repository<T> : IRepository<T> where T : class
     /// it and everything it reaches as existing rows to be updated.
     /// </para>
     /// <para>
-    /// A tracked entity - the usual case, loaded and edited in the same scope - must not go
-    /// through <c>Update</c>. Every entity gets its Guid key when it is constructed, so to EF a new
-    /// child added to a loaded collection looks exactly like an existing row: <c>Update</c> marks
-    /// it Modified, and so does the <c>DetectChanges</c> that <c>SaveChanges</c> runs. Either way
-    /// the insert is sent as an UPDATE that matches no row and fails with a concurrency error.
-    /// But a child that is in a collection of a tracked entity and is not itself tracked cannot
-    /// be an existing row - loading the collection would have tracked it - so it is marked Added
-    /// here, before <c>DetectChanges</c> gets to guess.
+    /// A tracked entity - the usual case, loaded and edited in the same scope - is saved as it
+    /// stands. Every entity gets its Guid key when it is constructed, so to EF a new child added to
+    /// a loaded collection looks exactly like an existing row: the <c>DetectChanges</c> that
+    /// <c>SaveChanges</c> runs marks it Modified, and the insert goes out as an UPDATE that matches
+    /// no row and fails with a concurrency error. But a child that sits in a collection of a
+    /// tracked entity and is not itself tracked cannot be an existing row - loading the collection
+    /// would have tracked it - so it is marked Added here, before <c>DetectChanges</c> gets to guess.
+    /// </para>
+    /// <para>
+    /// Limits: only one-to-many collections are walked, from the entity down, so a new child hung
+    /// off a reference navigation is not found. And an existing row that was loaded untracked and
+    /// then put into a collection would be inserted again (a duplicate key); nothing loads rows
+    /// untracked today.
     /// </para>
     /// </summary>
     public async Task UpdateAsync(T entity, CancellationToken ct = default)
