@@ -1,6 +1,7 @@
 using PeopleCore.Application.Attendance.DTOs;
 using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Application.Common.DTOs;
+using PeopleCore.Application.Common.Time;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Scheduling.Interfaces;
 using PeopleCore.Domain.Entities.Attendance;
@@ -17,45 +18,60 @@ public class AttendanceService : IAttendanceService
     private readonly IHolidayService _holidayService;
     private readonly IEmployeeRepository _employeeRepo;
     private readonly IShiftService _shiftService;
+    private readonly TimeProvider _clock;
 
     public AttendanceService(
         IAttendanceRepository repo,
         IHolidayService holidayService,
         IEmployeeRepository employeeRepo,
-        IShiftService shiftService)
+        IShiftService shiftService,
+        TimeProvider clock)
     {
         _repo = repo;
         _holidayService = holidayService;
         _employeeRepo = employeeRepo;
         _shiftService = shiftService;
+        _clock = clock;
     }
 
-    public async Task<AttendanceRecordDto> TimeInAsync(TimeInRequest request, CancellationToken ct = default)
-    {
-        var employee = await _employeeRepo.GetByIdAsync(request.EmployeeId, ct)
-            ?? throw new KeyNotFoundException($"Employee {request.EmployeeId} not found.");
+    /// <summary>
+    /// Clocks in at the server's current Philippine time (<see cref="PhilippineTime"/>): the day,
+    /// and lateness against the shift start, are read off that wall clock.
+    /// </summary>
+    public Task<AttendanceRecordDto> TimeInAsync(TimeInRequest request, CancellationToken ct = default)
+        => RecordTimeInAsync(request.EmployeeId, PhilippineTime.Now(_clock), ct);
 
-        var today = DateOnly.FromDateTime(request.TimeIn);
-        var existing = await _repo.GetByEmployeeAndDateAsync(request.EmployeeId, today, ct);
+    /// <summary>Clocks out at the server's current Philippine time, as <see cref="TimeInAsync"/>.</summary>
+    public Task<AttendanceRecordDto> TimeOutAsync(TimeOutRequest request, CancellationToken ct = default)
+        => RecordTimeOutAsync(request.EmployeeId, PhilippineTime.Now(_clock), ct);
+
+    /// <param name="timeIn">Philippine wall-clock time, labelled UTC.</param>
+    private async Task<AttendanceRecordDto> RecordTimeInAsync(Guid employeeId, DateTime timeIn, CancellationToken ct)
+    {
+        var employee = await _employeeRepo.GetByIdAsync(employeeId, ct)
+            ?? throw new KeyNotFoundException($"Employee {employeeId} not found.");
+
+        var today = DateOnly.FromDateTime(timeIn);
+        var existing = await _repo.GetByEmployeeAndDateAsync(employeeId, today, ct);
 
         if (existing?.TimeIn is not null)
             throw new DomainException("Employee has already clocked in today.");
 
         var holidayType = await _holidayService.IsHolidayAsync(today, ct);
-        var schedule = await _shiftService.ResolveShiftForDayAsync(request.EmployeeId, today, ct);
+        var schedule = await _shiftService.ResolveShiftForDayAsync(employeeId, today, ct);
         var shiftStart = schedule?.StartTime ?? DefaultShiftStart;
-        var timeInOnly = TimeOnly.FromDateTime(request.TimeIn);
+        var timeInOnly = TimeOnly.FromDateTime(timeIn);
         var lateMinutes = timeInOnly > shiftStart
             ? (int)(timeInOnly - shiftStart).TotalMinutes
             : 0;
 
         var record = existing ?? new AttendanceRecord
         {
-            EmployeeId = request.EmployeeId,
+            EmployeeId = employeeId,
             AttendanceDate = today
         };
 
-        record.TimeIn = request.TimeIn;
+        record.TimeIn = timeIn;
         record.IsPresent = true;
         record.LateMinutes = lateMinutes;
         record.IsHoliday = holidayType is not null;
@@ -75,20 +91,21 @@ public class AttendanceService : IAttendanceService
         return ToDto(saved, employee.FullName);
     }
 
-    public async Task<AttendanceRecordDto> TimeOutAsync(TimeOutRequest request, CancellationToken ct = default)
+    /// <param name="timeOut">Philippine wall-clock time, labelled UTC.</param>
+    private async Task<AttendanceRecordDto> RecordTimeOutAsync(Guid employeeId, DateTime timeOut, CancellationToken ct)
     {
-        var employee = await _employeeRepo.GetByIdAsync(request.EmployeeId, ct)
-            ?? throw new KeyNotFoundException($"Employee {request.EmployeeId} not found.");
+        var employee = await _employeeRepo.GetByIdAsync(employeeId, ct)
+            ?? throw new KeyNotFoundException($"Employee {employeeId} not found.");
 
-        var today = DateOnly.FromDateTime(request.TimeOut);
-        var record = await _repo.GetByEmployeeAndDateAsync(request.EmployeeId, today, ct);
+        var today = DateOnly.FromDateTime(timeOut);
+        var record = await _repo.GetByEmployeeAndDateAsync(employeeId, today, ct);
 
         if (record?.TimeIn is null)
             throw new DomainException("Employee is not clocked in today.");
 
-        record.TimeOut = request.TimeOut;
-        record.UndertimeMinutes = CalculateUndertimeMinutes(TimeOnly.FromDateTime(request.TimeOut));
-        record.OvertimeMinutes = CalculateOvertimeMinutes(TimeOnly.FromDateTime(request.TimeOut));
+        record.TimeOut = timeOut;
+        record.UndertimeMinutes = CalculateUndertimeMinutes(TimeOnly.FromDateTime(timeOut));
+        record.OvertimeMinutes = CalculateOvertimeMinutes(TimeOnly.FromDateTime(timeOut));
         record.UpdatedAt = DateTime.UtcNow;
 
         await _repo.UpdateAsync(record, ct);
@@ -148,12 +165,12 @@ public class AttendanceService : IAttendanceService
 
                 if (existing is null)
                 {
-                    await TimeInAsync(new TimeInRequest(employee.Id, punch.PunchTime), ct);
+                    await RecordTimeInAsync(employee.Id, punch.PunchTime, ct);
                 }
                 else if (existing.TimeIn is not null && existing.TimeOut is null &&
                          punch.PunchTime > existing.TimeIn)
                 {
-                    await TimeOutAsync(new TimeOutRequest(employee.Id, punch.PunchTime), ct);
+                    await RecordTimeOutAsync(employee.Id, punch.PunchTime, ct);
                 }
                 else
                 {

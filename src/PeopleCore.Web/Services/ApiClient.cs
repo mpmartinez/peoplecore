@@ -191,16 +191,18 @@ public class ApiClient
         return await GetJsonAsync<PagedResult<AttendanceRecordDto>>(query);
     }
 
+    /// <summary>Sends no time: the API stamps the punch with its own clock, in Philippine time.</summary>
     public async Task<AttendanceRecordDto?> TimeInAsync(Guid employeeId)
     {
-        var response = await _http.PostAsJsonAsync("api/attendance/time-in", new { employeeId, timeIn = DateTime.UtcNow });
+        var response = await _http.PostAsJsonAsync("api/attendance/time-in", new { employeeId });
         await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<AttendanceRecordDto>(JsonOptions);
     }
 
+    /// <summary>As <see cref="TimeInAsync"/>.</summary>
     public async Task<AttendanceRecordDto?> TimeOutAsync(Guid employeeId)
     {
-        var response = await _http.PostAsJsonAsync("api/attendance/time-out", new { employeeId, timeOut = DateTime.UtcNow });
+        var response = await _http.PostAsJsonAsync("api/attendance/time-out", new { employeeId });
         await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<AttendanceRecordDto>(JsonOptions);
     }

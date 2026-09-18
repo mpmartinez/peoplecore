@@ -94,6 +94,19 @@ public class MyAttendanceTests : BunitContext
     }
 
     [Fact]
+    public void ClockTimes_AsTheApiSendsThem_ShowTheManilaWallClock_NotShiftedIntoTheBrowsersZone()
+    {
+        // The API stores and returns Philippine wall-clock time labelled UTC: "...T08:07:00Z" is
+        // 08:07 in Manila. Converting it to the browser's zone would show 16:07 in Manila.
+        _recordsJson = Paged(Record(Yesterday, $"{Yesterday}T08:07:00Z", $"{Yesterday}T17:00:00Z", late: 7));
+
+        var cut = RenderAsLinkedEmployee();
+
+        cut.FindAll("tbody td").Select(td => td.TextContent.Trim())
+            .Should().Equal(Yesterday, "08:07", "17:00", "7", "0");
+    }
+
+    [Fact]
     public void NoRecords_ShowsTheEmptyState()
     {
         var cut = RenderAsLinkedEmployee();
@@ -139,7 +152,8 @@ public class MyAttendanceTests : BunitContext
         cut.WaitForAssertion(() => cut.Markup.Should().Contain("Clocked in successfully."));
         var body = PostedBody("/api/attendance/time-in");
         body.GetProperty("employeeId").GetGuid().Should().Be(EmployeeId);
-        body.TryGetProperty("timeIn", out _).Should().BeTrue();
+        // The server stamps the punch with its own clock; the browser's is neither sent nor trusted.
+        body.EnumerateObject().Select(p => p.Name).Should().Equal("employeeId");
 
         IsEnabled(Button(cut, "Time In")).Should().BeFalse();
         IsEnabled(Button(cut, "Time Out")).Should().BeTrue();
@@ -162,7 +176,7 @@ public class MyAttendanceTests : BunitContext
         cut.WaitForAssertion(() => cut.Markup.Should().Contain("Clocked out successfully."));
         var body = PostedBody("/api/attendance/time-out");
         body.GetProperty("employeeId").GetGuid().Should().Be(EmployeeId);
-        body.TryGetProperty("timeOut", out _).Should().BeTrue();
+        body.EnumerateObject().Select(p => p.Name).Should().Equal("employeeId");
         cut.FindAll("tbody td").Select(td => td.TextContent.Trim()).Should().StartWith([Today, "08:00", "17:05"]);
     }
 

@@ -17,8 +17,15 @@ public record AttendanceRecordDto(
     HolidayType? HolidayType,
     string? Remarks);
 
-public record TimeInRequest(Guid EmployeeId, DateTime TimeIn);
-public record TimeOutRequest(Guid EmployeeId, DateTime TimeOut);
+/// <summary>
+/// Clocking in carries no time: the server stamps the punch with its own clock (see
+/// <c>PhilippineTime</c>), so nobody can clock in at a time of their choosing. Older clients still
+/// send a <c>timeIn</c> property; System.Text.Json skips unknown properties, so it binds and is ignored.
+/// </summary>
+public record TimeInRequest(Guid EmployeeId);
+
+/// <summary>As <see cref="TimeInRequest"/>: any <c>timeOut</c> an older client sends is ignored.</summary>
+public record TimeOutRequest(Guid EmployeeId);
 
 public record AttendanceSummaryDto(
     Guid EmployeeId,

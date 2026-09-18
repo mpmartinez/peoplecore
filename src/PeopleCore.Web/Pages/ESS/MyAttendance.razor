@@ -78,8 +78,8 @@
                     {
                         <TableRow>
                             <TableCell Class="px-4 py-3">@r.AttendanceDate</TableCell>
-                            <TableCell Class="px-4 py-3">@(r.TimeIn ?? "--")</TableCell>
-                            <TableCell Class="px-4 py-3">@(r.TimeOut ?? "--")</TableCell>
+                            <TableCell Class="px-4 py-3">@(WallClock.Time(r.TimeIn) ?? "--")</TableCell>
+                            <TableCell Class="px-4 py-3">@(WallClock.Time(r.TimeOut) ?? "--")</TableCell>
                             <TableCell Class="@("px-4 py-3 text-right " + (r.LateMinutes > 0 ? "text-destructive font-medium" : ""))">@r.LateMinutes</TableCell>
                             <TableCell Class="@("px-4 py-3 text-right " + (r.UndertimeMinutes > 0 ? "text-warning font-medium" : ""))">@r.UndertimeMinutes</TableCell>
                         </TableRow>

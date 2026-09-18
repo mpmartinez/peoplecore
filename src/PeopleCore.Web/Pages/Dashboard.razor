@@ -71,12 +71,12 @@
                 <div class="text-sm space-y-2">
                     <div class="flex justify-between">
                         <span class="text-muted-foreground">Time In</span>
-                        <span class="font-medium">@(_todayRecord.TimeIn ?? "--:--")</span>
+                        <span class="font-medium">@(WallClock.Time(_todayRecord.TimeIn) ?? "--:--")</span>
                     </div>
                     <Separator />
                     <div class="flex justify-between">
                         <span class="text-muted-foreground">Time Out</span>
-                        <span class="font-medium">@(_todayRecord.TimeOut ?? "--:--")</span>
+                        <span class="font-medium">@(WallClock.Time(_todayRecord.TimeOut) ?? "--:--")</span>
                     </div>
                     @if (_todayRecord.LateMinutes > 0)
                     {

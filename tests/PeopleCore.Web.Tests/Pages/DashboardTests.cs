@@ -123,6 +123,18 @@ public class DashboardTests : BunitContext
     }
 
     [Fact]
+    public void TodaysAttendance_AsTheApiSendsIt_ShowsTheManilaWallClock()
+    {
+        // "...T08:07:00Z" is 08:07 in Manila (wall clock labelled UTC), shown as-is.
+        SignedInAsAnEmployee(attendance: Paged(Attendance(Today, $"{Today}T08:07:00Z", null, 7)));
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain(">08:07<"));
+        cut.Markup.Should().NotContain("T08:07");
+    }
+
+    [Fact]
     public void TodaysAttendance_ShowsTheClockTimes_AndHowLateTheEmployeeWas()
     {
         SignedInAsAnEmployee(attendance: Paged(Attendance(Today, "08:17", null, 17)));
