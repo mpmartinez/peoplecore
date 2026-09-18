@@ -35,9 +35,11 @@ public class AttendanceRepository : Repository<AttendanceRecord>, IAttendanceRep
             .Where(r => r.EmployeeId == employeeId && r.AttendanceDate >= from && r.AttendanceDate <= to)
             .ToListAsync(ct);
 
+    // Analytics groups these by Employee.Department.Name (attendance rate) - without the
+    // ThenInclude, that navigation is null and every record falls back to "Unassigned".
     public async Task<IReadOnlyList<AttendanceRecord>> GetAllByPeriodAsync(DateOnly from, DateOnly to, CancellationToken ct = default)
         => await Context.AttendanceRecords
-            .Include(r => r.Employee)
+            .Include(r => r.Employee).ThenInclude(e => e.Department)
             .Where(r => r.AttendanceDate >= from && r.AttendanceDate <= to)
             .ToListAsync(ct);
 }

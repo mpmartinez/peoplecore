@@ -19,6 +19,14 @@ public class EmployeeRepository : Repository<Employee>, IEmployeeRepository
             .Include(e => e.Documents)
             .FirstOrDefaultAsync(e => e.Id == id, ct);
 
+    // Every caller of the unfiltered list (analytics, payroll exports, leave accrual) reads
+    // DepartmentId's navigation for display or grouping - GetAllAsync's base implementation loaded
+    // none of it, so Employee.Department was always null and everything fell back to "Unassigned".
+    public override async Task<IReadOnlyList<Employee>> GetAllAsync(CancellationToken ct = default)
+        => await Context.Employees
+            .Include(e => e.Department)
+            .ToListAsync(ct);
+
     public async Task<IReadOnlyList<Employee>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default)
     {
         var idList = ids as ICollection<Guid> ?? ids.ToList();
