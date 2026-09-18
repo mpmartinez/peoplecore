@@ -27,6 +27,17 @@ public class EmployeeRepository : Repository<Employee>, IEmployeeRepository
             .Include(e => e.Department)
             .ToListAsync(ct);
 
+    // Dedicated to the payroll master-data export, which reads Position and GovernmentIds on top of
+    // Department. AsSplitQuery keeps the GovernmentIds collection Include from cross-joining with
+    // Department/Position and multiplying rows - callers that don't need it use the lighter GetAllAsync.
+    public async Task<IReadOnlyList<Employee>> GetAllForExportAsync(CancellationToken ct = default)
+        => await Context.Employees
+            .Include(e => e.Department)
+            .Include(e => e.Position)
+            .Include(e => e.GovernmentIds)
+            .AsSplitQuery()
+            .ToListAsync(ct);
+
     public async Task<IReadOnlyList<Employee>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default)
     {
         var idList = ids as ICollection<Guid> ?? ids.ToList();

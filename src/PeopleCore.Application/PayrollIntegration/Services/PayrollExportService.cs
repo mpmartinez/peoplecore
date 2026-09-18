@@ -30,7 +30,7 @@ public class PayrollExportService : IPayrollExportService
 
     public async Task<IReadOnlyList<PayrollEmployeeDto>> GetEmployeeMasterDataAsync(CancellationToken ct = default)
     {
-        var employees = await _employeeRepo.GetAllAsync(ct);
+        var employees = await _employeeRepo.GetAllForExportAsync(ct);
 
         return employees
             .Where(e => e.IsActive)
