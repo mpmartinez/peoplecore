@@ -1,3 +1,5 @@
+using PeopleCore.DemoSeed.Api;
+
 namespace PeopleCore.DemoSeed.Seeding;
 
 public sealed partial class Seeder
@@ -13,11 +15,13 @@ public sealed partial class Seeder
         {
             await api.PostAsync($"Deactivate the login of {person.EmployeeNumber}",
                 $"api/users/{_logins.UserIdOf(person.Number)}/deactivate", null, admin);
+            _switchedOff.Add(person.Number);
             Count("logins deactivated");
         }
 
-        var reset = await api.PostAsync("Reset the client's password",
-            $"api/users/{_logins.UserIdOf(ClientPerson)}/reset-password", null, admin);
-        return reset!["temporaryPassword"]!.GetValue<string>();
+        const string step = "Reset the client's password";
+        var path = $"api/users/{_logins.UserIdOf(ClientPerson)}/reset-password";
+        var reset = await api.PostAsync(step, path, null, admin);
+        return ApiClient.RequireString(reset, step, "POST", path, "temporaryPassword");
     }
 }

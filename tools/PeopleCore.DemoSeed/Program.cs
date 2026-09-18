@@ -29,9 +29,10 @@ catch (ArgumentOutOfRangeException)
 using var http = new HttpClient { BaseAddress = new Uri(url.TrimEnd('/') + "/"), Timeout = TimeSpan.FromMinutes(5) };
 Console.WriteLine($"Seeding the demo company into {new Uri(url).Host}, history to {today:d MMMM yyyy}.");
 
+var seeder = new Seeder(new ApiClient(http), plan, Console.Out);
 try
 {
-    var result = await new Seeder(new ApiClient(http), plan, Console.Out).RunAsync(email, password);
+    var result = await seeder.RunAsync(email, password);
 
     Console.WriteLine();
     Console.WriteLine("Done.");
@@ -51,8 +52,43 @@ catch (PreflightRefusedException e)
 }
 catch (SeedException e)
 {
-    Console.Error.WriteLine();
-    Console.Error.WriteLine($"Stopped. {e.Message}");
-    Console.Error.WriteLine("Records created before this step remain on the site.");
+    return Stopped(e.Message);
+}
+catch (Exception e)
+{
+    // Anything else (a timeout, a dropped connection, a response of an unexpected shape) is reported
+    // the same way, by type and message: a stack trace tells the operator nothing they can act on.
+    return Stopped($"{e.GetType().Name}: {e.Message}");
+}
+
+int Stopped(string reason)
+{
+    var error = Console.Error;
+    error.WriteLine();
+    error.WriteLine($"Stopped. {reason}");
+
+    if (!seeder.WroteAnything)
+    {
+        error.WriteLine("Nothing was changed.");
+        return 1;
+    }
+
+    error.WriteLine();
+    error.WriteLine("Records created before the failure remain on the site:");
+    if (seeder.CountsSoFar.Count == 0) error.WriteLine("  (none counted yet)");
+    foreach (var (what, count) in seeder.CountsSoFar)
+        error.WriteLine($"  {what,-32}{count,6}");
+
+    if (seeder.LoginCleanup is { } cleanup)
+    {
+        error.WriteLine();
+        error.WriteLine($"Demo logins switched off after the failure: {cleanup.SwitchedOff} of the {cleanup.Created} created.");
+        foreach (var problem in cleanup.Errors)
+            error.WriteLine($"  Could not switch off: {problem}");
+    }
+
+    error.WriteLine();
+    error.WriteLine("A rerun is refused while any DEMO- employee exists on the site, and the API has no way to");
+    error.WriteLine("delete them. Cleaning up needs direct work on the database.");
     return 1;
 }

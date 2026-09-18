@@ -102,6 +102,33 @@ public class ApiClientTests
     }
 
     [Fact]
+    public void ARequiredString_IsReadThroughNestedKeys()
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse("""{"account":{"id":"abc"}}""");
+
+        ApiClient.RequireString(node, "Create a login", "POST", "api/users", "account", "id").Should().Be("abc");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("{}")]
+    [InlineData("""{"account":null}""")]
+    [InlineData("""{"account":{"id":""}}""")]
+    [InlineData("""{"account":{"id":42}}""")]
+    [InlineData("""{"account":"abc"}""")]
+    public void AMissingOrMistypedRequiredString_IsASeedExceptionNamingTheStepAndTheField(string? json)
+    {
+        var node = json is null ? null : System.Text.Json.Nodes.JsonNode.Parse(json);
+
+        var act = () => ApiClient.RequireString(node, "Create a login", "POST", "api/users", "account", "id");
+
+        var error = act.Should().Throw<SeedException>().Which;
+        error.Step.Should().Be("Create a login");
+        error.Path.Should().Be("api/users");
+        error.Message.Should().Contain("account.id");
+    }
+
+    [Fact]
     public void GeneratedPasswords_MeetThePolicy_AndDiffer()
     {
         var a = Logins.NewPassword();

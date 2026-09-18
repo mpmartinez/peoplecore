@@ -53,6 +53,19 @@ public sealed class ApiClient(HttpClient http)
         return string.IsNullOrWhiteSpace(body) ? null : JsonNode.Parse(body);
     }
 
+    /// <summary>
+    /// The string at <paramref name="keys"/> in a successful response, or a <see cref="SeedException"/>
+    /// naming the step and the missing field when the response doesn't carry one.
+    /// </summary>
+    internal static string RequireString(JsonNode? node, string step, string method, string path, params string[] keys)
+    {
+        var current = node;
+        foreach (var key in keys)
+            current = current is JsonObject json ? json[key] : null;
+        return StringValue(current)
+            ?? throw new SeedException(step, method, path, 200, $"The response has no {string.Join(".", keys)}.");
+    }
+
     /// <summary>The most useful sentence in an error body: ProblemDetails detail, a message, validation errors, or the text itself.</summary>
     /// <remarks>Never throws: any field with an unexpected shape is skipped rather than blowing up.</remarks>
     internal static string ReadMessage(string body)

@@ -19,6 +19,13 @@ public sealed class Logins(ApiClient api)
     }
 
     private readonly Dictionary<int, Session> _sessions = new();
+    private readonly Dictionary<int, string> _createdUserIds = new();
+
+    /// <summary>
+    /// Every demo login created so far, by person number, recorded as soon as the account exists, so
+    /// a run that stops even halfway through creating a login can still switch it off.
+    /// </summary>
+    public IReadOnlyDictionary<int, string> CreatedUserIds => _createdUserIds;
 
     /// <summary>Signs the administrator in, and returns the sign-in so the caller can check its roles.</summary>
     public async Task<SignIn> AddAdminAsync(string email, string password)
@@ -36,16 +43,19 @@ public sealed class Logins(ApiClient api)
         var created = await api.PostAsync(step, "api/users",
             new { email, firstName, lastName, employeeId, roles }, await TokenAsync(Admin));
 
-        var userId = created!["account"]!["id"]!.GetValue<string>();
-        var temporary = created["temporaryPassword"]!.GetValue<string>();
+        var userId = ApiClient.RequireString(created, step, "POST", "api/users", "account", "id");
+        _createdUserIds[personNumber] = userId;
+        var temporary = ApiClient.RequireString(created, step, "POST", "api/users", "temporaryPassword");
         var password = NewPassword();
 
         // A new account must replace its temporary password before it can do anything else.
         var temporaryToken = (await api.SignInAsync(email, temporary)).Token;
-        var session = await api.PostAsync($"First password change for DEMO-{personNumber:0000}", "api/auth/change-password",
+        var changeStep = $"First password change for DEMO-{personNumber:0000}";
+        var session = await api.PostAsync(changeStep, "api/auth/change-password",
             new { currentPassword = temporary, newPassword = password }, temporaryToken);
+        var token = ApiClient.RequireString(session, changeStep, "POST", "api/auth/change-password", "token");
 
-        _sessions[personNumber] = new Session(email, password, userId, session!["token"]!.GetValue<string>(), DateTimeOffset.UtcNow);
+        _sessions[personNumber] = new Session(email, password, userId, token, DateTimeOffset.UtcNow);
     }
 
     public async Task<string> TokenAsync(int key)
