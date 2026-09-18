@@ -1,0 +1,96 @@
+using System.Text.Json;
+using FluentAssertions;
+using PeopleCore.DemoSeed.Plan;
+
+namespace PeopleCore.DemoSeed.Tests;
+
+/// <summary>Clock-ins that look like a real office: mostly on time, some late, now and then absent.</summary>
+public class AttendancePlannerTests
+{
+    private static readonly DemoPlan Plan = DemoPlan.Build(20260918, new DateOnly(2026, 9, 18));
+
+    [Fact]
+    public void Rows_FallOnWorkDays_OnlyWhileEmployed_AndBeforeToday()
+    {
+        foreach (var month in Plan.Months)
+        foreach (var row in Plan.AttendanceFor(month))
+        {
+            Calendar.IsWorkDay(row.Date).Should().BeTrue();
+            row.Date.Month.Should().Be(month);
+            row.Date.Should().BeBefore(Plan.Today);
+            row.Date.Should().BeOnOrAfter(Plan.People.Single(p => p.EmployeeNumber == row.EmployeeNumber).ActiveFrom);
+        }
+    }
+
+    [Fact]
+    public void NobodyClocksInOnApprovedLeave()
+    {
+        var onLeave = Plan.Leave.Where(l => l.Decision == Decision.Approved)
+            .SelectMany(l => Calendar.WorkDays(l.Start, l.End).Select(d => ($"DEMO-{l.PersonNumber:0000}", d)))
+            .ToHashSet();
+
+        Plan.Months.SelectMany(Plan.AttendanceFor)
+            .Should().OnlyContain(r => !onLeave.Contains(new ValueTuple<string, DateOnly>(r.EmployeeNumber, r.Date)));
+    }
+
+    [Fact]
+    public void OvertimeDays_ClockOutAtOrAfterTheOvertimeEnd()
+    {
+        var rows = Plan.Months.SelectMany(Plan.AttendanceFor).ToDictionary(r => (r.EmployeeNumber, r.Date));
+
+        foreach (var o in Plan.Overtime)
+            rows[($"DEMO-{o.PersonNumber:0000}", o.Date)].TimeOut.Should().BeOnOrAfter(o.End);
+    }
+
+    [Fact]
+    public void AMonth_HasSomeLates_AndSomeAbsences()
+    {
+        var march = Plan.AttendanceFor(3);
+        var expected = Plan.People.Sum(p => Calendar.WorkDays(new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 31))
+            .Count(d => d >= p.ActiveFrom));
+
+        march.Count(r => r.TimeIn > new TimeOnly(8, 0)).Should().BeGreaterThan(0);
+        march.Count.Should().BeLessThan(expected, "someone is absent or on leave");
+    }
+
+    [Fact]
+    public void TheSameMonth_IsTheSameEveryTime()
+    {
+        DemoPlan.Build(20260918, Plan.Today).AttendanceFor(5).Should().Equal(Plan.AttendanceFor(5));
+    }
+
+    [Fact]
+    public void PunchesFor_GivesTwoUtcLabelledPunchesPerRow_InOrder_WithTheWallClockUnchanged()
+    {
+        var rows = new[]
+        {
+            new AttendanceRow("DEMO-0001", new DateOnly(2026, 3, 12), new TimeOnly(8, 7), new TimeOnly(17, 3)),
+            new AttendanceRow("DEMO-0002", new DateOnly(2026, 3, 13), new TimeOnly(7, 55), new TimeOnly(18, 0)),
+        };
+
+        var punches = AttendancePlanner.PunchesFor(rows);
+
+        punches.Should().HaveCount(4);
+        punches.Should().OnlyContain(p => p.PunchTime.Kind == DateTimeKind.Utc);
+
+        punches[0].EmployeeNumber.Should().Be("DEMO-0001");
+        punches[0].PunchTime.Should().Be(new DateTime(2026, 3, 12, 8, 7, 0, DateTimeKind.Utc));
+        punches[1].EmployeeNumber.Should().Be("DEMO-0001");
+        punches[1].PunchTime.Should().Be(new DateTime(2026, 3, 12, 17, 3, 0, DateTimeKind.Utc));
+
+        punches[2].EmployeeNumber.Should().Be("DEMO-0002");
+        punches[2].PunchTime.Should().Be(new DateTime(2026, 3, 13, 7, 55, 0, DateTimeKind.Utc));
+        punches[3].EmployeeNumber.Should().Be("DEMO-0002");
+        punches[3].PunchTime.Should().Be(new DateTime(2026, 3, 13, 18, 0, 0, DateTimeKind.Utc));
+    }
+
+    [Fact]
+    public void PunchesFor_Serializes_WithATrailingZ()
+    {
+        var rows = new[] { new AttendanceRow("DEMO-0001", new DateOnly(2026, 3, 12), new TimeOnly(8, 7), new TimeOnly(17, 3)) };
+
+        var json = JsonSerializer.Serialize(AttendancePlanner.PunchesFor(rows), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        json.Should().Contain("\"punchTime\":\"2026-03-12T08:07:00Z\"");
+    }
+}

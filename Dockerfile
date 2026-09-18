@@ -17,8 +17,9 @@ RUN apt-get update \
 # in PeopleCore.Application and PeopleCore.Domain read at restore time.
 COPY Directory.Build.props PeopleCore.slnx ./
 
-# Each .csproj by its own path - Docker COPY has no ** glob. All ten are needed because the
-# restore below targets the whole solution.
+# Each .csproj by its own path - Docker COPY has no ** glob. All twelve are needed because the
+# restore below targets the whole solution. Only src/ is copied in full further down, and only the
+# API and Web projects are published, so the demo seed tool and its tests are restored, never built.
 COPY src/M2NET.Core/M2NET.Core.csproj src/M2NET.Core/
 COPY src/PeopleCore.Domain/PeopleCore.Domain.csproj src/PeopleCore.Domain/
 COPY src/PeopleCore.Application/PeopleCore.Application.csproj src/PeopleCore.Application/
@@ -29,6 +30,8 @@ COPY src/PeopleCore.Web/PeopleCore.Web.csproj src/PeopleCore.Web/
 COPY tests/PeopleCore.Application.Tests/PeopleCore.Application.Tests.csproj tests/PeopleCore.Application.Tests/
 COPY tests/PeopleCore.Infrastructure.Tests/PeopleCore.Infrastructure.Tests.csproj tests/PeopleCore.Infrastructure.Tests/
 COPY tests/PeopleCore.Web.Tests/PeopleCore.Web.Tests.csproj tests/PeopleCore.Web.Tests/
+COPY tests/PeopleCore.DemoSeed.Tests/PeopleCore.DemoSeed.Tests.csproj tests/PeopleCore.DemoSeed.Tests/
+COPY tools/PeopleCore.DemoSeed/PeopleCore.DemoSeed.csproj tools/PeopleCore.DemoSeed/
 
 RUN dotnet restore PeopleCore.slnx
 
