@@ -1,3 +1,4 @@
+using PeopleCore.DemoSeed;
 using PeopleCore.DemoSeed.Api;
 using PeopleCore.DemoSeed.Plan;
 using PeopleCore.DemoSeed.Seeding;
@@ -10,6 +11,12 @@ var seed = int.TryParse(Environment.GetEnvironmentVariable("PEOPLECORE_SEED"), o
 if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
 {
     Console.Error.WriteLine("Set PEOPLECORE_URL, PEOPLECORE_ADMIN_EMAIL and PEOPLECORE_ADMIN_PASSWORD.");
+    return 64;
+}
+
+if (SiteUrl.Problem(url) is { } badUrl)
+{
+    Console.Error.WriteLine($"{badUrl} Nothing was changed.");
     return 64;
 }
 
