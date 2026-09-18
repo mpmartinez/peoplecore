@@ -77,7 +77,8 @@ public sealed partial class Seeder
     /// once an employee's tenure exceeds its TenureMonthsMax, so an inactive policy is invisible to it
     /// and a tenure cap would silently stop long-tenured demo staff from accruing. A policy is usable
     /// only when it is active, Monthly, at least 15 days a year, has no minimum tenure, and has no
-    /// maximum tenure at all. Decision:
+    /// maximum tenure at all. The type itself must be paid and open to both genders
+    /// (<see cref="Preflight.LeaveTypeProblem"/>). Decision:
     ///   - no active policy for the type: fine, CreateLeaveSetupAsync will create one;
     ///   - exactly one active policy and it is usable: reuse it;
     ///   - anything else (an active policy that isn't usable, or more than one active policy, which
@@ -93,6 +94,9 @@ public sealed partial class Seeder
             var type = types.FirstOrDefault(t => string.Equals(t!["code"]!.GetValue<string>(), code, StringComparison.OrdinalIgnoreCase));
             if (type is null) continue;
 
+            if (Preflight.LeaveTypeProblem(code, type) is { } problem)
+                throw new PreflightRefusedException($"{problem} Nothing was changed.");
+
             _leaveTypeIds[code] = IdOf(type);
             var active = (await AccrualPoliciesForAsync(_leaveTypeIds[code], admin))
                 .Where(p => p!["isActive"]!.GetValue<bool>())
@@ -101,11 +105,11 @@ public sealed partial class Seeder
             if (active.Count == 0) continue;
 
             if (active.Count > 1)
-                throw new SeedException("Check leave setup", "GET", "api/leave-accrual-policies", 200,
+                throw new PreflightRefusedException(
                     $"The existing {code} accrual policies include more than one active policy, which would double-accrue. Nothing was changed.");
 
             if (!IsUsablePolicy(active[0]!))
-                throw new SeedException("Check leave setup", "GET", "api/leave-accrual-policies", 200,
+                throw new PreflightRefusedException(
                     $"The existing active {code} accrual policy is not monthly at 15+ days a year from day one with no tenure cap, so the demo's leave would be refused. Nothing was changed.");
         }
     }

@@ -16,6 +16,7 @@ public sealed partial class Seeder(ApiClient api, DemoPlan plan, TextWriter log)
     public const int ClientPerson = 2;
 
     private readonly Logins _logins = new(api);
+    private Guid _companyId;
     private readonly Dictionary<int, Guid> _employeeIds = new();
     private readonly Dictionary<string, Guid> _departmentIds = new();
     private readonly Dictionary<(string Department, string Title), Guid> _positionIds = new();

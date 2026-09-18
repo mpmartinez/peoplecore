@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using PeopleCore.DemoSeed.Api;
 using PeopleCore.DemoSeed.Plan;
 
@@ -13,8 +14,9 @@ public sealed partial class Seeder
 
     /// <summary>
     /// Refuses before changing anything if the account is not an Admin with its own password (checked
-    /// first, and without a request), if the site already holds the demo, or holds leave setup
-    /// the demo's leave plan could not live with. The employee scan narrows the server-side search
+    /// first, and without a request), if the site already holds the demo's employees or logins, has
+    /// other than one company, or holds leave setup the demo's leave plan could not live with. Every
+    /// request here is a read. The employee scan narrows the server-side search
     /// to "DEMO-" (EmployeeRepository.GetPagedAsync matches it against EmployeeNumber, FirstName,
     /// LastName and WorkEmail via Contains), so the DEMO- check does not depend on paging landing
     /// every existing employee on some page before an earlier demo's pages are reached. The
@@ -35,16 +37,47 @@ public sealed partial class Seeder
             if (page * 100 >= result["totalCount"]!.GetValue<int>()) break;
         }
 
+        await CheckDemoLoginsAsync();
+        await CheckCompanyAsync();
         await CheckLeaveSetupAsync();
-        Say("Preflight passed: no earlier demo on this site.");
+        Say("Preflight passed: an Admin account, one company, and no earlier demo on this site.");
+    }
+
+    /// <summary>
+    /// A demo login left behind without its employee (say, after the employee was deleted by hand)
+    /// would make the first login create fail halfway through the run. UsersController's GET takes
+    /// "search", matched against email and names, and pages with page/pageSize (at most 100).
+    /// </summary>
+    private async Task CheckDemoLoginsAsync()
+    {
+        const string step = "Check for earlier demo logins";
+        var search = Uri.EscapeDataString(PeopleBuilder.EmailDomain);
+        for (var page = 1; ; page++)
+        {
+            var result = await api.GetAsync(step, $"api/users?search={search}&page={page}&pageSize=100", await AdminAsync());
+            var items = result?["items"] as JsonArray
+                ?? throw new SeedException(step, "GET", "api/users", 200, "The response has no items list.");
+            var demo = items.Select(u => u?["email"]?.GetValue<string>()).OfType<string>().Where(Preflight.IsDemoEmail).ToList();
+            if (demo.Count > 0)
+                throw new PreflightRefusedException(
+                    $"This site already has logins on @{PeopleBuilder.EmailDomain} (for example {demo[0]}). Nothing was changed.");
+            if (page * 100 >= (result?["totalCount"]?.GetValue<int>() ?? 0)) break;
+        }
+    }
+
+    private async Task CheckCompanyAsync()
+    {
+        const string step = "Find the company";
+        var companies = await api.GetAsync(step, "api/companies", await AdminAsync()) as JsonArray
+            ?? throw new SeedException(step, "GET", "api/companies", 200, "The response is not a list of companies.");
+        if (Preflight.CompanyProblem(companies.Count) is { } problem)
+            throw new PreflightRefusedException($"{problem} Nothing was changed.");
+        _companyId = IdOf(companies[0]);
     }
 
     private async Task CreateOrganizationAsync()
     {
-        var companies = (await api.GetAsync("Find the company", "api/companies", await AdminAsync()))!.AsArray();
-        if (companies.Count == 0)
-            throw new SeedException("Find the company", "GET", "api/companies", 200, "The site has no company record.");
-        var companyId = IdOf(companies[0]);
+        var companyId = _companyId;
 
         foreach (var department in plan.People.Select(p => p.Department).Distinct())
         {
