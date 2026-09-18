@@ -79,6 +79,11 @@ else
                            Placeholder="https://people.example.com" Disabled="@_saving" />
                 </FormField>
 
+                <FormField LabelText="Send test to" Id="test-recipient"
+                           Description="Where the test message goes. Leave blank to send it to your own address.">
+                    <Input TValue="string" Id="test-recipient" Type="email" @bind-Value="_testRecipient" Disabled="@_testing" />
+                </FormField>
+
                 <div class="flex justify-end gap-2 pt-2">
                     <Button Type="button" Variant="outline" data-send-test OnClick="SendTest"
                             Disabled="@(!_configured || _saving)" Loading="@_testing">
@@ -92,6 +97,8 @@ else
 }
 
 @code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthenticationState { get; set; }
+
     private string _host = string.Empty;
     private int _port = 587;
     private bool _useStartTls = true;
@@ -100,6 +107,7 @@ else
     private string _fromAddress = string.Empty;
     private string _fromName = "PeopleCore";
     private string _appBaseUrl = string.Empty;
+    private string _testRecipient = string.Empty;
     private bool _hasPassword;
     private bool _configured;
     private bool _loading = true;
@@ -110,6 +118,11 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        // Prefills the field with the admin's own address - still just a starting point they can
+        // change, since that address is exactly the one production accounts often can't receive at.
+        var state = AuthenticationState is null ? null : await AuthenticationState;
+        _testRecipient = state?.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? string.Empty;
+
         try
         {
             if (await Api.GetEmailSettingsAsync() is { } settings) Apply(settings);
@@ -168,7 +181,7 @@ else
         _testing = true;
         try
         {
-            var to = await Api.SendTestEmailAsync();
+            var to = await Api.SendTestEmailAsync(_testRecipient);
             _result = string.IsNullOrEmpty(to)
                 ? "A test message is on its way."
                 : $"A test message is on its way to {to}.";

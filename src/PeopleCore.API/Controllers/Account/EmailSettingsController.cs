@@ -1,5 +1,7 @@
+using System.Net.Mail;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using PeopleCore.API.Authorization;
 using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Infrastructure.Email;
@@ -18,6 +20,10 @@ public class EmailSettingsController : ControllerBase
     // AppBaseUrl is interpolated, unencoded, into an HTML href in the reset email. A value carrying
     // any of these breaks out of the attribute or the tag, so it is refused here rather than trusted.
     private static readonly char[] UnsafeUrlCharacters = ['"', '\'', '<', '>', ' ', '\t', '\r', '\n'];
+
+    // A test recipient chosen by the admin, not a signed-in account's own claim: whitespace, angle
+    // brackets, commas and semicolons are how a display-name or a second address/header gets in.
+    private static readonly char[] UnsafeAddressCharacters = [' ', '\t', '\r', '\n', '<', '>', ',', ';'];
 
     private readonly IEmailSettingsStore _store;
     private readonly IEmailSender _email;
@@ -49,12 +55,24 @@ public class EmailSettingsController : ControllerBase
         return Ok(ToDto(saved!));
     }
 
-    /// <summary>Sends to the administrator asking, which is the one address we know is theirs.</summary>
+    /// <summary>
+    /// Sends to the address given, or to the administrator asking - the one address we know is
+    /// theirs - when none is given. The admin account's own claim is often not a real mailbox in
+    /// production, which is the whole reason to let the caller pick where the test goes.
+    /// </summary>
     [HttpPost("test")]
-    public async Task<IActionResult> SendTest(CancellationToken ct)
+    public async Task<IActionResult> SendTest([FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] SendTestEmailRequest? request, CancellationToken ct)
     {
-        var to = User.FindFirstValue(ClaimTypes.Email);
-        if (string.IsNullOrEmpty(to)) return SettingsProblem("Your account has no email address to send a test to.");
+        var to = request?.To?.Trim();
+        if (string.IsNullOrEmpty(to))
+        {
+            to = User.FindFirstValue(ClaimTypes.Email);
+            if (string.IsNullOrEmpty(to)) return SettingsProblem("Your account has no email address to send a test to.");
+        }
+        else if (!IsUsableTestAddress(to))
+        {
+            return SettingsProblem("Enter a valid email address to send the test to.");
+        }
 
         try
         {
@@ -83,6 +101,22 @@ public class EmailSettingsController : ControllerBase
         return null;
     }
 
+    // MailAddress accepts "Display Name <addr>" and folds it down to the bare address; comparing
+    // the parsed .Address back against the trimmed input is what rejects that form (and the header
+    // tricks that ride on it), rather than trusting whatever MailAddress managed to parse out.
+    private static bool IsUsableTestAddress(string to)
+    {
+        if (to.IndexOfAny(UnsafeAddressCharacters) >= 0) return false;
+        try
+        {
+            return new MailAddress(to).Address == to;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
     private static bool IsUsableAppBaseUrl(string? appBaseUrl)
     {
         var trimmed = appBaseUrl?.Trim();
@@ -104,3 +138,5 @@ public record EmailSettingsDto(string Host, int Port, bool UseStartTls, string? 
 
 public record SaveEmailSettingsRequest(string Host, int Port, bool UseStartTls, string? Username, string? Password,
     string FromAddress, string FromName, string AppBaseUrl);
+
+public record SendTestEmailRequest(string? To);

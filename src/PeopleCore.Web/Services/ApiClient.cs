@@ -84,10 +84,13 @@ public class ApiClient
     public Task<EmailSettingsDto?> SaveEmailSettingsAsync(SaveEmailSettingsRequest request)
         => SendJsonAsync<EmailSettingsDto>(HttpMethod.Put, "api/email-settings", request);
 
-    /// <summary>Sends a test message to the signed-in administrator, returning where it went.</summary>
-    public async Task<string> SendTestEmailAsync()
+    /// <summary>
+    /// Sends a test message to the given address, or to the signed-in administrator when none is
+    /// given, returning where it went.
+    /// </summary>
+    public async Task<string> SendTestEmailAsync(string? to = null)
     {
-        var response = await _http.PostAsync("api/email-settings/test", content: null);
+        var response = await _http.PostAsJsonAsync("api/email-settings/test", new { to });
         await EnsureSuccessAsync(response);
         var sent = await response.Content.ReadFromJsonAsync<TestEmailResult>(JsonOptions);
         return sent?.To ?? string.Empty;
