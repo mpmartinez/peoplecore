@@ -25,7 +25,8 @@ public class AttendanceCsvImportTests : DatabaseTestBase
         new ShiftService(
             new ShiftTemplateRepository(Context),
             new RotatingPatternRepository(Context),
-            new ShiftAssignmentRepository(Context)));
+            new ShiftAssignmentRepository(Context)),
+        TimeProvider.System);
 
     private async Task<Guid> AnEmployeeNumberedAsync(string employeeNumber)
     {

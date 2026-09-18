@@ -34,8 +34,8 @@ public class AttendanceControllerAuthorizationTests
 
     private void SignInAs(Guid? employeeId, params string[] roles) => _caller.As(employeeId, roles);
 
-    private static TimeInRequest TimeInFor(Guid employeeId) => new(employeeId, new DateTime(2026, 9, 14, 0, 2, 0, DateTimeKind.Utc));
-    private static TimeOutRequest TimeOutFor(Guid employeeId) => new(employeeId, new DateTime(2026, 9, 14, 9, 5, 0, DateTimeKind.Utc));
+    private static TimeInRequest TimeInFor(Guid employeeId) => new(employeeId);
+    private static TimeOutRequest TimeOutFor(Guid employeeId) => new(employeeId);
 
     // ---- GET api/attendance ----------------------------------------------------------------
 
