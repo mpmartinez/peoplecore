@@ -16,6 +16,14 @@ public class PerformanceReviewRepository : Repository<PerformanceReview>, IPerfo
             .Include(r => r.KpiItems)
             .FirstOrDefaultAsync(r => r.Id == id, ct);
 
+    // Executive analytics groups these by Employee.Department.Name and ReviewCycle.Name - the base
+    // GetAllAsync loaded neither, so every review fell back to "Unassigned" / "Unknown".
+    public override async Task<IReadOnlyList<PerformanceReview>> GetAllAsync(CancellationToken ct = default)
+        => await Context.PerformanceReviews
+            .Include(r => r.Employee).ThenInclude(e => e.Department)
+            .Include(r => r.ReviewCycle)
+            .ToListAsync(ct);
+
     public async Task<(IReadOnlyList<PerformanceReview> Items, int TotalCount)> GetPagedAsync(
         Guid? employeeId, Guid? cycleId, int page, int pageSize, CancellationToken ct = default)
     {

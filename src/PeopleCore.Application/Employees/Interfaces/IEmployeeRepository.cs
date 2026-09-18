@@ -22,4 +22,14 @@ public interface IEmployeeRepository : IRepository<Employee>
 
     /// <summary>True when <paramref name="employeeId"/>'s reporting manager is <paramref name="managerId"/>.</summary>
     Task<bool> IsDirectReportAsync(Guid employeeId, Guid managerId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Every employee, loaded with <see cref="Employee.Department"/>, <see cref="Employee.Position"/>
+    /// and <see cref="Employee.GovernmentIds"/> - what the payroll master-data export reads.
+    /// Deliberately heavier than <see cref="IRepository{T}.GetAllAsync"/>'s Department-only load: the
+    /// other <c>GetAllAsync</c> callers (HR analytics, leave accrual) don't read Position or
+    /// GovernmentIds, and GovernmentIds is a collection Include that multiplies rows those callers
+    /// don't need.
+    /// </summary>
+    Task<IReadOnlyList<Employee>> GetAllForExportAsync(CancellationToken ct = default);
 }

@@ -24,10 +24,12 @@ public class OvertimeRepository : Repository<OvertimeRequest>, IOvertimeReposito
         return (items, total);
     }
 
+    // Analytics groups these by Employee.Department.Name (overtime by department) - without the
+    // ThenInclude, that navigation is null and every record falls back to "Unassigned".
     public async Task<IReadOnlyList<OvertimeRequest>> GetApprovedByPeriodAsync(
         DateOnly from, DateOnly to, CancellationToken ct = default)
         => await Context.OvertimeRequests
-            .Include(r => r.Employee)
+            .Include(r => r.Employee).ThenInclude(e => e.Department)
             .Include(r => r.Approver)
             .Where(r => r.Status == OvertimeStatus.Approved && r.OvertimeDate >= from && r.OvertimeDate <= to)
             .ToListAsync(ct);

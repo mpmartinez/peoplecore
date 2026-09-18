@@ -66,7 +66,7 @@ public class PayrollExportServiceTests
             GovernmentIds = []
         };
 
-        _employeeRepo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
+        _employeeRepo.Setup(r => r.GetAllForExportAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([active, inactive]);
 
         var result = await _sut.GetEmployeeMasterDataAsync();

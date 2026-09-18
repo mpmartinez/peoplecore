@@ -30,9 +30,13 @@ public class LeaveBalanceRepository : Repository<LeaveBalance>, ILeaveBalanceRep
         return await query.OrderBy(b => b.Year).ToListAsync(ct);
     }
 
+    // HRAnalyticsService.GetLeaveUtilizationAsync filters this list by
+    // `b.Employee?.DepartmentId == departmentId.Value` - without this Include that navigation was
+    // always null, so a department filter silently matched nothing, for every department.
     public async Task<IReadOnlyList<LeaveBalance>> GetByYearAsync(
         int year, CancellationToken ct = default)
         => await Context.LeaveBalances
+            .Include(b => b.Employee)
             .Include(b => b.LeaveType)
             .Where(b => b.Year == year)
             .ToListAsync(ct);

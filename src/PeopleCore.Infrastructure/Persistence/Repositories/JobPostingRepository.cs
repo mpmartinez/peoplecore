@@ -14,6 +14,14 @@ public class JobPostingRepository : Repository<JobPosting>, IJobPostingRepositor
             .Include(j => j.Position)
             .FirstOrDefaultAsync(j => j.Id == id, ct);
 
+    // The public careers page (CareersService.GetOpenJobsAsync) reads Department.Name and
+    // Position.Title off the unfiltered list - the base GetAllAsync loaded neither.
+    public override async Task<IReadOnlyList<JobPosting>> GetAllAsync(CancellationToken ct = default)
+        => await Context.JobPostings
+            .Include(j => j.Department)
+            .Include(j => j.Position)
+            .ToListAsync(ct);
+
     public async Task<(IReadOnlyList<JobPosting> Items, int TotalCount)> GetPagedAsync(
         string? status, int page, int pageSize, CancellationToken ct = default)
     {
