@@ -12,8 +12,11 @@ public sealed partial class Seeder
     {
         var admin = await AdminAsync();
 
-        // A site may already carry this year's holidays. Adding a second copy of a date could count it twice.
+        // A site may already carry this year's holidays. Payroll would not count a date twice (the
+        // attendance bridge keys holidays by date), but a second row for the same day would clutter
+        // the Holidays list the client sees, so a date already there is left alone.
         var existing = await ExistingHolidayDatesAsync(admin);
+        var added = new List<Holiday>();
         foreach (var holiday in Calendar.Holidays.Where(h => !existing.Contains(h.Date)))
         {
             await api.PostAsync($"Add the holiday {holiday.Name}", "api/holidays", new
@@ -21,8 +24,13 @@ public sealed partial class Seeder
                 name = holiday.Name, holidayDate = holiday.Date,
                 holidayType = holiday.IsRegular ? "RegularHoliday" : "SpecialNonWorking", isRecurring = false,
             }, admin);
+            added.Add(holiday);
             Count("holidays");
         }
+
+        Say(added.Count == 0
+            ? "Holidays added: none; the site already had every 2026 date the demo uses."
+            : $"Holidays added (company-wide, so real staff's payroll uses them too): {string.Join(", ", added.Select(h => $"{h.Name} {h.Date:d MMM}"))}.");
 
         var shiftId = IdOf(await api.PostAsync("Create the day shift", "api/shift-templates", new
         {
@@ -41,7 +49,7 @@ public sealed partial class Seeder
             Count("shift assignments");
         }
 
-        Say("Holidays and the Monday-to-Friday day shift are in place.");
+        Say("The Monday-to-Friday day shift is in place.");
     }
 
     /// <summary>
