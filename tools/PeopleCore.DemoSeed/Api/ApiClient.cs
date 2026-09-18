@@ -55,24 +55,43 @@ public sealed class ApiClient(HttpClient http)
     }
 
     /// <summary>The most useful sentence in an error body: ProblemDetails detail, a message, validation errors, or the text itself.</summary>
+    /// <remarks>Never throws: any field with an unexpected shape is skipped rather than blowing up.</remarks>
     internal static string ReadMessage(string body)
     {
         if (string.IsNullOrWhiteSpace(body)) return "(no body)";
+
+        if (TryParseObject(body) is JsonObject json)
+        {
+            if (StringValue(json["detail"]) is { } detail) return detail;
+            if (StringValue(json["message"]) is { } message) return message;
+            if (json["errors"] is JsonObject errors)
+            {
+                var lines = errors
+                    .Select(e => (e.Key, Values: (e.Value as JsonArray)?.Select(StringValue).Where(s => s is { Length: > 0 }).ToArray() ?? []))
+                    .Where(e => e.Values.Length > 0)
+                    .Select(e => $"{e.Key}: {string.Join(" ", e.Values)}")
+                    .ToArray();
+                if (lines.Length > 0) return string.Join("; ", lines);
+            }
+            if (StringValue(json["title"]) is { } title) return title;
+        }
+
+        return body.Length > 300 ? body[..300] : body;
+    }
+
+    private static JsonObject? TryParseObject(string body)
+    {
         try
         {
-            if (JsonNode.Parse(body) is JsonObject json)
-            {
-                if (json["detail"]?.GetValue<string>() is { Length: > 0 } detail) return detail;
-                if (json["message"]?.GetValue<string>() is { Length: > 0 } message) return message;
-                if (json["errors"] is JsonObject errors)
-                    return string.Join("; ", errors.Select(e =>
-                        $"{e.Key}: {string.Join(" ", e.Value!.AsArray().Select(v => v!.GetValue<string>()))}"));
-                if (json["title"]?.GetValue<string>() is { Length: > 0 } title) return title;
-            }
+            return JsonNode.Parse(body) as JsonObject;
         }
         catch (JsonException)
         {
+            return null;
         }
-        return body.Length > 300 ? body[..300] : body;
     }
+
+    /// <summary>The node's value when, and only when, it is a JSON string. Never throws.</summary>
+    private static string? StringValue(JsonNode? node) =>
+        node is JsonValue value && value.TryGetValue<string>(out var s) && s.Length > 0 ? s : null;
 }

@@ -13,7 +13,10 @@ public sealed class Logins(ApiClient api)
     public const int Admin = 0;
     private static readonly TimeSpan Refresh = TimeSpan.FromMinutes(60);
 
-    private sealed record Session(string Email, string Password, string? UserId, string Token, DateTimeOffset IssuedAt);
+    private sealed record Session(string Email, string Password, string? UserId, string Token, DateTimeOffset IssuedAt)
+    {
+        public override string ToString() => $"Session({Email})";
+    }
 
     private readonly Dictionary<int, Session> _sessions = new();
 

@@ -68,6 +68,11 @@ public class ApiClientTests
     [InlineData("""{"errors":{"Email":["The Email field is required."]}}""", "Email: The Email field is required.")]
     [InlineData("plain text failure", "plain text failure")]
     [InlineData("", "(no body)")]
+    [InlineData("""{"detail":{"nested":true}}""", """{"detail":{"nested":true}}""")]
+    [InlineData("""{"errors":"just a string"}""", """{"errors":"just a string"}""")]
+    [InlineData("""{"errors":{"Email":[null, 5, "Required."]}}""", "Email: Required.")]
+    [InlineData("""{"errors":{}}""", """{"errors":{}}""")]
+    [InlineData("""{"message":42}""", """{"message":42}""")]
     public void TheApisMessage_IsFoundWhereverItIs(string body, string expected)
     {
         ApiClient.ReadMessage(body).Should().Be(expected);
