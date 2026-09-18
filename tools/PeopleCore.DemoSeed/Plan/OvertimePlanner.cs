@@ -50,8 +50,11 @@ public static class OvertimePlanner
             filings.Add(Evening(person.Number, date.Value, rng, Decision.Approved));
         }
 
-        // The HR Officer's two most recent work days this month, worked late and awaiting the client.
-        var recent = Calendar.WorkDays(new DateOnly(today.Year, today.Month, 1), today.AddDays(-1))
+        // The HR Officer's two most recent work days before today, from whichever month they fall in,
+        // worked late and awaiting the client. Reaching back past the 1st keeps a run early in a
+        // month from leaving the client with nothing to decide.
+        var hrOfficer = people[PendingPerson - 1];
+        var recent = Calendar.WorkDays(hrOfficer.ActiveFrom, today.AddDays(-1))
             .Where(d => !onLeave.Contains((PendingPerson, d)) && !used.Contains((PendingPerson, d)))
             .TakeLast(2);
         foreach (var date in recent)
