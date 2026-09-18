@@ -143,7 +143,7 @@ public sealed partial class Seeder
 
         if (period == plan.PayPeriods[^1])
         {
-            Count("payroll runs awaiting approval");
+            Count("payroll runs left as draft");
             return;
         }
 
