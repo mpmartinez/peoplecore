@@ -15,7 +15,16 @@ if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(email) || string
 
 // The demo's days are Philippine days, whatever time zone this machine runs in.
 var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
-var plan = DemoPlan.Build(seed, today);
+DemoPlan plan;
+try
+{
+    plan = DemoPlan.Build(seed, today);
+}
+catch (ArgumentOutOfRangeException)
+{
+    Console.Error.WriteLine($"The demo calendar covers February to December 2026; today is {today:d MMMM yyyy}. Nothing was changed.");
+    return 64;
+}
 
 using var http = new HttpClient { BaseAddress = new Uri(url.TrimEnd('/') + "/"), Timeout = TimeSpan.FromMinutes(5) };
 Console.WriteLine($"Seeding the demo company into {new Uri(url).Host}, history to {today:d MMMM yyyy}.");
