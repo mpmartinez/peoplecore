@@ -22,7 +22,7 @@ try
 }
 catch (ArgumentOutOfRangeException)
 {
-    Console.Error.WriteLine($"The demo calendar covers February to December 2026; today is {today:d MMMM yyyy}. Nothing was changed.");
+    Console.Error.WriteLine($"The demo calendar covers February to October 2026; today is {today:d MMMM yyyy}. Nothing was changed.");
     return 64;
 }
 

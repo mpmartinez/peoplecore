@@ -25,11 +25,24 @@ public class DemoPlanTests
 
     [Theory]
     [InlineData(2026, 1, 20)]
+    [InlineData(2026, 11, 1)]
+    [InlineData(2026, 12, 17)]
+    [InlineData(2026, 12, 31)]
     [InlineData(2027, 3, 1)]
     public void ADayTheCalendarCannotCover_IsRefused(int year, int month, int day)
     {
         var act = () => DemoPlan.Build(1, new DateOnly(year, month, day));
 
         act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Theory]
+    [InlineData(2026, 2, 1)]
+    [InlineData(2026, 10, 31)]
+    public void TheFirstAndLastDaysTheCalendarCovers_AreAccepted(int year, int month, int day)
+    {
+        var act = () => DemoPlan.Build(1, new DateOnly(year, month, day));
+
+        act.Should().NotThrow();
     }
 }
