@@ -205,24 +205,34 @@ public static class AttendanceFile
 
     // ── PeopleCore's daily layout ──────────────────────────────────────────────────────────────
 
-    private static readonly string[] DailyTimeFormats = ["HH:mm", "HH:mm:ss"];
+    // 24-hour times as written, and the 12-hour forms Excel writes when it saves a CSV back out.
+    private static readonly string[] DailyTimeFormats = ["H:mm", "H:mm:ss", "h:mm tt", "h:mm:ss tt"];
+
+    // yyyy-MM-dd as written, or the slash form Excel writes when it saves a CSV back out.
+    private static readonly string[] IsoDateFormats = ["yyyy-MM-dd", "yyyy/MM/dd"];
 
     private static AttendanceFileParseResult ParseDaily(List<TableRow> rows, DailyIndexes at)
     {
         var punches = new List<AttendancePunchDto>();
         var errors = new List<string>();
 
+        string Cell(TableRow row, int i) => i < row.Cells.Length ? row.Cells[i].Trim() : "";
+
+        if (DayFirst(rows.Select(r => Cell(r, at.Date))) is not { } dayFirst)
+            return Refused("The dates mix day-first and month-first forms (for example 25/03 and 03/25), so none can be trusted.");
+        string[] dateFormats = [.. IsoDateFormats, dayFirst ? "d/M/yyyy" : "M/d/yyyy"];
+
         foreach (var row in rows)
         {
-            string Cell(int i) => i < row.Cells.Length ? row.Cells[i].Trim() : "";
-            var (number, dateText, inText, outText) = (Cell(at.EmployeeNumber), Cell(at.Date), Cell(at.TimeIn), Cell(at.TimeOut));
+            var (number, dateText, inText, outText) =
+                (Cell(row, at.EmployeeNumber), Cell(row, at.Date), Cell(row, at.TimeIn), Cell(row, at.TimeOut));
 
             if (number.Length == 0 || dateText.Length == 0)
                 continue;
 
-            if (!DateOnly.TryParseExact(dateText, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+            if (!DateOnly.TryParseExact(dateText, dateFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
             {
-                errors.Add($"Row {row.Line}: '{dateText}' is not a date in yyyy-MM-dd form.");
+                errors.Add($"Row {row.Line}: '{dateText}' is not a date this import can read; write it as yyyy-MM-dd.");
                 continue;
             }
 
@@ -230,12 +240,12 @@ public static class AttendanceFile
             // bad time_in would record the time-out as that day's time-in.
             if (!TryReadDailyTime(inText, out var timeIn))
             {
-                errors.Add($"Row {row.Line}: time_in '{inText}' is not a time in HH:mm or HH:mm:ss form.");
+                errors.Add($"Row {row.Line}: time_in '{inText}' is not a time this import can read; write it as HH:mm.");
                 continue;
             }
             if (!TryReadDailyTime(outText, out var timeOut))
             {
-                errors.Add($"Row {row.Line}: time_out '{outText}' is not a time in HH:mm or HH:mm:ss form.");
+                errors.Add($"Row {row.Line}: time_out '{outText}' is not a time this import can read; write it as HH:mm.");
                 continue;
             }
 

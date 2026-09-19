@@ -1,6 +1,7 @@
 @page "/attendance-import"
 @attribute [RequirePermission(Permissions.AttendanceManage)]
 @inject ApiClient Api
+@inject IJSRuntime JS
 
 @*
     Upload a time clock export, see what it holds, link any device numbers that match nobody yet,
@@ -11,7 +12,7 @@
 <PageTitle>Import Attendance</PageTitle>
 
 <PageHeader Title="Import Attendance" Section="Time"
-            Description="Upload the attendance export from your biometric time clock, or PeopleCore's own CSV." />
+            Description="Upload the attendance export from your biometric time clock, or a filled-in template." />
 
 <Card Class="mb-4 max-w-3xl">
     <CardContent Class="pt-6 space-y-3">
@@ -21,11 +22,22 @@
             <code>employee_number,date,time_in,time_out</code>. From a time clock, each person's first scan of the day
             is the time-in and the last is the time-out. Days already recorded are left as they are.
         </p>
-        <label class="inline-flex cursor-pointer items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent">
-            <i class="bi bi-upload"></i>
-            <span>@(_fileName ?? "Choose a file")</span>
-            <InputFile OnChange="OnFileChosen" accept=".csv,.txt,.dat,.xls,.xlsx" class="hidden" data-attendance-file disabled="@_busy" />
-        </label>
+        <div class="flex flex-wrap items-center gap-2">
+            <label class="inline-flex cursor-pointer items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent">
+                <i class="bi bi-upload"></i>
+                <span>@(_fileName ?? "Choose a file")</span>
+                <InputFile OnChange="OnFileChosen" accept=".csv,.txt,.dat,.xls,.xlsx" class="hidden" data-attendance-file disabled="@_busy" />
+            </label>
+            <span class="text-sm text-muted-foreground sm:ml-auto">No time clock export? Fill in a template:</span>
+            <Button Variant="outline" Size="sm" data-template="xlsx" Loading="@(_downloading == "xlsx")"
+                    OnClick="@(() => DownloadTemplate("xlsx"))">
+                <i class="bi bi-file-earmark-spreadsheet mr-1"></i> Excel template
+            </Button>
+            <Button Variant="outline" Size="sm" data-template="csv" Loading="@(_downloading == "csv")"
+                    OnClick="@(() => DownloadTemplate("csv"))">
+                <i class="bi bi-filetype-csv mr-1"></i> CSV template
+            </Button>
+        </div>
         @if (_busy)
         {
             <p class="text-sm text-muted-foreground">Reading the file…</p>
@@ -152,6 +164,29 @@
     private bool _busy;
     private bool _importing;
     private string? _error;
+    private string? _downloading;
+
+    private async Task DownloadTemplate(string format)
+    {
+        _error = null;
+        _downloading = format;
+        try
+        {
+            var bytes = await Api.GetAttendanceTemplateAsync(format);
+            var contentType = format == "xlsx"
+                ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                : "text/csv";
+            await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(bytes), $"attendance-import-template.{format}", contentType);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _downloading = null;
+        }
+    }
 
     private async Task OnFileChosen(InputFileChangeEventArgs e)
     {

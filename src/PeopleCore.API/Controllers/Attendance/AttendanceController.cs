@@ -142,6 +142,16 @@ public class AttendanceController : ControllerBase
         return Ok(await import.ImportAsync(parsed.Punches, parsed.Errors, ct));
     }
 
+    /// <summary>A blank of PeopleCore's own import layout with example rows, as <c>csv</c> or <c>xlsx</c>.</summary>
+    [HttpGet("import/template")]
+    [RequirePermission(Permissions.AttendanceManage)]
+    public IActionResult ImportTemplate([FromQuery] string format = "csv") => format.ToLowerInvariant() switch
+    {
+        "csv" => File(AttendanceImportTemplate.Csv(), AttendanceImportTemplate.CsvContentType, "attendance-import-template.csv"),
+        "xlsx" => File(AttendanceImportTemplate.Xlsx(), AttendanceImportTemplate.XlsxContentType, "attendance-import-template.xlsx"),
+        _ => BadRequest("Ask for format=csv or format=xlsx."),
+    };
+
     /// <summary>Links an employee to the number they are enrolled under on the time clock; a blank id unlinks them.</summary>
     [HttpPut("biometric-ids/{employeeId:guid}")]
     [RequirePermission(Permissions.AttendanceManage)]

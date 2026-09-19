@@ -194,6 +194,14 @@ public class ApiClient
     public Task<AttendanceImportResultDto?> ImportAttendanceAsync(byte[] content, string fileName)
         => PostAttendanceFileAsync<AttendanceImportResultDto>("api/attendance/import", content, fileName);
 
+    /// <summary>PeopleCore's import layout with example rows; <paramref name="format"/> is "csv" or "xlsx".</summary>
+    public async Task<byte[]> GetAttendanceTemplateAsync(string format)
+    {
+        var response = await _http.GetAsync($"api/attendance/import/template?format={format}");
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadAsByteArrayAsync();
+    }
+
     /// <summary>Links an employee to their time clock number; null unlinks them.</summary>
     public Task<AttendanceImportEmployeeDto?> SetBiometricIdAsync(Guid employeeId, string? biometricId)
         => SendJsonAsync<AttendanceImportEmployeeDto>(HttpMethod.Put, $"api/attendance/biometric-ids/{employeeId}", new { biometricId });

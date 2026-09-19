@@ -91,11 +91,11 @@ public class AttendanceCsvTests
     public void Parse_ReportsAnUnparseableDateAsARowError_AndKeepsTheOtherRows()
     {
         var result = Parse(
-            "CHK-0001,2026/03/10,08:00,17:00",
+            "CHK-0001,March 10,08:00,17:00",
             "CHK-0002,2026-03-10,08:00,17:00");
 
         result.Errors.Should().ContainSingle()
-            .Which.Should().Be("Row 2: '2026/03/10' is not a date in yyyy-MM-dd form.");
+            .Which.Should().Be("Row 2: 'March 10' is not a date this import can read; write it as yyyy-MM-dd.");
         result.Punches.Should().HaveCount(2).And.OnlyContain(p => p.EmployeeNumber == "CHK-0002");
     }
 
@@ -108,9 +108,39 @@ public class AttendanceCsvTests
             "CHK-0002,2026-03-10,08:00,25:00");
 
         result.Errors.Should().Equal(
-            "Row 2: time_in '8am' is not a time in HH:mm or HH:mm:ss form.",
-            "Row 3: time_out '25:00' is not a time in HH:mm or HH:mm:ss form.");
+            "Row 2: time_in '8am' is not a time this import can read; write it as HH:mm.",
+            "Row 3: time_out '25:00' is not a time this import can read; write it as HH:mm.");
         result.Punches.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Opening the CSV template in Excel and saving it rewrites 2026-03-10 as 3/10/2026 and 17:05 as
+    /// 5:05 PM. The file must still import as the same days and times.
+    /// </summary>
+    [Fact]
+    public void Parse_ReadsTheDatesAndTimesExcelWritesWhenItSavesTheTemplate()
+    {
+        var result = Parse(
+            "CHK-0001,3/10/2026,8:02 AM,5:05 PM",
+            "CHK-0001,2026/03/11,7:59,17:00:30");
+
+        result.Errors.Should().BeEmpty();
+        result.Punches.Select(p => p.PunchTime).Should().Equal(
+            new DateTime(2026, 3, 10, 8, 2, 0, DateTimeKind.Utc),
+            new DateTime(2026, 3, 10, 17, 5, 0, DateTimeKind.Utc),
+            new DateTime(2026, 3, 11, 7, 59, 0, DateTimeKind.Utc),
+            new DateTime(2026, 3, 11, 17, 0, 30, DateTimeKind.Utc));
+    }
+
+    [Fact]
+    public void Parse_ReadsSlashDatesDayFirstWhenOneOnlyMakesSenseThatWay()
+    {
+        var result = Parse(
+            "CHK-0001,10/03/2026,08:00,",
+            "CHK-0001,25/03/2026,08:00,");
+
+        result.Punches.Select(p => DateOnly.FromDateTime(p.PunchTime))
+            .Should().Equal(new DateOnly(2026, 3, 10), new DateOnly(2026, 3, 25));
     }
 
     [Fact]

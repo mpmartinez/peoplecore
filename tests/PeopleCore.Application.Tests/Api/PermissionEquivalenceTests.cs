@@ -105,6 +105,7 @@ public class PermissionEquivalenceTests
         ["CompanyProfileController.Get"] = [Permissions.SettingsManage],
         ["CompanyProfileController.Save"] = [Permissions.SettingsManage],
         ["AttendanceController.SetBiometricId"] = [Permissions.AttendanceManage],
+        ["AttendanceController.ImportTemplate"] = [Permissions.AttendanceManage],
     };
 
     private static IEnumerable<(Type Controller, MethodInfo Action)> Endpoints() =>

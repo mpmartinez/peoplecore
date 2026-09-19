@@ -38,6 +38,7 @@ public class AttendanceImportTests : BunitContext
         var auth = AddAuthorization();
         auth.SetAuthorized("hr@company.test");
         auth.SetClaims(SeededPermissions.ClaimsFor("HRManager"));
+        JSInterop.SetupVoid("downloadFileFromBytes", _ => true);
     }
 
     private IRenderedComponent<AttendanceImport> RenderWithFile()
@@ -102,5 +103,18 @@ public class AttendanceImportTests : BunitContext
 
         cut.WaitForElement("[data-import-error]").TextContent.Should().Contain("weren't recognised");
         cut.FindAll("[data-import-preview]").Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("xlsx", "attendance-import-template.xlsx")]
+    [InlineData("csv", "attendance-import-template.csv")]
+    public void The_template_buttons_download_the_file(string format, string fileName)
+    {
+        _api.On(HttpMethod.Get, $"/api/attendance/import/template?format={format}", HttpStatusCode.OK, "template");
+
+        var cut = Render<AttendanceImport>();
+        cut.Find($"[data-template='{format}']").Click();
+
+        cut.WaitForAssertion(() => JSInterop.VerifyInvoke("downloadFileFromBytes").Arguments[1].Should().Be(fileName));
     }
 }
