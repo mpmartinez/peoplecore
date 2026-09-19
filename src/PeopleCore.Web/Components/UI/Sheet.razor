@@ -23,7 +23,7 @@
         <!-- Header -->
         @if (Title != null || Description != null)
         {
-            <div class="flex flex-col space-y-2 text-center sm:text-left">
+            <div class="flex shrink-0 flex-col space-y-2 text-center sm:text-left">
                 @if (Title != null)
                 {
                     <h2 class="text-lg font-semibold text-foreground">@Title</h2>
@@ -35,15 +35,15 @@
             </div>
         }
 
-        <!-- Body -->
-        <div class="@BodyClass">
+        <!-- Body: the part that scrolls when the content is taller than the panel -->
+        <div class="min-h-0 flex-1 overflow-y-auto @BodyClass">
             @ChildContent
         </div>
 
         <!-- Footer -->
         @if (FooterContent != null)
         {
-            <div class="flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2 mt-4">
+            <div class="flex shrink-0 flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2">
                 @FooterContent
             </div>
         }
@@ -64,12 +64,12 @@
     [Parameter] public string? BodyClass { get; set; }
     [Parameter(CaptureUnmatchedValues = true)] public Dictionary<string, object>? AdditionalAttributes { get; set; }
 
-    private string ContentBaseClasses => "fixed z-50 gap-4 bg-background p-6 shadow-lg transition ease-in-out data-[state=closed]:duration-300 data-[state=open]:duration-500 data-[state=open]:animate-in data-[state=closed]:animate-out";
+    private string ContentBaseClasses => "fixed z-50 flex flex-col gap-4 bg-background p-6 shadow-lg transition ease-in-out data-[state=closed]:duration-300 data-[state=open]:duration-500 data-[state=open]:animate-in data-[state=closed]:animate-out";
 
     private string GetSideClasses() => Side switch
     {
-        "top" => "inset-x-0 top-0 border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top",
-        "bottom" => "inset-x-0 bottom-0 border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
+        "top" => "inset-x-0 top-0 max-h-[85vh] border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top",
+        "bottom" => "inset-x-0 bottom-0 max-h-[85vh] border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
         "left" => "inset-y-0 left-0 h-full w-3/4 border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left sm:max-w-sm",
         "right" => "inset-y-0 right-0 h-full w-3/4 border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-sm",
         _ => "inset-y-0 right-0 h-full w-3/4 border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-sm"
