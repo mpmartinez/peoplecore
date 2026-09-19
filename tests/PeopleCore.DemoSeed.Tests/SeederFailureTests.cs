@@ -33,6 +33,7 @@ public class SeederFailureTests
                 ("POST", "api/users") => $$"""{"account":{"id":"{{Guid.NewGuid()}}"},"temporaryPassword":"Temp1234"}""",
                 ("POST", _) when path.EndsWith("/deactivate") => "{}",
                 ("POST", _) => $$"""{"id":"{{Guid.NewGuid()}}"}""",
+                ("GET", "api/company-profile") => """{"name":"My Company","tin":""}""",
                 ("GET", "api/companies") => $$"""[{"id":"{{Guid.NewGuid()}}","name":"My Company"}]""",
                 ("GET", "api/employees" or "api/users") => """{"items":[],"totalCount":0}""",
                 ("GET", _) => "[]",

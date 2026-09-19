@@ -47,6 +47,7 @@ public sealed partial class Seeder(ApiClient api, DemoPlan plan, TextWriter log)
 
         try
         {
+            await FillCompanyProfileAsync();
             await CreateOrganizationAsync();
             await CreateEmployeesAsync();
             await CreateHolidaysAndScheduleAsync();

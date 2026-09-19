@@ -32,6 +32,9 @@ dotnet run --project tools/PeopleCore.DemoSeed
 Remove-Item Env:PEOPLECORE_ADMIN_PASSWORD
 ```
 
+To fill in only the company details, on a site seeded before they were part of the run, add
+`company` to the command: `dotnet run --project tools/PeopleCore.DemoSeed -- company`.
+
 `PEOPLECORE_URL` must start with `https://`. Plain `http://` is accepted only for `localhost` or
 `127.0.0.1`, for a rehearsal against a local API.
 
@@ -42,6 +45,9 @@ The client signs in with those and chooses their own password.
 
 The demo shares the site with any real records:
 
+- **The company's employer details** (name, TIN, address, ZIP, RDO and agency numbers) for
+  Bayanihan Trading Corporation, so payslips and BIR Form 2316 print an employer. All of them are
+  made up. This happens only if the company has no TIN yet: real details are never overwritten.
 - **Up to ten 2026 public holidays**, from New Year's Day to National Heroes Day, for any date the
   site doesn't already have. Holidays are company-wide, so **real staff's payroll uses them too**.
   The run prints which ones it added.

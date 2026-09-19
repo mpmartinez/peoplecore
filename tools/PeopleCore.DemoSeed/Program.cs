@@ -20,6 +20,28 @@ if (SiteUrl.Problem(url) is { } badUrl)
     return 64;
 }
 
+// "company" fills in only the employer details, for a site seeded before they were part of the run.
+if (args is ["company"])
+{
+    using var companyHttp = new HttpClient { BaseAddress = new Uri(url.TrimEnd('/') + "/"), Timeout = TimeSpan.FromMinutes(1) };
+    var companySeeder = new Seeder(new ApiClient(companyHttp), DemoPlan.Build(seed, new DateOnly(2026, 9, 18)), Console.Out);
+    try
+    {
+        await companySeeder.FillCompanyProfileOnlyAsync(email, password);
+        return 0;
+    }
+    catch (PreflightRefusedException e)
+    {
+        Console.Error.WriteLine(e.Message);
+        return 2;
+    }
+    catch (Exception e)
+    {
+        Console.Error.WriteLine($"Stopped. {(e is SeedException ? e.Message : $"{e.GetType().Name}: {e.Message}")}");
+        return 1;
+    }
+}
+
 // The demo's days are Philippine days, whatever time zone this machine runs in.
 var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
 DemoPlan plan;
