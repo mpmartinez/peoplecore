@@ -1,0 +1,151 @@
+@page "/admin/company"
+@attribute [RequirePermission(Permissions.SettingsManage)]
+@inject ApiClient Api
+
+@*
+    The employer identity printed on payslips and BIR Form 2316. Blank fields print blank.
+*@
+
+<PageHeader Title="Company" Section="Administration"
+            Description="Your registered employer details, printed on payslips and BIR Form 2316." />
+
+@if (_loading)
+{
+    <p class="text-sm text-muted-foreground">Loading…</p>
+}
+else
+{
+    <Card Class="max-w-2xl">
+        <CardContent Class="pt-6">
+            <form class="space-y-4" data-company-profile @onsubmit="Save" @onsubmit:preventDefault>
+                @if (_error is not null)
+                {
+                    <Alert Variant="destructive" data-company-error>@_error</Alert>
+                }
+                else if (_result is not null)
+                {
+                    <Alert Variant="success" data-company-result>@_result</Alert>
+                }
+                else if (string.IsNullOrWhiteSpace(_tin))
+                {
+                    <Alert Variant="warning">
+                        No TIN yet, so the employer section of BIR Form 2316 prints blank.
+                    </Alert>
+                }
+
+                <FormField LabelText="Registered name" Id="company-name">
+                    <Input TValue="string" Id="company-name" @bind-Value="_name" Disabled="@_saving" />
+                </FormField>
+
+                <div class="grid gap-4 sm:grid-cols-3">
+                    <FormField LabelText="TIN" Id="company-tin" Class="min-w-0 sm:col-span-2"
+                               Description="With the branch code, for example 123-456-789-00000.">
+                        <Input TValue="string" Id="company-tin" @bind-Value="_tin" Placeholder="123-456-789-00000" Disabled="@_saving" />
+                    </FormField>
+                    <FormField LabelText="RDO code" Id="company-rdo" Class="min-w-0">
+                        <Input TValue="string" Id="company-rdo" @bind-Value="_rdoCode" Placeholder="043" Disabled="@_saving" />
+                    </FormField>
+                </div>
+
+                <FormField LabelText="Registered address" Id="company-address">
+                    <Input TValue="string" Id="company-address" @bind-Value="_address" Disabled="@_saving" />
+                </FormField>
+
+                <div class="grid gap-4 sm:grid-cols-3">
+                    <FormField LabelText="City" Id="company-city" Class="min-w-0 sm:col-span-2">
+                        <Input TValue="string" Id="company-city" @bind-Value="_city" Disabled="@_saving" />
+                    </FormField>
+                    <FormField LabelText="ZIP code" Id="company-zip" Class="min-w-0">
+                        <Input TValue="string" Id="company-zip" @bind-Value="_zipCode" Placeholder="1000" Disabled="@_saving" />
+                    </FormField>
+                </div>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <FormField LabelText="Contact email" Id="company-email" Class="min-w-0">
+                        <Input TValue="string" Id="company-email" Type="email" @bind-Value="_contactEmail" Disabled="@_saving" />
+                    </FormField>
+                    <FormField LabelText="Contact phone" Id="company-phone" Class="min-w-0">
+                        <Input TValue="string" Id="company-phone" @bind-Value="_contactPhone" Disabled="@_saving" />
+                    </FormField>
+                </div>
+
+                <div class="grid gap-4 sm:grid-cols-3">
+                    <FormField LabelText="SSS employer no." Id="company-sss" Class="min-w-0">
+                        <Input TValue="string" Id="company-sss" @bind-Value="_sss" Disabled="@_saving" />
+                    </FormField>
+                    <FormField LabelText="PhilHealth employer no." Id="company-philhealth" Class="min-w-0">
+                        <Input TValue="string" Id="company-philhealth" @bind-Value="_philHealth" Disabled="@_saving" />
+                    </FormField>
+                    <FormField LabelText="Pag-IBIG employer no." Id="company-pagibig" Class="min-w-0">
+                        <Input TValue="string" Id="company-pagibig" @bind-Value="_pagIbig" Disabled="@_saving" />
+                    </FormField>
+                </div>
+
+                <div class="flex justify-end pt-2">
+                    <Button Type="submit" Variant="primary" Loading="@_saving">Save</Button>
+                </div>
+            </form>
+        </CardContent>
+    </Card>
+}
+
+@code {
+    private string _name = string.Empty;
+    private string? _tin, _rdoCode, _address, _city, _zipCode, _contactEmail, _contactPhone, _sss, _philHealth, _pagIbig;
+    private bool _loading = true;
+    private bool _saving;
+    private string? _error;
+    private string? _result;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            if (await Api.GetCompanyProfileAsync() is { } profile) Apply(profile);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void Apply(CompanyProfileDto p)
+    {
+        _name = p.Name;
+        _tin = p.Tin;
+        _rdoCode = p.RdoCode;
+        _address = p.Address;
+        _city = p.City;
+        _zipCode = p.ZipCode;
+        _contactEmail = p.ContactEmail;
+        _contactPhone = p.ContactPhone;
+        _sss = p.SssNumber;
+        _philHealth = p.PhilHealthNumber;
+        _pagIbig = p.PagIbigNumber;
+    }
+
+    private async Task Save()
+    {
+        _error = _result = null;
+        _saving = true;
+        try
+        {
+            var saved = await Api.SaveCompanyProfileAsync(new CompanyProfileDto(
+                _name, _tin, _rdoCode, _address, _city, _zipCode, _contactEmail, _contactPhone, _sss, _philHealth, _pagIbig));
+            if (saved is not null) Apply(saved);
+            _result = "Saved. New payslips and 2316 forms will use these details.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

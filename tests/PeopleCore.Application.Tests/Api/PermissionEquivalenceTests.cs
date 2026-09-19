@@ -102,6 +102,8 @@ public class PermissionEquivalenceTests
         ["EmailSettingsController.Get"] = [Permissions.SettingsManage],
         ["EmailSettingsController.Save"] = [Permissions.SettingsManage],
         ["EmailSettingsController.SendTest"] = [Permissions.SettingsManage],
+        ["CompanyProfileController.Get"] = [Permissions.SettingsManage],
+        ["CompanyProfileController.Save"] = [Permissions.SettingsManage],
     };
 
     private static IEnumerable<(Type Controller, MethodInfo Action)> Endpoints() =>

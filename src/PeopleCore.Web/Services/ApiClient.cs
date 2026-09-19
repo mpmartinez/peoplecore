@@ -230,6 +230,12 @@ public class ApiClient
     public async Task<IReadOnlyList<CompanyDto>?> GetCompaniesAsync()
         => await GetJsonAsync<IReadOnlyList<CompanyDto>>("api/companies");
 
+    public Task<CompanyProfileDto?> GetCompanyProfileAsync()
+        => GetJsonAsync<CompanyProfileDto>("api/company-profile");
+
+    public Task<CompanyProfileDto?> SaveCompanyProfileAsync(CompanyProfileDto profile)
+        => SendJsonAsync<CompanyProfileDto>(HttpMethod.Put, "api/company-profile", profile);
+
     // Departments
     public async Task<PagedResult<DepartmentDto>?> GetDepartmentsAsync(int page = 1, int pageSize = 50)
         => await GetJsonAsync<PagedResult<DepartmentDto>>($"api/departments?page={page}&pageSize={pageSize}");
@@ -600,6 +606,9 @@ public record LeaveBalanceDto(Guid Id, Guid EmployeeId, string EmployeeName, Gui
 public record LeaveRequestDto(Guid Id, Guid EmployeeId, string EmployeeName, string LeaveTypeName, string StartDate, string EndDate, decimal TotalDays, string Status, string? Reason);
 public record AttendanceRecordDto(Guid Id, string AttendanceDate, string? TimeIn, string? TimeOut, int LateMinutes, int UndertimeMinutes, bool IsPresent);
 public record CompanyDto(Guid Id, string Name);
+public record CompanyProfileDto(
+    string Name, string? Tin, string? RdoCode, string? Address, string? City, string? ZipCode,
+    string? ContactEmail, string? ContactPhone, string? SssNumber, string? PhilHealthNumber, string? PagIbigNumber);
 public record DepartmentDto(Guid Id, Guid CompanyId, Guid? ParentDepartmentId, string? ParentDepartmentName, string Name, string? Code, int SubDepartmentCount);
 public record PositionDto(Guid Id, Guid DepartmentId, string DepartmentName, string Title, string? Level);
 public record JobPostingDto(Guid Id, string Title, Guid? DepartmentId, string? DepartmentName, Guid? PositionId, string? PositionTitle, string? Description, string? Requirements, int Vacancies, string Status, DateTime? PostedAt, DateTime? ClosedAt);

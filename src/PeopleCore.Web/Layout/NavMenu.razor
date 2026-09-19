@@ -73,6 +73,7 @@
         [
             new("/admin/users", "Users", "bi-person-gear", AnyOf: [Permissions.UsersManage]),
             new("/admin/roles", "Roles", "bi-shield-lock", AnyOf: [Permissions.RolesManage]),
+            new("/admin/company", "Company", "bi-building", AnyOf: [Permissions.SettingsManage]),
             new("/admin/email", "Email", "bi-envelope", AnyOf: [Permissions.SettingsManage])
         ])
     ];
