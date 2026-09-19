@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using PeopleCore.Application.Attendance.DTOs;
 using PeopleCore.Application.Employees.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Domain.Entities.Employees;
@@ -96,4 +97,15 @@ public class EmployeeRepository : Repository<Employee>, IEmployeeRepository
             .Include(e => e.Department)
             .Include(e => e.Position)
             .FirstOrDefaultAsync(e => e.EmployeeNumber == employeeNumber, ct);
+
+    public async Task<Employee?> GetByBiometricIdAsync(string biometricId, CancellationToken ct = default)
+        => await Context.Employees.FirstOrDefaultAsync(e => e.BiometricId == biometricId, ct);
+
+    public async Task<IReadOnlyList<AttendanceImportEmployeeDto>> GetAttendanceImportKeysAsync(CancellationToken ct = default)
+        => await Context.Employees
+            .AsNoTracking()
+            .OrderBy(e => e.LastName).ThenBy(e => e.FirstName)
+            .Select(e => new AttendanceImportEmployeeDto(
+                e.Id, e.EmployeeNumber, e.FirstName + " " + e.LastName, e.BiometricId, e.IsActive))
+            .ToListAsync(ct);
 }

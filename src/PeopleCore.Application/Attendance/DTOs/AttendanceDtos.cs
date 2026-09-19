@@ -78,3 +78,25 @@ public record AttendanceImportResultDto(
     int Skipped,
     IReadOnlyList<string> Errors
 );
+
+/// <summary>An employee as the attendance import sees them: who a time clock's number can point at.</summary>
+public record AttendanceImportEmployeeDto(Guid Id, string EmployeeNumber, string FullName, string? BiometricId, bool IsActive);
+
+/// <summary>A number in the file that matches no employee, and how many of the day's punches carry it.</summary>
+public record UnmatchedDeviceIdDto(string DeviceId, int Punches);
+
+/// <summary>
+/// What an import would do, before anything is written: the file's shape, who and which days it
+/// covers, the numbers that match nobody yet, and every employee they could be linked to.
+/// </summary>
+public record AttendanceImportPreviewDto(
+    string Layout,
+    int Punches,
+    int MatchedPeople,
+    DateOnly? From,
+    DateOnly? To,
+    IReadOnlyList<UnmatchedDeviceIdDto> Unmatched,
+    IReadOnlyList<string> Errors,
+    IReadOnlyList<AttendanceImportEmployeeDto> Employees);
+
+public record SetBiometricIdDto(string? BiometricId);

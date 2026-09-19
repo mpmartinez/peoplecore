@@ -25,6 +25,12 @@ public class Employee : M2NET.Core.Entities.Employee, IAuditableEntity
     public string? PersonalEmail { get; set; }     // base has Email
     public string WorkEmail { get; set; } = string.Empty;
     public string? MobileNumber { get; set; }      // base has Mobile/Phone
+
+    /// <summary>
+    /// The number this person is enrolled under on the biometric time clock (ZKTeco's "AC-No." /
+    /// "User ID"). Attendance imports match on it first, then fall back to the employee number.
+    /// </summary>
+    public string? BiometricId { get; set; }
     public string? Address { get; set; }
 
     /// <summary>BIR Revenue District Office code. Stable per employee; printed on Form 2316.</summary>

@@ -11,6 +11,8 @@ public class EmployeeConfiguration : IEntityTypeConfiguration<Employee>
         builder.HasKey(e => e.Id);
         builder.HasIndex(e => e.EmployeeNumber).IsUnique();
         builder.Property(e => e.EmployeeNumber).IsRequired().HasMaxLength(50);
+        builder.HasIndex(e => e.BiometricId).IsUnique();
+        builder.Property(e => e.BiometricId).HasMaxLength(50);
         builder.Property(e => e.FirstName).IsRequired().HasMaxLength(100);
         builder.Property(e => e.LastName).IsRequired().HasMaxLength(100);
         builder.Property(e => e.WorkEmail).IsRequired().HasMaxLength(200);

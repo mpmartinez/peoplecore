@@ -297,7 +297,9 @@ public class AttendanceControllerAuthorizationTests
         string[] covered =
         [
             nameof(AttendanceController.GetAll), nameof(AttendanceController.GetSummary),
-            nameof(AttendanceController.TimeIn), nameof(AttendanceController.TimeOut)
+            nameof(AttendanceController.TimeIn), nameof(AttendanceController.TimeOut),
+            // HR only: guarded by attendance.manage, pinned in PermissionEquivalenceTests.AddedEndpoints.
+            nameof(AttendanceController.SetBiometricId)
         ];
 
         var takingAnEmployeeId = typeof(AttendanceController)

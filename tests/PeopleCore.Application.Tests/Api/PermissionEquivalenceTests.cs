@@ -104,6 +104,7 @@ public class PermissionEquivalenceTests
         ["EmailSettingsController.SendTest"] = [Permissions.SettingsManage],
         ["CompanyProfileController.Get"] = [Permissions.SettingsManage],
         ["CompanyProfileController.Save"] = [Permissions.SettingsManage],
+        ["AttendanceController.SetBiometricId"] = [Permissions.AttendanceManage],
     };
 
     private static IEnumerable<(Type Controller, MethodInfo Action)> Endpoints() =>

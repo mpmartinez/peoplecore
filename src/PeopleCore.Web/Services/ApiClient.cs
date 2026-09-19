@@ -186,6 +186,29 @@ public class ApiClient
         return await response.Content.ReadFromJsonAsync<LeaveRequestDto>(JsonOptions);
     }
 
+    // Attendance import
+    /// <summary>What importing this file would do, without saving anything.</summary>
+    public Task<AttendanceImportPreviewDto?> PreviewAttendanceImportAsync(byte[] content, string fileName)
+        => PostAttendanceFileAsync<AttendanceImportPreviewDto>("api/attendance/import?preview=true", content, fileName);
+
+    public Task<AttendanceImportResultDto?> ImportAttendanceAsync(byte[] content, string fileName)
+        => PostAttendanceFileAsync<AttendanceImportResultDto>("api/attendance/import", content, fileName);
+
+    /// <summary>Links an employee to their time clock number; null unlinks them.</summary>
+    public Task<AttendanceImportEmployeeDto?> SetBiometricIdAsync(Guid employeeId, string? biometricId)
+        => SendJsonAsync<AttendanceImportEmployeeDto>(HttpMethod.Put, $"api/attendance/biometric-ids/{employeeId}", new { biometricId });
+
+    private async Task<T?> PostAttendanceFileAsync<T>(string url, byte[] content, string fileName)
+    {
+        using var form = new MultipartFormDataContent();
+        var file = new ByteArrayContent(content);
+        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        form.Add(file, "file", fileName);
+        var response = await _http.PostAsync(url, form);
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<T>(JsonOptions);
+    }
+
     // Attendance
     public async Task<PagedResult<AttendanceRecordDto>?> GetAttendanceAsync(Guid? employeeId = null, int page = 1, int pageSize = 20)
     {
@@ -604,6 +627,11 @@ public record PagedResult<T>(IReadOnlyList<T> Items, int TotalCount, int Page, i
 public record EmployeeListDto(Guid Id, string EmployeeNumber, string FirstName, string LastName, string FullName, string WorkEmail, string? DepartmentName, string? PositionTitle, string EmploymentStatus, bool IsActive);
 public record LeaveBalanceDto(Guid Id, Guid EmployeeId, string EmployeeName, Guid LeaveTypeId, string LeaveTypeName, int Year, decimal TotalDays, decimal UsedDays, decimal CarriedOverDays, decimal RemainingDays);
 public record LeaveRequestDto(Guid Id, Guid EmployeeId, string EmployeeName, string LeaveTypeName, string StartDate, string EndDate, decimal TotalDays, string Status, string? Reason);
+public record AttendanceImportEmployeeDto(Guid Id, string EmployeeNumber, string FullName, string? BiometricId, bool IsActive);
+public record UnmatchedDeviceIdDto(string DeviceId, int Punches);
+public record AttendanceImportPreviewDto(string Layout, int Punches, int MatchedPeople, DateOnly? From, DateOnly? To,
+    IReadOnlyList<UnmatchedDeviceIdDto> Unmatched, IReadOnlyList<string> Errors, IReadOnlyList<AttendanceImportEmployeeDto> Employees);
+public record AttendanceImportResultDto(int Imported, int Skipped, IReadOnlyList<string> Errors);
 public record AttendanceRecordDto(Guid Id, string AttendanceDate, string? TimeIn, string? TimeOut, int LateMinutes, int UndertimeMinutes, bool IsPresent);
 public record CompanyDto(Guid Id, string Name);
 public record CompanyProfileDto(

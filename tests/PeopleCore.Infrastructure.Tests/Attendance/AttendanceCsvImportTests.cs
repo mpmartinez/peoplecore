@@ -38,8 +38,8 @@ public class AttendanceCsvImportTests : DatabaseTestBase
         return employee.Id;
     }
 
-    private static AttendanceCsvParseResult ParseCsv(string csv)
-        => AttendanceCsv.Parse(new MemoryStream(Encoding.UTF8.GetBytes(csv)));
+    private static AttendanceFileParseResult ParseCsv(string csv)
+        => AttendanceFile.Parse(new MemoryStream(Encoding.UTF8.GetBytes(csv)), "attendance.csv");
 
     [Fact]
     public async Task ImportedPunches_AreSaved_WithLatenessAndUndertimeReadOffTheWallClock()
@@ -72,5 +72,31 @@ public class AttendanceCsvImportTests : DatabaseTestBase
         // Stored as the wall-clock time labelled UTC - not shifted by the server's zone.
         records[1].TimeIn.Should().Be(new DateTime(2026, 3, 10, 8, 7, 0, DateTimeKind.Utc));
         records[2].TimeOut.Should().Be(new DateTime(2026, 3, 11, 16, 30, 0, DateTimeKind.Utc));
+    }
+
+    [Fact]
+    public async Task A_ZKTeco_scan_log_is_saved_under_the_employee_enrolled_with_that_number()
+    {
+        var employeeId = await AnEmployeeNumberedAsync("ZK-0001");
+        var import = new AttendanceImportService(new EmployeeRepository(Context), Service);
+        await import.SetBiometricIdAsync(employeeId, "1023");
+
+        var parsed = AttendanceFile.Parse(new MemoryStream(Encoding.UTF8.GetBytes(
+            "AC-No.,Name,Time,State\n" +
+            "1023,Juan,3/10/2026 8:05 AM,C/In\n" +
+            "1023,Juan,3/10/2026 12:00 PM,C/Out\n" +
+            "1023,Juan,3/10/2026 5:10 PM,C/Out\n" +
+            "999,Nobody,3/10/2026 8:00 AM,C/In\n")), "zk.csv");
+
+        var result = await import.ImportAsync(parsed.Punches, parsed.Errors);
+
+        result.Imported.Should().Be(2);
+        result.Errors.Should().ContainSingle().Which.Should().Contain("'999'");
+
+        await using var reader = NewContext();
+        var record = await reader.AttendanceRecords.SingleAsync(r => r.EmployeeId == employeeId);
+        record.TimeIn.Should().Be(new DateTime(2026, 3, 10, 8, 5, 0, DateTimeKind.Utc));
+        record.TimeOut.Should().Be(new DateTime(2026, 3, 10, 17, 10, 0, DateTimeKind.Utc));
+        record.LateMinutes.Should().Be(5);
     }
 }

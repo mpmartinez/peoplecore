@@ -108,24 +108,46 @@ public class AttendanceController : ControllerBase
         => Ok(await _service.SyncPunchesAsync(punches, ct));
 
     /// <summary>
-    /// Imports punches from a CSV (see <see cref="AttendanceCsv"/> for the format). Always 200 with
-    /// the counts: a row the parser refuses is reported in <c>errors</c> and counted once in
-    /// <c>skipped</c>, alongside whatever the punches it did read made of the sync.
+    /// Imports a time clock export or PeopleCore's own CSV (see <see cref="AttendanceFile"/> for what
+    /// is read). With <paramref name="preview"/> nothing is written: the answer says what the file
+    /// holds and which of its people match no employee yet. Otherwise always 200 with the counts: a
+    /// row the parser refuses, or a punch for nobody, is reported in <c>errors</c> and counted in
+    /// <c>skipped</c>.
     /// </summary>
     [HttpPost("import")]
     [RequirePermission(Permissions.AttendanceManage)]
-    public async Task<IActionResult> Import(IFormFile file, CancellationToken ct = default)
+    [RequestSizeLimit(MaxImportBytes)]
+    public async Task<IActionResult> Import(
+        IFormFile file, [FromServices] IAttendanceImportService import,
+        [FromQuery] bool preview = false, CancellationToken ct = default)
     {
         if (file is null || file.Length == 0)
             return BadRequest("No file provided.");
 
-        using var stream = file.OpenReadStream();
-        var parsed = AttendanceCsv.Parse(stream);
-        var synced = await _service.SyncPunchesAsync(parsed.Punches, ct);
+        AttendanceFileParseResult parsed;
+        using (var stream = file.OpenReadStream())
+            parsed = AttendanceFile.Parse(stream, file.FileName);
 
-        return Ok(new AttendanceImportResultDto(
-            synced.Imported,
-            synced.Skipped + parsed.Errors.Count,
-            [.. parsed.Errors, .. synced.Errors]));
+        if (preview)
+        {
+            var layout = parsed.Layout switch
+            {
+                AttendanceFileLayout.DailyInOut => "One row per person per day",
+                AttendanceFileLayout.ScanLog => "Time clock scans",
+                _ => "Not recognised",
+            };
+            return Ok(await import.PreviewAsync(layout, parsed.Punches, parsed.Errors, ct));
+        }
+
+        return Ok(await import.ImportAsync(parsed.Punches, parsed.Errors, ct));
     }
+
+    /// <summary>Links an employee to the number they are enrolled under on the time clock; a blank id unlinks them.</summary>
+    [HttpPut("biometric-ids/{employeeId:guid}")]
+    [RequirePermission(Permissions.AttendanceManage)]
+    public async Task<IActionResult> SetBiometricId(
+        Guid employeeId, [FromBody] SetBiometricIdDto body, [FromServices] IAttendanceImportService import, CancellationToken ct = default)
+        => Ok(await import.SetBiometricIdAsync(employeeId, body.BiometricId, ct));
+
+    private const long MaxImportBytes = 10 * 1024 * 1024;
 }

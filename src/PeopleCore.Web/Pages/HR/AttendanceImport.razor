@@ -1,0 +1,246 @@
+@page "/attendance-import"
+@attribute [RequirePermission(Permissions.AttendanceManage)]
+@inject ApiClient Api
+
+@*
+    Upload a time clock export, see what it holds, link any device numbers that match nobody yet,
+    then import. The file is read once in the browser and sent again for the import itself, so the
+    preview and the import always see the same bytes.
+*@
+
+<PageTitle>Import Attendance</PageTitle>
+
+<PageHeader Title="Import Attendance" Section="Time"
+            Description="Upload the attendance export from your biometric time clock, or PeopleCore's own CSV." />
+
+<Card Class="mb-4 max-w-3xl">
+    <CardContent Class="pt-6 space-y-3">
+        <p class="text-sm text-muted-foreground">
+            Accepts ZKTeco and similar time clock exports (<code>.csv</code>, <code>.xls</code>, <code>.xlsx</code>,
+            or the <code>attlog.dat</code> download) and PeopleCore's layout
+            <code>employee_number,date,time_in,time_out</code>. From a time clock, each person's first scan of the day
+            is the time-in and the last is the time-out. Days already recorded are left as they are.
+        </p>
+        <label class="inline-flex cursor-pointer items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent">
+            <i class="bi bi-upload"></i>
+            <span>@(_fileName ?? "Choose a file")</span>
+            <InputFile OnChange="OnFileChosen" accept=".csv,.txt,.dat,.xls,.xlsx" class="hidden" data-attendance-file disabled="@_busy" />
+        </label>
+        @if (_busy)
+        {
+            <p class="text-sm text-muted-foreground">Reading the file…</p>
+        }
+    </CardContent>
+</Card>
+
+@if (_error is not null)
+{
+    <Alert Variant="destructive" Class="mb-4 max-w-3xl" data-import-error>@_error</Alert>
+}
+
+@if (_result is not null)
+{
+    <Alert Variant="@(_result.Imported > 0 ? "success" : "warning")" Class="mb-4 max-w-3xl" data-import-result>
+        Imported @_result.Imported punch@(_result.Imported == 1 ? "" : "es"); skipped @_result.Skipped.
+        @if (_result.Errors.Count > 0)
+        {
+            <ul class="mt-2 list-disc pl-5 text-sm">
+                @foreach (var error in _result.Errors.Take(20))
+                {
+                    <li>@error</li>
+                }
+            </ul>
+            @if (_result.Errors.Count > 20)
+            {
+                <p class="mt-1 text-sm">…and @(_result.Errors.Count - 20) more.</p>
+            }
+        }
+    </Alert>
+}
+
+@if (_preview is not null && _result is null)
+{
+    <Card Class="mb-4 max-w-3xl" data-import-preview>
+        <CardContent Class="pt-6 space-y-4">
+            <div class="grid gap-4 sm:grid-cols-4">
+                <div><div class="text-xs text-muted-foreground">File type</div><div class="font-medium">@_preview.Layout</div></div>
+                <div><div class="text-xs text-muted-foreground">Punches</div><div class="font-medium">@_preview.Punches</div></div>
+                <div><div class="text-xs text-muted-foreground">Employees matched</div><div class="font-medium">@_preview.MatchedPeople</div></div>
+                <div>
+                    <div class="text-xs text-muted-foreground">Dates</div>
+                    <div class="font-medium">@(_preview.From is { } from ? $"{from:MMM d} – {_preview.To:MMM d, yyyy}" : "–")</div>
+                </div>
+            </div>
+
+            @if (_preview.Errors.Count > 0)
+            {
+                <Alert Variant="warning">
+                    @_preview.Errors.Count row@(_preview.Errors.Count == 1 ? "" : "s") can't be read and will be skipped:
+                    <ul class="mt-2 list-disc pl-5 text-sm">
+                        @foreach (var error in _preview.Errors.Take(10))
+                        {
+                            <li>@error</li>
+                        }
+                    </ul>
+                </Alert>
+            }
+
+            @if (_preview.Unmatched.Count > 0)
+            {
+                <div data-unmatched>
+                    <h3 class="font-semibold">Numbers that match no employee</h3>
+                    <p class="mb-2 text-sm text-muted-foreground">
+                        Link each one to the employee enrolled under it on the time clock. It's remembered for future imports.
+                        Unlinked numbers are skipped.
+                    </p>
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead Class="px-3">Number in file</TableHead>
+                                <TableHead Class="px-3">Punches</TableHead>
+                                <TableHead Class="px-3">Employee</TableHead>
+                                <TableHead Class="px-3"></TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            @foreach (var unmatched in _preview.Unmatched)
+                            {
+                                var deviceId = unmatched.DeviceId;
+                                <TableRow>
+                                    <TableCell Class="px-3 py-2 font-mono">@deviceId</TableCell>
+                                    <TableCell Class="px-3 py-2">@unmatched.Punches</TableCell>
+                                    <TableCell Class="px-3 py-2">
+                                        <Select TValue="Guid?" Id="@($"link-{deviceId}")" Value="@_links.GetValueOrDefault(deviceId)" Placeholder="Choose…"
+                                                ValueChanged="@(v => _links[deviceId] = v)">
+                                            @foreach (var employee in _preview.Employees.Where(e => e.IsActive))
+                                            {
+                                                <option value="@employee.Id">@employee.FullName (@employee.EmployeeNumber)@(employee.BiometricId is { } b ? $" · now {b}" : "")</option>
+                                            }
+                                        </Select>
+                                    </TableCell>
+                                    <TableCell Class="px-3 py-2 text-right">
+                                        <Button Variant="outline" Size="sm" data-link="@deviceId"
+                                                Disabled="@(_links.GetValueOrDefault(deviceId) is null || _busy)"
+                                                OnClick="@(() => Link(deviceId))">Link</Button>
+                                    </TableCell>
+                                </TableRow>
+                            }
+                        </TableBody>
+                    </Table>
+                </div>
+            }
+
+            <div class="flex justify-end gap-2">
+                <Button Variant="outline" OnClick="Reset" Disabled="@_busy">Cancel</Button>
+                <Button Variant="primary" data-import OnClick="Import" Loading="@_importing"
+                        Disabled="@(_preview.MatchedPeople == 0 || _busy)">
+                    Import @(_preview.Unmatched.Count > 0 ? "matched employees" : "")
+                </Button>
+            </div>
+        </CardContent>
+    </Card>
+}
+
+@code {
+    private const long MaxBytes = 10 * 1024 * 1024;
+
+    private byte[]? _content;
+    private string? _fileName;
+    private AttendanceImportPreviewDto? _preview;
+    private AttendanceImportResultDto? _result;
+    private readonly Dictionary<string, Guid?> _links = new();
+    private bool _busy;
+    private bool _importing;
+    private string? _error;
+
+    private async Task OnFileChosen(InputFileChangeEventArgs e)
+    {
+        Reset();
+        var file = e.File;
+        if (file.Size > MaxBytes)
+        {
+            _error = "The file is larger than 10 MB. Export a shorter date range.";
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            using var stream = file.OpenReadStream(MaxBytes);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            _content = buffer.ToArray();
+            _fileName = file.Name;
+            await LoadPreview();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task LoadPreview()
+    {
+        if (_content is null || _fileName is null) return;
+        _preview = await Api.PreviewAttendanceImportAsync(_content, _fileName);
+        if (_preview is { Layout: "Not recognised" })
+        {
+            _error = _preview.Errors.FirstOrDefault() ?? "The file's layout wasn't recognised.";
+            _preview = null;
+        }
+    }
+
+    private async Task Link(string deviceId)
+    {
+        if (_links.GetValueOrDefault(deviceId) is not { } employeeId) return;
+        _error = null;
+        _busy = true;
+        try
+        {
+            await Api.SetBiometricIdAsync(employeeId, deviceId);
+            _links.Remove(deviceId);
+            await LoadPreview();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task Import()
+    {
+        if (_content is null || _fileName is null) return;
+        _error = null;
+        _busy = _importing = true;
+        try
+        {
+            _result = await Api.ImportAttendanceAsync(_content, _fileName);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = _importing = false;
+        }
+    }
+
+    private void Reset()
+    {
+        _content = null;
+        _fileName = null;
+        _preview = null;
+        _result = null;
+        _error = null;
+        _links.Clear();
+    }
+}

@@ -14,8 +14,8 @@ public class AttendanceCsvTests
 {
     private const string Header = "employee_number,date,time_in,time_out";
 
-    private static AttendanceCsvParseResult Parse(params string[] rows)
-        => AttendanceCsv.Parse(new MemoryStream(Encoding.UTF8.GetBytes(string.Join("\n", [Header, .. rows]))));
+    private static AttendanceFileParseResult Parse(params string[] rows)
+        => AttendanceFile.Parse(new MemoryStream(Encoding.UTF8.GetBytes(string.Join("\n", [Header, .. rows]))), "attendance.csv");
 
     [Fact]
     public void Parse_YieldsUtcPunchesWithTheSameWallClockTime()
@@ -126,12 +126,19 @@ public class AttendanceCsvTests
     }
 
     [Fact]
-    public void Parse_ReportsAMissingColumn_InsteadOfThrowing()
+    public void Parse_RefusesAFileWhoseColumnsAreNotRecognised_InsteadOfThrowing()
     {
-        var result = AttendanceCsv.Parse(new MemoryStream(Encoding.UTF8.GetBytes(
-            "employee_number,date,time_in\nCHK-0001,2026-03-10,08:00\n")));
+        var result = AttendanceFile.Parse(new MemoryStream(Encoding.UTF8.GetBytes(
+            "name,shift\nJuan,day\n")), "attendance.csv");
 
+        result.Layout.Should().BeNull();
         result.Punches.Should().BeEmpty();
-        result.Errors.Should().ContainSingle().Which.Should().Contain("time_out");
+        result.Errors.Should().ContainSingle().Which.Should().Contain("employee_number,date,time_in,time_out");
+    }
+
+    [Fact]
+    public void Parse_RecognisesPeopleCoresOwnLayout()
+    {
+        Parse("CHK-0001,2026-03-10,08:00,17:00").Layout.Should().Be(AttendanceFileLayout.DailyInOut);
     }
 }
