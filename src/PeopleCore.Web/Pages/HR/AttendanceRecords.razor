@@ -1,0 +1,228 @@
+@page "/attendance-records"
+@attribute [RequirePermission(Permissions.AttendanceManage)]
+@inject ApiClient Api
+
+@*
+    HR's view of everyone's recorded days, and the place to correct one. A correction is applied at
+    once and kept in the day's history; a day already paid in a payroll run is refused by the API,
+    and its message says which run.
+*@
+
+<PageTitle>Attendance Records</PageTitle>
+
+<PageHeader Title="Attendance Records" Section="Time"
+            Description="Recorded time-ins and time-outs. Correct a day here; every change is kept with its reason.">
+    <Actions>
+        <Button Variant="outline" data-add-day Disabled="@(_employeeId is null)" OnClick="AddDay">
+            <i class="bi bi-plus-lg mr-1"></i> Add a day
+        </Button>
+    </Actions>
+</PageHeader>
+
+<Card Class="mb-4">
+    <CardContent Class="pt-4">
+        <div class="grid gap-4 sm:grid-cols-4">
+            <FormField LabelText="Employee" Id="records-employee" Class="sm:col-span-2">
+                <Select TValue="Guid?" Id="records-employee" Value="@_employeeId" Placeholder="Everyone"
+                        ValueChanged="@(async v => { _employeeId = v; _page = 1; await Load(); })">
+                    @foreach (var employee in _employees)
+                    {
+                        <option value="@employee.Id">@employee.FullName (@employee.EmployeeNumber)</option>
+                    }
+                </Select>
+            </FormField>
+            <FormField LabelText="From" Id="records-from">
+                <Input TValue="DateOnly" Id="records-from" Type="date" Value="@_from"
+                       ValueChanged="@(async v => { _from = v; _page = 1; await Load(); })" />
+            </FormField>
+            <FormField LabelText="To" Id="records-to">
+                <Input TValue="DateOnly" Id="records-to" Type="date" Value="@_to"
+                       ValueChanged="@(async v => { _to = v; _page = 1; await Load(); })" />
+            </FormField>
+        </div>
+    </CardContent>
+</Card>
+
+@if (_notice is not null)
+{
+    <Alert Variant="success" Class="mb-4" data-records-notice>@_notice</Alert>
+}
+
+<Card>
+    <CardContent Class="p-0">
+        @if (_loadError is not null)
+        {
+            <div class="p-4"><Alert Variant="destructive" Title="Couldn't load attendance">@_loadError</Alert></div>
+        }
+        else if (_records is null)
+        {
+            <div class="p-6 flex justify-center"><Spinner /></div>
+        }
+        else if (!_records.Items.Any())
+        {
+            <div class="p-6 text-center text-muted-foreground text-sm">No attendance recorded for these dates.</div>
+        }
+        else
+        {
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead Class="px-4">Employee</TableHead>
+                        <TableHead Class="px-4">Date</TableHead>
+                        <TableHead Class="px-4">Time In</TableHead>
+                        <TableHead Class="px-4">Time Out</TableHead>
+                        <TableHead Class="px-4 text-right">Late</TableHead>
+                        <TableHead Class="px-4 text-right">Undertime</TableHead>
+                        <TableHead Class="px-4 text-right">Overtime</TableHead>
+                        <TableHead Class="px-4"></TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    @foreach (var r in _records.Items)
+                    {
+                        <TableRow>
+                            <TableCell Class="px-4 py-3 font-medium">@r.EmployeeName</TableCell>
+                            <TableCell Class="px-4 py-3">@r.AttendanceDate</TableCell>
+                            <TableCell Class="px-4 py-3">@(WallClock.Time(r.TimeIn) ?? "--")</TableCell>
+                            <TableCell Class="px-4 py-3">@(WallClock.Time(r.TimeOut) ?? "--")</TableCell>
+                            <TableCell Class="px-4 py-3 text-right">@r.LateMinutes</TableCell>
+                            <TableCell Class="px-4 py-3 text-right">@r.UndertimeMinutes</TableCell>
+                            <TableCell Class="px-4 py-3 text-right">@r.OvertimeMinutes</TableCell>
+                            <TableCell Class="px-4 py-3 text-right">
+                                <Button Variant="ghost" Size="sm" data-edit="@r.Id" OnClick="@(() => Edit(r))">
+                                    <i class="bi bi-pencil mr-1"></i> Correct
+                                </Button>
+                            </TableCell>
+                        </TableRow>
+                    }
+                </TableBody>
+            </Table>
+            @if (_records.TotalPages > 1)
+            {
+                <div class="border-t px-4 py-3">
+                    <Pagination CurrentPage="@_page" TotalPages="@_records.TotalPages" OnPageChange="@(async p => { _page = p; await Load(); })" />
+                </div>
+            }
+        }
+    </CardContent>
+</Card>
+
+<AttendanceCorrectionDialog IsOpen="@(_editing is not null)"
+                            Title="@(_editing?.IsNewDay == true ? "Add a day" : "Correct attendance")"
+                            Description="@_editing?.Label"
+                            DateEditable="@(_editing?.IsNewDay == true)"
+                            Date="@(_editing?.Date ?? default)"
+                            TimeIn="@_editing?.TimeIn" TimeOut="@_editing?.TimeOut"
+                            SubmitLabel="Save correction"
+                            History="@_history" Busy="@_saving" Error="@_saveError"
+                            OnSubmit="Save" OnClose="CloseEdit" />
+
+@code {
+    private sealed record Editing(Guid EmployeeId, DateOnly Date, string? TimeIn, string? TimeOut, string Label, bool IsNewDay);
+
+    private List<EmployeeListDto> _employees = [];
+    private Guid? _employeeId;
+    private DateOnly _to = DateOnly.FromDateTime(DateTime.Today);
+    private DateOnly _from = DateOnly.FromDateTime(DateTime.Today).AddDays(-14);
+    private int _page = 1;
+    private PagedResult<AttendanceRecordDto>? _records;
+    private string? _loadError;
+
+    private Editing? _editing;
+    private IReadOnlyList<AttendanceCorrectionDto>? _history;
+    private bool _saving;
+    private string? _saveError;
+    private string? _notice;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadEmployees();
+        await Load();
+    }
+
+    /// <summary>Every active employee, for the filter; a page at a time, as the list endpoint caps its pages.</summary>
+    private async Task LoadEmployees()
+    {
+        try
+        {
+            for (var page = 1; ; page++)
+            {
+                var result = await Api.GetEmployeesAsync(page, 100, isActive: true);
+                if (result is null) break;
+                _employees.AddRange(result.Items);
+                if (page >= result.TotalPages) break;
+            }
+        }
+        catch
+        {
+            // The filter is a convenience: without it the page still lists everyone's attendance.
+        }
+    }
+
+    private async Task Load()
+    {
+        _loadError = null;
+        try
+        {
+            _records = await Api.GetAttendanceAsync(_employeeId, _page, 50, _from, _to);
+        }
+        catch (Exception ex)
+        {
+            _records = null;
+            _loadError = ex.Message;
+        }
+    }
+
+    private async Task Edit(AttendanceRecordDto record)
+    {
+        var date = DateOnly.Parse(record.AttendanceDate, System.Globalization.CultureInfo.InvariantCulture);
+        _saveError = _notice = null;
+        _history = null;
+        _editing = new Editing(record.EmployeeId, date, WallClock.Time(record.TimeIn), WallClock.Time(record.TimeOut),
+            $"{record.EmployeeName}, {date:dddd, MMM d, yyyy}", IsNewDay: false);
+        try
+        {
+            _history = await Api.GetAttendanceCorrectionHistoryAsync(record.EmployeeId, date);
+        }
+        catch
+        {
+            // The history is shown for context only; the correction can still be made without it.
+        }
+    }
+
+    private void AddDay()
+    {
+        if (_employeeId is not { } id) return;
+        var name = _employees.FirstOrDefault(e => e.Id == id)?.FullName ?? "";
+        _saveError = _notice = null;
+        _history = null;
+        _editing = new Editing(id, DateOnly.FromDateTime(DateTime.Today), null, null, $"{name}: a day with no record, such as a missed scan", IsNewDay: true);
+    }
+
+    private async Task Save(AttendanceCorrectionRequest form)
+    {
+        if (_editing is null) return;
+        _saving = true;
+        _saveError = null;
+        try
+        {
+            await Api.CorrectAttendanceAsync(new CorrectAttendanceRequest(_editing.EmployeeId, form.Date, form.TimeIn, form.TimeOut, form.Reason));
+            _notice = $"Saved the correction for {form.Date:MMM d, yyyy}.";
+            _editing = null;
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            _saveError = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void CloseEdit()
+    {
+        if (!_saving) _editing = null;
+    }
+}

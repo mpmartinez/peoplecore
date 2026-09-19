@@ -20,7 +20,7 @@
             Accepts ZKTeco and similar time clock exports (<code>.csv</code>, <code>.xls</code>, <code>.xlsx</code>,
             or the <code>attlog.dat</code> download) and PeopleCore's layout
             <code>employee_number,date,time_in,time_out</code>. From a time clock, each person's first scan of the day
-            is the time-in and the last is the time-out. Days already recorded are left as they are.
+            is the time-in and the last is the time-out. Days already recorded are left as they are unless you choose to replace them.
         </p>
         <div class="flex flex-wrap items-center gap-2">
             <label class="inline-flex cursor-pointer items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent">
@@ -142,6 +142,14 @@
                 </div>
             }
 
+            <Checkbox Value="@_replace" ValueChanged="@(on => _replace = on)" Disabled="@_busy" data-replace>
+                <span>Replace days already recorded</span>
+                <span class="block text-xs font-normal text-muted-foreground">
+                    For a corrected export: those days take this file's times, and each change is kept in the day's history.
+                    Days already paid in a payroll run are never changed.
+                </span>
+            </Checkbox>
+
             <div class="flex justify-end gap-2">
                 <Button Variant="outline" OnClick="Reset" Disabled="@_busy">Cancel</Button>
                 <Button Variant="primary" data-import OnClick="Import" Loading="@_importing"
@@ -165,6 +173,7 @@
     private bool _importing;
     private string? _error;
     private string? _downloading;
+    private bool _replace;
 
     private async Task DownloadTemplate(string format)
     {
@@ -257,7 +266,7 @@
         _busy = _importing = true;
         try
         {
-            _result = await Api.ImportAttendanceAsync(_content, _fileName);
+            _result = await Api.ImportAttendanceAsync(_content, _fileName, _replace);
         }
         catch (Exception ex)
         {

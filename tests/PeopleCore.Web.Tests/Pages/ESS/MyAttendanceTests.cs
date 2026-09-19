@@ -88,9 +88,11 @@ public class MyAttendanceTests : BunitContext
 
         var cut = RenderAsLinkedEmployee();
 
-        _api.Requests.Should().ContainSingle().Which.RequestUri!.PathAndQuery.Should().Be(AttendancePath);
+        // Besides the employee's own correction requests, only their own attendance is fetched.
+        _api.Requests.Where(r => r.RequestUri!.AbsolutePath == "/api/attendance")
+            .Should().ContainSingle().Which.RequestUri!.PathAndQuery.Should().Be(AttendancePath);
         cut.FindAll("tbody td").Select(td => td.TextContent.Trim())
-            .Should().Equal(Yesterday, "08:12", "--", "12", "0");
+            .Should().Equal(Yesterday, "08:12", "--", "12", "0", "Fix");
     }
 
     [Fact]
@@ -103,7 +105,7 @@ public class MyAttendanceTests : BunitContext
         var cut = RenderAsLinkedEmployee();
 
         cut.FindAll("tbody td").Select(td => td.TextContent.Trim())
-            .Should().Equal(Yesterday, "08:07", "17:00", "7", "0");
+            .Should().Equal(Yesterday, "08:07", "17:00", "7", "0", "Fix");
     }
 
     [Fact]

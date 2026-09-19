@@ -51,7 +51,7 @@ public class MobileFooterNavTests : BunitContext
     {
         var cut = WithMoreOpen(RenderAs("Manager"));
 
-        MoreLinks(cut).Should().Equal("my-payslips", "leave-approvals", "overtime-approvals", "performance");
+        MoreLinks(cut).Should().Equal("my-payslips", "leave-approvals", "overtime-approvals", "attendance-corrections", "performance");
         cut.FindAll("div.rounded-t-2xl p").Select(p => p.TextContent).Should().Equal("My HR", "Management");
     }
 

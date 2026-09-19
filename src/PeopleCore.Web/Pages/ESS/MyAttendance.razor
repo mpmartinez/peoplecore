@@ -41,8 +41,14 @@
 </Card>
 
 <Card>
-    <CardHeader>
+    <CardHeader Class="flex flex-row items-center justify-between gap-2 space-y-0">
         <CardTitle>Recent Attendance</CardTitle>
+        @if (_employeeId != Guid.Empty)
+        {
+            <Button Variant="outline" Size="sm" data-request-new OnClick="@(() => StartRequest(null))">
+                <i class="bi bi-pencil-square mr-1"></i> Request a correction
+            </Button>
+        }
     </CardHeader>
     <CardContent Class="p-0">
         @if (_employeeId == Guid.Empty)
@@ -71,6 +77,7 @@
                         <TableHead Class="px-4">Time Out</TableHead>
                         <TableHead Class="px-4 text-right">Late (min)</TableHead>
                         <TableHead Class="px-4 text-right">Undertime (min)</TableHead>
+                        <TableHead Class="px-4"></TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -82,6 +89,9 @@
                             <TableCell Class="px-4 py-3">@(WallClock.Time(r.TimeOut) ?? "--")</TableCell>
                             <TableCell Class="@("px-4 py-3 text-right " + (r.LateMinutes > 0 ? "text-destructive font-medium" : ""))">@r.LateMinutes</TableCell>
                             <TableCell Class="@("px-4 py-3 text-right " + (r.UndertimeMinutes > 0 ? "text-warning font-medium" : ""))">@r.UndertimeMinutes</TableCell>
+                            <TableCell Class="px-4 py-3 text-right">
+                                <Button Variant="ghost" Size="sm" data-request="@r.AttendanceDate" OnClick="@(() => StartRequest(r))">Fix</Button>
+                            </TableCell>
                         </TableRow>
                     }
                 </TableBody>
@@ -89,6 +99,116 @@
         }
     </CardContent>
 </Card>
+
+@if (_employeeId != Guid.Empty && _requests is { Items.Count: > 0 })
+{
+    <Card Class="mt-6" data-my-corrections>
+        <CardHeader><CardTitle>My Correction Requests</CardTitle></CardHeader>
+        <CardContent Class="p-0">
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead Class="px-4">Date</TableHead>
+                        <TableHead Class="px-4">Asked for</TableHead>
+                        <TableHead Class="px-4">Reason</TableHead>
+                        <TableHead Class="px-4">Status</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    @foreach (var c in _requests.Items)
+                    {
+                        <TableRow>
+                            <TableCell Class="px-4 py-3">@c.AttendanceDate.ToString("MMM d, yyyy")</TableCell>
+                            <TableCell Class="px-4 py-3">@(WallClock.Time(c.NewTimeIn) ?? "--") – @(WallClock.Time(c.NewTimeOut) ?? "--")</TableCell>
+                            <TableCell Class="px-4 py-3 max-w-xs">
+                                @c.Reason
+                                @if (c.RejectionReason is not null)
+                                {
+                                    <div class="text-xs text-destructive">Rejected: @c.RejectionReason</div>
+                                }
+                            </TableCell>
+                            <TableCell Class="px-4 py-3">
+                                <Badge Variant="@RequestVariant(c.Status)">@(c.Status == "Pending" ? "Waiting for approval" : c.Status)</Badge>
+                            </TableCell>
+                        </TableRow>
+                    }
+                </TableBody>
+            </Table>
+        </CardContent>
+    </Card>
+}
+
+<AttendanceCorrectionDialog IsOpen="@_requesting" Title="Request a correction"
+                            Description="Your manager or HR approves it before your attendance changes."
+                            DateEditable="true" Date="@_requestDate" TimeIn="@_requestIn" TimeOut="@_requestOut"
+                            SubmitLabel="Send request" ReasonPlaceholder="For example: forgot to scan out, or the clock was down"
+                            Busy="@_sending" Error="@_requestError"
+                            OnSubmit="SendRequest" OnClose="@(() => _requesting = _sending)" />
+
+@code {
+    private PagedResult<AttendanceCorrectionDto>? _requests;
+    private bool _requesting;
+    private bool _sending;
+    private string? _requestError;
+    private DateOnly _requestDate;
+    private string? _requestIn;
+    private string? _requestOut;
+
+    private static string RequestVariant(string status) => status switch
+    {
+        "Applied" => "success",
+        "Rejected" => "destructive",
+        _ => "warning",
+    };
+
+    private async Task LoadRequests()
+    {
+        if (_employeeId == Guid.Empty) return;
+        try
+        {
+            _requests = await Api.GetAttendanceCorrectionsAsync(_employeeId, pageSize: 10);
+        }
+        catch
+        {
+            // The list of past requests is secondary: attendance and filing a request still work without it.
+            _requests = null;
+        }
+    }
+
+    /// <summary>Opens the request form on a recorded day, or on today for a day with no record.</summary>
+    private void StartRequest(AttendanceRecordDto? record)
+    {
+        _requestError = null;
+        _requestDate = record is null
+            ? DateOnly.FromDateTime(DateTime.Today)
+            : DateOnly.Parse(record.AttendanceDate, System.Globalization.CultureInfo.InvariantCulture);
+        _requestIn = WallClock.Time(record?.TimeIn);
+        _requestOut = WallClock.Time(record?.TimeOut);
+        _requesting = true;
+    }
+
+    private async Task SendRequest(AttendanceCorrectionRequest request)
+    {
+        _sending = true;
+        _requestError = null;
+        try
+        {
+            await Api.RequestAttendanceCorrectionAsync(request);
+            _requesting = false;
+            _message = $"Correction for {request.Date:MMM d} sent for approval.";
+            _isError = false;
+            await LoadRequests();
+        }
+        catch (Exception ex)
+        {
+            _requestError = ex.Message;
+        }
+        finally
+        {
+            _sending = false;
+        }
+    }
+}
 
 @code {
     private PagedResult<AttendanceRecordDto>? _records;
@@ -108,6 +228,7 @@
             _employeeId = empId;
 
         await LoadRecords();
+        await LoadRequests();
         var today = DateOnly.FromDateTime(DateTime.Today).ToString("yyyy-MM-dd");
         var todays = _records?.Items.FirstOrDefault(r => r.AttendanceDate == today);
         _clockedIn = todays?.TimeIn != null;

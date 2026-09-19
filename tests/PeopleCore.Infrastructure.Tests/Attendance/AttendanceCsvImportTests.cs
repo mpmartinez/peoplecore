@@ -78,7 +78,11 @@ public class AttendanceCsvImportTests : DatabaseTestBase
     public async Task A_ZKTeco_scan_log_is_saved_under_the_employee_enrolled_with_that_number()
     {
         var employeeId = await AnEmployeeNumberedAsync("ZK-0001");
-        var import = new AttendanceImportService(new EmployeeRepository(Context), Service);
+        var corrections = new AttendanceCorrectionService(
+            new AttendanceCorrectionRepository(Context), new AttendanceRepository(Context), Service,
+            new PayrollRunRepository(Context), TimeProvider.System);
+        var import = new AttendanceImportService(
+            new EmployeeRepository(Context), Service, new AttendanceRepository(Context), corrections);
         await import.SetBiometricIdAsync(employeeId, "1023");
 
         var parsed = AttendanceFile.Parse(new MemoryStream(Encoding.UTF8.GetBytes(

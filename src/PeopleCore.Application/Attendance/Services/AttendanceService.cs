@@ -59,11 +59,7 @@ public class AttendanceService : IAttendanceService
 
         var holidayType = await _holidayService.IsHolidayAsync(today, ct);
         var schedule = await _shiftService.ResolveShiftForDayAsync(employeeId, today, ct);
-        var shiftStart = schedule?.StartTime ?? DefaultShiftStart;
-        var timeInOnly = TimeOnly.FromDateTime(timeIn);
-        var lateMinutes = timeInOnly > shiftStart
-            ? (int)(timeInOnly - shiftStart).TotalMinutes
-            : 0;
+        var lateMinutes = CalculateLateMinutes(TimeOnly.FromDateTime(timeIn), schedule?.StartTime ?? DefaultShiftStart);
 
         var record = existing ?? new AttendanceRecord
         {
@@ -188,6 +184,53 @@ public class AttendanceService : IAttendanceService
 
         return new AttendanceImportResultDto(imported, skipped, errors);
     }
+
+    /// <summary>
+    /// Sets a day's times outright - for a correction - and recomputes lateness, undertime and
+    /// overtime by the same rules as clocking in and out. Both times null clears the day to absent.
+    /// </summary>
+    /// <param name="timeIn">Philippine wall-clock time of day.</param>
+    public async Task<AttendanceRecordDto> SetDayAsync(
+        Guid employeeId, DateOnly date, TimeOnly? timeIn, TimeOnly? timeOut, CancellationToken ct = default)
+    {
+        var employee = await _employeeRepo.GetByIdAsync(employeeId, ct)
+            ?? throw new KeyNotFoundException($"Employee {employeeId} not found.");
+        EnsureValidTimes(timeIn, timeOut);
+
+        var existing = await _repo.GetByEmployeeAndDateAsync(employeeId, date, ct);
+        var record = existing ?? new AttendanceRecord { EmployeeId = employeeId, AttendanceDate = date };
+
+        var holidayType = await _holidayService.IsHolidayAsync(date, ct);
+        var schedule = timeIn is null ? null : await _shiftService.ResolveShiftForDayAsync(employeeId, date, ct);
+
+        record.TimeIn = timeIn is { } i ? date.ToDateTime(i, DateTimeKind.Utc) : null;
+        record.TimeOut = timeOut is { } o ? date.ToDateTime(o, DateTimeKind.Utc) : null;
+        record.IsPresent = timeIn is not null;
+        record.LateMinutes = timeIn is { } late ? CalculateLateMinutes(late, schedule?.StartTime ?? DefaultShiftStart) : 0;
+        record.UndertimeMinutes = timeOut is { } under ? CalculateUndertimeMinutes(under) : 0;
+        record.OvertimeMinutes = timeOut is { } over ? CalculateOvertimeMinutes(over) : 0;
+        record.IsHoliday = holidayType is not null;
+        record.HolidayType = holidayType;
+
+        if (existing is null)
+            return ToDto(await _repo.AddAsync(record, ct), employee.FullName);
+
+        record.UpdatedAt = DateTime.UtcNow;
+        await _repo.UpdateAsync(record, ct);
+        return ToDto(record, employee.FullName);
+    }
+
+    /// <summary>A time-out needs a time-in before it; a correction that breaks that is refused.</summary>
+    public static void EnsureValidTimes(TimeOnly? timeIn, TimeOnly? timeOut)
+    {
+        if (timeIn is null && timeOut is not null)
+            throw new DomainException("A time-out needs a time-in.");
+        if (timeIn is { } i && timeOut is { } o && o <= i)
+            throw new DomainException("The time-out must be later than the time-in.");
+    }
+
+    private static int CalculateLateMinutes(TimeOnly timeIn, TimeOnly shiftStart)
+        => timeIn > shiftStart ? (int)(timeIn - shiftStart).TotalMinutes : 0;
 
     private static int CalculateUndertimeMinutes(TimeOnly timeOut)
     {

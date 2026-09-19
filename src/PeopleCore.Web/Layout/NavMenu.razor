@@ -51,12 +51,14 @@
         ]),
         new("Time", [Permissions.AttendanceManage],
         [
+            new("/attendance-records", "Attendance Records", "bi-calendar-week"),
             new("/attendance-import", "Import Attendance", "bi-upload")
         ]),
         new("Management", [Permissions.ApprovalsTeam, Permissions.ApprovalsAll],
         [
             new("/leave-approvals", "Leave Approvals", "bi-check-square"),
             new("/overtime-approvals", "OT Approvals", "bi-clock-history"),
+            new("/attendance-corrections", "Attendance Corrections", "bi-pencil-square"),
             new("/performance", "Performance", "bi-bar-chart")
         ]),
         new("Payroll", [Permissions.PayrollManage],

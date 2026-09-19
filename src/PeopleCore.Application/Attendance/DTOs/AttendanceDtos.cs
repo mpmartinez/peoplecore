@@ -100,3 +100,31 @@ public record AttendanceImportPreviewDto(
     IReadOnlyList<AttendanceImportEmployeeDto> Employees);
 
 public record SetBiometricIdDto(string? BiometricId);
+
+/// <summary>A change to one day's times: an HR edit, an import that replaced the day, or an employee's request.</summary>
+public record AttendanceCorrectionDto(
+    Guid Id,
+    Guid EmployeeId,
+    string EmployeeName,
+    string EmployeeNumber,
+    DateOnly AttendanceDate,
+    DateTime? PreviousTimeIn,
+    DateTime? PreviousTimeOut,
+    DateTime? NewTimeIn,
+    DateTime? NewTimeOut,
+    string Reason,
+    string Source,
+    string Status,
+    string RequestedBy,
+    DateTime RequestedAt,
+    string? ReviewedBy,
+    DateTime? ReviewedAt,
+    string? RejectionReason);
+
+/// <summary>HR setting a day's times. Both null clears the day to absent.</summary>
+public record CorrectAttendanceDto(Guid EmployeeId, DateOnly Date, TimeOnly? TimeIn, TimeOnly? TimeOut, string Reason);
+
+/// <summary>An employee asking for their own day to be corrected.</summary>
+public record RequestAttendanceCorrectionDto(DateOnly Date, TimeOnly? TimeIn, TimeOnly? TimeOut, string Reason);
+
+public record RejectAttendanceCorrectionDto(string Reason);

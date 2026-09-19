@@ -4,7 +4,9 @@ using PeopleCore.Application.Attendance.DTOs;
 using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Application.Attendance.Services;
 using PeopleCore.Application.Employees.Interfaces;
+using PeopleCore.Domain.Entities.Attendance;
 using PeopleCore.Domain.Entities.Employees;
+using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
 using Xunit;
 
@@ -21,6 +23,8 @@ public class AttendanceImportServiceTests
 
     private readonly Mock<IEmployeeRepository> _employees = new();
     private readonly Mock<IAttendanceService> _attendance = new();
+    private readonly Mock<IAttendanceRepository> _records = new();
+    private readonly Mock<IAttendanceCorrectionService> _corrections = new();
     private readonly AttendanceImportService _sut;
     private List<AttendancePunchDto> _synced = [];
 
@@ -34,7 +38,7 @@ public class AttendanceImportServiceTests
         _attendance.Setup(a => a.SyncPunchesAsync(It.IsAny<IReadOnlyList<AttendancePunchDto>>(), It.IsAny<CancellationToken>()))
             .Callback((IReadOnlyList<AttendancePunchDto> p, CancellationToken _) => _synced = [.. p])
             .ReturnsAsync((IReadOnlyList<AttendancePunchDto> p, CancellationToken _) => new AttendanceImportResultDto(p.Count, 0, []));
-        _sut = new AttendanceImportService(_employees.Object, _attendance.Object);
+        _sut = new AttendanceImportService(_employees.Object, _attendance.Object, _records.Object, _corrections.Object);
     }
 
     private static AttendancePunchDto Punch(string who, int hour) => new(who, new DateTime(2026, 3, 10, hour, 0, 0, DateTimeKind.Utc));
@@ -100,5 +104,70 @@ public class AttendanceImportServiceTests
 
         await _sut.SetBiometricIdAsync(Ana, "  ");
         ana.BiometricId.Should().BeNull();
+    }
+
+    private static readonly AttendanceImportOptions Replace = new(ReplaceExisting: true, FileName: "fix.csv", Actor: "hr@company.test");
+
+    private void GivenJuanRecorded(int inHour, int? outHour) =>
+        _records.Setup(r => r.GetByEmployeeAndDateAsync(Juan, new DateOnly(2026, 3, 10), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AttendanceRecord
+            {
+                EmployeeId = Juan,
+                AttendanceDate = new DateOnly(2026, 3, 10),
+                TimeIn = new DateTime(2026, 3, 10, inHour, 0, 0, DateTimeKind.Utc),
+                TimeOut = outHour is { } o ? new DateTime(2026, 3, 10, o, 0, 0, DateTimeKind.Utc) : null,
+            });
+
+    [Fact]
+    public async Task Without_replace_a_recorded_day_goes_to_sync_which_leaves_it_alone()
+    {
+        GivenJuanRecorded(9, 18);
+
+        await _sut.ImportAsync([Punch("1023", 8), Punch("1023", 17)], []);
+
+        _synced.Should().HaveCount(2);
+        _corrections.Verify(c => c.CorrectAsync(It.IsAny<CorrectAttendanceDto>(), It.IsAny<string>(),
+            It.IsAny<AttendanceCorrectionSource>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task With_replace_a_recorded_day_takes_the_files_first_and_last_punch_as_a_logged_correction()
+    {
+        GivenJuanRecorded(9, 18);
+
+        var result = await _sut.ImportAsync([Punch("1023", 8), Punch("1023", 12), Punch("1023", 17)], [], Replace);
+
+        _corrections.Verify(c => c.CorrectAsync(
+            It.Is<CorrectAttendanceDto>(d => d.EmployeeId == Juan && d.TimeIn == new TimeOnly(8, 0) && d.TimeOut == new TimeOnly(17, 0)
+                                             && d.Reason.Contains("fix.csv")),
+            "hr@company.test", AttendanceCorrectionSource.Import, It.IsAny<CancellationToken>()), Times.Once);
+        _synced.Should().BeEmpty();
+        result.Imported.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task With_replace_a_day_that_already_matches_the_file_is_not_corrected_again()
+    {
+        GivenJuanRecorded(8, 17);
+
+        var result = await _sut.ImportAsync([Punch("1023", 8), Punch("1023", 17)], [], Replace);
+
+        _corrections.Verify(c => c.CorrectAsync(It.IsAny<CorrectAttendanceDto>(), It.IsAny<string>(),
+            It.IsAny<AttendanceCorrectionSource>(), It.IsAny<CancellationToken>()), Times.Never);
+        result.Skipped.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task With_replace_a_paid_day_is_reported_and_the_rest_of_the_file_still_imports()
+    {
+        GivenJuanRecorded(9, 18);
+        _corrections.Setup(c => c.CorrectAsync(It.IsAny<CorrectAttendanceDto>(), It.IsAny<string>(),
+                It.IsAny<AttendanceCorrectionSource>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DomainException("Mar 10, 2026 was paid in payroll run PR-2026-005."));
+
+        var result = await _sut.ImportAsync([Punch("1023", 8), Punch("1023", 17), Punch("EMP-002", 8)], [], Replace);
+
+        result.Errors.Should().ContainSingle(e => e.Contains("EMP-001") && e.Contains("PR-2026-005"));
+        _synced.Should().ContainSingle().Which.EmployeeNumber.Should().Be("EMP-002"); // Ana had no record yet
     }
 }

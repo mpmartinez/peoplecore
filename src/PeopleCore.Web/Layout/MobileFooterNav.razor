@@ -81,12 +81,14 @@
         ]),
         new("Time",
         [
+            new("attendance-records", "Attendance Records", [Permissions.AttendanceManage]),
             new("attendance-import", "Import Attendance", [Permissions.AttendanceManage])
         ]),
         new("Management",
         [
             new("leave-approvals", "Leave Approvals", [Permissions.ApprovalsTeam, Permissions.ApprovalsAll]),
             new("overtime-approvals", "OT Approvals", [Permissions.ApprovalsTeam, Permissions.ApprovalsAll]),
+            new("attendance-corrections", "Attendance Corrections", [Permissions.ApprovalsTeam, Permissions.ApprovalsAll]),
             new("performance", "Performance", [Permissions.ApprovalsTeam, Permissions.ApprovalsAll])
         ]),
         new("Payroll",

@@ -94,6 +94,21 @@ public class AttendanceImportTests : BunitContext
     }
 
     [Fact]
+    public void Choosing_to_replace_recorded_days_sends_replace()
+    {
+        _api.On(HttpMethod.Post, "/api/attendance/import?preview=true", HttpStatusCode.OK, Preview)
+            .On(HttpMethod.Post, "/api/attendance/import?replace=true", HttpStatusCode.OK,
+                """{"imported":2,"skipped":0,"errors":[]}""");
+
+        var cut = RenderWithFile();
+        cut.WaitForElement("[data-replace]").Click();
+        cut.Find("[data-import]").Click();
+
+        cut.WaitForElement("[data-import-result]");
+        _api.Requests.Should().Contain(r => r.RequestUri!.PathAndQuery == "/api/attendance/import?replace=true");
+    }
+
+    [Fact]
     public void A_file_whose_layout_is_not_recognised_says_so()
     {
         _api.On(HttpMethod.Post, "/api/attendance/import?preview=true", HttpStatusCode.OK,

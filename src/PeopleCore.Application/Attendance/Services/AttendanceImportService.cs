@@ -1,6 +1,7 @@
 using PeopleCore.Application.Attendance.DTOs;
 using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Application.Employees.Interfaces;
+using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
 
 namespace PeopleCore.Application.Attendance.Services;
@@ -16,11 +17,17 @@ public class AttendanceImportService : IAttendanceImportService
 {
     private readonly IEmployeeRepository _employees;
     private readonly IAttendanceService _attendance;
+    private readonly IAttendanceRepository _records;
+    private readonly IAttendanceCorrectionService _corrections;
 
-    public AttendanceImportService(IEmployeeRepository employees, IAttendanceService attendance)
+    public AttendanceImportService(
+        IEmployeeRepository employees, IAttendanceService attendance,
+        IAttendanceRepository records, IAttendanceCorrectionService corrections)
     {
         _employees = employees;
         _attendance = attendance;
+        _records = records;
+        _corrections = corrections;
     }
 
     public async Task<AttendanceImportPreviewDto> PreviewAsync(
@@ -45,29 +52,79 @@ public class AttendanceImportService : IAttendanceImportService
     }
 
     public async Task<AttendanceImportResultDto> ImportAsync(
-        IReadOnlyList<AttendancePunchDto> punches, IReadOnlyList<string> fileErrors, CancellationToken ct = default)
+        IReadOnlyList<AttendancePunchDto> punches, IReadOnlyList<string> fileErrors,
+        AttendanceImportOptions? options = null, CancellationToken ct = default)
     {
         var match = Matcher(await _employees.GetAttendanceImportKeysAsync(ct));
 
-        var resolved = new List<AttendancePunchDto>();
+        var resolved = new List<(AttendanceImportEmployeeDto Employee, AttendancePunchDto Punch)>();
         var unmatched = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var punch in punches)
         {
             if (match(punch.EmployeeNumber) is { } employee)
-                resolved.Add(punch with { EmployeeNumber = employee.EmployeeNumber });
+                resolved.Add((employee, punch with { EmployeeNumber = employee.EmployeeNumber }));
             else
                 unmatched[punch.EmployeeNumber] = unmatched.GetValueOrDefault(punch.EmployeeNumber) + 1;
         }
 
-        var synced = await _attendance.SyncPunchesAsync(resolved, ct);
+        int replaced = 0, notReplaced = 0;
+        var replaceErrors = new List<string>();
+        var toSync = new List<AttendancePunchDto>();
+
+        if (options is { ReplaceExisting: true })
+        {
+            // A day already recorded is replaced by the file's first and last punch for it, through a
+            // correction - so it is logged, and refused on a day already paid.
+            foreach (var day in resolved.GroupBy(r => (r.Employee.Id, Day: DateOnly.FromDateTime(r.Punch.PunchTime))))
+            {
+                var employee = day.First().Employee;
+                var times = day.Select(r => TimeOnly.FromDateTime(r.Punch.PunchTime)).ToList();
+                var (timeIn, last) = (times.Min(), times.Max());
+                TimeOnly? timeOut = last > timeIn ? last : null;
+
+                var existing = await _records.GetByEmployeeAndDateAsync(employee.Id, day.Key.Day, ct);
+                if (existing is null)
+                {
+                    toSync.AddRange(day.Select(r => r.Punch));
+                    continue;
+                }
+                if (Same(existing.TimeIn, timeIn) && Same(existing.TimeOut, timeOut))
+                {
+                    notReplaced += day.Count(); // already exactly this
+                    continue;
+                }
+
+                try
+                {
+                    await _corrections.CorrectAsync(
+                        new CorrectAttendanceDto(employee.Id, day.Key.Day, timeIn, timeOut, $"Replaced by importing {options.FileName}"),
+                        options.Actor, AttendanceCorrectionSource.Import, ct);
+                    replaced += day.Count();
+                }
+                catch (DomainException ex)
+                {
+                    replaceErrors.Add($"{employee.EmployeeNumber} on {day.Key.Day:MMM d, yyyy}: {ex.Message}");
+                    notReplaced += day.Count();
+                }
+            }
+        }
+        else
+        {
+            toSync.AddRange(resolved.Select(r => r.Punch));
+        }
+
+        var synced = await _attendance.SyncPunchesAsync(toSync, ct);
         var unmatchedErrors = unmatched.OrderBy(u => u.Key, StringComparer.Ordinal)
             .Select(u => $"'{u.Key}' matches no employee, so its {u.Value} punch{(u.Value == 1 ? "" : "es")} were not imported.");
 
         return new AttendanceImportResultDto(
-            synced.Imported,
-            synced.Skipped + unmatched.Values.Sum() + fileErrors.Count,
-            [.. fileErrors, .. unmatchedErrors, .. synced.Errors]);
+            synced.Imported + replaced,
+            synced.Skipped + notReplaced + unmatched.Values.Sum() + fileErrors.Count,
+            [.. fileErrors, .. unmatchedErrors, .. replaceErrors, .. synced.Errors]);
     }
+
+    private static bool Same(DateTime? recorded, TimeOnly? time) =>
+        recorded is null ? time is null : time is { } t && TimeOnly.FromDateTime(recorded.Value) == t;
 
     public async Task<AttendanceImportEmployeeDto> SetBiometricIdAsync(Guid employeeId, string? biometricId, CancellationToken ct = default)
     {

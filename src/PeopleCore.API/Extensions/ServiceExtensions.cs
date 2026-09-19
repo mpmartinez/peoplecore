@@ -157,9 +157,11 @@ public static class ServiceExtensions
         // Attendance
         services.AddScoped<IAttendanceRepository, AttendanceRepository>();
         services.AddScoped<IOvertimeRepository, OvertimeRepository>();
+        services.AddScoped<IAttendanceCorrectionRepository, AttendanceCorrectionRepository>();
         services.AddScoped<IHolidayRepository, HolidayRepository>();
         services.AddScoped<IAttendanceService, AttendanceService>();
         services.AddScoped<IAttendanceImportService, AttendanceImportService>();
+        services.AddScoped<IAttendanceCorrectionService, AttendanceCorrectionService>();
         services.AddScoped<IOvertimeService, OvertimeService>();
         services.AddScoped<IHolidayService, HolidayService>();
 

@@ -15,6 +15,13 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     Task<int> CountForYearAsync(int year, CancellationToken ct = default);
 
     /// <summary>
+    /// The paid run that paid <paramref name="employeeId"/> for a period containing <paramref name="date"/>,
+    /// if any. Attendance on such a day is settled: changing it would leave the payslip disagreeing
+    /// with the attendance it was computed from.
+    /// </summary>
+    Task<PayrollRun?> GetPaidRunCoveringAsync(Guid employeeId, DateOnly date, CancellationToken ct = default);
+
+    /// <summary>
     /// A page of runs, newest first, together with entries so EmployeeCount/TotalGrossPay/
     /// TotalNetPay can be evaluated - see PayrollRunSummaryDto's remarks for why the totals are
     /// not instead computed in SQL.

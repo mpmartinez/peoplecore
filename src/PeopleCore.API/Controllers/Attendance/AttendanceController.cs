@@ -119,7 +119,7 @@ public class AttendanceController : ControllerBase
     [RequestSizeLimit(MaxImportBytes)]
     public async Task<IActionResult> Import(
         IFormFile file, [FromServices] IAttendanceImportService import,
-        [FromQuery] bool preview = false, CancellationToken ct = default)
+        [FromQuery] bool preview = false, [FromQuery] bool replace = false, CancellationToken ct = default)
     {
         if (file is null || file.Length == 0)
             return BadRequest("No file provided.");
@@ -139,7 +139,10 @@ public class AttendanceController : ControllerBase
             return Ok(await import.PreviewAsync(layout, parsed.Punches, parsed.Errors, ct));
         }
 
-        return Ok(await import.ImportAsync(parsed.Punches, parsed.Errors, ct));
+        // With replace, a day already recorded takes the file's times as a logged correction; a day
+        // inside a paid payroll run is still refused and reported.
+        var options = new AttendanceImportOptions(replace, file.FileName, _currentUser.Email ?? "unknown");
+        return Ok(await import.ImportAsync(parsed.Punches, parsed.Errors, options, ct));
     }
 
     /// <summary>A blank of PeopleCore's own import layout with example rows, as <c>csv</c> or <c>xlsx</c>.</summary>

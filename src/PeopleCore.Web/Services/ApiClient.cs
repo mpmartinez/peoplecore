@@ -191,8 +191,9 @@ public class ApiClient
     public Task<AttendanceImportPreviewDto?> PreviewAttendanceImportAsync(byte[] content, string fileName)
         => PostAttendanceFileAsync<AttendanceImportPreviewDto>("api/attendance/import?preview=true", content, fileName);
 
-    public Task<AttendanceImportResultDto?> ImportAttendanceAsync(byte[] content, string fileName)
-        => PostAttendanceFileAsync<AttendanceImportResultDto>("api/attendance/import", content, fileName);
+    /// <summary>With <paramref name="replace"/>, days already recorded take the file's times as logged corrections.</summary>
+    public Task<AttendanceImportResultDto?> ImportAttendanceAsync(byte[] content, string fileName, bool replace = false)
+        => PostAttendanceFileAsync<AttendanceImportResultDto>($"api/attendance/import{(replace ? "?replace=true" : "")}", content, fileName);
 
     /// <summary>PeopleCore's import layout with example rows; <paramref name="format"/> is "csv" or "xlsx".</summary>
     public async Task<byte[]> GetAttendanceTemplateAsync(string format)
@@ -218,12 +219,42 @@ public class ApiClient
     }
 
     // Attendance
-    public async Task<PagedResult<AttendanceRecordDto>?> GetAttendanceAsync(Guid? employeeId = null, int page = 1, int pageSize = 20)
+    public async Task<PagedResult<AttendanceRecordDto>?> GetAttendanceAsync(
+        Guid? employeeId = null, int page = 1, int pageSize = 20, DateOnly? from = null, DateOnly? to = null)
     {
         var query = $"api/attendance?page={page}&pageSize={pageSize}";
         if (employeeId.HasValue) query += $"&employeeId={employeeId}";
+        if (from.HasValue) query += $"&from={from:yyyy-MM-dd}";
+        if (to.HasValue) query += $"&to={to:yyyy-MM-dd}";
         return await GetJsonAsync<PagedResult<AttendanceRecordDto>>(query);
     }
+
+    // Attendance corrections
+    /// <summary>HR sets a day's times directly; it is applied at once and kept in the day's history.</summary>
+    public Task<AttendanceCorrectionDto?> CorrectAttendanceAsync(CorrectAttendanceRequest request)
+        => SendJsonAsync<AttendanceCorrectionDto>(HttpMethod.Post, "api/attendance-corrections", request);
+
+    /// <summary>The signed-in employee asks for one of their own days to be corrected.</summary>
+    public Task<AttendanceCorrectionDto?> RequestAttendanceCorrectionAsync(AttendanceCorrectionRequest request)
+        => SendJsonAsync<AttendanceCorrectionDto>(HttpMethod.Post, "api/attendance-corrections/requests", request);
+
+    public async Task<PagedResult<AttendanceCorrectionDto>?> GetAttendanceCorrectionsAsync(
+        Guid? employeeId = null, string? status = null, int page = 1, int pageSize = 20)
+    {
+        var query = $"api/attendance-corrections?page={page}&pageSize={pageSize}";
+        if (employeeId.HasValue) query += $"&employeeId={employeeId}";
+        if (!string.IsNullOrEmpty(status)) query += $"&status={status}";
+        return await GetJsonAsync<PagedResult<AttendanceCorrectionDto>>(query);
+    }
+
+    public async Task<IReadOnlyList<AttendanceCorrectionDto>?> GetAttendanceCorrectionHistoryAsync(Guid employeeId, DateOnly date)
+        => await GetJsonAsync<List<AttendanceCorrectionDto>>($"api/attendance-corrections/history?employeeId={employeeId}&date={date:yyyy-MM-dd}");
+
+    public Task<AttendanceCorrectionDto?> ApproveAttendanceCorrectionAsync(Guid id)
+        => SendJsonAsync<AttendanceCorrectionDto>(HttpMethod.Put, $"api/attendance-corrections/{id}/approve");
+
+    public Task<AttendanceCorrectionDto?> RejectAttendanceCorrectionAsync(Guid id, string reason)
+        => SendJsonAsync<AttendanceCorrectionDto>(HttpMethod.Put, $"api/attendance-corrections/{id}/reject", new { reason });
 
     /// <summary>Sends no time: the API stamps the punch with its own clock, in Philippine time.</summary>
     public async Task<AttendanceRecordDto?> TimeInAsync(Guid employeeId)
@@ -640,7 +671,14 @@ public record UnmatchedDeviceIdDto(string DeviceId, int Punches);
 public record AttendanceImportPreviewDto(string Layout, int Punches, int MatchedPeople, DateOnly? From, DateOnly? To,
     IReadOnlyList<UnmatchedDeviceIdDto> Unmatched, IReadOnlyList<string> Errors, IReadOnlyList<AttendanceImportEmployeeDto> Employees);
 public record AttendanceImportResultDto(int Imported, int Skipped, IReadOnlyList<string> Errors);
-public record AttendanceRecordDto(Guid Id, string AttendanceDate, string? TimeIn, string? TimeOut, int LateMinutes, int UndertimeMinutes, bool IsPresent);
+public record AttendanceRecordDto(Guid Id, string AttendanceDate, string? TimeIn, string? TimeOut, int LateMinutes, int UndertimeMinutes, bool IsPresent,
+    Guid EmployeeId = default, string EmployeeName = "", int OvertimeMinutes = 0);
+public record AttendanceCorrectionDto(Guid Id, Guid EmployeeId, string EmployeeName, string EmployeeNumber, DateOnly AttendanceDate,
+    string? PreviousTimeIn, string? PreviousTimeOut, string? NewTimeIn, string? NewTimeOut,
+    string Reason, string Source, string Status, string RequestedBy, DateTime RequestedAt,
+    string? ReviewedBy, DateTime? ReviewedAt, string? RejectionReason);
+public record CorrectAttendanceRequest(Guid EmployeeId, DateOnly Date, TimeOnly? TimeIn, TimeOnly? TimeOut, string Reason);
+public record AttendanceCorrectionRequest(DateOnly Date, TimeOnly? TimeIn, TimeOnly? TimeOut, string Reason);
 public record CompanyDto(Guid Id, string Name);
 public record CompanyProfileDto(
     string Name, string? Tin, string? RdoCode, string? Address, string? City, string? ZipCode,

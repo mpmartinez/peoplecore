@@ -106,6 +106,15 @@ public class PermissionEquivalenceTests
         ["CompanyProfileController.Save"] = [Permissions.SettingsManage],
         ["AttendanceController.SetBiometricId"] = [Permissions.AttendanceManage],
         ["AttendanceController.ImportTemplate"] = [Permissions.AttendanceManage],
+
+        // Reads and requests are open to any signed-in user; the controller checks whose
+        // attendance it is through IEmployeeAccessService (AttendanceCorrectionsAuthorizationTests).
+        ["AttendanceCorrectionsController.GetAll"] = [],
+        ["AttendanceCorrectionsController.GetHistory"] = [],
+        ["AttendanceCorrectionsController.RequestCorrection"] = [],
+        ["AttendanceCorrectionsController.Correct"] = [Permissions.AttendanceManage],
+        ["AttendanceCorrectionsController.Approve"] = [Permissions.ApprovalsTeam, Permissions.ApprovalsAll],
+        ["AttendanceCorrectionsController.Reject"] = [Permissions.ApprovalsTeam, Permissions.ApprovalsAll],
     };
 
     private static IEnumerable<(Type Controller, MethodInfo Action)> Endpoints() =>

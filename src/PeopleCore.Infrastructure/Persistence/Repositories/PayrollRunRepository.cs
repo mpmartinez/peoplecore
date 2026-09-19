@@ -55,6 +55,13 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
             .Select(e => e.EmployeeId)
             .ToListAsync(ct);
 
+    public async Task<PayrollRun?> GetPaidRunCoveringAsync(Guid employeeId, DateOnly date, CancellationToken ct = default)
+        => await Context.PayrollRuns
+            .Where(r => r.Status == PayrollRunStatus.Paid && r.PeriodStart <= date && r.PeriodEnd >= date
+                        && r.Employees.Any(e => e.EmployeeId == employeeId))
+            .OrderByDescending(r => r.PayDate)
+            .FirstOrDefaultAsync(ct);
+
     public async Task<IReadOnlyList<PayrollRun>> GetPaidRunsInYearAsync(int year, CancellationToken ct = default)
         => await Context.PayrollRuns
             .Where(r => r.Status == PayrollRunStatus.Paid && r.PayDate.Year == year)

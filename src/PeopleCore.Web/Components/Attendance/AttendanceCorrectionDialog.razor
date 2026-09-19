@@ -1,0 +1,138 @@
+@using System.Globalization
+
+@*
+    The form behind both an HR edit and an employee's request: a day, its time-in and time-out, and
+    why. Blank times are allowed (a time-in with no time-out yet, or both blank to mark the day
+    absent); the API refuses a time-out before the time-in either way, and this just says so sooner.
+*@
+
+<Dialog IsOpen="@IsOpen" OnClose="OnClose" Title="@Title" Description="@Description">
+    <ChildContent>
+        <form class="space-y-4" data-correction-form @onsubmit="Submit" @onsubmit:preventDefault>
+            @if ((_error ?? Error) is { } error)
+            {
+                <Alert Variant="destructive" data-correction-error>@error</Alert>
+            }
+
+            @if (DateEditable)
+            {
+                <FormField LabelText="Date" Id="correction-date">
+                    <Input TValue="DateOnly" Id="correction-date" Type="date" @bind-Value="_date" Disabled="@Busy" />
+                </FormField>
+            }
+
+            <div class="grid grid-cols-2 gap-4">
+                <FormField LabelText="Time in" Id="correction-in">
+                    <Input TValue="string" Id="correction-in" Type="time" @bind-Value="_timeIn" Disabled="@Busy" />
+                </FormField>
+                <FormField LabelText="Time out" Id="correction-out">
+                    <Input TValue="string" Id="correction-out" Type="time" @bind-Value="_timeOut" Disabled="@Busy" />
+                </FormField>
+            </div>
+
+            <FormField LabelText="Reason" Id="correction-reason">
+                <Textarea Id="correction-reason" @bind-Value="_reason" Placeholder="@ReasonPlaceholder" Disabled="@Busy" />
+            </FormField>
+
+            @if (History is { Count: > 0 })
+            {
+                <div data-correction-history>
+                    <h4 class="mb-1 text-sm font-semibold">Changes to this day</h4>
+                    <ul class="space-y-1 text-xs text-muted-foreground">
+                        @foreach (var change in History)
+                        {
+                            <li>
+                                @change.RequestedAt.ToLocalTime().ToString("MMM d, h:mm tt"):
+                                @Range(change.PreviousTimeIn, change.PreviousTimeOut) → @Range(change.NewTimeIn, change.NewTimeOut)
+                                · @change.Status.ToLowerInvariant() · @change.RequestedBy · “@change.Reason”
+                            </li>
+                        }
+                    </ul>
+                </div>
+            }
+
+            <div class="flex justify-end gap-2">
+                <Button Type="button" Variant="outline" Size="sm" OnClick="OnClose" Disabled="@Busy">Cancel</Button>
+                <Button Type="submit" Variant="primary" Size="sm" Loading="@Busy">@SubmitLabel</Button>
+            </div>
+        </form>
+    </ChildContent>
+</Dialog>
+
+@code {
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public string Title { get; set; } = "Correct attendance";
+    [Parameter] public string? Description { get; set; }
+    [Parameter] public bool DateEditable { get; set; }
+    [Parameter] public DateOnly Date { get; set; }
+    [Parameter] public string? TimeIn { get; set; }
+    [Parameter] public string? TimeOut { get; set; }
+    [Parameter] public string SubmitLabel { get; set; } = "Save";
+    [Parameter] public string ReasonPlaceholder { get; set; } = "Why is this day being changed?";
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public string? Error { get; set; }
+    [Parameter] public IReadOnlyList<AttendanceCorrectionDto>? History { get; set; }
+    [Parameter] public EventCallback<AttendanceCorrectionRequest> OnSubmit { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private bool _wasOpen;
+    private DateOnly _date;
+    private string? _timeIn;
+    private string? _timeOut;
+    private string? _reason;
+    private string? _error;
+
+    /// <summary>Starts from the given values each time the dialog opens, not on every re-render.</summary>
+    protected override void OnParametersSet()
+    {
+        if (IsOpen && !_wasOpen)
+        {
+            _date = Date;
+            _timeIn = TimeIn;
+            _timeOut = TimeOut;
+            _reason = null;
+            _error = null;
+        }
+        _wasOpen = IsOpen;
+    }
+
+    private async Task Submit()
+    {
+        _error = null;
+        if (!TryRead(_timeIn, out var timeIn) || !TryRead(_timeOut, out var timeOut))
+        {
+            _error = "Enter the times as hours and minutes.";
+            return;
+        }
+        if (timeIn is null && timeOut is not null)
+        {
+            _error = "A time-out needs a time-in.";
+            return;
+        }
+        if (timeIn is { } i && timeOut is { } o && o <= i)
+        {
+            _error = "The time-out must be later than the time-in.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(_reason))
+        {
+            _error = "Give a reason for the correction.";
+            return;
+        }
+
+        await OnSubmit.InvokeAsync(new AttendanceCorrectionRequest(_date, timeIn, timeOut, _reason.Trim()));
+    }
+
+    private static bool TryRead(string? text, out TimeOnly? time)
+    {
+        time = null;
+        if (string.IsNullOrWhiteSpace(text)) return true;
+        if (!TimeOnly.TryParseExact(text, ["HH:mm", "HH:mm:ss"], CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+            return false;
+        time = parsed;
+        return true;
+    }
+
+    private static string Range(string? timeIn, string? timeOut) =>
+        timeIn is null && timeOut is null ? "absent" : $"{WallClock.Time(timeIn) ?? "--"}–{WallClock.Time(timeOut) ?? "--"}";
+}

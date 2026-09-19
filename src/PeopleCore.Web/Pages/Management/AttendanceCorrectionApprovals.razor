@@ -1,0 +1,190 @@
+@page "/attendance-corrections"
+@attribute [RequirePermission(Permissions.ApprovalsTeam, Permissions.ApprovalsAll)]
+@inject ApiClient Api
+
+<PageTitle>Attendance Corrections</PageTitle>
+
+<PageHeader Title="Attendance Corrections" Section="Management"
+            Description="Employees' requests to fix a time-in or time-out, and every correction made.">
+    <Actions>
+        <div class="w-48">
+            <Select TValue="string" Id="corrections-status" Value="@_status"
+                    ValueChanged="@(async v => { _status = v; _page = 1; await Load(); })">
+                <option value="Pending">Waiting for approval</option>
+                <option value="">All</option>
+                <option value="Applied">Applied</option>
+                <option value="Rejected">Rejected</option>
+            </Select>
+        </div>
+    </Actions>
+</PageHeader>
+
+@if (_error is not null)
+{
+    <Alert Variant="destructive" Class="mb-4" data-corrections-error>@_error</Alert>
+}
+
+<Card>
+    <CardContent Class="p-0">
+        @if (_loadError is not null)
+        {
+            <div class="p-4"><Alert Variant="destructive" Title="Couldn't load corrections">@_loadError</Alert></div>
+        }
+        else if (_corrections is null)
+        {
+            <div class="flex items-center justify-center p-10"><Spinner /></div>
+        }
+        else if (!_corrections.Items.Any())
+        {
+            <div class="p-6 text-sm text-muted-foreground">@(_status == "Pending" ? "Nothing is waiting for approval." : "No corrections.")</div>
+        }
+        else
+        {
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead Class="px-4">Employee</TableHead>
+                        <TableHead Class="px-4">Date</TableHead>
+                        <TableHead Class="px-4">Recorded</TableHead>
+                        <TableHead Class="px-4">Corrected to</TableHead>
+                        <TableHead Class="px-4">Reason</TableHead>
+                        <TableHead Class="px-4">Status</TableHead>
+                        <TableHead Class="px-4"></TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    @foreach (var c in _corrections.Items)
+                    {
+                        <TableRow>
+                            <TableCell Class="px-4 py-3">
+                                <div class="font-medium">@c.EmployeeName</div>
+                                <div class="text-xs text-muted-foreground">@SourceLabel(c.Source) · @c.RequestedBy</div>
+                            </TableCell>
+                            <TableCell Class="px-4 py-3">@c.AttendanceDate.ToString("MMM d, yyyy")</TableCell>
+                            <TableCell Class="px-4 py-3">@Range(c.PreviousTimeIn, c.PreviousTimeOut)</TableCell>
+                            <TableCell Class="px-4 py-3 font-medium">@Range(c.NewTimeIn, c.NewTimeOut)</TableCell>
+                            <TableCell Class="px-4 py-3 max-w-xs">
+                                @c.Reason
+                                @if (c.RejectionReason is not null)
+                                {
+                                    <div class="text-xs text-destructive">Rejected: @c.RejectionReason</div>
+                                }
+                            </TableCell>
+                            <TableCell Class="px-4 py-3"><Badge Variant="@StatusVariant(c.Status)">@c.Status</Badge></TableCell>
+                            <TableCell Class="px-4 py-3">
+                                @if (c.Status == "Pending")
+                                {
+                                    <div class="flex gap-2">
+                                        <Button Variant="ghost" Size="sm" data-approve="@c.Id" Disabled="@_busy" OnClick="@(() => Approve(c.Id))">Approve</Button>
+                                        <Button Variant="destructive" Size="sm" data-reject="@c.Id" Disabled="@_busy" OnClick="@(() => StartReject(c))">Reject</Button>
+                                    </div>
+                                }
+                            </TableCell>
+                        </TableRow>
+                    }
+                </TableBody>
+            </Table>
+            @if (_corrections.TotalPages > 1)
+            {
+                <div class="border-t px-4 py-3">
+                    <Pagination CurrentPage="@_page" TotalPages="@_corrections.TotalPages" OnPageChange="@(async p => { _page = p; await Load(); })" />
+                </div>
+            }
+        }
+    </CardContent>
+</Card>
+
+<Dialog IsOpen="@(_rejecting is not null)" OnClose="@(() => _rejecting = null)" Title="Reject correction"
+        Description="@(_rejecting is { } r ? $"{r.EmployeeName}, {r.AttendanceDate:MMM d, yyyy}" : null)">
+    <ChildContent>
+        <div class="space-y-4">
+            <FormField LabelText="Why is it rejected?" Id="reject-reason">
+                <Textarea Id="reject-reason" @bind-Value="_rejectReason" />
+            </FormField>
+            <div class="flex justify-end gap-2">
+                <Button Variant="outline" Size="sm" OnClick="@(() => _rejecting = null)">Cancel</Button>
+                <Button Variant="destructive" Size="sm" data-confirm-reject Loading="@_busy"
+                        Disabled="@string.IsNullOrWhiteSpace(_rejectReason)" OnClick="Reject">Reject</Button>
+            </div>
+        </div>
+    </ChildContent>
+</Dialog>
+
+@code {
+    private PagedResult<AttendanceCorrectionDto>? _corrections;
+    private string _status = "Pending";
+    private int _page = 1;
+    private string? _loadError;
+    private string? _error;
+    private bool _busy;
+    private AttendanceCorrectionDto? _rejecting;
+    private string? _rejectReason;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    private async Task Load()
+    {
+        _loadError = null;
+        try
+        {
+            _corrections = await Api.GetAttendanceCorrectionsAsync(status: string.IsNullOrEmpty(_status) ? null : _status, page: _page);
+        }
+        catch (Exception ex)
+        {
+            _corrections = null;
+            _loadError = ex.Message;
+        }
+    }
+
+    private async Task Approve(Guid id)
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            await Api.ApproveAttendanceCorrectionAsync(id);
+            await Load();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private void StartReject(AttendanceCorrectionDto correction)
+    {
+        _rejecting = correction;
+        _rejectReason = null;
+    }
+
+    private async Task Reject()
+    {
+        if (_rejecting is null || string.IsNullOrWhiteSpace(_rejectReason)) return;
+        _error = null;
+        _busy = true;
+        try
+        {
+            await Api.RejectAttendanceCorrectionAsync(_rejecting.Id, _rejectReason.Trim());
+            _rejecting = null;
+            await Load();
+        }
+        catch (Exception ex) { _error = ex.Message; _rejecting = null; }
+        finally { _busy = false; }
+    }
+
+    private static string Range(string? timeIn, string? timeOut) =>
+        timeIn is null && timeOut is null ? "absent" : $"{WallClock.Time(timeIn) ?? "--"} – {WallClock.Time(timeOut) ?? "--"}";
+
+    private static string SourceLabel(string source) => source switch
+    {
+        "EmployeeRequest" => "Requested",
+        "HrEdit" => "HR edit",
+        "Import" => "Import",
+        _ => source,
+    };
+
+    private static string StatusVariant(string status) => status switch
+    {
+        "Applied" => "success",
+        "Rejected" => "destructive",
+        _ => "warning",
+    };
+}
