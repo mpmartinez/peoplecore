@@ -83,17 +83,19 @@ public class PayrollComputationService
     }
 
     /// <summary>
-    /// Compute BIR withholding tax for a semi-monthly payroll period.
-    /// taxableIncome = semi-monthly gross taxable (after mandatory deductions).
-    /// Returns the semi-monthly withholding tax.
+    /// Compute BIR withholding tax for one payroll period.
+    /// periodTaxableIncome = the period's gross taxable (after mandatory deductions).
+    /// Returns the withholding tax for that period.
     /// </summary>
-    public decimal ComputeWithholdingTax(decimal semiMonthlyTaxableIncome)
+    public decimal ComputeWithholdingTax(decimal periodTaxableIncome, PayFrequency frequency)
     {
-        // Annualize the semi-monthly taxable income (24 periods), tax it on the shared annual
-        // bracket table, then de-annualize. BIR Form 2316 Item 24 reads the same table.
-        decimal annualTax = BirWithholdingTax.ComputeAnnualTax(semiMonthlyTaxableIncome * 24m);
+        // Annualize over the number of periods in a year (24 semi-monthly, 12 monthly), tax it
+        // on the shared annual bracket table, then de-annualize. BIR Form 2316 Item 24 reads
+        // the same table.
+        decimal periodsPerYear = frequency == PayFrequency.SemiMonthly ? 24m : 12m;
+        decimal annualTax = BirWithholdingTax.ComputeAnnualTax(periodTaxableIncome * periodsPerYear);
 
-        return Math.Round(annualTax / 24m, 2);
+        return Math.Round(annualTax / periodsPerYear, 2);
     }
 
     /// <summary>
@@ -210,7 +212,7 @@ public class PayrollComputationService
 
         // Taxable income for BIR = gross taxable - mandatory deductions
         decimal taxableForBIR = grossForContribs - sssEmp - phEmp - piEmp;
-        decimal withholdingTax = ComputeWithholdingTax(taxableForBIR);
+        decimal withholdingTax = ComputeWithholdingTax(taxableForBIR, compensation.PayFrequency);
 
         // Loan deductions. Each active loan contributes its per-period instalment, but never
         // more than is still owed - an employee must not be charged past the payoff - and only

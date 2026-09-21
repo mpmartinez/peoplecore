@@ -163,14 +163,14 @@ public class PayrollComputationServiceTests
     public void ComputeWithholdingTax_is_zero_below_the_250k_annual_threshold()
     {
         // 10,000 semi-monthly = 240,000 annual
-        _sut.ComputeWithholdingTax(10_000m).Should().Be(0m);
+        _sut.ComputeWithholdingTax(10_000m, PayFrequency.SemiMonthly).Should().Be(0m);
     }
 
     [Fact]
     public void ComputeWithholdingTax_taxes_only_the_excess_over_250k()
     {
         // 10,500 semi-monthly = 252,000 annual; 2,000 excess at 15% = 300 annual
-        _sut.ComputeWithholdingTax(10_500m).Should().Be(12.50m);
+        _sut.ComputeWithholdingTax(10_500m, PayFrequency.SemiMonthly).Should().Be(12.50m);
     }
 
     [Fact]
@@ -178,7 +178,15 @@ public class PayrollComputationServiceTests
     {
         // 20,000 semi-monthly = 480,000 annual
         // bracket 400k-800k: 22,500 base + (80,000 x 20%) = 38,500 annual / 24
-        _sut.ComputeWithholdingTax(20_000m).Should().Be(1_604.17m);
+        _sut.ComputeWithholdingTax(20_000m, PayFrequency.SemiMonthly).Should().Be(1_604.17m);
+    }
+
+    [Fact]
+    public void ComputeWithholdingTax_annualizes_a_monthly_period_over_12()
+    {
+        // 40,000 monthly = 480,000 annual -> 38,500 annual / 12. Annualizing over 24 would
+        // read it as 960,000 and withhold 5,937.50.
+        _sut.ComputeWithholdingTax(40_000m, PayFrequency.Monthly).Should().Be(3_208.33m);
     }
 
     // ─── Full computation ─────────────────────────────────────────────────
@@ -369,6 +377,20 @@ public class PayrollComputationServiceTests
         result.SSSEmployee.Should().Be(1_000.00m, "monthly payroll deducts the whole contribution");
         result.PhilHealthEmployee.Should().Be(500.00m);
         result.PagIbigEmployee.Should().Be(200.00m);
+    }
+
+    [Fact]
+    public void Compute_monthly_frequency_withholds_tax_on_a_monthly_period()
+    {
+        var employee = NewEmployee(basicSalary: 40_000m);
+        employee.PayFrequency = PayFrequency.Monthly;
+
+        var result = _sut.Compute(employee, NewRun(), daysWorked: 22m);
+
+        // Taxable = 40,000 - 1,750 SSS - 1,000 PhilHealth - 200 Pag-IBIG = 37,050 a month.
+        // x 12 = 444,600 annual -> 22,500 + (44,600 x 20%) = 31,420 annual / 12.
+        result.WithholdingTax.Should().Be(2_618.33m,
+            "a monthly payslip is one twelfth of the year, not one twenty-fourth");
     }
 
     private static EmployeeCompensation NewEmployee(decimal basicSalary) => new()
