@@ -70,6 +70,29 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
             .OrderBy(r => r.PayDate)
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyList<PayrollRun>> GetPaidRunsByPeriodEndMonthAsync(int year, int month, CancellationToken ct = default)
+        => await WithEmployeesAndIds(Context.PayrollRuns
+                .Where(r => r.Status == PayrollRunStatus.Paid && r.PeriodEnd.Year == year && r.PeriodEnd.Month == month))
+            .OrderBy(r => r.PeriodEnd)
+            .ToListAsync(ct);
+
+    public async Task<IReadOnlyList<PayrollRun>> GetPaidRunsByPayMonthAsync(int year, int month, CancellationToken ct = default)
+        => await WithEmployeesAndIds(Context.PayrollRuns
+                .Where(r => r.Status == PayrollRunStatus.Paid && r.PayDate.Year == year && r.PayDate.Month == month))
+            .OrderBy(r => r.PayDate)
+            .ToListAsync(ct);
+
+    public async Task<int> CountUnpaidRunsAsync(int year, int month, bool byPayDate, CancellationToken ct = default)
+        => byPayDate
+            ? await Context.PayrollRuns.CountAsync(r => r.Status != PayrollRunStatus.Paid
+                                                        && r.PayDate.Year == year && r.PayDate.Month == month, ct)
+            : await Context.PayrollRuns.CountAsync(r => r.Status != PayrollRunStatus.Paid
+                                                        && r.PeriodEnd.Year == year && r.PeriodEnd.Month == month, ct);
+
+    private static IQueryable<PayrollRun> WithEmployeesAndIds(IQueryable<PayrollRun> runs)
+        => runs.Include(r => r.Employees).ThenInclude(e => e.Employee!).ThenInclude(p => p.GovernmentIds)
+               .AsSplitQuery();
+
     public async Task<(IReadOnlyList<PayrollRun> Items, int TotalCount)> GetPagedAsync(
         int page, int pageSize, CancellationToken ct = default)
     {
