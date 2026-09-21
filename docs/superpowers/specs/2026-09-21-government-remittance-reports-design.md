@@ -121,7 +121,8 @@ was withheld.
   the count of unpaid runs.
 - The row arithmetic (combining cutoffs, working back MSC and EC, splitting the 13th month) sits
   in pure static helpers, so it can be tested without repositories.
-- `GovernmentReportCsv`: writes each report DTO as CSV with CsvHelper, the header rows first, then
+- `GovernmentReportCsv`: writes each report DTO as CSV (a small writer; the Application project doesn't reference
+  CsvHelper), cells that would run as Excel formulas neutralised, the header rows first, then
   the rows and the totals.
 
 **Repository** (`IPayrollRunRepository`), two new queries, each loading entries with their
