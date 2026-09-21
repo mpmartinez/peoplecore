@@ -226,6 +226,22 @@ public class PayrollRunService : IPayrollRunService
 
         var attendanceByEmployee = snapshots ?? await DeriveAttendanceAsync(run, employeeIds, ct);
 
+        // 13th month already paid this pay year uses up the 90,000 exemption first. Only Paid
+        // runs count, keyed on PayDate - the same basis BIR Form 2316 totals the year on - and
+        // this run itself is never Paid while it can still be computed. Looked up only when
+        // someone in the run is receiving a 13th month, since nobody else's tax depends on it.
+        var thirteenthMonthPaidEarlier = new Dictionary<Guid, decimal>();
+        if (employees.Any(e => e.IncludeThirteenthMonth))
+        {
+            var paidRuns = await _runRepo.GetPaidRunsInYearAsync(run.PayDate.Year, ct) ?? [];
+            thirteenthMonthPaidEarlier = paidRuns
+                .Where(r => r.Id != run.Id)
+                .SelectMany(r => r.Employees)
+                .Where(e => employeeIds.Contains(e.EmployeeId))
+                .GroupBy(e => e.EmployeeId)
+                .ToDictionary(g => g.Key, g => g.Sum(e => e.ThirteenthMonth));
+        }
+
         var entries = new List<PayrollRunEmployee>();
         foreach (var employee in employees)
         {
@@ -252,7 +268,9 @@ public class PayrollRunService : IPayrollRunService
                 compensation, run,
                 daysWorked: employee.DaysWorked ?? defaultDaysInPeriod,
                 includeThirteenthMonth: employee.IncludeThirteenthMonth,
-                rates: rates, attendance: attendance, dailyRateFactor: dailyRateFactor);
+                rates: rates, attendance: attendance, dailyRateFactor: dailyRateFactor,
+                thirteenthMonthPaidEarlierInYear:
+                    thirteenthMonthPaidEarlier.GetValueOrDefault(employee.EmployeeId));
 
             // Snapshot the inputs the figures above were struck from. The entry's own
             // OvertimeHours and HolidayDays are roll-ups Compute wrote; these seven are the

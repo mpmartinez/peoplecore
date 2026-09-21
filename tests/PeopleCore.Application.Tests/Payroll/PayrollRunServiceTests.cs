@@ -531,6 +531,38 @@ public class PayrollRunServiceTests
         PayFrequency.SemiMonthly, [new PayrollRunEmployeeInput(employeeId)]);
 
     [Fact]
+    public async Task CreateAsync_CountsThe13thMonthAlreadyPaidThisYearAgainstThe90kCeiling()
+    {
+        var employeeId = Guid.NewGuid();
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = employeeId, BasicSalary = 40_000m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "S"
+        };
+        var savedRun = SetupRoundTripRepositories(compensation);
+
+        // A paid run earlier in the same pay year already gave this employee 80,000 of 13th
+        // month; another employee's larger 13th month in the same run must not count.
+        var earlier = new PayrollRun
+        {
+            RunNumber = "PAY-2026-000", Status = PayrollRunStatus.Paid, PayDate = new DateOnly(2026, 1, 5)
+        };
+        earlier.Employees.Add(new PayrollRunEmployee { EmployeeId = employeeId, ThirteenthMonth = 80_000m });
+        earlier.Employees.Add(new PayrollRunEmployee { EmployeeId = Guid.NewGuid(), ThirteenthMonth = 500_000m });
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>()))
+                .ReturnsAsync([earlier]);
+
+        var request = RoundTripRequest(employeeId) with
+        {
+            Employees = [new PayrollRunEmployeeInput(employeeId, IncludeThirteenthMonth: true)]
+        };
+        await _sut.CreateAsync(request, CancellationToken.None);
+
+        // 1,309.17 on the regular half-month plus 6,000 on the 30,000 above what is left of
+        // the exemption (see PayrollComputationServiceTests for the arithmetic).
+        savedRun()!.Employees.Single().WithholdingTax.Should().Be(7_309.17m);
+    }
+
+    [Fact]
     public async Task ComputeAsync_AfterARecompute_ReproducesEveryMonetaryFigure()
     {
         // A run whose entries include BOTH rest-day and ordinary overtime, and BOTH regular and

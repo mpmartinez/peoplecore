@@ -99,6 +99,34 @@ public class PayrollComputationService
     }
 
     /// <summary>
+    /// Tax withheld on the part of a 13th month payment above the 90,000 exemption (NIRC
+    /// Sec. 32(B)(7)(e)), after the 13th month already paid earlier in the year has used up
+    /// its share of that exemption.
+    /// <para>
+    /// The taxable excess is a one-off, so it is not annualized with the period's pay - that
+    /// would tax it as if it recurred every payslip. It is taxed at the margin instead: the
+    /// annual tax on the year's regular pay plus the excess, less the annual tax on the regular
+    /// pay alone, all withheld on this payslip.
+    /// </para>
+    /// </summary>
+    public decimal ComputeThirteenthMonthTax(decimal periodTaxableIncome, PayFrequency frequency,
+        decimal thirteenthMonth, decimal thirteenthMonthPaidEarlierInYear)
+    {
+        decimal exemptionLeft = Math.Max(0m,
+            StatutoryCaps.ThirteenthMonthExemption - thirteenthMonthPaidEarlierInYear);
+        decimal taxableExcess = Math.Max(0m, thirteenthMonth - exemptionLeft);
+        if (taxableExcess == 0m)
+            return 0m;
+
+        decimal periodsPerYear = frequency == PayFrequency.SemiMonthly ? 24m : 12m;
+        decimal annualRegular = Math.Max(0m, periodTaxableIncome * periodsPerYear);
+        decimal marginalTax = BirWithholdingTax.ComputeAnnualTax(annualRegular + taxableExcess)
+                            - BirWithholdingTax.ComputeAnnualTax(annualRegular);
+
+        return Math.Round(marginalTax, 2);
+    }
+
+    /// <summary>
     /// Full computation for one employee in one payroll run.
     /// </summary>
     /// <param name="attendance">
@@ -109,10 +137,14 @@ public class PayrollComputationService
     /// <param name="dailyRateFactor">
     /// DOLE equivalent-monthly-rate factor; defaults to 365. See <see cref="DefaultDailyRateFactor"/>.
     /// </param>
+    /// <param name="thirteenthMonthPaidEarlierInYear">
+    /// 13th month the employee was already paid in earlier paid runs of this run's pay year,
+    /// which counts against the 90,000 exemption before this run's 13th month does.
+    /// </param>
     public PayrollRunEmployee Compute(EmployeeCompensation compensation, PayrollRun run, decimal daysWorked = 0,
         decimal overtimeHours = 0, decimal holidayDays = 0, bool includeThirteenthMonth = false,
         ContributionRates? rates = null, PayrollAttendanceInput? attendance = null,
-        decimal? dailyRateFactor = null)
+        decimal? dailyRateFactor = null, decimal thirteenthMonthPaidEarlierInYear = 0m)
     {
         bool isSemiMonthly = compensation.PayFrequency == PayFrequency.SemiMonthly;
         decimal periodsPerMonth = isSemiMonthly ? 2m : 1m;
@@ -212,7 +244,9 @@ public class PayrollComputationService
 
         // Taxable income for BIR = gross taxable - mandatory deductions
         decimal taxableForBIR = grossForContribs - sssEmp - phEmp - piEmp;
-        decimal withholdingTax = ComputeWithholdingTax(taxableForBIR, compensation.PayFrequency);
+        decimal withholdingTax = ComputeWithholdingTax(taxableForBIR, compensation.PayFrequency)
+            + ComputeThirteenthMonthTax(taxableForBIR, compensation.PayFrequency,
+                thirteenthMonth, thirteenthMonthPaidEarlierInYear);
 
         // Loan deductions. Each active loan contributes its per-period instalment, but never
         // more than is still owed - an employee must not be charged past the payoff - and only
