@@ -3,7 +3,8 @@
 @*
     The form behind both an HR edit and an employee's request: a day, its time-in and time-out, and
     why. Blank times are allowed (a time-in with no time-out yet, or both blank to mark the day
-    absent); the API refuses a time-out before the time-in either way, and this just says so sooner.
+    absent). A time-out earlier than the time-in is a night shift ending the next morning, up to 16
+    hours on; the API refuses anything else either way, and this just says so sooner.
 *@
 
 <Dialog IsOpen="@IsOpen" OnClose="OnClose" Title="@Title" Description="@Description">
@@ -29,6 +30,10 @@
                     <Input TValue="string" Id="correction-out" Type="time" @bind-Value="_timeOut" Disabled="@Busy" />
                 </FormField>
             </div>
+            @if (IsNextMorning)
+            {
+                <p class="text-xs text-muted-foreground" data-next-morning>The time-out is the next morning.</p>
+            }
 
             <FormField LabelText="Reason" Id="correction-reason">
                 <Textarea Id="correction-reason" @bind-Value="_reason" Placeholder="@ReasonPlaceholder" Disabled="@Busy" />
@@ -109,9 +114,9 @@
             _error = "A time-out needs a time-in.";
             return;
         }
-        if (timeIn is { } i && timeOut is { } o && o <= i)
+        if (timeIn is { } i && timeOut is { } o && (o == i || (o < i && o - i > MaxOvernightSpan)))
         {
-            _error = "The time-out must be later than the time-in.";
+            _error = "The time-out must be later than the time-in. An earlier time is read as the next morning, up to 16 hours after the time-in.";
             return;
         }
         if (string.IsNullOrWhiteSpace(_reason))
@@ -122,6 +127,13 @@
 
         await OnSubmit.InvokeAsync(new AttendanceCorrectionRequest(_date, timeIn, timeOut, _reason.Trim()));
     }
+
+    // Matches AttendanceService.MaxOvernightSpan on the server.
+    private static readonly TimeSpan MaxOvernightSpan = TimeSpan.FromHours(16);
+
+    private bool IsNextMorning =>
+        TryRead(_timeIn, out var timeIn) && TryRead(_timeOut, out var timeOut)
+        && timeIn is { } i && timeOut is { } o && o < i && o - i <= MaxOvernightSpan;
 
     private static bool TryRead(string? text, out TimeOnly? time)
     {

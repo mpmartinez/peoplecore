@@ -41,7 +41,7 @@ public class AttendanceCorrectionServiceTests
     }
 
     [Theory]
-    [InlineData(8, 0, 7, 0, "later than the time-in")] // out before in
+    [InlineData(8, 0, 7, 0, "later than the time-in")] // out before in, 23 hours on - not a night shift
     [InlineData(8, 0, 8, 0, "later than the time-in")] // out equal to in
     public async Task A_time_out_not_after_the_time_in_is_refused(int inH, int inM, int outH, int outM, string message)
     {
@@ -49,6 +49,23 @@ public class AttendanceCorrectionServiceTests
 
         (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Contain(message);
         NothingWritten();
+    }
+
+    [Fact]
+    public async Task A_time_out_earlier_than_the_time_in_is_the_next_morning_for_a_night_shift()
+    {
+        AttendanceCorrection? saved = null;
+        _corrections.Setup(c => c.AddAsync(It.IsAny<AttendanceCorrection>(), It.IsAny<CancellationToken>()))
+                    .Callback((AttendanceCorrection c, CancellationToken _) => saved = c)
+                    .ReturnsAsync((AttendanceCorrection c, CancellationToken _) => c);
+        _corrections.Setup(c => c.GetWithEmployeeAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(() => saved);
+
+        await _sut.CorrectAsync(new CorrectAttendanceDto(Juan, Day, new(22, 0), new(6, 0), "night shift"), "hr");
+
+        _attendance.Verify(a => a.SetDayAsync(Juan, Day, new TimeOnly(22, 0), new TimeOnly(6, 0), It.IsAny<CancellationToken>()));
+        saved!.NewTimeIn.Should().Be(new DateTime(2026, 3, 10, 22, 0, 0, DateTimeKind.Utc));
+        saved.NewTimeOut.Should().Be(new DateTime(2026, 3, 11, 6, 0, 0, DateTimeKind.Utc), "the shift ends the next morning");
     }
 
     [Fact]
