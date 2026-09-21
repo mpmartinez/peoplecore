@@ -28,6 +28,7 @@
             @foreach (var (key, label) in Tabs)
             {
                 <Button Size="sm" Variant="@(key == _tab ? "primary" : "outline")" data-tab="@key"
+                        role="tab" aria-selected="@(key == _tab ? "true" : "false")"
                         OnClick="@(() => SelectTab(key))">@label</Button>
             }
         </div>
@@ -44,6 +45,11 @@ else if (_loading)
 }
 else if (_report is not null)
 {
+    @if (_downloadError is not null)
+    {
+        <Alert Variant="destructive" Class="mb-4" data-download-error>@_downloadError</Alert>
+    }
+
     <div class="mb-4 text-sm">
         <p class="font-semibold">@_report.Employer.Name</p>
         <p class="text-muted-foreground">@_report.Title · @_report.Basis · TIN @_report.Employer.Tin
@@ -100,6 +106,12 @@ else if (_report is not null)
     private GovernmentReportDto? _report;
     private bool _loading, _downloading;
     private string? _error;
+    private string? _downloadError;
+
+    // Guards against a slow earlier tab/month request resolving after a later one and
+    // overwriting its (more current) result: each LoadAsync call claims the next number, and
+    // only the call that is still the latest when it completes is allowed to apply what it got.
+    private int _loadSequence;
 
     protected override Task OnInitializedAsync() => LoadAsync();
 
@@ -120,26 +132,32 @@ else if (_report is not null)
 
     private async Task LoadAsync()
     {
+        var sequence = ++_loadSequence;
         _loading = true;
         _error = null;
+        _downloadError = null;
         try
         {
-            _report = await Api.GetGovernmentReportAsync(_tab, _month.Year, _month.Month);
+            var report = await Api.GetGovernmentReportAsync(_tab, _month.Year, _month.Month);
+            if (sequence != _loadSequence) return; // a later tab/month change has since started; drop this stale result
+            _report = report;
         }
         catch (HttpRequestException ex)
         {
+            if (sequence != _loadSequence) return;
             _report = null;
             _error = ex.Message;
         }
         finally
         {
-            _loading = false;
+            if (sequence == _loadSequence) _loading = false;
         }
     }
 
     private async Task DownloadCsv()
     {
         _downloading = true;
+        _downloadError = null;
         try
         {
             var csv = await Api.GetGovernmentReportCsvAsync(_tab, _month.Year, _month.Month);
@@ -148,7 +166,11 @@ else if (_report is not null)
         }
         catch (HttpRequestException ex)
         {
-            _error = ex.Message;
+            // A download failure is about the CSV, not the report already on screen - keep that
+            // report visible and show this as its own alert, rather than routing it through
+            // _error and having the "@if (_error) / else if (_report)" chain above replace the
+            // whole page with the banner.
+            _downloadError = ex.Message;
         }
         finally
         {

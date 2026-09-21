@@ -48,10 +48,13 @@ public class GovernmentReportsTests : BunitContext
             .On(HttpMethod.Get, Path("philhealth", LastMonth), HttpStatusCode.OK, Report("philhealth"));
         var cut = Render<GovernmentReports>();
         cut.WaitForElement("[data-report-table]");
+        cut.Find("[data-tab='sss']").GetAttribute("aria-selected").Should().Be("true");
 
         cut.Find("[data-tab='philhealth']").Click();
 
         cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.RequestUri!.PathAndQuery == Path("philhealth", LastMonth)));
+        cut.Find("[data-tab='philhealth']").GetAttribute("aria-selected").Should().Be("true");
+        cut.Find("[data-tab='sss']").GetAttribute("aria-selected").Should().Be("false");
     }
 
     [Fact]
@@ -86,5 +89,21 @@ public class GovernmentReportsTests : BunitContext
         cut.Find("[data-download-csv]").Click();
 
         cut.WaitForAssertion(() => JSInterop.VerifyInvoke("downloadFileFromBytes"));
+    }
+
+    [Fact]
+    public void FailedCsvDownload_KeepsTheReportVisible_AndShowsTheError()
+    {
+        _api.On(HttpMethod.Get, Path("sss", LastMonth), HttpStatusCode.OK, Report("sss"))
+            .On(HttpMethod.Get, Path("sss", LastMonth) + "&format=csv", HttpStatusCode.BadRequest,
+                """{"title":"x","detail":"The CSV could not be built.","status":400}""");
+        var cut = Render<GovernmentReports>();
+        cut.WaitForElement("[data-report-table]");
+
+        cut.Find("[data-download-csv]").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[data-download-error]").TextContent.Should().Contain("The CSV could not be built."));
+        cut.Find("[data-report-table]").TextContent.Should().Contain("Cruz, Juan");
+        JSInterop.VerifyNotInvoke("downloadFileFromBytes");
     }
 }
