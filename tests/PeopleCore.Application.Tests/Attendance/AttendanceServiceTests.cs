@@ -199,6 +199,116 @@ public class AttendanceServiceTests
         clockedOut.TimeOut.Should().Be(Wall(2026, 3, 12, 17, 0));
     }
 
+    // ─── Measured against the employee's own shift ───────────────────────────────────────────
+
+    private void OnShift(DateOnly date, TimeOnly start, TimeOnly end) =>
+        _shiftService.Setup(s => s.ResolveShiftForDayAsync(_emp.Id, date, It.IsAny<CancellationToken>()))
+                     .ReturnsAsync(new DailyScheduleDto(date, "Shift", start, end, IsRestDay: false,
+                         IsNightShift: end <= start));
+
+    private void OnRestDay(DateOnly date) =>
+        _shiftService.Setup(s => s.ResolveShiftForDayAsync(_emp.Id, date, It.IsAny<CancellationToken>()))
+                     .ReturnsAsync(new DailyScheduleDto(date, null, null, null, IsRestDay: true, IsNightShift: false));
+
+    [Theory]
+    [InlineData("2026-03-12T08:00:00Z", 0, 0)]    // 16:00 Manila - the shift's end
+    [InlineData("2026-03-12T07:30:00Z", 30, 0)]   // 15:30 - half an hour early
+    [InlineData("2026-03-12T09:00:00Z", 0, 60)]   // 17:00 - an hour past the shift
+    public async Task TimeOutAsync_MeasuresUndertimeAndOvertimeFromTheShiftsEnd_NotFivePm(
+        string instant, int undertime, int overtime)
+    {
+        OnShift(new DateOnly(2026, 3, 12), new TimeOnly(7, 0), new TimeOnly(16, 0));
+        ClockedInAt(Wall(2026, 3, 12, 7, 0));
+        _clock.Now = DateTimeOffset.Parse(instant);
+
+        var result = await _sut.TimeOutAsync(new TimeOutRequest(_emp.Id));
+
+        result.UndertimeMinutes.Should().Be(undertime);
+        result.OvertimeMinutes.Should().Be(overtime);
+    }
+
+    [Fact]
+    public async Task TimeOutAsync_ANightShiftClocksOutTheNextMorning_OnLastNightsRecord()
+    {
+        var night = new DateOnly(2026, 3, 11);
+        OnShift(night, new TimeOnly(22, 0), new TimeOnly(6, 0));
+        var record = ClockedInAt(Wall(2026, 3, 11, 22, 0));
+        _repo.Setup(r => r.GetByEmployeeAndDateAsync(_emp.Id, new DateOnly(2026, 3, 12), default))
+             .ReturnsAsync((AttendanceRecord?)null);
+        _clock.Now = DateTimeOffset.Parse("2026-03-11T21:30:00Z");   // 05:30 on the 12th in Manila
+
+        var result = await _sut.TimeOutAsync(new TimeOutRequest(_emp.Id));
+
+        result.Id.Should().Be(record.Id);
+        result.TimeOut.Should().Be(Wall(2026, 3, 12, 5, 30));
+        result.UndertimeMinutes.Should().Be(30, "the shift ends at 06:00 the next morning");
+        result.OvertimeMinutes.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task TimeOutAsync_LongAfterLastNightsShiftEnded_IsNotTakenAsItsTimeOut()
+    {
+        var night = new DateOnly(2026, 3, 11);
+        OnShift(night, new TimeOnly(22, 0), new TimeOnly(6, 0));
+        ClockedInAt(Wall(2026, 3, 11, 22, 0));
+        _repo.Setup(r => r.GetByEmployeeAndDateAsync(_emp.Id, new DateOnly(2026, 3, 12), default))
+             .ReturnsAsync((AttendanceRecord?)null);
+        _clock.Now = DateTimeOffset.Parse("2026-03-12T12:00:00Z");   // 20:00 on the 12th
+
+        var act = () => _sut.TimeOutAsync(new TimeOutRequest(_emp.Id));
+
+        await act.Should().ThrowAsync<DomainException>();
+    }
+
+    [Fact]
+    public async Task ARestDay_HasNoLatenessOrUndertime_AndAllItsTimeIsOvertime()
+    {
+        var sunday = new DateOnly(2026, 3, 15);
+        OnRestDay(sunday);
+        _repo.Setup(r => r.GetByEmployeeAndDateAsync(_emp.Id, sunday, default)).ReturnsAsync((AttendanceRecord?)null);
+        _clock.Now = DateTimeOffset.Parse("2026-03-15T02:00:00Z");   // 10:00 Manila
+
+        var clockedIn = await _sut.TimeInAsync(new TimeInRequest(_emp.Id));
+        ClockedInAt(clockedIn.TimeIn!.Value);
+        _clock.Now = DateTimeOffset.Parse("2026-03-15T06:00:00Z");   // 14:00 Manila
+        var clockedOut = await _sut.TimeOutAsync(new TimeOutRequest(_emp.Id));
+
+        clockedIn.LateMinutes.Should().Be(0, "a rest day has no shift to be late for");
+        clockedOut.UndertimeMinutes.Should().Be(0);
+        clockedOut.OvertimeMinutes.Should().Be(240);
+    }
+
+    [Fact]
+    public async Task SyncPunches_ANightShiftsMorningPunch_ClosesLastNightInsteadOfOpeningToday()
+    {
+        var night = new DateOnly(2026, 3, 11);
+        var morning = new DateOnly(2026, 3, 12);
+        OnShift(night, new TimeOnly(22, 0), new TimeOnly(6, 0));
+        _employeeRepo.Setup(r => r.GetByNumberAsync("EMP-001", default)).ReturnsAsync(_emp);
+        var record = ClockedInAt(Wall(2026, 3, 11, 21, 55));
+        _repo.Setup(r => r.GetByEmployeeAndDateAsync(_emp.Id, morning, default)).ReturnsAsync((AttendanceRecord?)null);
+
+        var result = await _sut.SyncPunchesAsync([new AttendancePunchDto("EMP-001", Wall(2026, 3, 12, 6, 10))]);
+
+        result.Imported.Should().Be(1);
+        record.TimeOut.Should().Be(Wall(2026, 3, 12, 6, 10));
+        record.OvertimeMinutes.Should().Be(10);
+        _repo.Verify(r => r.AddAsync(It.IsAny<AttendanceRecord>(), default), Times.Never);
+    }
+
+    [Fact]
+    public async Task SetDayAsync_MeasuresACorrectedTimeOutFromTheShiftsEnd()
+    {
+        var date = new DateOnly(2026, 3, 12);
+        OnShift(date, new TimeOnly(7, 0), new TimeOnly(16, 0));
+        _repo.Setup(r => r.GetByEmployeeAndDateAsync(_emp.Id, date, default)).ReturnsAsync((AttendanceRecord?)null);
+
+        var result = await _sut.SetDayAsync(_emp.Id, date, new TimeOnly(7, 0), new TimeOnly(15, 0));
+
+        result.UndertimeMinutes.Should().Be(60);
+        result.OvertimeMinutes.Should().Be(0);
+    }
+
     [Fact]
     public async Task SyncPunches_StillRecordsTheDevicesPunchTime_NotTheServerClock()
     {

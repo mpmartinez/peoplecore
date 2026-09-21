@@ -3,6 +3,7 @@ using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Common.Time;
 using PeopleCore.Application.Employees.Interfaces;
+using PeopleCore.Application.Scheduling.DTOs;
 using PeopleCore.Application.Scheduling.Interfaces;
 using PeopleCore.Domain.Entities.Attendance;
 using PeopleCore.Domain.Exceptions;
@@ -11,8 +12,15 @@ namespace PeopleCore.Application.Attendance.Services;
 
 public class AttendanceService : IAttendanceService
 {
+    // The day an employee with no shift assignment is measured against.
     private static readonly TimeOnly DefaultShiftStart = new(8, 0);
-    private static readonly TimeOnly ShiftEnd = new(17, 0);
+    private static readonly TimeOnly DefaultShiftEnd = new(17, 0);
+
+    /// <summary>
+    /// How long after a night shift's end its clock-out is still taken as that shift's. Past it,
+    /// a punch the next day is a fresh time-in, not a very late time-out.
+    /// </summary>
+    private static readonly TimeSpan OvernightClockOutWindow = TimeSpan.FromHours(8);
 
     private readonly IAttendanceRepository _repo;
     private readonly IHolidayService _holidayService;
@@ -59,7 +67,7 @@ public class AttendanceService : IAttendanceService
 
         var holidayType = await _holidayService.IsHolidayAsync(today, ct);
         var schedule = await _shiftService.ResolveShiftForDayAsync(employeeId, today, ct);
-        var lateMinutes = CalculateLateMinutes(TimeOnly.FromDateTime(timeIn), schedule?.StartTime ?? DefaultShiftStart);
+        var lateMinutes = CalculateLateMinutes(timeIn, ShiftWindow(today, schedule));
 
         var record = existing ?? new AttendanceRecord
         {
@@ -96,12 +104,17 @@ public class AttendanceService : IAttendanceService
         var today = DateOnly.FromDateTime(timeOut);
         var record = await _repo.GetByEmployeeAndDateAsync(employeeId, today, ct);
 
+        // A night shift clocks out the morning after it started, so its record is last night's.
         if (record?.TimeIn is null)
-            throw new DomainException("Employee is not clocked in today.");
+            record = await FindOpenOvernightRecordAsync(employeeId, timeOut, ct)
+                ?? throw new DomainException("Employee is not clocked in today.");
+
+        var schedule = await _shiftService.ResolveShiftForDayAsync(employeeId, record.AttendanceDate, ct);
+        var window = ShiftWindow(record.AttendanceDate, schedule);
 
         record.TimeOut = timeOut;
-        record.UndertimeMinutes = CalculateUndertimeMinutes(TimeOnly.FromDateTime(timeOut));
-        record.OvertimeMinutes = CalculateOvertimeMinutes(TimeOnly.FromDateTime(timeOut));
+        record.UndertimeMinutes = CalculateUndertimeMinutes(timeOut, window);
+        record.OvertimeMinutes = CalculateOvertimeMinutes(record.TimeIn!.Value, timeOut, window);
         record.UpdatedAt = DateTime.UtcNow;
 
         await _repo.UpdateAsync(record, ct);
@@ -159,7 +172,13 @@ public class AttendanceService : IAttendanceService
                 var date = DateOnly.FromDateTime(punch.PunchTime);
                 var existing = await _repo.GetByEmployeeAndDateAsync(employee.Id, date, ct);
 
-                if (existing is null)
+                if (existing is null
+                    && await FindOpenOvernightRecordAsync(employee.Id, punch.PunchTime, ct) is not null)
+                {
+                    // The morning punch that ends last night's shift, not the start of today's.
+                    await RecordTimeOutAsync(employee.Id, punch.PunchTime, ct);
+                }
+                else if (existing is null)
                 {
                     await RecordTimeInAsync(employee.Id, punch.PunchTime, ct);
                 }
@@ -206,9 +225,11 @@ public class AttendanceService : IAttendanceService
         record.TimeIn = timeIn is { } i ? date.ToDateTime(i, DateTimeKind.Utc) : null;
         record.TimeOut = timeOut is { } o ? date.ToDateTime(o, DateTimeKind.Utc) : null;
         record.IsPresent = timeIn is not null;
-        record.LateMinutes = timeIn is { } late ? CalculateLateMinutes(late, schedule?.StartTime ?? DefaultShiftStart) : 0;
-        record.UndertimeMinutes = timeOut is { } under ? CalculateUndertimeMinutes(under) : 0;
-        record.OvertimeMinutes = timeOut is { } over ? CalculateOvertimeMinutes(over) : 0;
+        var window = ShiftWindow(date, schedule);
+        record.LateMinutes = record.TimeIn is { } late ? CalculateLateMinutes(late, window) : 0;
+        record.UndertimeMinutes = record.TimeOut is { } under ? CalculateUndertimeMinutes(under, window) : 0;
+        record.OvertimeMinutes = record.TimeIn is { } start && record.TimeOut is { } end
+            ? CalculateOvertimeMinutes(start, end, window) : 0;
         record.IsHoliday = holidayType is not null;
         record.HolidayType = holidayType;
 
@@ -229,20 +250,55 @@ public class AttendanceService : IAttendanceService
             throw new DomainException("The time-out must be later than the time-in.");
     }
 
-    private static int CalculateLateMinutes(TimeOnly timeIn, TimeOnly shiftStart)
-        => timeIn > shiftStart ? (int)(timeIn - shiftStart).TotalMinutes : 0;
-
-    private static int CalculateUndertimeMinutes(TimeOnly timeOut)
+    /// <summary>
+    /// Last night's record, still open, when <paramref name="punch"/> is the morning clock-out of
+    /// a shift that ran past midnight - and null for anything else.
+    /// </summary>
+    private async Task<AttendanceRecord?> FindOpenOvernightRecordAsync(
+        Guid employeeId, DateTime punch, CancellationToken ct)
     {
-        if (timeOut >= ShiftEnd) return 0;
-        return (int)(ShiftEnd - timeOut).TotalMinutes;
+        var night = DateOnly.FromDateTime(punch).AddDays(-1);
+        var record = await _repo.GetByEmployeeAndDateAsync(employeeId, night, ct);
+        if (record is not { TimeIn: not null, TimeOut: null })
+            return null;
+
+        var schedule = await _shiftService.ResolveShiftForDayAsync(employeeId, night, ct);
+        return ShiftWindow(night, schedule) is { } window
+               && DateOnly.FromDateTime(window.End) > night
+               && punch <= window.End + OvernightClockOutWindow
+            ? record
+            : null;
     }
 
-    private static int CalculateOvertimeMinutes(TimeOnly timeOut)
+    /// <summary>
+    /// When the employee was due to work on <paramref name="date"/>: their shift, ending the next
+    /// morning when it runs past midnight, or 08:00-17:00 when no shift is assigned. Null on a
+    /// rest day, which has no shift to be late for or to leave early.
+    /// </summary>
+    private static (DateTime Start, DateTime End)? ShiftWindow(DateOnly date, DailyScheduleDto? schedule)
     {
-        if (timeOut <= ShiftEnd) return 0;
-        return (int)(timeOut - ShiftEnd).TotalMinutes;
+        if (schedule is { IsRestDay: true })
+            return null;
+
+        var start = date.ToDateTime(schedule?.StartTime ?? DefaultShiftStart, DateTimeKind.Utc);
+        var end = date.ToDateTime(schedule?.EndTime ?? DefaultShiftEnd, DateTimeKind.Utc);
+        if (end <= start)
+            end = end.AddDays(1);
+
+        return (start, end);
     }
+
+    private static int CalculateLateMinutes(DateTime timeIn, (DateTime Start, DateTime End)? shift)
+        => shift is { } s && timeIn > s.Start ? (int)(timeIn - s.Start).TotalMinutes : 0;
+
+    private static int CalculateUndertimeMinutes(DateTime timeOut, (DateTime Start, DateTime End)? shift)
+        => shift is { } s && timeOut < s.End ? (int)(s.End - timeOut).TotalMinutes : 0;
+
+    /// <summary>Time past the shift's end - or, on a rest day, all of the time worked.</summary>
+    private static int CalculateOvertimeMinutes(DateTime timeIn, DateTime timeOut, (DateTime Start, DateTime End)? shift)
+        => shift is { } s
+            ? (timeOut > s.End ? (int)(timeOut - s.End).TotalMinutes : 0)
+            : (int)(timeOut - timeIn).TotalMinutes;
 
     private static int TotalWorkingDays(DateOnly from, DateOnly to)
     {
