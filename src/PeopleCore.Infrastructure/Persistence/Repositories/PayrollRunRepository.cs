@@ -14,6 +14,7 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
         => await Context.PayrollRuns
             .Include(r => r.Employees).ThenInclude(e => e.Employee)
             .Include(r => r.Employees).ThenInclude(e => e.LoanDeductionLines)
+            .Include(r => r.Employees).ThenInclude(e => e.PremiumDays)
             .AsSplitQuery()
             .FirstOrDefaultAsync(r => r.Id == id, ct);
 
@@ -100,7 +101,7 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
         PayrollRun run, IReadOnlyList<PayrollRunEmployee> newEntries, CancellationToken ct = default)
     {
         // Both steps share a transaction: a failure between them would otherwise leave the run
-        // with no entries at all. Deleting the entries cascades to their loan deduction lines.
+        // with no entries at all. Deleting the entries cascades to their loan deduction lines and premium days.
         await using var tx = await Context.Database.BeginTransactionAsync(ct);
 
         await Context.PayrollRunEmployees

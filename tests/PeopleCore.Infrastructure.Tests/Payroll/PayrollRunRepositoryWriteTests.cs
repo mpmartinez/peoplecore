@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Enums;
+using PeopleCore.Domain.Payroll;
 using PeopleCore.Infrastructure.Persistence.Repositories;
 
 namespace PeopleCore.Infrastructure.Tests.Payroll;
@@ -88,6 +89,43 @@ public class PayrollRunRepositoryWriteTests : DatabaseTestBase
 
         await using var reader = NewContext();
         (await reader.Set<PayrollLoanDeduction>().CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task PremiumDays_RoundTripWithTheirEntry_AndCascadeOnReplace()
+    {
+        // A recompute reprices from these rows, so they must come back with the run, and must not
+        // outlive the entry they belong to once it is replaced.
+        var employee = AnEmployee();
+        Context.Employees.Add(employee);
+        await Context.SaveChangesAsync();
+
+        var run = ARun("PAY-2026-001", new(2026, 1, 1), new(2026, 1, 15), new(2026, 1, 20));
+        var entry = AnEntry(run.Id, employee.Id);
+        entry.PremiumDays =
+        [
+            new PayrollRunPremiumDay { DayType = WorkDayType.DoubleRegularHoliday, Days = 1m, OvertimeHours = 2.5m },
+            new PayrollRunPremiumDay { DayType = WorkDayType.RestDay, Hours = 8m, NightDiffHours = 1.25m }
+        ];
+        run.Employees = [entry];
+        await Sut.AddWithEntriesAsync(run);
+
+        await using (var reader = NewContext())
+        {
+            var loaded = await new PayrollRunRepository(reader).GetWithEntriesAsync(run.Id);
+            loaded!.Employees.Single().PremiumDays
+                .Select(d => (d.DayType, d.Days, d.Hours, d.OvertimeHours, d.NightDiffHours))
+                .Should().BeEquivalentTo([
+                    (WorkDayType.DoubleRegularHoliday, 1m, 0m, 2.5m, 0m),
+                    (WorkDayType.RestDay, 0m, 8m, 0m, 1.25m)
+                ]);
+        }
+
+        var reloaded = await Context.PayrollRuns.Include(r => r.Employees).SingleAsync(r => r.Id == run.Id);
+        await Sut.ReplaceEntriesAsync(reloaded, [AnEntry(run.Id, employee.Id)]);
+
+        await using var after = NewContext();
+        (await after.PayrollRunPremiumDays.CountAsync()).Should().Be(0);
     }
 
     [Fact]

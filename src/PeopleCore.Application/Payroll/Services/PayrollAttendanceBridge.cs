@@ -7,11 +7,12 @@ using PeopleCore.Domain.Entities.Attendance;
 using PeopleCore.Domain.Entities.Scheduling;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Interfaces;
+using PeopleCore.Domain.Payroll;
 
 namespace PeopleCore.Application.Payroll.Services;
 
 /// <summary>
-/// Turns PeopleCore's attendance data into the eight <see cref="PayrollAttendanceInput"/> totals
+/// Turns PeopleCore's attendance data into the <see cref="PayrollAttendanceInput"/> totals and per-day-type breakdown
 /// the payroll engine consumes.
 /// <para>
 /// Everything is loaded once for the whole employee set and indexed in memory, so a 200-employee
@@ -64,24 +65,23 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
 
         // There is no period query for holidays, so ask for every year the period touches - a pay
         // period can straddle a year boundary.
-        var holidaysByDate = new Dictionary<DateOnly, HolidayType>();
+        //
+        // Two holiday rows on one date is a real DOLE scenario - two regular holidays coinciding
+        // (a double holiday, 300%), or two special days (150%). A regular holiday that a local
+        // government also declares special keeps the regular holiday's pay, the higher of the
+        // two, whichever row the database returns first. A special working day is an ordinary
+        // working day for pay, so it is not counted at all.
+        var holidaysByDate = new Dictionary<DateOnly, (int Regular, int Special)>();
         for (var year = from.Year; year <= to.Year; year++)
         {
             foreach (var holiday in await _holidays.GetByYearAsync(year, ct))
             {
-                // Two holiday rows on the same date is a real DOLE scenario - e.g. a regular
-                // holiday that a local government also declares a special non-working day -
-                // that DolePremiumRates prices explicitly (DoubleRegularHoliday,
-                // DoubleSpecialNonWorking), but that PayrollAttendanceInput's two day-counts
-                // cannot express: a date can only land in one bucket here. Rather than let
-                // whichever row the database returns last win - a coin flip between a 200% and
-                // a 130% day - always keep RegularHoliday, the higher-paying classification, so
-                // a duplicate never underpays.
-                if (holidaysByDate.TryGetValue(holiday.HolidayDate, out var existing)
-                    && existing == HolidayType.RegularHoliday)
-                    continue;
+                if (holiday.HolidayType == HolidayType.SpecialWorking) continue;
 
-                holidaysByDate[holiday.HolidayDate] = holiday.HolidayType;
+                var (regular, special) = holidaysByDate.GetValueOrDefault(holiday.HolidayDate);
+                holidaysByDate[holiday.HolidayDate] = holiday.HolidayType == HolidayType.RegularHoliday
+                    ? (regular + 1, special)
+                    : (regular, special + 1);
             }
         }
 
@@ -151,9 +151,21 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
             var employeeAssignments = assignmentsByEmployee.GetValueOrDefault(employeeId) ?? [];
 
             decimal lateMinutes = 0m, undertimeMinutes = 0m, absenceDays = 0m;
-            decimal ordinaryOvertimeHours = 0m, restDayOvertimeHours = 0m;
-            decimal holidayRegularDays = 0m, holidaySpecialDays = 0m, nightDiffHours = 0m;
+            var premiumDays = new Dictionary<WorkDayType, PremiumDayInput>();
             var anyDateScheduled = false;
+
+            void Add(WorkDayType dayType, decimal days = 0m, decimal hours = 0m,
+                     decimal overtimeHours = 0m, decimal nightDiffHours = 0m)
+            {
+                var current = premiumDays.GetValueOrDefault(dayType) ?? new PremiumDayInput(dayType);
+                premiumDays[dayType] = current with
+                {
+                    Days = current.Days + days,
+                    Hours = current.Hours + hours,
+                    OvertimeHours = current.OvertimeHours + overtimeHours,
+                    NightDiffHours = current.NightDiffHours + nightDiffHours
+                };
+            }
 
             for (var date = from; date <= to; date = date.AddDays(1))
             {
@@ -164,6 +176,14 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                 // ShiftScheduleResolver is now authoritative about which dates a fixed template
                 // schedules (via ShiftTemplate.WorkDays), so no Mon-Fri second-guessing is needed
                 // here any more.
+
+                // The Holiday calendar governs, never AttendanceRecord.IsHoliday - the record
+                // carries a denormalised flag that can drift from the calendar. A date whose
+                // schedule resolves to null is not a rest day: with no schedule there is no basis
+                // for the rest-day rates.
+                var isRestDay = schedule is { IsRestDay: true };
+                var holidays = holidaysByDate.GetValueOrDefault(date);
+                var dayType = Classify(holidays.Regular, holidays.Special, isRestDay);
 
                 // Nothing in the schema enforces one record per employee per day: a date counts as
                 // present if ANY record for it is marked IsPresent, and late, undertime and night
@@ -181,30 +201,27 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                         // A record with no TimeOut contributes zero rather than a guess at when
                         // the shift ended.
                         if (record.TimeIn.HasValue && record.TimeOut.HasValue)
-                            nightDiffHours += NightDifferential.Hours(record.TimeIn.Value, record.TimeOut.Value);
+                            Add(dayType, nightDiffHours: NightDifferential.Hours(record.TimeIn.Value, record.TimeOut.Value));
                     }
                 }
 
-                var isHoliday = holidaysByDate.TryGetValue(date, out var holidayType);
-
-                // The Holiday calendar governs, never AttendanceRecord.IsHoliday - the record
-                // carries a denormalised flag that can drift from the calendar.
-                if (isPresent && isHoliday)
+                var overtimeHours = (employeeOvertime?.GetValueOrDefault(date) ?? 0) / 60m;
+                if (isRestDay)
                 {
-                    if (holidayType == HolidayType.RegularHoliday) holidayRegularDays += 1m;
-                    else holidaySpecialDays += 1m;
+                    // A rest day has no shift, so all its work is approved overtime: the first
+                    // eight hours earn the rest day's own rate, and only the hours past them the
+                    // overtime rate. Turning up on a rest day without approval earns nothing, just
+                    // as staying late without approval does not.
+                    if (overtimeHours > 0m)
+                        Add(dayType, hours: Math.Min(overtimeHours, 8m),
+                            overtimeHours: Math.Max(0m, overtimeHours - 8m));
                 }
-
-                var overtimeMinutes = employeeOvertime?.GetValueOrDefault(date) ?? 0;
-                if (overtimeMinutes > 0)
+                else
                 {
-                    // Overtime on a date whose schedule resolves to null counts as ordinary
-                    // overtime, not rest-day: it was approved so it is payable, but with no
-                    // schedule there is no basis for the rest-day premium.
-                    if (schedule is { IsRestDay: true })
-                        restDayOvertimeHours += overtimeMinutes / 60m;
-                    else
-                        ordinaryOvertimeHours += overtimeMinutes / 60m;
+                    // A scheduled day: attending a holiday earns that day's premium, and approved
+                    // overtime past the shift the overtime rate for that kind of day.
+                    if (isPresent && dayType != WorkDayType.Ordinary) Add(dayType, days: 1m);
+                    if (overtimeHours > 0m) Add(dayType, overtimeHours: overtimeHours);
                 }
 
                 // An absence needs a scheduled working day. A rest day is not one, and a null
@@ -215,7 +232,7 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                 // day follows "no work, no pay", so it is NOT excluded here and still creates an
                 // absence when unworked. That asymmetry looks like an oversight if you don't know
                 // the Labor Code distinction, so it is spelled out here rather than left implicit.
-                var isUnworkedRegularHoliday = isHoliday && holidayType == HolidayType.RegularHoliday;
+                var isUnworkedRegularHoliday = holidays.Regular > 0;
                 if (schedule is { IsRestDay: false }
                     && !isPresent
                     && employeePaidLeave?.Contains(date) != true
@@ -225,20 +242,32 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                 }
             }
 
+            // NightDifferential.Hours already rounds each record to 2dp before it is summed, so
+            // night hours are a sum of already-rounded values and are not rounded again here.
+            var breakdown = premiumDays.Values
+                .Select(d => d with
+                {
+                    Hours = Math.Round(d.Hours, 2),
+                    OvertimeHours = Math.Round(d.OvertimeHours, 2)
+                })
+                .Where(d => d.Days != 0m || d.Hours != 0m || d.OvertimeHours != 0m || d.NightDiffHours != 0m)
+                .OrderBy(d => d.DayType)
+                .ToList();
+
             inputs[employeeId] = new PayrollAttendanceInput
             {
                 LateMinutes = lateMinutes,
                 UndertimeMinutes = undertimeMinutes,
                 AbsenceDays = absenceDays,
-                OvertimeHours = Math.Round(ordinaryOvertimeHours, 2),
-                RestDayOTHours = Math.Round(restDayOvertimeHours, 2),
-                HolidayRegularDays = holidayRegularDays,
-                HolidaySpecialDays = holidaySpecialDays,
-                // NightDifferential.Hours already rounds each record to 2dp before it is summed
-                // above, so the period total here is a sum of already-rounded values - rounding
-                // it again is a no-op, not a "round once on the period total" step, so it is left
-                // out rather than implying behaviour this line does not have.
-                NightDiffHours = nightDiffHours
+                PremiumDays = breakdown,
+
+                // Roll-ups of the breakdown, which is what payroll prices from. All rest-day work
+                // is approved overtime, so all of it rolls up as rest-day overtime.
+                OvertimeHours = breakdown.Where(d => !IsRestDay(d.DayType)).Sum(d => d.OvertimeHours),
+                RestDayOTHours = breakdown.Where(d => IsRestDay(d.DayType)).Sum(d => d.Hours + d.OvertimeHours),
+                HolidayRegularDays = breakdown.Where(d => IsRegularHoliday(d.DayType)).Sum(d => d.Days),
+                HolidaySpecialDays = breakdown.Where(d => IsSpecialDay(d.DayType)).Sum(d => d.Days),
+                NightDiffHours = breakdown.Sum(d => d.NightDiffHours)
             };
 
             // No assignment covered any date in the period - or the one that did could not be
@@ -249,6 +278,38 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
 
         return new AttendanceBridgeResult(inputs, withoutSchedule);
     }
+
+    /// <summary>
+    /// The DOLE kind of day for a date, from how many regular holidays and special days fall on
+    /// it and whether it is the employee's rest day. A regular holiday outranks a special day on
+    /// the same date; two of either make a double holiday.
+    /// </summary>
+    private static WorkDayType Classify(int regularHolidays, int specialDays, bool isRestDay) =>
+        (regularHolidays, specialDays, isRestDay) switch
+        {
+            (>= 2, _, false) => WorkDayType.DoubleRegularHoliday,
+            (>= 2, _, true)  => WorkDayType.DoubleRegularHolidayOnRestDay,
+            (1, _, false)    => WorkDayType.RegularHoliday,
+            (1, _, true)     => WorkDayType.RegularHolidayOnRestDay,
+            (_, >= 2, false) => WorkDayType.DoubleSpecialNonWorking,
+            (_, >= 2, true)  => WorkDayType.DoubleSpecialNonWorkingOnRestDay,
+            (_, 1, false)    => WorkDayType.SpecialNonWorking,
+            (_, 1, true)     => WorkDayType.SpecialNonWorkingOnRestDay,
+            (_, _, true)     => WorkDayType.RestDay,
+            _                => WorkDayType.Ordinary
+        };
+
+    private static bool IsRestDay(WorkDayType day) => day is WorkDayType.RestDay
+        or WorkDayType.SpecialNonWorkingOnRestDay or WorkDayType.DoubleSpecialNonWorkingOnRestDay
+        or WorkDayType.RegularHolidayOnRestDay or WorkDayType.DoubleRegularHolidayOnRestDay;
+
+    private static bool IsRegularHoliday(WorkDayType day) => day is WorkDayType.RegularHoliday
+        or WorkDayType.RegularHolidayOnRestDay or WorkDayType.DoubleRegularHoliday
+        or WorkDayType.DoubleRegularHolidayOnRestDay;
+
+    private static bool IsSpecialDay(WorkDayType day) => day is WorkDayType.SpecialNonWorking
+        or WorkDayType.SpecialNonWorkingOnRestDay or WorkDayType.DoubleSpecialNonWorking
+        or WorkDayType.DoubleSpecialNonWorkingOnRestDay;
 
     /// <summary>
     /// The assignment in force on <paramref name="date"/>: <c>EffectiveFrom &lt;= date</c> and
