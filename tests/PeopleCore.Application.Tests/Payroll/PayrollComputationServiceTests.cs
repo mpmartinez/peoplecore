@@ -393,6 +393,47 @@ public class PayrollComputationServiceTests
             "a monthly payslip is one twelfth of the year, not one twenty-fourth");
     }
 
+    // ─── 13th month and the 90,000 exemption ──────────────────────────────
+
+    [Fact]
+    public void Compute_withholds_nothing_extra_on_a_13th_month_under_the_90k_ceiling()
+    {
+        var without = _sut.Compute(NewEmployee(basicSalary: 30_000m), NewRun(), daysWorked: 11m);
+        var with = _sut.Compute(NewEmployee(basicSalary: 30_000m), NewRun(), daysWorked: 11m,
+            includeThirteenthMonth: true);
+
+        with.ThirteenthMonth.Should().Be(30_000m);
+        with.WithholdingTax.Should().Be(without.WithholdingTax, "30,000 is inside the 90,000 exemption");
+    }
+
+    [Fact]
+    public void Compute_taxes_the_13th_month_above_the_90k_ceiling_at_the_marginal_rate()
+    {
+        var employee = NewEmployee(basicSalary: 120_000m);
+        employee.PayFrequency = PayFrequency.Monthly;
+
+        var result = _sut.Compute(employee, NewRun(), daysWorked: 22m, includeThirteenthMonth: true);
+
+        // Regular: 120,000 - 1,750 SSS - 2,500 PhilHealth - 200 Pag-IBIG = 115,550 a month,
+        // 1,386,600 a year -> 102,500 + (586,600 x 25%) = 249,150 / 12 = 20,762.50.
+        // 13th month: 120,000 - 90,000 exempt = 30,000 taxable, still inside the 25% bracket
+        // on top of the annual regular pay -> 7,500, withheld in full on this payslip.
+        result.WithholdingTax.Should().Be(28_262.50m);
+    }
+
+    [Fact]
+    public void Compute_counts_13th_month_paid_earlier_in_the_year_against_the_ceiling()
+    {
+        var result = _sut.Compute(NewEmployee(basicSalary: 40_000m), NewRun(), daysWorked: 11m,
+            includeThirteenthMonth: true, thirteenthMonthPaidEarlierInYear: 80_000m);
+
+        // Regular: 20,000 - 875 SSS - 500 PhilHealth - 100 Pag-IBIG = 18,525 a half-month,
+        // 444,600 a year -> 31,420 / 24 = 1,309.17.
+        // Only 10,000 of the exemption is left, so 30,000 of the 40,000 is taxable, all inside
+        // the 20% bracket -> 6,000.
+        result.WithholdingTax.Should().Be(7_309.17m);
+    }
+
     private static EmployeeCompensation NewEmployee(decimal basicSalary) => new()
     {
         BasicSalary = basicSalary,
