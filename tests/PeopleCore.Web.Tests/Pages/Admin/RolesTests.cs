@@ -38,14 +38,15 @@ public class RolesTests : BunitContext
     }
 
     /// <summary>
-    /// A JSON body that arrives only after a pause, so a request answered with it finishes after one
-    /// sent alongside it - the order a slow roles response and a quick failure arrive in for real.
+    /// A JSON body held back until the test releases it, so a request answered with it finishes
+    /// only after whatever the test waits for first - the order a slow roles response and a quick
+    /// failure arrive in for real, without leaning on a timer.
     /// </summary>
-    private sealed class SlowJsonContent(string json) : HttpContent
+    private sealed class HeldJsonContent(string json, Task release) : HttpContent
     {
         protected override async Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context)
         {
-            await Task.Delay(50);
+            await release;
             await stream.WriteAsync(Encoding.UTF8.GetBytes(json));
         }
 
@@ -168,14 +169,19 @@ public class RolesTests : BunitContext
         Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(api)));
         api.On(HttpMethod.Get, "/api/roles/permissions", HttpStatusCode.InternalServerError,
             """{"title":"Server error","status":500,"detail":"The permission list is unavailable."}""");
+        var releaseRoles = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         api.On(HttpMethod.Get, "/api/roles", () => new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new SlowJsonContent(TwoRoles) { Headers = { ContentType = new("application/json") } }
+            Content = new HeldJsonContent(TwoRoles, releaseRoles.Task) { Headers = { ContentType = new("application/json") } }
         });
         api.On(HttpMethod.Put, "/api/roles/r1", HttpStatusCode.OK, Role("r1", "Recruiter", false, [], 3, true));
         api.On(HttpMethod.Post, "/api/roles", HttpStatusCode.Created, Role("r2", "Blank", false, [], 0, true));
 
         var cut = Render<Roles>();
+        cut.WaitForAssertion(() => cut.Find("[data-catalogue-error]"));
+        cut.FindAll("[data-role-row]").Should().BeEmpty("the roles are still held back");
+
+        releaseRoles.SetResult();
         cut.WaitForAssertion(() => cut.FindAll("[data-role-row]").Should().NotBeEmpty());
 
         cut.Find("[data-catalogue-error]").TextContent.Should().Contain("The permission list is unavailable.");

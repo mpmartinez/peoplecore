@@ -113,7 +113,13 @@
         var state = AuthenticationState is null ? null : await AuthenticationState;
         _held = state?.User.FindAll(Permissions.ClaimType).Select(c => c.Value).ToHashSet() ?? [];
 
-        await Task.WhenAll(LoadRoles(), LoadCatalogue());
+        var roles = LoadRoles();
+        await LoadCatalogue();
+
+        // Whether roles can be changed hangs on the catalogue, so say so the moment it settles
+        // rather than behind a slow roles list.
+        if (!roles.IsCompleted) StateHasChanged();
+        await roles;
     }
 
     private async Task LoadRoles()
