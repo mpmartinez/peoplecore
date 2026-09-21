@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace PeopleCore.Application.Payroll.GovernmentReports;
@@ -36,5 +37,22 @@ public static class GovernmentReportCsv
     }
 
     private static string Quote(string cell)
-        => cell.IndexOfAny([',', '"', '\r', '\n']) >= 0 ? $"\"{cell.Replace("\"", "\"\"")}\"" : cell;
+    {
+        // Prevent formula injection: neutralize cells starting with =, +, -, @, \t, \r
+        // by prefixing with '. Exception: negative amounts (starting with -) that parse as
+        // decimal are kept numeric (e.g., money like -50.00).
+        var neutralized = cell;
+        if (cell.Length > 0 && "=+-@\t\r".IndexOf(cell[0]) >= 0)
+        {
+            var shouldNeutralize = true;
+            if (cell[0] == '-' && decimal.TryParse(cell, NumberStyles.Number, CultureInfo.InvariantCulture, out _))
+                shouldNeutralize = false; // Keep negative numbers numeric (money).
+
+            if (shouldNeutralize)
+                neutralized = "'" + cell;
+        }
+
+        // Apply RFC 4180 quoting for commas, quotes, CR, LF.
+        return neutralized.IndexOfAny([',', '"', '\r', '\n']) >= 0 ? $"\"{neutralized.Replace("\"", "\"\"")}\"" : neutralized;
+    }
 }
