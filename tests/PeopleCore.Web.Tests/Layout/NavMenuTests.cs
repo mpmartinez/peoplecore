@@ -55,7 +55,7 @@ public class NavMenuTests : BunitContext
     {
         var cut = RenderAs("Admin");
 
-        cut.FindAll("a[href]").Should().HaveCount(23);
+        cut.FindAll("a[href]").Should().HaveCount(24);
         Links(cut).Should().OnlyHaveUniqueItems();
     }
 

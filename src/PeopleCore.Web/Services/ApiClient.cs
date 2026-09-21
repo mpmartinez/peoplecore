@@ -592,6 +592,17 @@ public class ApiClient
         return await response.Content.ReadAsByteArrayAsync();
     }
 
+    // Government remittance reports
+    public async Task<GovernmentReportDto?> GetGovernmentReportAsync(string report, int year, int month)
+        => await GetJsonAsync<GovernmentReportDto>($"api/reports/government/{report}?year={year}&month={month}");
+
+    public async Task<byte[]> GetGovernmentReportCsvAsync(string report, int year, int month)
+    {
+        var response = await _http.GetAsync($"api/reports/government/{report}?year={year}&month={month}&format=csv");
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadAsByteArrayAsync();
+    }
+
     // Every JSON read and every command goes through these two rather than GetFromJsonAsync or
     // EnsureSuccessStatusCode. Those throw "Response status code does not indicate success: 409
     // (Conflict)." - which pages then showed to users verbatim - and discard the API's own
@@ -887,3 +898,11 @@ public class Bir2316Dto
 
 // Problem-detail body from ExceptionHandlingMiddleware (400 responses for DomainException)
 public record ProblemDetailResponse(string? Title, string? Detail, int? Status);
+
+// One month's SSS / PhilHealth / Pag-IBIG / 1601-C remittance report.
+public record GovernmentReportDto(string Report, string Title, int Year, int Month, string Basis,
+    GovernmentReportEmployerDto Employer, IReadOnlyList<string> Columns, IReadOnlyList<GovernmentReportRowDto> Rows,
+    IReadOnlyList<string> Totals, IReadOnlyList<GovernmentReportLineDto> Summary, IReadOnlyList<string> Warnings);
+public record GovernmentReportRowDto(Guid EmployeeId, IReadOnlyList<string> Cells, bool MissingNumber);
+public record GovernmentReportLineDto(string Label, decimal Amount);
+public record GovernmentReportEmployerDto(string Name, string? Address, string Tin, string? RdoCode, string AgencyNumber);
