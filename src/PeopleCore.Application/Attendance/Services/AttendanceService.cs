@@ -142,7 +142,7 @@ public class AttendanceService : IAttendanceService
             employee.FullName,
             from,
             to,
-            TotalWorkingDays(from, to),
+            await TotalWorkingDaysAsync(employeeId, from, to, ct),
             records.Count(r => r.IsPresent),
             records.Sum(r => r.LateMinutes),
             records.Sum(r => r.UndertimeMinutes),
@@ -223,7 +223,7 @@ public class AttendanceService : IAttendanceService
         var schedule = timeIn is null ? null : await _shiftService.ResolveShiftForDayAsync(employeeId, date, ct);
 
         record.TimeIn = timeIn is { } i ? date.ToDateTime(i, DateTimeKind.Utc) : null;
-        record.TimeOut = timeOut is { } o ? date.ToDateTime(o, DateTimeKind.Utc) : null;
+        record.TimeOut = TimeOutOn(date, timeIn, timeOut);
         record.IsPresent = timeIn is not null;
         var window = ShiftWindow(date, schedule);
         record.LateMinutes = record.TimeIn is { } late ? CalculateLateMinutes(late, window) : 0;
@@ -241,14 +241,35 @@ public class AttendanceService : IAttendanceService
         return ToDto(record, employee.FullName);
     }
 
-    /// <summary>A time-out needs a time-in before it; a correction that breaks that is refused.</summary>
+    /// <summary>
+    /// The longest a day can run when its time-out is read as the next morning: a twelve-hour night
+    /// shift with four hours of overtime. Anything longer is far likelier a mistyped time.
+    /// </summary>
+    public static readonly TimeSpan MaxOvernightSpan = TimeSpan.FromHours(16);
+
+    /// <summary>
+    /// A time-out needs a time-in before it; a correction that breaks that is refused. A time-out
+    /// earlier on the clock than the time-in is a night shift ending the next morning, allowed up to
+    /// <see cref="MaxOvernightSpan"/> after the time-in.
+    /// </summary>
     public static void EnsureValidTimes(TimeOnly? timeIn, TimeOnly? timeOut)
     {
         if (timeIn is null && timeOut is not null)
             throw new DomainException("A time-out needs a time-in.");
-        if (timeIn is { } i && timeOut is { } o && o <= i)
-            throw new DomainException("The time-out must be later than the time-in.");
+        if (timeIn is { } i && timeOut is { } o && (o == i || (o < i && o - i > MaxOvernightSpan)))
+            throw new DomainException(
+                "The time-out must be later than the time-in. An earlier time is read as the next morning, " +
+                $"up to {MaxOvernightSpan.TotalHours:0} hours after the time-in.");
     }
+
+    /// <summary>
+    /// When a day's time-out falls: on the day itself, or the next morning when it is earlier on the
+    /// clock than the time-in - a night shift. Philippine wall-clock time, labelled UTC.
+    /// </summary>
+    public static DateTime? TimeOutOn(DateOnly date, TimeOnly? timeIn, TimeOnly? timeOut)
+        => timeOut is { } o
+            ? (timeIn is { } i && o < i ? date.AddDays(1) : date).ToDateTime(o, DateTimeKind.Utc)
+            : null;
 
     /// <summary>
     /// Last night's record, still open, when <paramref name="punch"/> is the morning clock-out of
@@ -300,12 +321,22 @@ public class AttendanceService : IAttendanceService
             ? (timeOut > s.End ? (int)(timeOut - s.End).TotalMinutes : 0)
             : (int)(timeOut - timeIn).TotalMinutes;
 
-    private static int TotalWorkingDays(DateOnly from, DateOnly to)
+    /// <summary>
+    /// The days in the range the employee's shift schedules, rest days excluded. A day no shift
+    /// assignment covers falls back to Monday to Friday, as the attendance rules fall back to 08:00-17:00.
+    /// </summary>
+    private async Task<int> TotalWorkingDaysAsync(Guid employeeId, DateOnly from, DateOnly to, CancellationToken ct)
     {
         int count = 0;
         for (var d = from; d <= to; d = d.AddDays(1))
-            if (d.DayOfWeek != DayOfWeek.Saturday && d.DayOfWeek != DayOfWeek.Sunday)
+        {
+            var schedule = await _shiftService.ResolveShiftForDayAsync(employeeId, d, ct);
+            var isWorkingDay = schedule is not null
+                ? !schedule.IsRestDay
+                : d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday);
+            if (isWorkingDay)
                 count++;
+        }
         return count;
     }
 

@@ -105,13 +105,33 @@ public class AttendanceCorrectionPagesTests : BunitContext
     }
 
     [Fact]
+    public void HR_corrects_a_night_shift_whose_time_out_is_the_next_morning()
+    {
+        _api.On(HttpMethod.Post, "/api/attendance-corrections", HttpStatusCode.OK, Correction);
+        var cut = RenderRecords();
+
+        cut.Find("[data-edit]").Click();
+        cut.Find("#correction-in").Input("22:00");
+        cut.Find("#correction-out").Input("06:00");
+        cut.Find("[data-next-morning]").TextContent.Should().Contain("next morning");
+        cut.Find("#correction-reason").Input("Night shift");
+        cut.Find("form[data-correction-form]").Submit();
+
+        cut.WaitForElement("[data-records-notice]");
+        var body = BodyOf(HttpMethod.Post, "/api/attendance-corrections");
+        body.GetProperty("timeIn").GetString().Should().StartWith("22:00");
+        body.GetProperty("timeOut").GetString().Should().StartWith("06:00");
+    }
+
+    [Fact]
     public void The_form_refuses_a_time_out_before_the_time_in_without_asking_the_API()
     {
         var cut = RenderRecords();
 
+        // 17:00 to 16:00 would be a 23-hour day, past the 16 hours a night shift can run to.
         cut.Find("[data-edit]").Click();
         cut.Find("#correction-in").Input("17:00");
-        cut.Find("#correction-out").Input("08:00");
+        cut.Find("#correction-out").Input("16:00");
         cut.Find("#correction-reason").Input("x");
         cut.Find("form[data-correction-form]").Submit();
 

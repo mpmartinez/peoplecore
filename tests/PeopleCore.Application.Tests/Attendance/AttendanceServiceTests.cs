@@ -310,6 +310,61 @@ public class AttendanceServiceTests
     }
 
     [Fact]
+    public async Task SetDayAsync_ATimeOutEarlierThanTheTimeIn_IsTheNextMorning()
+    {
+        var night = new DateOnly(2026, 3, 11);
+        OnShift(night, new TimeOnly(22, 0), new TimeOnly(6, 0));
+        _repo.Setup(r => r.GetByEmployeeAndDateAsync(_emp.Id, night, default)).ReturnsAsync((AttendanceRecord?)null);
+
+        var result = await _sut.SetDayAsync(_emp.Id, night, new TimeOnly(22, 0), new TimeOnly(5, 30));
+
+        result.TimeIn.Should().Be(Wall(2026, 3, 11, 22, 0));
+        result.TimeOut.Should().Be(Wall(2026, 3, 12, 5, 30));
+        result.UndertimeMinutes.Should().Be(30);
+        result.OvertimeMinutes.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData(8, 0, 7, 0)]    // 23 hours on
+    [InlineData(17, 0, 9, 30)]  // 16.5 hours on
+    public async Task SetDayAsync_RefusesATimeOutMoreThanSixteenHoursAfterTheTimeIn(int inH, int inM, int outH, int outM)
+    {
+        var act = () => _sut.SetDayAsync(_emp.Id, new DateOnly(2026, 3, 11), new TimeOnly(inH, inM), new TimeOnly(outH, outM));
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Contain("later than the time-in");
+    }
+
+    // ─── Working days in the summary ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetSummaryAsync_CountsTheDaysTheShiftSchedules_NotMondayToFriday()
+    {
+        // A six-day week: Monday 9 March to Sunday 15 March, with only the Sunday off.
+        var from = new DateOnly(2026, 3, 9);
+        var to = new DateOnly(2026, 3, 15);
+        for (var d = from; d < to; d = d.AddDays(1))
+            OnShift(d, new TimeOnly(8, 0), new TimeOnly(17, 0));
+        OnRestDay(to);
+        _repo.Setup(r => r.GetByEmployeeAndPeriodAsync(_emp.Id, from, to, default)).ReturnsAsync([]);
+
+        var summary = await _sut.GetSummaryAsync(_emp.Id, from, to);
+
+        summary.TotalWorkingDays.Should().Be(6);
+    }
+
+    [Fact]
+    public async Task GetSummaryAsync_WithNoShiftAssigned_StillCountsMondayToFriday()
+    {
+        var from = new DateOnly(2026, 3, 9);
+        var to = new DateOnly(2026, 3, 15);
+        _repo.Setup(r => r.GetByEmployeeAndPeriodAsync(_emp.Id, from, to, default)).ReturnsAsync([]);
+
+        var summary = await _sut.GetSummaryAsync(_emp.Id, from, to);
+
+        summary.TotalWorkingDays.Should().Be(5);
+    }
+
+    [Fact]
     public async Task SyncPunches_StillRecordsTheDevicesPunchTime_NotTheServerClock()
     {
         _employeeRepo.Setup(r => r.GetByNumberAsync("EMP-001", default)).ReturnsAsync(_emp);
