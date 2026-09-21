@@ -8,6 +8,7 @@ using PeopleCore.Application.Payroll.Services;
 using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
+using PeopleCore.Domain.Payroll;
 using Employee = PeopleCore.Domain.Entities.Employees.Employee;
 using Xunit;
 
@@ -592,6 +593,76 @@ public class PayrollRunServiceTests
     {
         Employees = request.Employees.Select(e => e with { IncludeThirteenthMonth = true }).ToList()
     };
+
+    [Fact]
+    public async Task ComputeAsync_RepricesFromTheStoredBreakdown_NotTheCollapsedTotals()
+    {
+        // A double holiday, a rest day and holiday overtime: none of which the collapsed totals
+        // can tell apart from a single holiday or ordinary overtime.
+        var employeeId = Guid.NewGuid();
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = employeeId, BasicSalary = 36_500m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "S"
+        };
+        SetupBridge(employeeId, new PayrollAttendanceInput
+        {
+            PremiumDays =
+            [
+                new PremiumDayInput(WorkDayType.DoubleRegularHoliday, Days: 1m, OvertimeHours: 2m, NightDiffHours: 3m),
+                new PremiumDayInput(WorkDayType.RestDay, Hours: 8m, OvertimeHours: 1m)
+            ]
+        });
+        var savedRun = SetupRoundTripRepositories(compensation);
+
+        List<PayrollRunEmployee>? recomputed = null;
+        _runRepo.Setup(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(),
+                    It.IsAny<IReadOnlyList<PayrollRunEmployee>>(), It.IsAny<CancellationToken>()))
+                .Callback<PayrollRun, IReadOnlyList<PayrollRunEmployee>, CancellationToken>(
+                    (_, entries, _) => recomputed = entries.ToList())
+                .Returns(Task.CompletedTask);
+
+        await _sut.CreateAsync(RoundTripRequest(employeeId), CancellationToken.None);
+        var created = savedRun()!.Employees.Single();
+
+        await _sut.ComputeAsync(savedRun()!.Id, CancellationToken.None);
+        var entry = recomputed!.Single();
+
+        // 1,200 a day, 150 an hour: 2,400 for the double holiday + 360 for the rest day's eight hours;
+        // 2 x 150 x 3.90 + 1 x 150 x 1.69 overtime; 3 x 150 x 0.30 night differential.
+        created.HolidayPay.Should().Be(2_760.00m);
+        created.OvertimePay.Should().Be(1_423.50m);
+        created.NightDiffPay.Should().Be(135.00m);
+
+        entry.HolidayPay.Should().Be(created.HolidayPay);
+        entry.OvertimePay.Should().Be(created.OvertimePay);
+        entry.NightDiffPay.Should().Be(created.NightDiffPay);
+    }
+
+    [Fact]
+    public async Task CreateAsync_AnOvertimeOverride_ReplacesTheBreakdownsOvertime()
+    {
+        var employeeId = Guid.NewGuid();
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = employeeId, BasicSalary = 36_500m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "S"
+        };
+        SetupBridge(employeeId, new PayrollAttendanceInput
+        {
+            PremiumDays = [new PremiumDayInput(WorkDayType.RegularHoliday, Days: 1m, OvertimeHours: 2m)]
+        });
+        var savedRun = SetupRoundTripRepositories(compensation);
+
+        var request = RoundTripRequest(employeeId) with
+        {
+            Employees = [new PayrollRunEmployeeInput(employeeId, OvertimeHours: 5m)]
+        };
+        await _sut.CreateAsync(request, CancellationToken.None);
+
+        // The five overridden hours are ordinary overtime at 125%; the holiday day itself stays.
+        var entry = savedRun()!.Employees.Single();
+        entry.OvertimePay.Should().Be(937.50m);
+        entry.HolidayPay.Should().Be(1_200.00m);
+    }
 
     [Fact]
     public async Task ComputeAsync_AfterARecompute_ReproducesEveryMonetaryFigure()

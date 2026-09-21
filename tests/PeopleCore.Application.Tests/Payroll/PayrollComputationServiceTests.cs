@@ -396,6 +396,88 @@ public class PayrollComputationServiceTests
             "a monthly payslip is one twelfth of the year, not one twenty-fourth");
     }
 
+    // ─── Premiums by kind of day (DOLE Handbook 2024, section A) ──────────
+
+    // 36,500 a month under the 365 factor: 1,200 a day, 150 an hour. Each case prices one kind of
+    // day's attendance and asserts the premium (HolidayPay), overtime and night differential.
+    [Theory]
+    // A worked rest day's first eight hours: 130%, of which the 365-factor salary already pays 100%.
+    [InlineData(WorkDayType.RestDay, 0, 8, 0, 0, 360.00, 0, 0)]
+    // Ten hours on a rest day: eight at the rest-day rate, two at 169%.
+    [InlineData(WorkDayType.RestDay, 0, 8, 2, 0, 360.00, 507.00, 0)]
+    // A worked double regular holiday: 300%, the salary pays 100%.
+    [InlineData(WorkDayType.DoubleRegularHoliday, 1, 0, 0, 0, 2_400.00, 0, 0)]
+    // A worked double special day: 150%.
+    [InlineData(WorkDayType.DoubleSpecialNonWorking, 1, 0, 0, 0, 600.00, 0, 0)]
+    // A regular holiday falling on a rest day, eight hours: 260%.
+    [InlineData(WorkDayType.RegularHolidayOnRestDay, 0, 8, 0, 0, 1_920.00, 0, 0)]
+    // Two hours of overtime on a worked regular holiday: 200% x 130% = 260% an hour.
+    [InlineData(WorkDayType.RegularHoliday, 1, 0, 2, 0, 1_200.00, 780.00, 0)]
+    // Two night hours on a regular holiday: 10% of the holiday's 200%.
+    [InlineData(WorkDayType.RegularHoliday, 1, 0, 0, 2, 1_200.00, 0, 60.00)]
+    // Overtime on an ordinary day stays at 125%.
+    [InlineData(WorkDayType.Ordinary, 0, 0, 2, 0, 0, 375.00, 0)]
+    public void Compute_prices_each_kind_of_day_at_its_DOLE_rate(WorkDayType dayType,
+        double days, double hours, double overtimeHours, double nightHours,
+        double expectedPremium, double expectedOvertime, double expectedNightDiff)
+    {
+        var employee = NewEmployee(basicSalary: 36_500m);
+        employee.PayFrequency = PayFrequency.Monthly;
+        var attendance = new PayrollAttendanceInput
+        {
+            PremiumDays = [new PremiumDayInput(dayType,
+                (decimal)days, (decimal)hours, (decimal)overtimeHours, (decimal)nightHours)]
+        };
+
+        var result = _sut.Compute(employee, NewRun(), daysWorked: 22m, attendance: attendance);
+
+        result.HolidayPay.Should().Be((decimal)expectedPremium);
+        result.OvertimePay.Should().Be((decimal)expectedOvertime);
+        result.NightDiffPay.Should().Be((decimal)expectedNightDiff);
+    }
+
+    [Fact]
+    public void Compute_pays_the_whole_rest_day_rate_when_the_salary_does_not_pay_rest_days()
+    {
+        var employee = NewEmployee(basicSalary: 36_500m);
+        employee.PayFrequency = PayFrequency.Monthly;
+        var attendance = new PayrollAttendanceInput
+        {
+            PremiumDays = [new PremiumDayInput(WorkDayType.RestDay, Hours: 8m)]
+        };
+
+        // Under the 261 factor rest days are unpaid: 36,500 x 12 / 261 = 1,678.16 a day, 209.77 an
+        // hour, and eight rest-day hours earn their whole 130%.
+        var result = _sut.Compute(employee, NewRun(), daysWorked: 22m, attendance: attendance,
+            dailyRateFactor: 261m);
+
+        result.HolidayPay.Should().Be(2_181.61m);
+    }
+
+    [Fact]
+    public void Compute_records_the_breakdown_it_priced_so_a_recompute_can_reprice_it()
+    {
+        var attendance = new PayrollAttendanceInput
+        {
+            PremiumDays =
+            [
+                new PremiumDayInput(WorkDayType.DoubleRegularHoliday, Days: 1m, OvertimeHours: 2m),
+                new PremiumDayInput(WorkDayType.RestDay, Hours: 8m, NightDiffHours: 3m)
+            ]
+        };
+
+        var result = _sut.Compute(NewEmployee(basicSalary: 36_500m), NewRun(), daysWorked: 11m,
+            attendance: attendance);
+
+        result.PremiumDays.Select(d => (d.DayType, d.Days, d.Hours, d.OvertimeHours, d.NightDiffHours))
+            .Should().BeEquivalentTo([
+                (WorkDayType.DoubleRegularHoliday, 1m, 0m, 2m, 0m),
+                (WorkDayType.RestDay, 0m, 8m, 0m, 3m)
+            ]);
+        result.OvertimeHours.Should().Be(10m, "the rest day's eight hours and the holiday's two");
+        result.HolidayDays.Should().Be(1m);
+    }
+
     // ─── 13th month amount (PD 851) ───────────────────────────────────────
 
     [Fact]

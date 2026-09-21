@@ -29,7 +29,7 @@ public static class PayslipLineBuilder
         if (e.AbsenceDeduction > 0) lines.Add(new("Less: Absences", -e.AbsenceDeduction));
         if (e.TardinessDeduction > 0) lines.Add(new("Less: Tardiness / Undertime", -e.TardinessDeduction));
         if (e.OvertimePay > 0) lines.Add(new("Overtime Pay", e.OvertimePay));
-        if (e.HolidayPay > 0) lines.Add(new("Holiday Premium", e.HolidayPay));
+        if (e.HolidayPay > 0) lines.Add(new("Holiday / Rest Day Premium", e.HolidayPay));
         if (e.NightDiffPay > 0) lines.Add(new("Night Shift Differential", e.NightDiffPay));
         if (e.TaxableAllowances > 0) lines.Add(new("Taxable Allowances", e.TaxableAllowances));
         if (e.NonTaxableAllowances > 0) lines.Add(new("Non-Taxable Allowances", e.NonTaxableAllowances, IsTaxable: false));

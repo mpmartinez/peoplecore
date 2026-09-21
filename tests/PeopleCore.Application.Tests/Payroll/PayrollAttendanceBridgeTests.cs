@@ -2,12 +2,14 @@ using FluentAssertions;
 using Moq;
 using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Application.Leave.Interfaces;
+using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.Services;
 using PeopleCore.Domain.Entities.Attendance;
 using PeopleCore.Domain.Entities.Leave;
 using PeopleCore.Domain.Entities.Scheduling;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Interfaces;
+using PeopleCore.Domain.Payroll;
 
 namespace PeopleCore.Application.Tests.Payroll;
 
@@ -571,6 +573,164 @@ public class PayrollAttendanceBridgeTests
 
         resultSpecialFirst.Inputs[employeeId].HolidayRegularDays.Should().Be(1m);
         resultSpecialFirst.Inputs[employeeId].HolidaySpecialDays.Should().Be(0m);
+    }
+
+    // ─── Kinds of day ─────────────────────────────────────────────────────────────────────────
+
+    private void SetupFixedShift(Guid employeeId, DateOnly from) =>
+        _assignments.Setup(r => r.GetActiveForPeriodAsync(
+                        It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync([FixedAssignment(employeeId, from)]);
+
+    private void SetupHolidays(params Holiday[] holidays) =>
+        _holidays.Setup(r => r.GetByYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(holidays);
+
+    private void SetupPresent(Guid employeeId, params DateOnly[] dates) =>
+        _attendance.Setup(r => r.GetAllByPeriodAsync(
+                       It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(dates.Select(d => new AttendanceRecord
+                   {
+                       EmployeeId = employeeId, AttendanceDate = d, IsPresent = true
+                   }).ToList());
+
+    private void SetupOvertime(Guid employeeId, DateOnly date, int minutes) =>
+        _overtime.Setup(r => r.GetApprovedByPeriodAsync(
+                     It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                 .ReturnsAsync([new OvertimeRequest
+                 {
+                     EmployeeId = employeeId, OvertimeDate = date, TotalMinutes = minutes,
+                     Status = OvertimeStatus.Approved
+                 }]);
+
+    [Fact]
+    public async Task BuildAsync_SplitsRestDayWorkIntoItsFirstEightHoursAndOvertime()
+    {
+        var employeeId = Guid.NewGuid();
+        var saturday = new DateOnly(2026, 3, 7);   // a rest day under the Monday-to-Friday shift
+
+        SetupFixedShift(employeeId, new DateOnly(2026, 3, 2));
+        SetupOvertime(employeeId, saturday, 600);   // ten hours
+
+        var result = await _sut.BuildAsync([employeeId], saturday, saturday, CancellationToken.None);
+
+        // Eight hours at the rest day's 130%, and only the last two at the 169% overtime rate.
+        var input = result.Inputs[employeeId];
+        input.PremiumDays.Should().BeEquivalentTo([new PremiumDayInput(WorkDayType.RestDay, Hours: 8m, OvertimeHours: 2m)]);
+        input.RestDayOTHours.Should().Be(10m);
+    }
+
+    [Fact]
+    public async Task BuildAsync_TwoRegularHolidaysOnOneDate_MakeADoubleHoliday()
+    {
+        var employeeId = Guid.NewGuid();
+        var date = new DateOnly(2026, 4, 9);
+
+        SetupFixedShift(employeeId, date);
+        SetupPresent(employeeId, date);
+        SetupHolidays(
+            new Holiday { Name = "Araw ng Kagitingan", HolidayDate = date, HolidayType = HolidayType.RegularHoliday },
+            new Holiday { Name = "Maundy Thursday", HolidayDate = date, HolidayType = HolidayType.RegularHoliday });
+
+        var result = await _sut.BuildAsync([employeeId], date, date, CancellationToken.None);
+
+        result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.DoubleRegularHoliday, Days: 1m)]);
+        result.Inputs[employeeId].HolidayRegularDays.Should().Be(1m);
+    }
+
+    [Fact]
+    public async Task BuildAsync_TwoSpecialDaysOnOneDate_MakeADoubleSpecialDay()
+    {
+        var employeeId = Guid.NewGuid();
+        var date = new DateOnly(2026, 11, 2);
+
+        SetupFixedShift(employeeId, date);
+        SetupPresent(employeeId, date);
+        SetupHolidays(
+            new Holiday { Name = "All Souls' Day", HolidayDate = date, HolidayType = HolidayType.SpecialNonWorking },
+            new Holiday { Name = "City founding day", HolidayDate = date, HolidayType = HolidayType.SpecialNonWorking });
+
+        var result = await _sut.BuildAsync([employeeId], date, date, CancellationToken.None);
+
+        result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.DoubleSpecialNonWorking, Days: 1m)]);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ARegularHolidayOnARestDay_IsPricedAsOne()
+    {
+        var employeeId = Guid.NewGuid();
+        var saturday = new DateOnly(2026, 3, 7);
+
+        SetupFixedShift(employeeId, new DateOnly(2026, 3, 2));
+        SetupOvertime(employeeId, saturday, 480);
+        SetupHolidays(new Holiday { Name = "Holiday", HolidayDate = saturday, HolidayType = HolidayType.RegularHoliday });
+
+        var result = await _sut.BuildAsync([employeeId], saturday, saturday, CancellationToken.None);
+
+        result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.RegularHolidayOnRestDay, Hours: 8m)]);
+    }
+
+    [Fact]
+    public async Task BuildAsync_OvertimeOnAWorkedHoliday_IsHolidayOvertime_NotOrdinary()
+    {
+        var employeeId = Guid.NewGuid();
+        var date = new DateOnly(2026, 6, 12);   // Independence Day, a Friday
+
+        SetupFixedShift(employeeId, date);
+        SetupPresent(employeeId, date);
+        SetupOvertime(employeeId, date, 120);
+        SetupHolidays(new Holiday { Name = "Independence Day", HolidayDate = date, HolidayType = HolidayType.RegularHoliday });
+
+        var result = await _sut.BuildAsync([employeeId], date, date, CancellationToken.None);
+
+        result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.RegularHoliday, Days: 1m, OvertimeHours: 2m)]);
+    }
+
+    [Fact]
+    public async Task BuildAsync_NightHoursOnAHoliday_AreCountedAgainstTheHoliday()
+    {
+        var employeeId = Guid.NewGuid();
+        var date = new DateOnly(2026, 6, 12);
+
+        SetupFixedShift(employeeId, date);
+        SetupHolidays(new Holiday { Name = "Independence Day", HolidayDate = date, HolidayType = HolidayType.RegularHoliday });
+        _attendance.Setup(r => r.GetAllByPeriodAsync(
+                       It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync([new AttendanceRecord
+                   {
+                       EmployeeId = employeeId, AttendanceDate = date, IsPresent = true,
+                       TimeIn = new DateTime(2026, 6, 12, 22, 0, 0),
+                       TimeOut = new DateTime(2026, 6, 13, 6, 0, 0)
+                   }]);
+
+        var result = await _sut.BuildAsync([employeeId], date, date, CancellationToken.None);
+
+        result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.RegularHoliday, Days: 1m, NightDiffHours: 8m)]);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ASpecialWorkingDay_IsAnOrdinaryWorkingDay()
+    {
+        var employeeId = Guid.NewGuid();
+        var worked = new DateOnly(2026, 3, 2);
+        var missed = new DateOnly(2026, 3, 3);
+
+        SetupFixedShift(employeeId, worked);
+        SetupPresent(employeeId, worked);
+        SetupHolidays(
+            new Holiday { Name = "Special working day", HolidayDate = worked, HolidayType = HolidayType.SpecialWorking },
+            new Holiday { Name = "Special working day", HolidayDate = missed, HolidayType = HolidayType.SpecialWorking });
+
+        var result = await _sut.BuildAsync([employeeId], worked, missed, CancellationToken.None);
+
+        // No premium for working it, and missing it is an absence like any working day.
+        result.Inputs[employeeId].PremiumDays.Should().BeEmpty();
+        result.Inputs[employeeId].HolidaySpecialDays.Should().Be(0m);
+        result.Inputs[employeeId].AbsenceDays.Should().Be(1m);
     }
 
     [Fact]

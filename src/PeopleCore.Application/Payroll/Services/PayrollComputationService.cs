@@ -176,26 +176,39 @@ public class PayrollComputationService
         decimal tardinessDeduction = Math.Round(hourlyRate * lostMinutes / 60m, 2);
         decimal regularPay = Math.Max(0m, basePeriodPay - absenceDeduction - tardinessDeduction);
 
-        // Overtime: 125% on an ordinary day, 169% on a rest day (1.30 x 1.30).
-        decimal ordinaryOtHours = attendance?.OvertimeHours ?? overtimeHours;
-        decimal restDayOtHours = attendance?.RestDayOTHours ?? 0m;
-        decimal overtimePay = Math.Round(
-            (hourlyRate * DolePremiumRates.Rate(WorkDayType.Ordinary, overtime: true) * ordinaryOtHours) +
-            (hourlyRate * DolePremiumRates.Rate(WorkDayType.RestDay, overtime: true) * restDayOtHours), 2);
+        // Premiums, priced per kind of day from DolePremiumRates. Without attendance the caller's
+        // overtime and holiday figures stand for ordinary overtime and regular holiday days.
+        var premiumDays = (attendance ?? new PayrollAttendanceInput
+        {
+            OvertimeHours = overtimeHours, HolidayRegularDays = holidayDays
+        }).ResolvePremiumDays();
 
-        // Holiday work adds the increment above 100%, not the whole multiplier: under the 365
-        // factor the monthly salary already pays these days, so charging the full 200% would
-        // pay 300% for a worked regular holiday.
-        decimal regularHolidayDays = attendance?.HolidayRegularDays ?? holidayDays;
-        decimal specialHolidayDays = attendance?.HolidaySpecialDays ?? 0m;
-        decimal holidayPay = Math.Round(
-            (dailyRate * DolePremiumRates.Premium(WorkDayType.RegularHoliday) * regularHolidayDays) +
-            (dailyRate * DolePremiumRates.Premium(WorkDayType.SpecialNonWorking) * specialHolidayDays), 2);
+        decimal overtimePay = 0m, holidayPay = 0m, nightDiffPay = 0m;
+        foreach (var day in premiumDays)
+        {
+            // Work on these days adds only what the salary does not already pay. The salary
+            // pays 100% of every working day, holiday and special day - a worked regular holiday
+            // adds 100%, not 200%, or it would be paid at 300%. It pays rest days too only under
+            // the 365 factor; under 313 or 261 a rest day is unpaid, so work on one earns its
+            // whole rate.
+            decimal alreadyPaid = IsRestDay(day.DayType) && factor < 365m ? 0m : 1m;
+            decimal premium = DolePremiumRates.BaseRate(day.DayType) - alreadyPaid;
 
-        // Night shift differential: the hour is already paid, so only the 10% premium is added.
-        decimal nightDiffPay = Math.Round(
-            hourlyRate * DolePremiumRates.Premium(WorkDayType.Ordinary, nightShift: true)
-                       * (attendance?.NightDiffHours ?? 0m), 2);
+            // A worked day of this type, and the first eight hours of work on a rest day.
+            holidayPay += (dailyRate * premium * day.Days) + (hourlyRate * premium * day.Hours);
+
+            // Overtime is never paid by the salary, so it earns its full rate: 125% on an
+            // ordinary day, 130% of the day's rate on any other.
+            overtimePay += hourlyRate * DolePremiumRates.Rate(day.DayType, overtime: true) * day.OvertimeHours;
+
+            // A night hour is already paid at the day's rate; the differential is 10% of it.
+            nightDiffPay += hourlyRate * day.NightDiffHours
+                * (DolePremiumRates.Rate(day.DayType, nightShift: true) - DolePremiumRates.Rate(day.DayType));
+        }
+
+        overtimePay = Math.Round(overtimePay, 2);
+        holidayPay = Math.Round(holidayPay, 2);
+        nightDiffPay = Math.Round(nightDiffPay, 2);
 
         // Allowances
         decimal taxableAllowances = compensation.Allowances
@@ -323,8 +336,9 @@ public class PayrollComputationService
             EmployeeId = compensation.EmployeeId,
             PayrollRun = run,
             DaysWorked = daysWorked,
-            OvertimeHours = ordinaryOtHours + restDayOtHours,
-            HolidayDays = regularHolidayDays + specialHolidayDays,
+            // Roll-ups for display; PremiumDays below is what a recompute reprices from.
+            OvertimeHours = premiumDays.Sum(d => d.OvertimeHours + d.Hours),
+            HolidayDays = premiumDays.Where(d => !IsOrdinaryOrRestDay(d.DayType)).Sum(d => d.Days),
             IncludeThirteenthMonth = includeThirteenthMonth,
             RegularPay = regularPay,
             OvertimePay = overtimePay,
@@ -346,7 +360,24 @@ public class PayrollComputationService
             WithholdingTax = withholdingTax,
             LoanDeductions = loanDeductions,
             OtherDeductions = otherDeductions,
-            LoanDeductionLines = loanLines
+            LoanDeductionLines = loanLines,
+            PremiumDays = premiumDays
+                .Select(d => new PayrollRunPremiumDay
+                {
+                    DayType = d.DayType,
+                    Days = d.Days,
+                    Hours = d.Hours,
+                    OvertimeHours = d.OvertimeHours,
+                    NightDiffHours = d.NightDiffHours
+                })
+                .ToList()
         };
     }
+
+    private static bool IsRestDay(WorkDayType day) => day is WorkDayType.RestDay
+        or WorkDayType.SpecialNonWorkingOnRestDay or WorkDayType.DoubleSpecialNonWorkingOnRestDay
+        or WorkDayType.RegularHolidayOnRestDay or WorkDayType.DoubleRegularHolidayOnRestDay;
+
+    private static bool IsOrdinaryOrRestDay(WorkDayType day) =>
+        day is WorkDayType.Ordinary or WorkDayType.RestDay;
 }

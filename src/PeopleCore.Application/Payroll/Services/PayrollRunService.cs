@@ -334,18 +334,42 @@ public class PayrollRunService : IPayrollRunService
     private static PayrollAttendanceInput ApplyOverrides(
         PayrollAttendanceInput derived, PayrollRunEmployeeInput input)
     {
+        if (input.OvertimeHours is null && input.HolidayDays is null)
+            return derived;
+
+        // The override replaces the breakdown's hours or days wholesale, so it is applied to the
+        // breakdown itself - the collapsed totals alone would be ignored once one exists.
+        var days = derived.ResolvePremiumDays().ToList();
+
         if (input.OvertimeHours is decimal overtimeHours)
+        {
+            days = days.Select(d => d with { Hours = 0m, OvertimeHours = 0m }).ToList();
+            days.Add(new PremiumDayInput(WorkDayType.Ordinary, OvertimeHours: overtimeHours));
             derived = derived with { OvertimeHours = overtimeHours, RestDayOTHours = 0m };
+        }
 
         if (input.HolidayDays is decimal holidayDays)
+        {
+            days = days.Select(d => d with { Days = 0m }).ToList();
+            days.Add(new PremiumDayInput(WorkDayType.RegularHoliday, Days: holidayDays));
             derived = derived with { HolidayRegularDays = holidayDays, HolidaySpecialDays = 0m };
+        }
 
-        return derived;
+        return derived with { PremiumDays = Merge(days) };
     }
+
+    /// <summary>One row per kind of day, dropping any left with nothing on it.</summary>
+    private static List<PremiumDayInput> Merge(IEnumerable<PremiumDayInput> days) => days
+        .GroupBy(d => d.DayType)
+        .Select(g => new PremiumDayInput(g.Key,
+            g.Sum(d => d.Days), g.Sum(d => d.Hours), g.Sum(d => d.OvertimeHours), g.Sum(d => d.NightDiffHours)))
+        .Where(d => d.Days != 0m || d.Hours != 0m || d.OvertimeHours != 0m || d.NightDiffHours != 0m)
+        .ToList();
 
     /// <summary>
     /// Rebuilds the attendance a stored entry was computed from, so a recompute reproduces it
-    /// exactly.
+    /// exactly. An entry saved before the per-day breakdown existed has no premium days, and
+    /// its totals are repriced the way they were then.
     /// </summary>
     private static PayrollAttendanceInput FromSnapshot(PayrollRunEmployee entry) => new()
     {
@@ -358,7 +382,10 @@ public class PayrollRunService : IPayrollRunService
         UndertimeMinutes   = entry.UndertimeMinutes,
         NightDiffHours     = entry.NightDiffHours,
         HolidayRegularDays = entry.HolidayRegularDays,
-        HolidaySpecialDays = entry.HolidaySpecialDays
+        HolidaySpecialDays = entry.HolidaySpecialDays,
+        PremiumDays        = entry.PremiumDays
+            .Select(d => new PremiumDayInput(d.DayType, d.Days, d.Hours, d.OvertimeHours, d.NightDiffHours))
+            .ToList()
     };
 
     private static ContributionRates ToRates(PayrollSettings? settings) => settings is null

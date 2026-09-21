@@ -33,10 +33,18 @@ public class PayrollRunEmployee : AuditableEntity
     public decimal HolidayRegularDays { get; set; }
     public decimal HolidaySpecialDays { get; set; }
 
+    /// <summary>
+    /// The attendance above broken down by the kind of day it fell on - what the premiums are
+    /// actually priced from. The seven totals above are kept as roll-ups for display; an entry
+    /// saved before this breakdown existed has none, and is repriced from those totals instead.
+    /// </summary>
+    public List<PayrollRunPremiumDay> PremiumDays { get; set; } = [];
+
     // Earnings
     /// <summary>Pay for ordinary time, already net of absences and tardiness.</summary>
     public decimal RegularPay { get; set; }
     public decimal OvertimePay { get; set; }
+    /// <summary>Premium for work on holidays, special days and rest days, above what the salary pays.</summary>
     public decimal HolidayPay { get; set; }
     /// <summary>The 10% night shift premium on hours worked between 10 p.m. and 6 a.m.</summary>
     public decimal NightDiffPay { get; set; }

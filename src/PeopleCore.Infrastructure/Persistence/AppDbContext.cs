@@ -61,6 +61,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, ApplicationRole, 
     public DbSet<PayrollRun> PayrollRuns => Set<PayrollRun>();
     public DbSet<PayrollRunEmployee> PayrollRunEmployees => Set<PayrollRunEmployee>();
     public DbSet<PayrollLoanDeduction> PayrollLoanDeductions => Set<PayrollLoanDeduction>();
+    public DbSet<PayrollRunPremiumDay> PayrollRunPremiumDays => Set<PayrollRunPremiumDay>();
     public DbSet<PayrollSettings> PayrollSettings => Set<PayrollSettings>();
 
     // Recruitment

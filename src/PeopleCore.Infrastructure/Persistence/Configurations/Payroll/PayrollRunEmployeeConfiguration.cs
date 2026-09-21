@@ -66,5 +66,10 @@ public class PayrollRunEmployeeConfiguration : IEntityTypeConfiguration<PayrollR
                .WithOne(x => x.PayrollRunEmployee)
                .HasForeignKey(x => x.PayrollRunEmployeeId)
                .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasMany(x => x.PremiumDays)
+               .WithOne(x => x.PayrollRunEmployee)
+               .HasForeignKey(x => x.PayrollRunEmployeeId)
+               .OnDelete(DeleteBehavior.Cascade);
     }
 }
