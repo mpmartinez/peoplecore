@@ -1,4 +1,5 @@
 using FluentAssertions;
+using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.Services;
 using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Enums;
@@ -234,7 +235,9 @@ public class PayrollComputationServiceTests
     {
         var employee = NewEmployee(basicSalary: 20_000m);
 
-        var result = _sut.Compute(employee, NewRun(), daysWorked: 11m, includeThirteenthMonth: true);
+        // 23 earlier half-months of 10,000 plus this one: 240,000 basic / 12 = 20,000.
+        var result = _sut.Compute(employee, NewRun(), daysWorked: 11m, includeThirteenthMonth: true,
+            basicEarnedEarlierInYear: 230_000m);
 
         result.ThirteenthMonth.Should().Be(20_000.00m);
         result.GrossPay.Should().Be(30_000.00m);
@@ -393,6 +396,62 @@ public class PayrollComputationServiceTests
             "a monthly payslip is one twelfth of the year, not one twenty-fourth");
     }
 
+    // ─── 13th month amount (PD 851) ───────────────────────────────────────
+
+    [Fact]
+    public void Compute_pays_a_13th_month_of_one_twelfth_of_the_basic_earned_in_the_year()
+    {
+        var employee = NewEmployee(basicSalary: 30_000m);
+        employee.PayFrequency = PayFrequency.Monthly;
+
+        // Joined in August: five earlier months of 30,000 plus this one = 180,000 basic.
+        var result = _sut.Compute(employee, NewRun(), daysWorked: 22m, includeThirteenthMonth: true,
+            basicEarnedEarlierInYear: 150_000m);
+
+        result.ThirteenthMonth.Should().Be(15_000m, "180,000 / 12, not a full month's salary");
+    }
+
+    [Fact]
+    public void Compute_counts_absences_out_of_the_basic_the_13th_month_is_struck_from()
+    {
+        var employee = NewEmployee(basicSalary: 36_500m);
+        employee.PayFrequency = PayFrequency.Monthly;
+
+        // 36,500 x 12 / 365 = 1,200 a day; two days absent leaves 34,100 regular pay this month.
+        var result = _sut.Compute(employee, NewRun(), daysWorked: 20m, includeThirteenthMonth: true,
+            attendance: new PayrollAttendanceInput { AbsenceDays = 2m },
+            basicEarnedEarlierInYear: 401_500m);
+
+        result.ThirteenthMonth.Should().Be(36_300m, "(401,500 + 34,100) / 12");
+    }
+
+    [Fact]
+    public void Compute_pays_only_the_part_of_the_13th_month_not_already_paid_this_year()
+    {
+        var employee = NewEmployee(basicSalary: 30_000m);
+        employee.PayFrequency = PayFrequency.Monthly;
+
+        // Half was advanced in May; December pays the rest of the 30,000.
+        var result = _sut.Compute(employee, NewRun(), daysWorked: 22m, includeThirteenthMonth: true,
+            basicEarnedEarlierInYear: 330_000m, thirteenthMonthPaidEarlierInYear: 15_000m);
+
+        result.ThirteenthMonth.Should().Be(15_000m);
+    }
+
+    [Fact]
+    public void Compute_pays_no_13th_month_to_an_employee_marked_ineligible()
+    {
+        var employee = NewEmployee(basicSalary: 120_000m);
+        employee.PayFrequency = PayFrequency.Monthly;
+        var without = _sut.Compute(employee, NewRun(), daysWorked: 22m);
+
+        var result = _sut.Compute(employee, NewRun(), daysWorked: 22m, includeThirteenthMonth: true,
+            basicEarnedEarlierInYear: 1_320_000m, isThirteenthMonthEligible: false);
+
+        result.ThirteenthMonth.Should().Be(0m);
+        result.WithholdingTax.Should().Be(without.WithholdingTax);
+    }
+
     // ─── 13th month and the 90,000 exemption ──────────────────────────────
 
     [Fact]
@@ -400,7 +459,7 @@ public class PayrollComputationServiceTests
     {
         var without = _sut.Compute(NewEmployee(basicSalary: 30_000m), NewRun(), daysWorked: 11m);
         var with = _sut.Compute(NewEmployee(basicSalary: 30_000m), NewRun(), daysWorked: 11m,
-            includeThirteenthMonth: true);
+            includeThirteenthMonth: true, basicEarnedEarlierInYear: 345_000m);
 
         with.ThirteenthMonth.Should().Be(30_000m);
         with.WithholdingTax.Should().Be(without.WithholdingTax, "30,000 is inside the 90,000 exemption");
@@ -412,26 +471,32 @@ public class PayrollComputationServiceTests
         var employee = NewEmployee(basicSalary: 120_000m);
         employee.PayFrequency = PayFrequency.Monthly;
 
-        var result = _sut.Compute(employee, NewRun(), daysWorked: 22m, includeThirteenthMonth: true);
+        var result = _sut.Compute(employee, NewRun(), daysWorked: 22m, includeThirteenthMonth: true,
+            basicEarnedEarlierInYear: 1_320_000m);
 
         // Regular: 120,000 - 1,750 SSS - 2,500 PhilHealth - 200 Pag-IBIG = 115,550 a month,
         // 1,386,600 a year -> 102,500 + (586,600 x 25%) = 249,150 / 12 = 20,762.50.
-        // 13th month: 120,000 - 90,000 exempt = 30,000 taxable, still inside the 25% bracket
-        // on top of the annual regular pay -> 7,500, withheld in full on this payslip.
+        // 13th month: 1,440,000 / 12 = 120,000; less 90,000 exempt = 30,000 taxable, still
+        // inside the 25% bracket on top of the annual regular pay -> 7,500, withheld in full.
+        result.ThirteenthMonth.Should().Be(120_000m);
         result.WithholdingTax.Should().Be(28_262.50m);
     }
 
     [Fact]
     public void Compute_counts_13th_month_paid_earlier_in_the_year_against_the_ceiling()
     {
-        var result = _sut.Compute(NewEmployee(basicSalary: 40_000m), NewRun(), daysWorked: 11m,
-            includeThirteenthMonth: true, thirteenthMonthPaidEarlierInYear: 80_000m);
+        // 120,000 a month, half the 13th month (60,000) advanced mid-year.
+        var result = _sut.Compute(NewEmployee(basicSalary: 120_000m), NewRun(), daysWorked: 11m,
+            includeThirteenthMonth: true, basicEarnedEarlierInYear: 1_380_000m,
+            thirteenthMonthPaidEarlierInYear: 60_000m);
 
-        // Regular: 20,000 - 875 SSS - 500 PhilHealth - 100 Pag-IBIG = 18,525 a half-month,
-        // 444,600 a year -> 31,420 / 24 = 1,309.17.
-        // Only 10,000 of the exemption is left, so 30,000 of the 40,000 is taxable, all inside
-        // the 20% bracket -> 6,000.
-        result.WithholdingTax.Should().Be(7_309.17m);
+        // 1,440,000 / 12 = 120,000 due, 60,000 of it already paid -> 60,000 now.
+        // Regular: 60,000 - 875 SSS - 1,250 PhilHealth - 100 Pag-IBIG = 57,775 a half-month,
+        // 1,386,600 a year -> 249,150 / 24 = 10,381.25.
+        // Only 30,000 of the exemption is left, so 30,000 of the 60,000 is taxable, all inside
+        // the 25% bracket -> 7,500.
+        result.ThirteenthMonth.Should().Be(60_000m);
+        result.WithholdingTax.Should().Be(17_881.25m);
     }
 
     private static EmployeeCompensation NewEmployee(decimal basicSalary) => new()

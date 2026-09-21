@@ -1,12 +1,14 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Application.Payroll.Services;
 using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
+using Employee = PeopleCore.Domain.Entities.Employees.Employee;
 using Xunit;
 
 namespace PeopleCore.Application.Tests.Payroll;
@@ -19,6 +21,7 @@ public class PayrollRunServiceTests
     private readonly Mock<IEmployeeLoanRepository> _loanRepo = new();
     private readonly Mock<IPayrollSettingsRepository> _settingsRepo = new();
     private readonly Mock<IPayrollAttendanceBridge> _attendanceBridge = new();
+    private readonly Mock<IEmployeeRepository> _employeeRepo = new();
     private readonly PayrollRunService _sut;
 
     public PayrollRunServiceTests()
@@ -40,6 +43,7 @@ public class PayrollRunServiceTests
             _settingsRepo.Object,
             new PayrollComputationService(),
             _attendanceBridge.Object,
+            _employeeRepo.Object,
             NullLogger<PayrollRunService>.Instance);
     }
 
@@ -531,36 +535,63 @@ public class PayrollRunServiceTests
         PayFrequency.SemiMonthly, [new PayrollRunEmployeeInput(employeeId)]);
 
     [Fact]
-    public async Task CreateAsync_CountsThe13thMonthAlreadyPaidThisYearAgainstThe90kCeiling()
+    public async Task CreateAsync_Pays13thMonthFromTheYearsBasicLessWhatWasAlreadyPaid()
     {
         var employeeId = Guid.NewGuid();
         var compensation = new EmployeeCompensation
         {
-            EmployeeId = employeeId, BasicSalary = 40_000m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "S"
+            EmployeeId = employeeId, BasicSalary = 120_000m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "S"
         };
         var savedRun = SetupRoundTripRepositories(compensation);
 
-        // A paid run earlier in the same pay year already gave this employee 80,000 of 13th
-        // month; another employee's larger 13th month in the same run must not count.
+        // Paid runs earlier in the same pay year: 1,380,000 of basic and a 60,000 13th month
+        // advance for this employee. Another employee's figures in the same run must not count.
         var earlier = new PayrollRun
         {
             RunNumber = "PAY-2026-000", Status = PayrollRunStatus.Paid, PayDate = new DateOnly(2026, 1, 5)
         };
-        earlier.Employees.Add(new PayrollRunEmployee { EmployeeId = employeeId, ThirteenthMonth = 80_000m });
-        earlier.Employees.Add(new PayrollRunEmployee { EmployeeId = Guid.NewGuid(), ThirteenthMonth = 500_000m });
+        earlier.Employees.Add(new PayrollRunEmployee
+        {
+            EmployeeId = employeeId, RegularPay = 1_380_000m, ThirteenthMonth = 60_000m
+        });
+        earlier.Employees.Add(new PayrollRunEmployee
+        {
+            EmployeeId = Guid.NewGuid(), RegularPay = 9_000_000m, ThirteenthMonth = 500_000m
+        });
         _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>()))
                 .ReturnsAsync([earlier]);
 
-        var request = RoundTripRequest(employeeId) with
-        {
-            Employees = [new PayrollRunEmployeeInput(employeeId, IncludeThirteenthMonth: true)]
-        };
-        await _sut.CreateAsync(request, CancellationToken.None);
+        await _sut.CreateAsync(With13thMonth(RoundTripRequest(employeeId)), CancellationToken.None);
 
-        // 1,309.17 on the regular half-month plus 6,000 on the 30,000 above what is left of
-        // the exemption (see PayrollComputationServiceTests for the arithmetic).
-        savedRun()!.Employees.Single().WithholdingTax.Should().Be(7_309.17m);
+        // (1,380,000 + 60,000) / 12 = 120,000 due, 60,000 already paid. Tax: 10,381.25 on the
+        // regular half-month plus 7,500 on the 30,000 above what is left of the exemption (see
+        // PayrollComputationServiceTests for the arithmetic).
+        var entry = savedRun()!.Employees.Single();
+        entry.ThirteenthMonth.Should().Be(60_000m);
+        entry.WithholdingTax.Should().Be(17_881.25m);
     }
+
+    [Fact]
+    public async Task CreateAsync_PaysNo13thMonthToAnEmployeeMarkedIneligible()
+    {
+        var employeeId = Guid.NewGuid();
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = employeeId, BasicSalary = 30_000m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "S"
+        };
+        var savedRun = SetupRoundTripRepositories(compensation);
+        _employeeRepo.Setup(r => r.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+                     .ReturnsAsync([new Employee { Id = employeeId, Is13thMonthEligible = false }]);
+
+        await _sut.CreateAsync(With13thMonth(RoundTripRequest(employeeId)), CancellationToken.None);
+
+        savedRun()!.Employees.Single().ThirteenthMonth.Should().Be(0m);
+    }
+
+    private static CreatePayrollRunRequest With13thMonth(CreatePayrollRunRequest request) => request with
+    {
+        Employees = request.Employees.Select(e => e with { IncludeThirteenthMonth = true }).ToList()
+    };
 
     [Fact]
     public async Task ComputeAsync_AfterARecompute_ReproducesEveryMonetaryFigure()

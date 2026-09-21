@@ -139,12 +139,21 @@ public class PayrollComputationService
     /// </param>
     /// <param name="thirteenthMonthPaidEarlierInYear">
     /// 13th month the employee was already paid in earlier paid runs of this run's pay year,
-    /// which counts against the 90,000 exemption before this run's 13th month does.
+    /// which comes off the 13th month due and counts against the 90,000 exemption first.
+    /// </param>
+    /// <param name="basicEarnedEarlierInYear">
+    /// Regular pay from earlier paid runs of this run's pay year - the basic salary the 13th
+    /// month is one twelfth of, together with this period's.
+    /// </param>
+    /// <param name="isThirteenthMonthEligible">
+    /// False for an employee HR has marked as not entitled; no 13th month is paid even when the
+    /// run includes it.
     /// </param>
     public PayrollRunEmployee Compute(EmployeeCompensation compensation, PayrollRun run, decimal daysWorked = 0,
         decimal overtimeHours = 0, decimal holidayDays = 0, bool includeThirteenthMonth = false,
         ContributionRates? rates = null, PayrollAttendanceInput? attendance = null,
-        decimal? dailyRateFactor = null, decimal thirteenthMonthPaidEarlierInYear = 0m)
+        decimal? dailyRateFactor = null, decimal thirteenthMonthPaidEarlierInYear = 0m,
+        decimal basicEarnedEarlierInYear = 0m, bool isThirteenthMonthEligible = true)
     {
         bool isSemiMonthly = compensation.PayFrequency == PayFrequency.SemiMonthly;
         decimal periodsPerMonth = isSemiMonthly ? 2m : 1m;
@@ -215,10 +224,16 @@ public class PayrollComputationService
         // contribution and withholding bases are struck rather than after.
         taxableAllowances = Math.Round(taxableAllowances + customEarnings, 2);
 
-        // 13th month (included in December or when flagged)
+        // 13th month (PD 851, Revised Guidelines 1987): one twelfth of the basic salary actually
+        // earned in the year. Regular pay is that basic - net of absences and tardiness, and
+        // without overtime, premiums or allowances - so this period's regular pay joins what the
+        // year's earlier runs paid. Any part already paid this year (a mid-year advance) comes off.
         decimal thirteenthMonth = 0m;
-        if (includeThirteenthMonth)
-            thirteenthMonth = Math.Round(compensation.BasicSalary, 2); // 1 month basic
+        if (includeThirteenthMonth && isThirteenthMonthEligible)
+        {
+            decimal dueForYear = Math.Round((basicEarnedEarlierInYear + regularPay) / 12m, 2);
+            thirteenthMonth = Math.Max(0m, dueForYear - thirteenthMonthPaidEarlierInYear);
+        }
 
         // Gross pay for contribution base = regular pay + OT + holiday + taxable allowances (non-taxable excluded from BIR base)
         decimal grossForContribs = regularPay + overtimePay + holidayPay + nightDiffPay + taxableAllowances;
