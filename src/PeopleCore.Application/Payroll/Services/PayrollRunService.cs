@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using PeopleCore.Application.Common.DTOs;
+using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Application.Payroll.Validation;
@@ -19,6 +20,7 @@ public class PayrollRunService : IPayrollRunService
     private readonly IPayrollSettingsRepository _settingsRepo;
     private readonly PayrollComputationService _computationService;
     private readonly IPayrollAttendanceBridge _attendanceBridge;
+    private readonly IEmployeeRepository _employeeRepo;
     private readonly ILogger<PayrollRunService> _logger;
 
     public PayrollRunService(
@@ -29,6 +31,7 @@ public class PayrollRunService : IPayrollRunService
         IPayrollSettingsRepository settingsRepo,
         PayrollComputationService computationService,
         IPayrollAttendanceBridge attendanceBridge,
+        IEmployeeRepository employeeRepo,
         ILogger<PayrollRunService> logger)
     {
         _runRepo = runRepo;
@@ -38,6 +41,7 @@ public class PayrollRunService : IPayrollRunService
         _settingsRepo = settingsRepo;
         _computationService = computationService;
         _attendanceBridge = attendanceBridge;
+        _employeeRepo = employeeRepo;
         _logger = logger;
     }
 
@@ -226,20 +230,25 @@ public class PayrollRunService : IPayrollRunService
 
         var attendanceByEmployee = snapshots ?? await DeriveAttendanceAsync(run, employeeIds, ct);
 
-        // 13th month already paid this pay year uses up the 90,000 exemption first. Only Paid
-        // runs count, keyed on PayDate - the same basis BIR Form 2316 totals the year on - and
-        // this run itself is never Paid while it can still be computed. Looked up only when
-        // someone in the run is receiving a 13th month, since nobody else's tax depends on it.
-        var thirteenthMonthPaidEarlier = new Dictionary<Guid, decimal>();
+        // The 13th month is one twelfth of the basic earned in the pay year, less any part of it
+        // already paid - which also uses up the 90,000 exemption first. Only Paid runs count,
+        // keyed on PayDate - the same basis BIR Form 2316 totals the year on - and this run
+        // itself is never Paid while it can still be computed. Looked up only when someone in
+        // the run is receiving a 13th month, since nobody else's pay depends on it.
+        var earlierInYear = new Dictionary<Guid, (decimal Basic, decimal ThirteenthMonth)>();
+        var ineligible = new HashSet<Guid>();
         if (employees.Any(e => e.IncludeThirteenthMonth))
         {
             var paidRuns = await _runRepo.GetPaidRunsInYearAsync(run.PayDate.Year, ct) ?? [];
-            thirteenthMonthPaidEarlier = paidRuns
+            earlierInYear = paidRuns
                 .Where(r => r.Id != run.Id)
                 .SelectMany(r => r.Employees)
                 .Where(e => employeeIds.Contains(e.EmployeeId))
                 .GroupBy(e => e.EmployeeId)
-                .ToDictionary(g => g.Key, g => g.Sum(e => e.ThirteenthMonth));
+                .ToDictionary(g => g.Key, g => (g.Sum(e => e.RegularPay), g.Sum(e => e.ThirteenthMonth)));
+
+            var people = await _employeeRepo.GetByIdsAsync(employeeIds, ct) ?? [];
+            ineligible = people.Where(p => !p.Is13thMonthEligible).Select(p => p.Id).ToHashSet();
         }
 
         var entries = new List<PayrollRunEmployee>();
@@ -270,7 +279,9 @@ public class PayrollRunService : IPayrollRunService
                 includeThirteenthMonth: employee.IncludeThirteenthMonth,
                 rates: rates, attendance: attendance, dailyRateFactor: dailyRateFactor,
                 thirteenthMonthPaidEarlierInYear:
-                    thirteenthMonthPaidEarlier.GetValueOrDefault(employee.EmployeeId));
+                    earlierInYear.GetValueOrDefault(employee.EmployeeId).ThirteenthMonth,
+                basicEarnedEarlierInYear: earlierInYear.GetValueOrDefault(employee.EmployeeId).Basic,
+                isThirteenthMonthEligible: !ineligible.Contains(employee.EmployeeId));
 
             // Snapshot the inputs the figures above were struck from. The entry's own
             // OvertimeHours and HolidayDays are roll-ups Compute wrote; these seven are the
