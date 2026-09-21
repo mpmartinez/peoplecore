@@ -115,6 +115,8 @@ public class PermissionEquivalenceTests
         ["AttendanceCorrectionsController.Correct"] = [Permissions.AttendanceManage],
         ["AttendanceCorrectionsController.Approve"] = [Permissions.ApprovalsTeam, Permissions.ApprovalsAll],
         ["AttendanceCorrectionsController.Reject"] = [Permissions.ApprovalsTeam, Permissions.ApprovalsAll],
+
+        ["GovernmentReportsController.Get"] = [Permissions.PayrollManage],
     };
 
     private static IEnumerable<(Type Controller, MethodInfo Action)> Endpoints() =>
