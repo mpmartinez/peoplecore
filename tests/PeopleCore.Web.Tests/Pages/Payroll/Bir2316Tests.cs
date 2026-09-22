@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using AngleSharp.Dom;
 using Bunit;
 using FluentAssertions;
@@ -20,7 +21,10 @@ public class Bir2316Tests : BunitContext
     public Bir2316Tests()
     {
         Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(_api)));
-        JSInterop.SetupVoid("downloadFileFromBytes", _ => true);
+        // .SetVoidResult() completes the mocked call's Task; without it, Generate()'s own await of
+        // this call never resumes - harmless everywhere else here, since nothing else in this suite
+        // awaits anything after the JS call, but Generate_ReloadsThePreviewAfterwards does.
+        JSInterop.SetupVoid("downloadFileFromBytes", _ => true).SetVoidResult();
     }
 
     private static string YearsPath(Guid employeeId) => $"/api/reports/2316/years/{employeeId}";
@@ -121,6 +125,43 @@ public class Bir2316Tests : BunitContext
     }
 
     [Fact]
+    public async Task SwitchingEmployeeWhileTheFirstsSavedInputsAreStillLoading_ShowsTheSecondEmployeesSavedTin()
+    {
+        // Maria's preview loads normally, but her saved-inputs call is held open. While it's still
+        // in flight, HR switches to Jose, whose own preview and inputs load and land first. Only
+        // once both of Jose's calls are in must Maria's delayed inputs response be released - if
+        // OnYearChanged has no stale-response guard, applying it now would overwrite Jose's TIN
+        // with Maria's, even though the screen is showing Jose.
+        var mariaInputsGate = _api.OnGated(HttpMethod.Get, InputsPath(MariaId, 2025));
+        _api.On(HttpMethod.Get, YearsPath(MariaId), HttpStatusCode.OK, "[2025]")
+            .On(HttpMethod.Get, PreviewPath(MariaId, 2025), HttpStatusCode.OK, Preview(2025))
+            .On(HttpMethod.Get, YearsPath(JoseId), HttpStatusCode.OK, "[2025]")
+            .On(HttpMethod.Get, PreviewPath(JoseId, 2025), HttpStatusCode.OK, Preview(2025))
+            .On(HttpMethod.Get, InputsPath(JoseId, 2025), HttpStatusCode.OK, Inputs(prevTin: "222-333-444-000"));
+        var cut = RenderPage();
+
+        cut.Find("#employee").Change(MariaId.ToString());
+        // The spinner covers the whole preview+inputs sequence (_loadingPreview only clears once
+        // both have resolved), so #prevTin itself won't appear yet - wait for the gated inputs call
+        // to have been reached instead, which proves Maria's preview already resolved underneath.
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.RequestUri!.PathAndQuery == InputsPath(MariaId, 2025)));
+
+        cut.Find("#employee").Change(JoseId.ToString());
+        cut.WaitForAssertion(() => cut.Find("#prevTin").GetAttribute("value").Should().Be("222-333-444-000"));
+
+        mariaInputsGate.SetResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(Inputs(prevTin: "111-222-333-000"), Encoding.UTF8, "application/json")
+        });
+        // Give the now-released response's continuation a chance to run (and, unguarded, clobber
+        // the screen) before asserting the final state is still Jose's.
+        await Task.Delay(300);
+
+        cut.Find("#prevTin").GetAttribute("value").Should().Be("222-333-444-000");
+        cut.Find("#employee").GetAttribute("value").Should().Be(JoseId.ToString());
+    }
+
+    [Fact]
     public void AnEmployeeWithNoPaidRuns_SaysSo_AndOffersNoForm()
     {
         _api.On(HttpMethod.Get, YearsPath(JoseId), HttpStatusCode.OK, "[]");
@@ -175,6 +216,24 @@ public class Bir2316Tests : BunitContext
     }
 
     [Fact]
+    public void AFailedSavedInputsLoad_KeepsThePreview_WithABlankForm()
+    {
+        // The preview came from payroll and loaded fine; only the separate saved-inputs call
+        // failed. That must not be treated as a failed preview - the operator still needs to see
+        // and generate the certificate, just with a blank manual-inputs form instead of a filled one.
+        _api.On(HttpMethod.Get, YearsPath(MariaId), HttpStatusCode.OK, "[2025]")
+            .On(HttpMethod.Get, PreviewPath(MariaId, 2025), HttpStatusCode.OK, Preview(2025))
+            .On(HttpMethod.Get, InputsPath(MariaId, 2025), HttpStatusCode.InternalServerError);
+        var cut = RenderPage();
+
+        cut.Find("#employee").Change(MariaId.ToString());
+
+        cut.WaitForAssertion(() => cut.FindAll("#prevTin").Should().ContainSingle());
+        cut.Find("#prevTin").GetAttribute("value").Should().BeEmpty();
+        cut.FindAll("[role=alert]").Should().BeEmpty();
+    }
+
+    [Fact]
     public void APreviewErrorForOneEmployee_DoesNotLingerOverTheNext()
     {
         // The next employee has no paid runs, so no year gets selected: only the employee change
@@ -212,6 +271,23 @@ public class Bir2316Tests : BunitContext
         var body = _api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)];
         body.Should().Be(
             """{"prevEmployerTin":"987-654-321-000","prevEmployerName":"Acme Trading","prevEmployerAddress":null,"prevEmployerZipCode":null,"item22_PrevTaxableCompensation":150000.50,"item25B_PrevTaxWithheld":12000,"item27_PeraTaxCredit":0,"item35_DeMinimis":0,"item33_HazardPayMwe":0}""");
+    }
+
+    [Fact]
+    public void Generate_ReloadsThePreviewAfterwards()
+    {
+        // GenerateAsync saves the manual inputs just submitted; reloading the preview afterwards
+        // keeps the on-screen totals in step with what the PDF was actually generated from.
+        _api.On(HttpMethod.Post, $"/api/reports/2316/generate/{MariaId}?year=2025", Pdf);
+        var cut = RenderWithMariasPreview();
+
+        Button(cut, "Generate").Click();
+
+        // Waiting on the JS download call (as every other Generate/Download test here does) is what
+        // actually drives bUnit's fake renderer through the awaits in Generate() - only once it has
+        // settled is it meaningful to count how many preview requests went out.
+        cut.WaitForAssertion(() => JSInterop.VerifyInvoke("downloadFileFromBytes"));
+        _api.Requests.Count(r => r.RequestUri!.PathAndQuery == PreviewPath(MariaId, 2025)).Should().Be(2);
     }
 
     [Fact]

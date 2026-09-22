@@ -214,6 +214,13 @@ else if (_selectedYear.HasValue && !_previewLoadFailed)
     private string? _generateError;
     private bool _downloadingAll;
 
+    // Guards against a slow earlier employee/year load resolving after a later one and overwriting
+    // its (more current) state - same pattern as GovernmentReports.razor's _loadSequence. Employee
+    // and year changes share one counter: OnEmployeeChanged claims a number and hands it down to
+    // the OnYearChanged call it makes for the employee's first year, so a later employee change
+    // invalidates that whole cascade, not just the outer call.
+    private int _loadSequence;
+
     protected override async Task OnInitializedAsync()
     {
         _loadingEmployees = true;
@@ -251,6 +258,7 @@ else if (_selectedYear.HasValue && !_previewLoadFailed)
 
     private async Task OnEmployeeChanged(string value)
     {
+        var sequence = ++_loadSequence;
         _selectedYear = null;
         _preview = null;
         _years = [];
@@ -270,22 +278,30 @@ else if (_selectedYear.HasValue && !_previewLoadFailed)
         _loadingYears = true;
         try
         {
-            _years = await Api.GetBir2316YearsAsync(employeeId) ?? [];
+            var years = await Api.GetBir2316YearsAsync(employeeId) ?? [];
+            if (sequence != _loadSequence) return; // a later employee change has since started; drop this stale result
+            _years = years;
             if (_years.Count > 0)
-                await OnYearChanged(_years[0].ToString());
+                await LoadYearAsync(_years[0].ToString(), sequence);
         }
         catch (Exception ex)
         {
+            if (sequence != _loadSequence) return;
             _yearsLoadFailed = true;
             _pageError = ex.Message;
         }
         finally
         {
-            _loadingYears = false;
+            if (sequence == _loadSequence) _loadingYears = false;
         }
     }
 
-    private async Task OnYearChanged(string value)
+    // Bound directly to the year <select>'s ValueChanged: a direct year change is its own, fresh
+    // load - it doesn't share the employee change's claimed number the way LoadYearAsync's other
+    // caller (OnEmployeeChanged, cascading into the employee's first year) does.
+    private Task OnYearChanged(string value) => LoadYearAsync(value, ++_loadSequence);
+
+    private async Task LoadYearAsync(string value, int mySequence)
     {
         _preview = null;
         _previewLoadFailed = false;
@@ -305,47 +321,70 @@ else if (_selectedYear.HasValue && !_previewLoadFailed)
         _loadingPreview = true;
         try
         {
-            _preview = await Api.GetBir2316PreviewAsync(_selectedEmployeeId.Value, year);
+            var preview = await Api.GetBir2316PreviewAsync(_selectedEmployeeId.Value, year);
+            if (mySequence != _loadSequence) return; // a later employee/year change has since started; drop this stale result
+            _preview = preview;
             if (_preview is not null)
             {
-                var inputs = await Api.GetBir2316InputsAsync(_selectedEmployeeId.Value, year);
-                if (inputs is not null)
-                {
-                    _manual = new ManualInputsFormModel
-                    {
-                        PrevEmployerTin = inputs.PrevEmployerTin,
-                        PrevEmployerName = inputs.PrevEmployerName,
-                        PrevEmployerAddress = inputs.PrevEmployerAddress,
-                        PrevEmployerZipCode = inputs.PrevEmployerZipCode,
-                        Item22_PrevTaxableCompensation = inputs.Item22_PrevTaxableCompensation,
-                        Item25B_PrevTaxWithheld = inputs.Item25B_PrevTaxWithheld,
-                        Item27_PeraTaxCredit = inputs.Item27_PeraTaxCredit,
-                        Item35_DeMinimis = inputs.Item35_DeMinimis,
-                        Item33_HazardPayMwe = inputs.Item33_HazardPayMwe
-                    };
-                }
+                var manual = await LoadManualInputsAsync(_selectedEmployeeId.Value, year);
+                if (mySequence == _loadSequence) _manual = manual; // dropped if a later change started meanwhile
             }
         }
         catch (Exception ex)
         {
+            if (mySequence != _loadSequence) return;
             _previewLoadFailed = true;
             _pageError = ex.Message;
         }
         finally
         {
-            _loadingPreview = false;
+            if (mySequence == _loadSequence) _loadingPreview = false;
         }
+    }
+
+    // A failed saved-inputs call is not a failed preview: the preview already loaded from payroll
+    // and stands on its own, so this falls back to a blank form rather than routing the failure
+    // through _previewLoadFailed/_pageError and hiding a perfectly good preview behind an error.
+    private async Task<ManualInputsFormModel> LoadManualInputsAsync(Guid employeeId, int year)
+    {
+        Bir2316ManualInputsDto? inputs;
+        try
+        {
+            inputs = await Api.GetBir2316InputsAsync(employeeId, year);
+        }
+        catch (Exception)
+        {
+            return new ManualInputsFormModel();
+        }
+
+        if (inputs is null) return new ManualInputsFormModel();
+        return new ManualInputsFormModel
+        {
+            PrevEmployerTin = inputs.PrevEmployerTin,
+            PrevEmployerName = inputs.PrevEmployerName,
+            PrevEmployerAddress = inputs.PrevEmployerAddress,
+            PrevEmployerZipCode = inputs.PrevEmployerZipCode,
+            Item22_PrevTaxableCompensation = inputs.Item22_PrevTaxableCompensation,
+            Item25B_PrevTaxWithheld = inputs.Item25B_PrevTaxWithheld,
+            Item27_PeraTaxCredit = inputs.Item27_PeraTaxCredit,
+            Item35_DeMinimis = inputs.Item35_DeMinimis,
+            Item33_HazardPayMwe = inputs.Item33_HazardPayMwe
+        };
     }
 
     private async Task Generate()
     {
         if (_selectedEmployeeId is null || _selectedYear is null || _preview is null) return;
 
+        // Captured before the awaits: GenerateAsync saves the manual inputs, and the reload below
+        // must apply to this same employee/year even if the selection has since moved on.
+        var (employeeId, year) = (_selectedEmployeeId.Value, _selectedYear.Value);
+
         _generateError = null;
         _generating = true;
         try
         {
-            var pdf = await Api.GenerateBir2316Async(_selectedEmployeeId.Value, _selectedYear.Value, new
+            var pdf = await Api.GenerateBir2316Async(employeeId, year, new
             {
                 prevEmployerTin = _manual.PrevEmployerTin,
                 prevEmployerName = _manual.PrevEmployerName,
@@ -361,8 +400,15 @@ else if (_selectedYear.HasValue && !_previewLoadFailed)
                 // inputs card for why.
             });
 
-            var fileName = $"BIR2316-{_selectedYear}-{_preview.EmployeeLastName}{_preview.EmployeeFirstName}.pdf";
+            var fileName = $"BIR2316-{year}-{_preview.EmployeeLastName}{_preview.EmployeeFirstName}.pdf";
             await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(pdf), fileName, "application/pdf");
+
+            // Reload so the on-screen totals match the saved inputs the PDF was just generated
+            // with, rather than what was on screen before Generate was clicked. Only applied if the
+            // selection is still this employee/year - a stale reload must not override a selection
+            // change made while Generate was in flight.
+            if (_selectedEmployeeId == employeeId && _selectedYear == year)
+                _preview = await Api.GetBir2316PreviewAsync(employeeId, year) ?? _preview;
         }
         catch (Exception ex)
         {
