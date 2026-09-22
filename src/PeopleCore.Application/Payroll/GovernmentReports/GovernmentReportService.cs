@@ -237,13 +237,18 @@ public sealed class GovernmentReportService : IGovernmentReportService
         Bir1601CAsync(List<(Employee Employee, List<PayrollRunEmployee> Entries)> people, int year, int month, CancellationToken ct)
     {
         // 13th month paid earlier in the year has used its share of the exemption first, as it did
-        // when payroll withheld tax on this month's.
-        var monthStart = new DateOnly(year, month, 1);
-        var earlierThirteenth = (await _runs.GetPaidRunsInYearAsync(year, ct))
-            .Where(r => r.PayDate < monthStart)
-            .SelectMany(r => r.Employees)
-            .GroupBy(e => e.EmployeeId)
-            .ToDictionary(g => g.Key, g => g.Sum(e => e.ThirteenthMonth));
+        // when payroll withheld tax on this month's. Skip the year-wide query entirely when
+        // nothing this month even has a 13th month to offset - most months don't.
+        Dictionary<Guid, decimal> earlierThirteenth = [];
+        if (people.Any(p => p.Entries.Any(e => e.ThirteenthMonth > 0)))
+        {
+            var monthStart = new DateOnly(year, month, 1);
+            earlierThirteenth = (await _runs.GetPaidRunsInYearAsync(year, ct))
+                .Where(r => r.PayDate < monthStart)
+                .SelectMany(r => r.Employees)
+                .GroupBy(e => e.EmployeeId)
+                .ToDictionary(g => g.Key, g => g.Sum(e => e.ThirteenthMonth));
+        }
 
         var rows = new List<GovernmentReportRowDto>();
         decimal gross = 0, thirteenth = 0, shares = 0, allowances = 0, taxable = 0, tax = 0;

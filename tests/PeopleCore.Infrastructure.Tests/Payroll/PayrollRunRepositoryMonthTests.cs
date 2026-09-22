@@ -68,4 +68,21 @@ public class PayrollRunRepositoryMonthTests : DatabaseTestBase
         (await Sut.CountUnpaidRunsAsync(2026, 4, byPayDate: true)).Should().Be(1);
         (await Sut.CountUnpaidRunsAsync(2026, 3, byPayDate: true)).Should().Be(0);
     }
+
+    [Fact]
+    public async Task ByPeriodEndMonth_DoesNotMatchTheSameMonthInAnotherYear()
+    {
+        var employee = AnEmployee();
+        Context.Employees.Add(employee);
+        var march2025 = ARun("PAY-2025-005", new(2025, 3, 1), new(2025, 3, 15), new(2025, 3, 20));
+        var march2026 = ARun("PAY-2026-005", new(2026, 3, 1), new(2026, 3, 15), new(2026, 3, 20));
+        foreach (var run in new[] { march2025, march2026 })
+        {
+            Context.PayrollRuns.Add(run);
+            Context.PayrollRunEmployees.Add(AnEntry(run.Id, employee.Id));
+        }
+        await Context.SaveChangesAsync();
+
+        (await Sut.GetPaidRunsByPeriodEndMonthAsync(2026, 3)).Select(r => r.RunNumber).Should().Equal("PAY-2026-005");
+    }
 }

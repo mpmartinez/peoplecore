@@ -186,6 +186,18 @@ public class GovernmentReportServiceTests
     }
 
     [Fact]
+    public async Task Bir1601C_DoesNotLoadEarlierRuns_WhenNoEntryHasAThirteenthMonth()
+    {
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.TIN, "111-222-333-000"));
+        _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(2026, 4, It.IsAny<CancellationToken>()))
+             .ReturnsAsync([Run(new(2026, 3, 31), new(2026, 4, 5), Entry(juan, regularPay: 50_000m, tax: 5_000m))]);
+
+        await _sut.BuildAsync("1601c", 2026, 4);
+
+        _runs.Verify(r => r.GetPaidRunsInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task PagIbig_SplitsTheNameAndShowsTheDateOfBirth()
     {
         var juan = Person("Cruz", "Juan", (GovernmentIdType.PagIbig, "1234-5678-9012"));
