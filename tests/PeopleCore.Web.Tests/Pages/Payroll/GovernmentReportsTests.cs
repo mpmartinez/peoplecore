@@ -218,4 +218,64 @@ public class GovernmentReportsTests : BunitContext
 
         cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.RequestUri!.PathAndQuery == Path1604c(lastYear) + "&format=csv"));
     }
+
+    [Fact]
+    public void ThePageDescription_MentionsTheAnnualAlphalistTooNotJustTheMonthlyReports()
+    {
+        _api.On(HttpMethod.Get, Path("sss", LastMonth), HttpStatusCode.OK, Report("sss"));
+
+        var cut = Render<GovernmentReports>();
+
+        cut.WaitForElement("[data-report-table]");
+        // "BIR 1604-C" alone would also match the tab button's own label - pin the phrase that
+        // only the page description would contain.
+        cut.Markup.Should().Contain("1604-C alphalist");
+    }
+
+    [Fact]
+    public void TheAlphalistTab_ExplainsToCollectOrRefund()
+    {
+        var lastYear = DateTime.Today.Year - 1;
+        var sections = string.Join(",",
+            Section("Terminated before December 31"), Section("Separated during the year"), Section("Still employed on December 31"));
+        _api.On(HttpMethod.Get, Path1604c(lastYear), HttpStatusCode.OK, Report1604c(lastYear, sections));
+        var cut = Render<GovernmentReports>();
+
+        cut.Find("[data-tab='1604c']").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[data-alphalist-note]").TextContent.Should().Contain("To collect / (refund)"));
+    }
+
+    [Fact]
+    public void TheMonthlyTabs_DoNotShowTheAlphalistNote()
+    {
+        _api.On(HttpMethod.Get, Path("sss", LastMonth), HttpStatusCode.OK, Report("sss"));
+        var cut = Render<GovernmentReports>();
+
+        cut.WaitForElement("[data-report-table]");
+
+        cut.FindAll("[data-alphalist-note]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ARequestFromAnOlderApiWithNoSectionsField_IsTreatedAsHavingNoSections()
+    {
+        // An older API still answering mid-deploy simply omits "sections" from the JSON rather than
+        // sending an empty array - System.Text.Json then leaves the record's Sections null.
+        var lastYear = DateTime.Today.Year - 1;
+        var noSectionsField =
+            $$"""
+            {"report":"1604c","title":"BIR 1604-C alphalist","year":{{lastYear}},"month":0,"basis":"Paid in {{lastYear}}",
+             "employer":{"name":"Acme","address":null,"tin":"123","rdoCode":"050","agencyNumber":"03-9999999-1"},
+             "columns":[],"rows":[],"totals":[],"summary":[],"warnings":[]}
+            """;
+        _api.On(HttpMethod.Get, Path1604c(lastYear), HttpStatusCode.OK, noSectionsField);
+        var cut = Render<GovernmentReports>();
+
+        cut.Find("[data-tab='1604c']").Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[data-alphalist-note]").Should().ContainSingle());
+        cut.FindAll("[data-report-section]").Should().BeEmpty();
+        cut.FindAll("[role=alert]").Should().BeEmpty();
+    }
 }

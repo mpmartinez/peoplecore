@@ -6,7 +6,7 @@
 <PageTitle>Government Reports</PageTitle>
 
 <PageHeader Title="Government Reports" Section="Payroll"
-            Description="Each month's SSS, PhilHealth, Pag-IBIG and BIR 1601-C figures, from paid payroll runs.">
+            Description="Each month's SSS, PhilHealth, Pag-IBIG and BIR 1601-C figures, and the annual BIR 1604-C alphalist, from paid payroll runs.">
     <Actions>
         @if (HasData)
         {
@@ -74,7 +74,12 @@ else if (_report is not null)
         </Alert>
     }
 
-    @if (_report.Sections.Count > 0)
+    @if (_tab == "1604c")
+    {
+        <p data-alphalist-note>Payroll makes no year-end tax adjustment yet. "To collect / (refund)" is what's left to settle, for example in December's pay; a negative amount is a refund.</p>
+    }
+
+    @if ((_report.Sections?.Count ?? 0) > 0)
     {
         @if (!HasData)
         {
@@ -82,7 +87,7 @@ else if (_report is not null)
         }
         else
         {
-            @foreach (var section in _report.Sections)
+            @foreach (var section in _report.Sections!)
             {
                 <section class="mb-6" data-report-section>
                     <h3 class="font-semibold mb-2">@section.Title</h3>
@@ -135,8 +140,10 @@ else if (_report is not null)
     // True once the loaded report has something to show: either the top-level table (monthly
     // reports) or at least one non-empty section (the 1604-C alphalist). Drives both the Download
     // CSV button and, for a sectioned report, whether "No payroll was paid" replaces the sections.
+    // Sections is null-guarded: an older API mid-deploy can answer with no "sections" field at all
+    // (see GetJsonAsync/ApiClient), which System.Text.Json leaves as null rather than an empty list.
     private bool HasData => _report is not null &&
-        (_report.Rows.Count > 0 || _report.Sections.Any(s => s.Rows.Count > 0));
+        (_report.Rows.Count > 0 || (_report.Sections?.Any(s => s.Rows.Count > 0) ?? false));
 
     // Guards against a slow earlier tab/month request resolving after a later one and
     // overwriting its (more current) result: each LoadAsync call claims the next number, and
