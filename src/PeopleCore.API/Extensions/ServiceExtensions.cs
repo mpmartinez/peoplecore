@@ -14,6 +14,7 @@ using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Application.Attendance.Services;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Common.Options;
+using PeopleCore.Application.Employees.Coe;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Employees.Services;
 using PeopleCore.Application.Leave.Interfaces;
@@ -156,6 +157,8 @@ public static class ServiceExtensions
         services.AddScoped<IEmployeeDocumentService, EmployeeDocumentService>();
         services.AddScoped<ISeparationRepository, SeparationRepository>();
         services.AddScoped<ISeparationService, SeparationService>();
+        services.AddScoped<ICoeRenderer, CoeRenderer>();
+        services.AddScoped<ICoeService, CoeService>();
 
         // Attendance
         services.AddScoped<IAttendanceRepository, AttendanceRepository>();

@@ -4,6 +4,7 @@ using PeopleCore.API.Authorization;
 using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Common.Interfaces;
+using PeopleCore.Application.Employees.Coe;
 using PeopleCore.Application.Employees.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Domain.Enums;
@@ -27,15 +28,18 @@ public class EmployeesController : ControllerBase
     private readonly IEmployeeService _service;
     private readonly IEmployeeDocumentService _documentService;
     private readonly ICurrentUserService _currentUser;
+    private readonly ICoeService _coe;
 
     public EmployeesController(
         IEmployeeService service,
         IEmployeeDocumentService documentService,
-        ICurrentUserService currentUser)
+        ICurrentUserService currentUser,
+        ICoeService coe)
     {
         _service = service;
         _documentService = documentService;
         _currentUser = currentUser;
+        _coe = coe;
     }
 
     /// <summary>
@@ -196,6 +200,15 @@ public class EmployeesController : ControllerBase
     {
         await _documentService.DeleteDocumentAsync(id, documentId, ct);
         return NoContent();
+    }
+
+    /// <summary>A Certificate of Employment for a current or former employee.</summary>
+    [HttpPost("{id:guid}/coe")]
+    [RequirePermission(Permissions.EmployeesManage)]
+    public async Task<IActionResult> Coe(Guid id, [FromBody] CoeRequest request, CancellationToken ct)
+    {
+        var (pdf, fileName) = await _coe.GenerateAsync(id, request, ct);
+        return File(pdf, "application/pdf", fileName);
     }
 }
 

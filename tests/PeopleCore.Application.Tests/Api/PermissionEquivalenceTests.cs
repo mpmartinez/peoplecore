@@ -129,6 +129,8 @@ public class PermissionEquivalenceTests
         ["SeparationsController.ClearItem"] = [Permissions.EmployeesManage],
         ["SeparationsController.UndoClearItem"] = [Permissions.EmployeesManage],
         ["SeparationsController.DeleteClearanceItem"] = [Permissions.EmployeesManage],
+
+        ["EmployeesController.Coe"] = [Permissions.EmployeesManage],
     };
 
     private static IEnumerable<(Type Controller, MethodInfo Action)> Endpoints() =>
