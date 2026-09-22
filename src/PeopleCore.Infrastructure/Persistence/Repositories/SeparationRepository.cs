@@ -16,7 +16,8 @@ public class SeparationRepository : ISeparationRepository
     public SeparationRepository(AppDbContext context) => _context = context;
 
     private IQueryable<Separation> WithDetails() =>
-        _context.Separations.Include(s => s.ClearanceItems).Include(s => s.Employee).ThenInclude(e => e.Position);
+        _context.Separations.Include(s => s.ClearanceItems).Include(s => s.Employee).ThenInclude(e => e.Position)
+            .Include(s => s.FinalPayRun);
 
     public async Task<Separation?> GetAsync(Guid id, CancellationToken ct = default)
         => await WithDetails().FirstOrDefaultAsync(s => s.Id == id, ct);

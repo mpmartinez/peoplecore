@@ -31,6 +31,13 @@ public class PayrollRunEmployeeConfiguration : IEntityTypeConfiguration<PayrollR
         builder.Property(x => x.NonTaxableAllowances).HasColumnType("numeric(18,2)");
         builder.Property(x => x.ThirteenthMonth).HasColumnType("numeric(18,2)");
 
+        // Final-pay earnings
+        builder.Property(x => x.LeaveConversionPay).HasColumnType("numeric(18,2)");
+        builder.Property(x => x.LeaveConversionNonTaxable).HasColumnType("numeric(18,2)");
+        builder.Property(x => x.SeparationPay).HasColumnType("numeric(18,2)");
+        builder.Property(x => x.RetirementPay).HasColumnType("numeric(18,2)");
+        builder.Property(x => x.FinalPayNonTaxable).HasColumnType("numeric(18,2)");
+
         // Rate basis and attendance adjustments
         builder.Property(x => x.DailyRate).HasColumnType("numeric(18,2)");
         builder.Property(x => x.DailyRateFactor).HasColumnType("numeric(8,2)");
@@ -55,6 +62,7 @@ public class PayrollRunEmployeeConfiguration : IEntityTypeConfiguration<PayrollR
         builder.Ignore(x => x.TotalDeductions);
         builder.Ignore(x => x.NetPay);
         builder.Ignore(x => x.TotalEmployerCost);
+        builder.Ignore(x => x.FinalPayTaxable);
 
         // An employee with payroll history cannot be deleted.
         builder.HasOne(x => x.Employee)

@@ -24,6 +24,10 @@ public class Separation : AuditableEntity
 
     public List<SeparationClearanceItem> ClearanceItems { get; set; } = [];
 
+    /// <summary>The final-pay run created for this separation, once one exists. At most one per separation.</summary>
+    public Guid? FinalPayRunId { get; set; }
+    public Payroll.PayrollRun? FinalPayRun { get; set; }
+
     /// <summary>DOLE Labor Advisory 06-2020: final pay within 30 days of separation.</summary>
     public DateOnly FinalPayDueBy => LastWorkingDay.AddDays(30);
 
@@ -39,4 +43,9 @@ public class SeparationClearanceItem : AuditableEntity
     public string? ClearedBy { get; set; }
     public DateTime? ClearedAt { get; set; }
     public string? Note { get; set; }
+
+    /// <summary>Who last undid a clearance on this item, and the note that was cleared when they did.</summary>
+    public string? LastUndoneBy { get; set; }
+    public DateTime? LastUndoneAt { get; set; }
+    public string? LastUndoneNote { get; set; }
 }

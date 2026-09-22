@@ -10,6 +10,10 @@ public class PayrollRun : AuditableEntity
     public DateOnly PayDate { get; set; }
     public PayFrequency Frequency { get; set; }
     public PayrollRunStatus Status { get; set; } = PayrollRunStatus.Draft;
+    public PayrollRunType RunType { get; set; } = PayrollRunType.Regular;
+
+    /// <summary>Present only when <see cref="RunType"/> is <see cref="PayrollRunType.FinalPay"/>.</summary>
+    public FinalPayInputs? FinalPayInputs { get; set; }
 
     /// <summary>
     /// The attendance period this run was computed from, or null if it was computed without

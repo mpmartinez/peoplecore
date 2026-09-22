@@ -51,7 +51,27 @@ public class PayrollRunEmployee : AuditableEntity
     public decimal TaxableAllowances { get; set; }
     public decimal NonTaxableAllowances { get; set; }
     public decimal ThirteenthMonth { get; set; }
-    public decimal GrossPay => RegularPay + OvertimePay + HolidayPay + NightDiffPay + TaxableAllowances + NonTaxableAllowances + ThirteenthMonth;
+
+    // Final-pay earnings - zero on a Regular run.
+    /// <summary>Cash value of convertible leave balances. See <see cref="LeaveConversionNonTaxable"/> for the de minimis part.</summary>
+    public decimal LeaveConversionPay { get; set; }
+    /// <summary>The de minimis (non-taxable) part of <see cref="LeaveConversionPay"/>.</summary>
+    public decimal LeaveConversionNonTaxable { get; set; }
+    public decimal SeparationPay { get; set; }
+    public decimal RetirementPay { get; set; }
+    /// <summary>
+    /// The non-taxable part of leave conversion, separation pay and retirement pay combined -
+    /// includes <see cref="LeaveConversionNonTaxable"/> plus whatever of separation/retirement pay
+    /// is non-taxable.
+    /// </summary>
+    public decimal FinalPayNonTaxable { get; set; }
+
+    public decimal GrossPay =>
+        RegularPay + OvertimePay + HolidayPay + NightDiffPay + TaxableAllowances + NonTaxableAllowances
+        + ThirteenthMonth + LeaveConversionPay + SeparationPay + RetirementPay;
+
+    /// <summary>The taxable slice of the final-pay earnings above.</summary>
+    public decimal FinalPayTaxable => LeaveConversionPay + SeparationPay + RetirementPay - FinalPayNonTaxable;
 
     // Rate basis and attendance adjustments, stored so a payslip cannot drift from a later
     // settings change. Both deductions below are ALREADY netted out of RegularPay - they are

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using PeopleCore.Domain.Entities.Payroll;
+using PeopleCore.Domain.Enums;
 
 namespace PeopleCore.Infrastructure.Persistence.Configurations.Payroll;
 
@@ -10,6 +11,7 @@ public class PayrollRunConfiguration : IEntityTypeConfiguration<PayrollRun>
     {
         builder.HasKey(x => x.Id);
         builder.HasIndex(x => x.RunNumber).IsUnique();
+        builder.Property(x => x.RunType).HasConversion<string>().HasMaxLength(16).HasDefaultValue(PayrollRunType.Regular);
 
         // Computed properties - not columns.
         builder.Ignore(x => x.PeriodLabel);
@@ -21,6 +23,11 @@ public class PayrollRunConfiguration : IEntityTypeConfiguration<PayrollRun>
         builder.HasMany(x => x.Employees)
                .WithOne(x => x.PayrollRun)
                .HasForeignKey(x => x.PayrollRunId)
+               .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne(x => x.FinalPayInputs)
+               .WithOne(x => x.PayrollRun)
+               .HasForeignKey<FinalPayInputs>(x => x.PayrollRunId)
                .OnDelete(DeleteBehavior.Cascade);
     }
 }

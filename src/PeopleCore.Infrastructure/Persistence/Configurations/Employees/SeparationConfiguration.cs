@@ -24,6 +24,11 @@ public class SeparationConfiguration : IEntityTypeConfiguration<Separation>
         builder.HasOne(x => x.Employee).WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Restrict);
         builder.HasMany(x => x.ClearanceItems).WithOne(i => i.Separation).HasForeignKey(i => i.SeparationId)
                .OnDelete(DeleteBehavior.Cascade);
+
+        // SetNull, not Restrict: deleting a run must not be blocked by (or silently orphan) the
+        // separation that points at it.
+        builder.HasOne(x => x.FinalPayRun).WithMany().HasForeignKey(x => x.FinalPayRunId)
+               .OnDelete(DeleteBehavior.SetNull);
     }
 }
 
@@ -35,5 +40,7 @@ public class SeparationClearanceItemConfiguration : IEntityTypeConfiguration<Sep
         builder.Property(x => x.Name).HasMaxLength(100).IsRequired();
         builder.Property(x => x.ClearedBy).HasMaxLength(256);
         builder.Property(x => x.Note).HasMaxLength(500);
+        builder.Property(x => x.LastUndoneBy).HasMaxLength(256);
+        builder.Property(x => x.LastUndoneNote).HasMaxLength(500);
     }
 }

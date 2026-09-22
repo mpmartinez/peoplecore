@@ -15,6 +15,7 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
             .Include(r => r.Employees).ThenInclude(e => e.Employee)
             .Include(r => r.Employees).ThenInclude(e => e.LoanDeductionLines)
             .Include(r => r.Employees).ThenInclude(e => e.PremiumDays)
+            .Include(r => r.FinalPayInputs).ThenInclude(fp => fp!.Deductions)
             .AsSplitQuery()
             .FirstOrDefaultAsync(r => r.Id == id, ct);
 
@@ -138,8 +139,16 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
     {
         // Added to both DbSets explicitly - see the interface's doc comment for why the
         // Employees navigation alone is not enough once Compute has assigned each entry's Id.
+        // FinalPayInputs and its Deductions get the same treatment for the same reason - every
+        // AuditableEntity gets its Guid at construction, so a freshly built FinalPay run's inputs
+        // graph is added explicitly rather than trusted to the reference/collection navigations.
         await Context.PayrollRuns.AddAsync(run, ct);
         await Context.PayrollRunEmployees.AddRangeAsync(run.Employees, ct);
+        if (run.FinalPayInputs is not null)
+        {
+            await Context.FinalPayInputs.AddAsync(run.FinalPayInputs, ct);
+            await Context.FinalPayDeductions.AddRangeAsync(run.FinalPayInputs.Deductions, ct);
+        }
         await Context.SaveChangesAsync(ct);
     }
 
