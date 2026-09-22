@@ -65,8 +65,11 @@ public record CoeContent(
                 "Female" => "She",
                 _ => "They"
             };
+            // A current employee still earns it, so the sentence stays present tense (agreeing
+            // with the pronoun); a former employee's pay stopped with their last working day.
+            var salaryVerb = isFormer ? "received" : pronoun == "They" ? "receive" : "receives";
             var amount = facts.MonthlyBasicSalary!.Value.ToString("#,##0.00", CultureInfo.InvariantCulture);
-            paragraphs.Add($"{pronoun} received a monthly basic salary of ₱{amount}.");
+            paragraphs.Add($"{pronoun} {salaryVerb} a monthly basic salary of ₱{amount}.");
         }
 
         var purpose = string.IsNullOrWhiteSpace(request.Purpose)

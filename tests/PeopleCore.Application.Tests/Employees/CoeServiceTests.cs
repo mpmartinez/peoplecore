@@ -1,6 +1,7 @@
 using FluentAssertions;
 using M2NET.Core.Enums;
 using Moq;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Employees.Coe;
 using PeopleCore.Application.Employees.Interfaces;
@@ -40,6 +41,9 @@ public class CoeServiceTests
         _compensations.Setup(c => c.GetByEmployeeIdAsync(EmployeeId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new EmployeeCompensation { EmployeeId = EmployeeId, BasicSalary = 35_000m });
         _currentUser.Setup(c => c.Email).Returns("hr@company.test");
+        // Most tests here aren't exercising the payroll gate on IncludeSalary - only the tests
+        // that specifically withhold it should see a refusal.
+        _currentUser.Setup(c => c.HasPermission(Permissions.PayrollManage)).Returns(true);
 
         _renderer.Setup(r => r.Render(It.IsAny<CoeContent>())).Returns("%PDF-fake"u8.ToArray());
 
@@ -115,6 +119,18 @@ public class CoeServiceTests
     }
 
     [Fact]
+    public async Task GenerateAsync_WithSalaryRequested_ButNoPayrollPermission_IsRefused()
+    {
+        _employees.Setup(e => e.GetByIdAsync(EmployeeId, It.IsAny<CancellationToken>())).ReturnsAsync(Employee());
+        _currentUser.Setup(c => c.HasPermission(Permissions.PayrollManage)).Returns(false);
+
+        var act = () => _sut.GenerateAsync(EmployeeId, new CoeRequest(null, null, null, true), CancellationToken.None);
+
+        await act.Should().ThrowAsync<PeopleCore.Domain.Exceptions.DomainException>()
+            .WithMessage("Only someone who can manage payroll can add the salary to a certificate.");
+    }
+
+    [Fact]
     public async Task GenerateAsync_WithNoSignatoryGiven_UsesTheCurrentUsersEmail()
     {
         _employees.Setup(e => e.GetByIdAsync(EmployeeId, It.IsAny<CancellationToken>())).ReturnsAsync(Employee());
@@ -126,6 +142,35 @@ public class CoeServiceTests
         await _sut.GenerateAsync(EmployeeId, new CoeRequest(null, null, null, false), CancellationToken.None);
 
         captured!.SignatoryName.Should().Be("hr@company.test");
+    }
+
+    [Fact]
+    public async Task GenerateAsync_WithNoSignatoryGiven_AndTheUserIsLinkedToAnEmployee_UsesThatEmployeesFullName()
+    {
+        var signatoryId = Guid.NewGuid();
+        _employees.Setup(e => e.GetByIdAsync(EmployeeId, It.IsAny<CancellationToken>())).ReturnsAsync(Employee());
+        _employees.Setup(e => e.GetByIdAsync(signatoryId, It.IsAny<CancellationToken>())).ReturnsAsync(new Employee
+        {
+            Id = signatoryId,
+            EmployeeNumber = "EMP-777",
+            FirstName = "Maria",
+            LastName = "Reyes",
+            DateOfBirth = new DateOnly(1985, 1, 1),
+            Gender = Gender.Female,
+            WorkEmail = "maria@company.com",
+            EmploymentStatus = EmploymentStatus.Regular,
+            EmploymentType = EmploymentType.Regular,
+            HireDate = new DateOnly(2015, 1, 1)
+        });
+        _currentUser.Setup(c => c.EmployeeId).Returns(signatoryId);
+        CoeContent? captured = null;
+        _renderer.Setup(r => r.Render(It.IsAny<CoeContent>()))
+            .Callback((CoeContent c) => captured = c)
+            .Returns("%PDF-fake"u8.ToArray());
+
+        await _sut.GenerateAsync(EmployeeId, new CoeRequest(null, null, null, false), CancellationToken.None);
+
+        captured!.SignatoryName.Should().Be("Maria Reyes");
     }
 
     [Fact]

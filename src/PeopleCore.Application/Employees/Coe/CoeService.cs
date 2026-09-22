@@ -1,8 +1,10 @@
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Common.Time;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Organization.Interfaces;
 using PeopleCore.Application.Payroll.Interfaces;
+using PeopleCore.Domain.Exceptions;
 
 namespace PeopleCore.Application.Employees.Coe;
 
@@ -39,14 +41,26 @@ public class CoeService : ICoeService
 
     public async Task<(byte[] Pdf, string FileName)> GenerateAsync(Guid employeeId, CoeRequest request, CancellationToken ct = default)
     {
+        // Compensation sits behind payroll.manage everywhere else in the app; the salary line on
+        // a certificate is no different, so it is refused here rather than left to whatever the
+        // caller happened to send.
+        if (request.IncludeSalary && !_currentUser.HasPermission(Permissions.PayrollManage))
+            throw new DomainException("Only someone who can manage payroll can add the salary to a certificate.");
+
         var employee = await _employees.GetByIdAsync(employeeId, ct)
             ?? throw new KeyNotFoundException($"Employee {employeeId} not found.");
         var company = await _companies.GetDefaultAsync(ct);
         var compensation = await _compensations.GetByEmployeeIdAsync(employeeId, ct);
         var today = DateOnly.FromDateTime(PhilippineTime.Now(_clock));
 
-        // ICurrentUserService carries no display-name claim - Email is the only identity a
-        // requesting HR user's token gives us, so it doubles as the default signatory.
+        // The requesting HR user's own employee record gives their display name when their
+        // account is linked to one; ICurrentUserService carries no display-name claim otherwise,
+        // so Email is the fallback identity.
+        var signatoryEmployee = _currentUser.EmployeeId is { } signatoryId
+            ? await _employees.GetByIdAsync(signatoryId, ct)
+            : null;
+        var defaultSignatoryName = signatoryEmployee?.FullName ?? _currentUser.Email ?? "";
+
         var facts = new CoeFacts(
             employee.FullName,
             employee.Position?.Title,
@@ -57,7 +71,7 @@ public class CoeService : ICoeService
             company?.Logo,
             compensation?.BasicSalary,
             employee.Gender.ToString(),
-            _currentUser.Email ?? "");
+            defaultSignatoryName);
 
         var content = CoeContent.Build(facts, request, today);
         var pdf = _renderer.Render(content);

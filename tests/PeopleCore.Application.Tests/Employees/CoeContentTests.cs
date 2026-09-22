@@ -44,7 +44,23 @@ public class CoeContentTests
         var withSalary = CoeContent.Build(Facts(), new CoeRequest(null, null, null, true), Today);
 
         withSalary.Paragraphs.Should().HaveCount(3);
-        withSalary.Paragraphs[1].Should().Be("They received a monthly basic salary of ₱35,000.00.");
+        withSalary.Paragraphs[1].Should().Be("They receive a monthly basic salary of ₱35,000.00.");
+    }
+
+    [Fact]
+    public void TheSalarySentence_UsesThePresentTenseForACurrentEmployee()
+    {
+        var c = CoeContent.Build(Facts(), new CoeRequest(null, null, null, true), Today);
+
+        c.Paragraphs[1].Should().Be("They receive a monthly basic salary of ₱35,000.00.");
+    }
+
+    [Fact]
+    public void TheSalarySentence_UsesThePastTenseForAFormerEmployee()
+    {
+        var c = CoeContent.Build(Facts(lastDay: new DateOnly(2026, 8, 31)), new CoeRequest(null, null, null, true), Today);
+
+        c.Paragraphs[1].Should().Be("They received a monthly basic salary of ₱35,000.00.");
     }
 
     [Fact]
