@@ -210,6 +210,7 @@ public static class ServiceExtensions
         // Payroll
         services.AddScoped<IPayrollRunRepository, PayrollRunRepository>();
         services.AddScoped<IEmployeeCompensationRepository, EmployeeCompensationRepository>();
+        services.AddScoped<IBir2316InputsRepository, Bir2316InputsRepository>();
         services.AddScoped<IEmployeeAllowanceRepository, EmployeeAllowanceRepository>();
         services.AddScoped<IEmployeeLoanRepository, EmployeeLoanRepository>();
         services.AddScoped<IPayrollSettingsRepository, PayrollSettingsRepository>();
