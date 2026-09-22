@@ -88,7 +88,7 @@ public sealed class GovernmentReportService : IGovernmentReportService
         (IReadOnlyList<string> columns, List<GovernmentReportRowDto> rows, IReadOnlyList<string> totals,
          IReadOnlyList<GovernmentReportLineDto> summary) = key switch
         {
-            "sss" => await SssAsync(people, runs, year, month, warnings, ct),
+            "sss" => await SssAsync(people, runs, warnings, ct),
             "philhealth" => PhilHealth(people),
             "pagibig" => PagIbig(people),
             _ => await Bir1601CAsync(people, year, month, ct)
@@ -114,7 +114,7 @@ public sealed class GovernmentReportService : IGovernmentReportService
 
     private async Task<(IReadOnlyList<string>, List<GovernmentReportRowDto>, IReadOnlyList<string>, IReadOnlyList<GovernmentReportLineDto>)>
         SssAsync(List<(Employee Employee, List<PayrollRunEmployee> Entries)> people, IReadOnlyList<PayrollRun> runs,
-            int year, int month, List<string> warnings, CancellationToken ct)
+            List<string> warnings, CancellationToken ct)
     {
         // Working the MSC and EC back only holds under the statutory schedule, which is what
         // ComputeSSS uses unless both rates are overridden.
@@ -123,21 +123,25 @@ public sealed class GovernmentReportService : IGovernmentReportService
         if (overridden)
             warnings.Add("The company's payroll settings override the SSS rates, so the MSC and EC can't be worked out and are left blank.");
 
-        // The 50/50 split across a semi-monthly employee's two cutoffs only works back to the
-        // right MSC once both cutoffs are in - working it back from a single cutoff's half share
-        // would understate the MSC and the EC that goes with it.
-        var periodsByEmployee = runs
-            .SelectMany(r => r.Employees.Select(e => (e.EmployeeId, r.PeriodStart, r.PeriodEnd)))
-            .ToLookup(x => x.EmployeeId, x => (x.PeriodStart, x.PeriodEnd));
+        // Payroll deducts half the month's SSS in each semi-monthly cutoff and all of it in a
+        // monthly run, so the MSC only works back once the month's cutoffs are all in; a single
+        // cutoff's half share would understate the MSC and the EC that goes with it. Cutoffs are
+        // counted rather than calendar days checked, because many companies' cutoffs (26th-10th,
+        // 21st-20th) never cover the end of the month they close in.
+        var sssCutoffsByEmployee = runs
+            .SelectMany(r => r.Employees.Where(e => e.SSSEmployee > 0).Select(e => (e.EmployeeId, r.Frequency)))
+            .ToLookup(x => x.EmployeeId, x => x.Frequency);
 
         var rows = new List<GovernmentReportRowDto>();
         decimal ee = 0, erSs = 0, ec = 0, er = 0;
-        int rowsWithCredit = 0, partialMonthCount = 0;
+        int partialMonthCount = 0;
         foreach (var (employee, entries) in people)
         {
             decimal employeeShare = entries.Sum(e => e.SSSEmployee);
             decimal employerTotal = entries.Sum(e => e.SSSEmployer);
-            bool fullMonth = CoversWholeMonth(periodsByEmployee[employee.Id], year, month);
+            var cutoffs = sssCutoffsByEmployee[employee.Id].ToList();
+            bool fullMonth = cutoffs.Contains(PayFrequency.Monthly)
+                             || cutoffs.Count(f => f == PayFrequency.SemiMonthly) >= 2;
 
             (decimal? msc, decimal? credit) = (null, null);
             if (!overridden && fullMonth)
@@ -147,7 +151,7 @@ public sealed class GovernmentReportService : IGovernmentReportService
             decimal? employerSs = credit is { } c ? employerTotal - c : null;
 
             ee += employeeShare; er += employerTotal;
-            if (credit is not null) { rowsWithCredit++; ec += credit.Value; erSs += employerSs!.Value; }
+            if (credit is not null) { ec += credit.Value; erSs += employerSs!.Value; }
             var number = Id(employee, GovernmentIdType.SSS);
             rows.Add(new(employee.Id, [
                 FullName(employee), number ?? "", Blank(msc), Money(employeeShare), Blank(employerSs), Blank(credit),
@@ -160,36 +164,13 @@ public sealed class GovernmentReportService : IGovernmentReportService
                 ? "The MSC and EC are left blank for 1 employee whose pay for the whole month isn't paid yet."
                 : $"The MSC and EC are left blank for {partialMonthCount} employees whose pay for the whole month isn't paid yet.");
 
+        // The employer share and EC totals only stand when every row has them; totalled over some
+        // rows they would disagree with the Employer total column beside them.
+        bool allWorkedBack = !overridden && partialMonthCount == 0;
         return (["Employee", "SSS number", "MSC", "Employee share", "Employer share", "EC", "Employer total", "Total"],
                 rows,
-                ["Total", "", "", Money(ee), rowsWithCredit > 0 ? Money(erSs) : "", rowsWithCredit > 0 ? Money(ec) : "", Money(er), Money(ee + er)],
+                ["Total", "", "", Money(ee), allWorkedBack ? Money(erSs) : "", allWorkedBack ? Money(ec) : "", Money(er), Money(ee + er)],
                 []);
-    }
-
-    /// <summary>
-    /// Whether the union of a person's Paid runs' periods this month, clamped to the month, spans
-    /// every day of it. A monthly-frequency run whose period already covers the month satisfies
-    /// this on its own.
-    /// </summary>
-    private static bool CoversWholeMonth(IEnumerable<(DateOnly PeriodStart, DateOnly PeriodEnd)> periods, int year, int month)
-    {
-        int daysInMonth = DateTime.DaysInMonth(year, month);
-        var monthStart = new DateOnly(year, month, 1);
-        var monthEnd = new DateOnly(year, month, daysInMonth);
-
-        var covered = new bool[daysInMonth + 1]; // 1-indexed by day of month
-        foreach (var (start, end) in periods)
-        {
-            var from = start < monthStart ? monthStart : start;
-            var to = end > monthEnd ? monthEnd : end;
-            for (var day = from; day <= to; day = day.AddDays(1))
-                covered[day.Day] = true;
-        }
-
-        for (int day = 1; day <= daysInMonth; day++)
-            if (!covered[day])
-                return false;
-        return true;
     }
 
     private static (IReadOnlyList<string>, List<GovernmentReportRowDto>, IReadOnlyList<string>, IReadOnlyList<GovernmentReportLineDto>)

@@ -50,9 +50,13 @@ public class GovernmentReportServiceTests
         => RunForPeriod(periodEnd.AddDays(-14), periodEnd, payDate, entries);
 
     private static PayrollRun RunForPeriod(DateOnly periodStart, DateOnly periodEnd, DateOnly payDate, params PayrollRunEmployee[] entries)
+        => RunForPeriod(PayFrequency.SemiMonthly, periodStart, periodEnd, payDate, entries);
+
+    private static PayrollRun RunForPeriod(PayFrequency frequency, DateOnly periodStart, DateOnly periodEnd, DateOnly payDate,
+        params PayrollRunEmployee[] entries)
     {
         var run = new PayrollRun { RunNumber = "PAY", PeriodStart = periodStart, PeriodEnd = periodEnd,
-                                   PayDate = payDate, Status = PayrollRunStatus.Paid };
+                                   PayDate = payDate, Status = PayrollRunStatus.Paid, Frequency = frequency };
         run.Employees.AddRange(entries);
         return run;
     }
@@ -105,7 +109,7 @@ public class GovernmentReportServiceTests
     {
         var juan = Person("Cruz", "Juan", (GovernmentIdType.SSS, "34-1234567-8"));
         _runs.Setup(r => r.GetPaidRunsByPeriodEndMonthAsync(2026, 3, It.IsAny<CancellationToken>())).ReturnsAsync([
-            RunForPeriod(new(2026, 3, 1), new(2026, 3, 31), new(2026, 4, 5), Entry(juan, sssEe: 1_000m, sssEr: 2_030m))
+            RunForPeriod(PayFrequency.Monthly, new(2026, 3, 1), new(2026, 3, 31), new(2026, 4, 5), Entry(juan, sssEe: 1_000m, sssEr: 2_030m))
         ]);
 
         var report = await _sut.BuildAsync("sss", 2026, 3);
@@ -113,6 +117,67 @@ public class GovernmentReportServiceTests
         report.Rows.Should().ContainSingle().Which.Cells.Should().Equal(
             "Cruz, Juan", "34-1234567-8", "20000.00", "1000.00", "2000.00", "30.00", "2030.00", "3030.00");
         report.Warnings.Should().NotContain(w => w.Contains("whole month"));
+    }
+
+    [Fact]
+    public async Task Sss_ShowsValues_ForBothCutoffsOfAMonthThatDontFollowTheCalendar()
+    {
+        // 26th-10th and 11th-25th cutoffs never cover the 26th-31st of the month they end in, yet
+        // both of the month's cutoffs - and so its whole SSS - are in.
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.SSS, "34-1234567-8"));
+        _runs.Setup(r => r.GetPaidRunsByPeriodEndMonthAsync(2026, 3, It.IsAny<CancellationToken>())).ReturnsAsync([
+            RunForPeriod(new(2026, 2, 26), new(2026, 3, 10), new(2026, 3, 15), Entry(juan, sssEe: 500m, sssEr: 1_015m)),
+            RunForPeriod(new(2026, 3, 11), new(2026, 3, 25), new(2026, 3, 30), Entry(juan, sssEe: 500m, sssEr: 1_015m))
+        ]);
+
+        var report = await _sut.BuildAsync("sss", 2026, 3);
+
+        report.Rows.Single().Cells[2].Should().Be("20000.00");
+        report.Warnings.Should().NotContain(w => w.Contains("whole month"));
+    }
+
+    [Fact]
+    public async Task Sss_LeavesMscAndEcBlank_ForOneOfTwoNonCalendarCutoffs()
+    {
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.SSS, "34-1234567-8"));
+        _runs.Setup(r => r.GetPaidRunsByPeriodEndMonthAsync(2026, 3, It.IsAny<CancellationToken>())).ReturnsAsync([
+            RunForPeriod(new(2026, 3, 11), new(2026, 3, 25), new(2026, 3, 30), Entry(juan, sssEe: 500m, sssEr: 1_015m))
+        ]);
+
+        var report = await _sut.BuildAsync("sss", 2026, 3);
+
+        report.Rows.Single().Cells[2].Should().BeEmpty();
+        report.Warnings.Should().Contain(w => w.Contains("whole month"));
+    }
+
+    [Fact]
+    public async Task Sss_ShowsValues_ForAMonthlyRunThatDoesntFollowTheCalendar()
+    {
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.SSS, "34-1234567-8"));
+        _runs.Setup(r => r.GetPaidRunsByPeriodEndMonthAsync(2026, 3, It.IsAny<CancellationToken>())).ReturnsAsync([
+            RunForPeriod(PayFrequency.Monthly, new(2026, 2, 21), new(2026, 3, 20), new(2026, 3, 25), Entry(juan, sssEe: 1_000m, sssEr: 2_030m))
+        ]);
+
+        var report = await _sut.BuildAsync("sss", 2026, 3);
+
+        report.Rows.Single().Cells[2].Should().Be("20000.00");
+    }
+
+    [Fact]
+    public async Task Sss_LeavesTheEmployerShareAndEcTotalsBlank_WhenAnyRowIsBlank()
+    {
+        // Totals over only the rows that have values would disagree with the Employer total column.
+        var ana = Person("Santos", "Ana", (GovernmentIdType.SSS, "34-7654321-0"));
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.SSS, "34-1234567-8"));
+        _runs.Setup(r => r.GetPaidRunsByPeriodEndMonthAsync(2026, 3, It.IsAny<CancellationToken>())).ReturnsAsync([
+            RunForPeriod(new(2026, 3, 1), new(2026, 3, 15), new(2026, 3, 20),
+                Entry(juan, sssEe: 500m, sssEr: 1_015m), Entry(ana, sssEe: 500m, sssEr: 1_015m)),
+            RunForPeriod(new(2026, 3, 16), new(2026, 3, 31), new(2026, 4, 5), Entry(juan, sssEe: 500m, sssEr: 1_015m))
+        ]);
+
+        var report = await _sut.BuildAsync("sss", 2026, 3);
+
+        report.Totals.Should().Equal("Total", "", "", "1500.00", "", "", "3045.00", "4545.00");
     }
 
     [Fact]
