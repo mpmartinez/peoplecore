@@ -70,6 +70,45 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
             .OrderBy(r => r.PayDate)
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyList<PayrollRun>> GetPaidRunsByPeriodEndMonthAsync(int year, int month, CancellationToken ct = default)
+    {
+        var (first, next) = MonthRange(year, month);
+        return await WithEmployeesAndIds(Context.PayrollRuns
+                .Where(r => r.Status == PayrollRunStatus.Paid && r.PeriodEnd >= first && r.PeriodEnd < next))
+            .OrderBy(r => r.PeriodEnd)
+            .ToListAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<PayrollRun>> GetPaidRunsByPayMonthAsync(int year, int month, CancellationToken ct = default)
+    {
+        var (first, next) = MonthRange(year, month);
+        return await WithEmployeesAndIds(Context.PayrollRuns
+                .Where(r => r.Status == PayrollRunStatus.Paid && r.PayDate >= first && r.PayDate < next))
+            .OrderBy(r => r.PayDate)
+            .ToListAsync(ct);
+    }
+
+    public async Task<int> CountUnpaidRunsAsync(int year, int month, bool byPayDate, CancellationToken ct = default)
+    {
+        var (first, next) = MonthRange(year, month);
+        var unpaid = Context.PayrollRuns.Where(r => r.Status != PayrollRunStatus.Paid);
+        return await (byPayDate
+            ? unpaid.CountAsync(r => r.PayDate >= first && r.PayDate < next, ct)
+            : unpaid.CountAsync(r => r.PeriodEnd >= first && r.PeriodEnd < next, ct));
+    }
+
+    // A half-open range so the index on the date column can be used, instead of the Year/Month
+    // predicates it used to run as, which cannot.
+    private static (DateOnly First, DateOnly Next) MonthRange(int year, int month)
+    {
+        var first = new DateOnly(year, month, 1);
+        return (first, first.AddMonths(1));
+    }
+
+    private static IQueryable<PayrollRun> WithEmployeesAndIds(IQueryable<PayrollRun> runs)
+        => runs.Include(r => r.Employees).ThenInclude(e => e.Employee!).ThenInclude(p => p.GovernmentIds)
+               .AsSplitQuery();
+
     public async Task<(IReadOnlyList<PayrollRun> Items, int TotalCount)> GetPagedAsync(
         int page, int pageSize, CancellationToken ct = default)
     {

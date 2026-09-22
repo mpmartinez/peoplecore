@@ -20,6 +20,7 @@ using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Application.Leave.Services;
 using PeopleCore.Application.Organization.Interfaces;
 using PeopleCore.Application.Organization.Services;
+using PeopleCore.Application.Payroll.GovernmentReports;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Application.Payroll.Services;
 using PeopleCore.Application.PayrollIntegration.Interfaces;
@@ -221,6 +222,7 @@ public static class ServiceExtensions
         services.AddScoped<IPayslipService, PayslipService>();
         services.AddScoped<IBir2316Service, Bir2316Service>();
         services.AddScoped<IBir2316Renderer, Bir2316Renderer>();
+        services.AddScoped<IGovernmentReportService, GovernmentReportService>();
 
         // Payroll Export
         services.AddScoped<IPayrollExportService, PayrollExportService>();

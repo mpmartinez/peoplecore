@@ -106,4 +106,23 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     /// out of) the same year's runs once per employee.
     /// </summary>
     Task<IReadOnlyList<PayrollRun>> GetPaidRunsInYearAsync(int year, CancellationToken ct = default);
+
+    /// <summary>
+    /// Every Paid run whose period ends in the month, each loaded with its entries, their employees
+    /// and those employees' government IDs. SSS, PhilHealth and Pag-IBIG contributions are for the
+    /// month the pay was earned, so a Dec 16-31 cutoff paid on 5 January belongs to December.
+    /// </summary>
+    Task<IReadOnlyList<PayrollRun>> GetPaidRunsByPeriodEndMonthAsync(int year, int month, CancellationToken ct = default);
+
+    /// <summary>
+    /// Every Paid run paid in the month, loaded as <see cref="GetPaidRunsByPeriodEndMonthAsync"/>.
+    /// BIR 1601-C reports tax withheld in the month compensation was paid.
+    /// </summary>
+    Task<IReadOnlyList<PayrollRun>> GetPaidRunsByPayMonthAsync(int year, int month, CancellationToken ct = default);
+
+    /// <summary>
+    /// Runs in the month, on the given basis, that are not Paid yet, so a report can say what it
+    /// leaves out.
+    /// </summary>
+    Task<int> CountUnpaidRunsAsync(int year, int month, bool byPayDate, CancellationToken ct = default);
 }

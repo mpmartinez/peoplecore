@@ -1,0 +1,183 @@
+@page "/government-reports"
+@attribute [RequirePermission(Permissions.PayrollManage)]
+@inject ApiClient Api
+@inject IJSRuntime JS
+
+<PageTitle>Government Reports</PageTitle>
+
+<PageHeader Title="Government Reports" Section="Payroll"
+            Description="Each month's SSS, PhilHealth, Pag-IBIG and BIR 1601-C figures, from paid payroll runs.">
+    <Actions>
+        @if (_report is { Rows.Count: > 0 })
+        {
+            <Button Variant="outline" OnClick="DownloadCsv" Loading="@_downloading" Disabled="@_downloading" data-download-csv>
+                <i class="bi bi-download mr-1"></i> Download CSV
+            </Button>
+        }
+    </Actions>
+</PageHeader>
+
+<Card Class="mb-4">
+    <CardContent Class="pt-6 flex flex-wrap items-end gap-4">
+        <div>
+            <Label For="report-month">Month</Label>
+            <input id="report-month" type="month" class="border rounded-md px-3 py-2 bg-background"
+                   value="@_month.ToString("yyyy-MM")" max="@DateTime.Today.ToString("yyyy-MM")" @onchange="ChangeMonth" />
+        </div>
+        <div class="flex gap-2" role="tablist">
+            @foreach (var (key, label) in Tabs)
+            {
+                <Button Size="sm" Variant="@(key == _tab ? "primary" : "outline")" data-tab="@key"
+                        role="tab" aria-selected="@(key == _tab ? "true" : "false")"
+                        OnClick="@(() => SelectTab(key))">@label</Button>
+            }
+        </div>
+    </CardContent>
+</Card>
+
+@if (_error is not null)
+{
+    <Alert Variant="destructive" Class="mb-4">@_error</Alert>
+}
+else if (_loading)
+{
+    <p class="text-sm text-muted-foreground">Loading…</p>
+}
+else if (_report is not null)
+{
+    @if (_downloadError is not null)
+    {
+        <Alert Variant="destructive" Class="mb-4" data-download-error>@_downloadError</Alert>
+    }
+
+    <div class="mb-4 text-sm">
+        <p class="font-semibold">@_report.Employer.Name</p>
+        <p class="text-muted-foreground">@_report.Title · @_report.Basis · TIN @_report.Employer.Tin
+            @if (_report.Report != "1601c") { <span> · Employer no. @_report.Employer.AgencyNumber</span> }</p>
+    </div>
+
+    @if (_report.Warnings.Count > 0)
+    {
+        <Alert Class="mb-4" data-report-warnings>
+            <ul class="list-disc pl-4">@foreach (var w in _report.Warnings) { <li>@w</li> }</ul>
+        </Alert>
+    }
+
+    @if (_report.Rows.Count == 0)
+    {
+        <p class="text-sm text-muted-foreground" data-report-empty>No payroll was paid for @_month.ToString("MMMM yyyy").</p>
+    }
+    else
+    {
+        <div class="overflow-x-auto rounded-md border">
+            <table class="w-full text-sm" data-report-table>
+                <thead><tr>@foreach (var c in _report.Columns) { <th class="px-3 py-2 text-left">@c</th> }</tr></thead>
+                <tbody>
+                    @foreach (var row in _report.Rows)
+                    {
+                        <tr class="@(row.MissingNumber ? "bg-destructive/10" : "")">
+                            @foreach (var cell in row.Cells) { <td class="px-3 py-2">@cell</td> }
+                        </tr>
+                    }
+                </tbody>
+                <tfoot><tr class="font-semibold" data-report-totals>@foreach (var t in _report.Totals) { <td class="px-3 py-2">@t</td> }</tr></tfoot>
+            </table>
+        </div>
+
+        @if (_report.Summary.Count > 0)
+        {
+            <table class="mt-6 text-sm" data-report-summary>
+                @foreach (var line in _report.Summary)
+                {
+                    <tr><td class="pr-6 py-1">@line.Label</td><td class="text-right">@line.Amount.ToString("N2")</td></tr>
+                }
+            </table>
+        }
+    }
+}
+
+@code {
+    private static readonly (string Key, string Label)[] Tabs =
+        [("sss", "SSS"), ("philhealth", "PhilHealth"), ("pagibig", "Pag-IBIG"), ("1601c", "BIR 1601-C")];
+
+    // Remittances are for the month just ended.
+    private DateTime _month = new(DateTime.Today.AddMonths(-1).Year, DateTime.Today.AddMonths(-1).Month, 1);
+    private string _tab = "sss";
+    private GovernmentReportDto? _report;
+    private bool _loading, _downloading;
+    private string? _error;
+    private string? _downloadError;
+
+    // Guards against a slow earlier tab/month request resolving after a later one and
+    // overwriting its (more current) result: each LoadAsync call claims the next number, and
+    // only the call that is still the latest when it completes is allowed to apply what it got.
+    private int _loadSequence;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task SelectTab(string key)
+    {
+        _tab = key;
+        await LoadAsync();
+    }
+
+    private async Task ChangeMonth(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse($"{e.Value}-01", out var month))
+        {
+            _month = month;
+            await LoadAsync();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        var sequence = ++_loadSequence;
+        _loading = true;
+        _error = null;
+        _downloadError = null;
+        try
+        {
+            var report = await Api.GetGovernmentReportAsync(_tab, _month.Year, _month.Month);
+            if (sequence != _loadSequence) return; // a later tab/month change has since started; drop this stale result
+            _report = report;
+        }
+        catch (HttpRequestException ex)
+        {
+            if (sequence != _loadSequence) return;
+            _report = null;
+            _error = ex.Message;
+        }
+        finally
+        {
+            if (sequence == _loadSequence) _loading = false;
+        }
+    }
+
+    private async Task DownloadCsv()
+    {
+        // Captured before the await: if a tab or month change lands while the download is in
+        // flight, the file name still matches the report that was actually downloaded.
+        var (tab, month) = (_tab, _month);
+        _downloading = true;
+        _downloadError = null;
+        try
+        {
+            var csv = await Api.GetGovernmentReportCsvAsync(tab, month.Year, month.Month);
+            await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(csv),
+                $"{tab}-{month:yyyy-MM}.csv", "text/csv");
+        }
+        catch (HttpRequestException ex)
+        {
+            // A download failure is about the CSV, not the report already on screen - keep that
+            // report visible and show this as its own alert, rather than routing it through
+            // _error and having the "@if (_error) / else if (_report)" chain above replace the
+            // whole page with the banner.
+            _downloadError = ex.Message;
+        }
+        finally
+        {
+            _downloading = false;
+        }
+    }
+}
