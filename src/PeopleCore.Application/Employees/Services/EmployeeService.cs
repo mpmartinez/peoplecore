@@ -3,6 +3,7 @@ using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Employees.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Domain.Entities.Employees;
+using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
 
 namespace PeopleCore.Application.Employees.Services;
@@ -10,8 +11,13 @@ namespace PeopleCore.Application.Employees.Services;
 public class EmployeeService : IEmployeeService
 {
     private readonly IEmployeeRepository _repo;
+    private readonly ISeparationService _separationService;
 
-    public EmployeeService(IEmployeeRepository repo) => _repo = repo;
+    public EmployeeService(IEmployeeRepository repo, ISeparationService separationService)
+    {
+        _repo = repo;
+        _separationService = separationService;
+    }
 
     public async Task<PagedResult<EmployeeDto>> GetAllAsync(EmployeeFilterDto filter, CancellationToken ct = default)
     {
@@ -81,17 +87,15 @@ public class EmployeeService : IEmployeeService
         return ToDto(employee);
     }
 
-    public async Task DeactivateAsync(Guid id, DateOnly separationDate, CancellationToken ct = default)
+    public async Task DeactivateAsync(
+        Guid id, DateOnly separationDate, SeparationType? type = null, AuthorizedCause? authorizedCause = null, CancellationToken ct = default)
     {
         var employee = await _repo.GetByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Employee {id} not found.");
         if (!employee.IsActive)
             throw new DomainException("Employee is already inactive.");
 
-        employee.IsActive = false;
-        employee.SeparationDate = separationDate;
-        employee.UpdatedAt = DateTime.UtcNow;
-        await _repo.UpdateAsync(employee, ct);
+        await _separationService.SeparateNowAsync(id, separationDate, type, authorizedCause, ct);
     }
 
     public async Task<IReadOnlyList<GovernmentIdDto>> GetGovernmentIdsAsync(Guid employeeId, CancellationToken ct = default)

@@ -1,0 +1,266 @@
+@page "/separations"
+@attribute [RequirePermission(Permissions.EmployeesManage)]
+@inject ApiClient Api
+@inject NavigationManager Nav
+
+@*
+    Everyone whose separation has been recorded - notice given or already separated - and the
+    clearance checklist each one is working through. Recording one opens with an employee already
+    chosen when the page is reached from the Employees list's "Record separation" link
+    (?employee={id}); otherwise the picker starts empty.
+*@
+
+<PageTitle>Separations</PageTitle>
+
+<PageHeader Title="Separations" Section="Employees" Description="Resignations, terminations and other separations, and the clearance each one needs before final pay.">
+    <Actions>
+        <Button Variant="primary" OnClick="OpenRecordForm" data-record-separation>
+            <i class="bi bi-plus-lg mr-1"></i> Record separation
+        </Button>
+    </Actions>
+</PageHeader>
+
+<Card>
+    <CardContent Class="p-0">
+        @if (_loadError is not null)
+        {
+            <div class="p-4"><Alert Variant="destructive">@_loadError</Alert></div>
+        }
+        else if (_separations is null)
+        {
+            <div class="p-6 flex justify-center"><Spinner /></div>
+        }
+        else if (_separations.Count == 0)
+        {
+            <div class="p-6 text-center text-muted-foreground text-sm">No separations recorded.</div>
+        }
+        else
+        {
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead Class="px-4">Employee</TableHead>
+                        <TableHead Class="px-4">Type</TableHead>
+                        <TableHead Class="px-4">Last Working Day</TableHead>
+                        <TableHead Class="px-4">Status</TableHead>
+                        <TableHead Class="px-4">Clearance</TableHead>
+                        <TableHead Class="px-4">Final Pay Due By</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    @foreach (var s in _separations)
+                    {
+                        <TableRow @onclick="() => GoToDetail(s.Id)">
+                            <TableCell Class="px-4 py-3 cursor-pointer">
+                                <div class="font-medium">@s.EmployeeName</div>
+                                <div class="text-xs text-muted-foreground">@s.EmployeeNumber</div>
+                            </TableCell>
+                            <TableCell Class="px-4 py-3 cursor-pointer">@SeparationLabels.TypeWithCause(s.Type, s.AuthorizedCause)</TableCell>
+                            <TableCell Class="px-4 py-3 cursor-pointer">@s.LastWorkingDay.ToString("MMM d, yyyy")</TableCell>
+                            <TableCell Class="px-4 py-3 cursor-pointer"><Badge Variant="@(s.Status == SeparationStatus.Separated ? "secondary" : "warning")">@SeparationLabels.StatusOf(s.Status)</Badge></TableCell>
+                            <TableCell Class="px-4 py-3 cursor-pointer">@s.ClearedCount of @s.ClearanceCount</TableCell>
+                            <TableCell Class="px-4 py-3 cursor-pointer">
+                                @s.FinalPayDueBy.ToString("MMM d, yyyy")
+                                @if (s.FinalPayOverdue)
+                                {
+                                    <Badge Variant="destructive" Class="ml-2" data-overdue>Overdue</Badge>
+                                }
+                            </TableCell>
+                        </TableRow>
+                    }
+                </TableBody>
+            </Table>
+        }
+    </CardContent>
+</Card>
+
+<Sheet IsOpen="@_showForm" IsOpenChanged="@(v => _showForm = v)" Title="Record separation"
+       Description="Notice of separation for an active employee." Side="right" data-record-form>
+    <ChildContent>
+        @if (_formError is not null)
+        {
+            <Alert Variant="destructive" Class="mb-4" data-form-error>@_formError</Alert>
+        }
+        @if (_employeesError is not null)
+        {
+            <Alert Variant="destructive" Class="mb-4">Employees could not be loaded: @_employeesError</Alert>
+        }
+
+        <div class="space-y-4">
+            <FormField LabelText="Employee" Id="separation-employee" Required="true">
+                <Select TValue="Guid?" Id="separation-employee" Value="@_form.EmployeeId" Placeholder="Select..."
+                        ValueChanged="@(v => _form.EmployeeId = v)">
+                    @foreach (var employee in _employees)
+                    {
+                        <option value="@employee.Id">@employee.FullName (@employee.EmployeeNumber)</option>
+                    }
+                </Select>
+            </FormField>
+            <FormField LabelText="Type" Id="separation-type" Required="true">
+                <Select TValue="string" Id="separation-type" Value="@_form.Type" Placeholder="Select..."
+                        ValueChanged="@(v => OnTypeChanged(v))">
+                    @foreach (var type in Enum.GetValues<SeparationType>())
+                    {
+                        <option value="@type">@SeparationLabels.TypeOf(type)</option>
+                    }
+                </Select>
+            </FormField>
+            @if (_form.Type == nameof(SeparationType.AuthorizedCause))
+            {
+                <FormField LabelText="Cause" Id="separation-cause" Required="true">
+                    <Select TValue="string" Id="separation-cause" @bind-Value="_form.Cause" Placeholder="Select...">
+                        @foreach (var cause in Enum.GetValues<AuthorizedCause>())
+                        {
+                            <option value="@cause">@SeparationLabels.CauseOf(cause)</option>
+                        }
+                    </Select>
+                </FormField>
+            }
+            <FormField LabelText="Notice Date" Id="separation-notice-date" Required="true">
+                <Input TValue="DateOnly" Id="separation-notice-date" Type="date" @bind-Value="_form.NoticeDate" />
+            </FormField>
+            <FormField LabelText="Last Working Day" Id="separation-last-day" Required="true">
+                <Input TValue="DateOnly" Id="separation-last-day" Type="date" @bind-Value="_form.LastWorkingDay" />
+            </FormField>
+            <FormField LabelText="Reason" Id="separation-reason">
+                <Textarea Id="separation-reason" @bind-Value="_form.Reason" />
+            </FormField>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <Button Variant="outline" Size="sm" OnClick="CloseForm">Cancel</Button>
+        <Button Variant="primary" Size="sm" OnClick="SubmitForm" Loading="@_saving" data-submit-separation>Record separation</Button>
+    </FooterContent>
+</Sheet>
+
+@code {
+    private List<SeparationDto>? _separations;
+    private string? _loadError;
+    private List<EmployeeListDto> _employees = [];
+    private string? _employeesError;
+    private bool _showForm;
+    private bool _saving;
+    private string? _formError;
+    private SeparationFormModel _form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSeparations();
+        await LoadEmployees();
+
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(Nav.Uri).Query);
+        if (query.TryGetValue("employee", out var employeeText) && Guid.TryParse(employeeText, out var employeeId))
+        {
+            OpenRecordForm();
+            _form.EmployeeId = employeeId;
+        }
+    }
+
+    private async Task LoadSeparations()
+    {
+        _loadError = null;
+        try
+        {
+            _separations = (await Api.GetSeparationsAsync() ?? []).ToList();
+        }
+        catch (Exception ex)
+        {
+            _separations = null;
+            _loadError = ex.Message;
+        }
+    }
+
+    /// <summary>Every active employee, for the picker; a page at a time, as the list endpoint caps its pages.</summary>
+    private async Task LoadEmployees()
+    {
+        try
+        {
+            var loaded = new List<EmployeeListDto>();
+            for (var page = 1; ; page++)
+            {
+                var result = await Api.GetEmployeesAsync(page, 100, isActive: true);
+                if (result is null) break;
+                loaded.AddRange(result.Items);
+                if (page >= result.TotalPages) break;
+            }
+            _employees = loaded;
+            _employeesError = null;
+        }
+        catch (Exception ex)
+        {
+            _employeesError = ex.Message;
+        }
+    }
+
+    private void GoToDetail(Guid id) => Nav.NavigateTo($"/separations/{id}");
+
+    private void OpenRecordForm()
+    {
+        _form = new SeparationFormModel();
+        _formError = null;
+        _showForm = true;
+    }
+
+    private void CloseForm() => _showForm = false;
+
+    // A cause chosen while the type was AuthorizedCause is stale as soon as the type changes away
+    // from it - clearing it here means SubmitForm never has to guess whether a leftover _form.Cause
+    // still applies.
+    private void OnTypeChanged(string type)
+    {
+        _form.Type = type;
+        if (type != nameof(SeparationType.AuthorizedCause)) _form.Cause = null;
+    }
+
+    private async Task SubmitForm()
+    {
+        _formError = null;
+        if (_form.EmployeeId is not { } employeeId || string.IsNullOrWhiteSpace(_form.Type))
+        {
+            _formError = "Please choose an employee and a type.";
+            return;
+        }
+        if (_form.Type == nameof(SeparationType.AuthorizedCause) && string.IsNullOrWhiteSpace(_form.Cause))
+        {
+            _formError = "Please choose a cause.";
+            return;
+        }
+
+        var type = Enum.Parse<SeparationType>(_form.Type);
+        // Only an AuthorizedCause separation has a cause - even if a stale one somehow survived
+        // in the form model, it isn't sent for any other type.
+        AuthorizedCause? cause = type == SeparationType.AuthorizedCause && !string.IsNullOrWhiteSpace(_form.Cause)
+            ? Enum.Parse<AuthorizedCause>(_form.Cause)
+            : null;
+
+        _saving = true;
+        SeparationDto? recorded;
+        try
+        {
+            recorded = await Api.RecordSeparationAsync(new RecordSeparationRequest(
+                employeeId, type, cause, _form.NoticeDate, _form.LastWorkingDay,
+                string.IsNullOrWhiteSpace(_form.Reason) ? null : _form.Reason.Trim()));
+        }
+        catch (Exception ex)
+        {
+            _formError = ex.Message;
+            return;
+        }
+        finally
+        {
+            _saving = false;
+        }
+
+        if (recorded is not null) Nav.NavigateTo($"/separations/{recorded.Id}");
+    }
+
+    private class SeparationFormModel
+    {
+        public Guid? EmployeeId { get; set; }
+        public string Type { get; set; } = "";
+        public string? Cause { get; set; }
+        public DateOnly NoticeDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+        public DateOnly LastWorkingDay { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+        public string? Reason { get; set; }
+    }
+}

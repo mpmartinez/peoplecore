@@ -14,11 +14,12 @@ namespace PeopleCore.Application.Tests.Employees;
 public class EmployeeServiceTests
 {
     private readonly Mock<IEmployeeRepository> _repo = new();
+    private readonly Mock<ISeparationService> _separationService = new();
     private readonly EmployeeService _sut;
 
     public EmployeeServiceTests()
     {
-        _sut = new EmployeeService(_repo.Object);
+        _sut = new EmployeeService(_repo.Object, _separationService.Object);
     }
 
     [Fact]
@@ -72,6 +73,32 @@ public class EmployeeServiceTests
 
         await act.Should().ThrowAsync<DomainException>()
                  .WithMessage("*already inactive*");
+    }
+
+    [Fact]
+    public async Task DeactivateAsync_CallsSeparateNowAsync_WithTheIdDateTypeAndCause()
+    {
+        var employee = new Employee
+        {
+            Id = Guid.NewGuid(),
+            EmployeeNumber = "EMP-001",
+            FirstName = "Juan",
+            LastName = "dela Cruz",
+            DateOfBirth = new DateOnly(1990, 1, 1),
+            Gender = Gender.Male,
+            WorkEmail = "juan@company.com",
+            EmploymentStatus = EmploymentStatus.Regular,
+            EmploymentType = EmploymentType.Regular,
+            HireDate = new DateOnly(2020, 1, 1),
+            IsActive = true
+        };
+        _repo.Setup(r => r.GetByIdAsync(employee.Id, It.IsAny<CancellationToken>())).ReturnsAsync(employee);
+        var separationDate = new DateOnly(2026, 9, 30);
+
+        await _sut.DeactivateAsync(employee.Id, separationDate, SeparationType.AuthorizedCause, AuthorizedCause.Redundancy);
+
+        _separationService.Verify(s => s.SeparateNowAsync(
+            employee.Id, separationDate, SeparationType.AuthorizedCause, AuthorizedCause.Redundancy, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

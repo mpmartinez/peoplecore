@@ -1,11 +1,14 @@
 using System.Net;
+using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using AngleSharp.Dom;
 using Bunit;
 using Bunit.TestDoubles;
 using FluentAssertions;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
+using PeopleCore.Web.Auth;
 using PeopleCore.Web.Pages.HR;
 using PeopleCore.Web.Services;
 using PeopleCore.Web.Tests.TestSupport;
@@ -31,6 +34,7 @@ public class EmployeesTests : BunitContext
     public EmployeesTests()
     {
         Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(_api)));
+        JSInterop.SetupVoid("downloadFileFromBytes", _ => true).SetVoidResult();
         _auth = AddAuthorization();
         _auth.SetAuthorized("hr@company.test");
         _auth.SetClaims(SeededPermissions.ClaimsFor("HRManager"));
@@ -508,6 +512,113 @@ public class EmployeesTests : BunitContext
 
         cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Positions are unavailable."));
         cut.FindAll("#position option").Select(o => o.TextContent).Should().Equal("None");
+    }
+
+    [Fact]
+    public void RecordSeparation_IsOfferedOnlyForActiveEmployees()
+    {
+        var cut = RenderPage(Paged(1,
+            Employee("EMP-1", "Maria Santos", id: MariaId),
+            Employee("EMP-2", "Juan Cruz", id: JuanId, active: false)));
+
+        ButtonsIn(RowNamed(cut, "Maria Santos")).Should().Contain("Record separation");
+        ButtonsIn(RowNamed(cut, "Juan Cruz")).Should().NotContain("Record separation");
+    }
+
+    [Fact]
+    public void RecordSeparation_NavigatesToTheSeparationsPage_WithThatEmployeeChosen()
+    {
+        var cut = RenderPage(Paged(1, Employee("EMP-1", "Maria Santos", id: MariaId)));
+
+        RowNamed(cut, "Maria Santos").QuerySelectorAll("button").Single(b => b.TextContent.Trim() == "Record separation").Click();
+
+        CurrentUri.Should().EndWith($"/separations?employee={MariaId}");
+    }
+
+    [Fact]
+    public void AViewOnlyUser_DoesNotSeeRecordSeparationOrCertificateOfEmployment()
+    {
+        // employees.view-all alone, not employees.manage: someone who can look but not act.
+        _auth.SetClaims([new Claim(Permissions.ClaimType, Permissions.EmployeesViewAll)]);
+
+        var cut = RenderPage(Paged(1, Employee("EMP-1", "Maria Santos", id: MariaId)));
+
+        var buttons = ButtonsIn(RowNamed(cut, "Maria Santos"));
+        buttons.Should().NotContain("Record separation");
+        buttons.Should().NotContain("Certificate of Employment");
+    }
+
+    [Fact]
+    public void TheIncludeSalaryCheckbox_IsHiddenWithoutPayrollPermission()
+    {
+        // employees.manage without payroll.manage: can open the certificate, but not add pay to it.
+        _auth.SetClaims([
+            new Claim(Permissions.ClaimType, Permissions.EmployeesViewAll),
+            new Claim(Permissions.ClaimType, Permissions.EmployeesManage)
+        ]);
+        var cut = RenderPage(Paged(1, Employee("EMP-1", "Maria Santos", id: MariaId)));
+
+        RowNamed(cut, "Maria Santos").QuerySelectorAll("button").Single(b => b.TextContent.Trim() == "Certificate of Employment").Click();
+
+        cut.WaitForElement("[data-coe-dialog]");
+        cut.FindAll("[data-include-salary]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void CertificateOfEmployment_OpensWithTheDefaultPurposeAndSignatoryTitlePrefilled()
+    {
+        var cut = RenderPage(Paged(1, Employee("EMP-1", "Maria Santos", id: MariaId)));
+
+        RowNamed(cut, "Maria Santos").QuerySelectorAll("button").Single(b => b.TextContent.Trim() == "Certificate of Employment").Click();
+
+        cut.WaitForElement("[data-coe-dialog]");
+        cut.Find("#coe-purpose").TextContent.Should().Contain("issued upon the request of the employee");
+        cut.Find("#coe-signatory-title").GetAttribute("value").Should().Be("HR Manager");
+        cut.Find("#coe-signatory-name").GetAttribute("value").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void DownloadingTheCertificate_SendsTheFormAndSavesThePdf()
+    {
+        var cut = RenderPage(Paged(1, Employee("EMP-1", "Maria Santos", id: MariaId)));
+        _api.On(HttpMethod.Post, $"/api/employees/{MariaId}/coe", () => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent([1, 2, 3]) { Headers = { ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf") } }
+        });
+        RowNamed(cut, "Maria Santos").QuerySelectorAll("button").Single(b => b.TextContent.Trim() == "Certificate of Employment").Click();
+        cut.WaitForElement("[data-coe-dialog]");
+        cut.Find("#coe-signatory-name").Input("Ana Reyes");
+        cut.Find("[data-include-salary]").Click();
+
+        cut.Find("[data-download-coe]").Click();
+
+        cut.WaitForAssertion(() => JSInterop.VerifyInvoke("downloadFileFromBytes"));
+        var body = BodyOf(HttpMethod.Post, $"/api/employees/{MariaId}/coe");
+        body.GetProperty("signatoryName").GetString().Should().Be("Ana Reyes");
+        body.GetProperty("includeSalary").GetBoolean().Should().BeTrue();
+        cut.WaitForAssertion(() => cut.FindAll("[data-coe-dialog]").Should().BeEmpty());
+    }
+
+    [Fact]
+    public void AFailedCertificateDownload_ShowsTheErrorInTheDialog()
+    {
+        var cut = RenderPage(Paged(1, Employee("EMP-1", "Maria Santos", id: MariaId)));
+        _api.On(HttpMethod.Post, $"/api/employees/{MariaId}/coe", HttpStatusCode.BadRequest,
+            """{"detail":"Maria Santos has no salary on record, so the salary line can't be added."}""");
+        RowNamed(cut, "Maria Santos").QuerySelectorAll("button").Single(b => b.TextContent.Trim() == "Certificate of Employment").Click();
+        cut.WaitForElement("[data-coe-dialog]");
+
+        cut.Find("[data-download-coe]").Click();
+
+        cut.WaitForElement("[data-coe-error]").TextContent.Should().Contain("no salary on record");
+        cut.FindAll("[data-coe-dialog]").Should().ContainSingle("the dialog stays open so the fields survive the failure");
+    }
+
+    private JsonElement BodyOf(HttpMethod method, string path)
+    {
+        var index = _api.Requests.FindIndex(r => r.Method == method && r.RequestUri!.AbsolutePath == path);
+        index.Should().BeGreaterThanOrEqualTo(0, $"a {method} to {path} was expected");
+        return JsonDocument.Parse(_api.RequestBodies[index]!).RootElement;
     }
 
     /// <summary>Holds back the answer to one URL until the test releases it.</summary>

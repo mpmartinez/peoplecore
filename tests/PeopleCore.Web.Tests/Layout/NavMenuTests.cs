@@ -1,8 +1,10 @@
+using System.Security.Claims;
 using Bunit;
 using Bunit.TestDoubles;
 using FluentAssertions;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
+using PeopleCore.Web.Auth;
 using PeopleCore.Web.Layout;
 using PeopleCore.Web.Tests.TestSupport;
 
@@ -55,7 +57,7 @@ public class NavMenuTests : BunitContext
     {
         var cut = RenderAs("Admin");
 
-        cut.FindAll("a[href]").Should().HaveCount(24);
+        cut.FindAll("a[href]").Should().HaveCount(25);
         Links(cut).Should().OnlyHaveUniqueItems();
     }
 
@@ -94,6 +96,20 @@ public class NavMenuTests : BunitContext
     public void TheCompanyPage_IsListedOnlyForThoseWhoManageSettings(string role, bool listed)
     {
         Links(RenderAs(role)).Contains("/admin/company").Should().Be(listed);
+    }
+
+    [Fact]
+    public void TheSeparationsLink_IsHiddenFromAViewOnlyEmployeesUser()
+    {
+        // employees.view-all lets them see /employees; separations is an HR action and needs
+        // employees.manage too.
+        _auth.SetAuthorized("someone@company.test");
+        _auth.SetClaims([new Claim(Permissions.ClaimType, Permissions.EmployeesViewAll)]);
+
+        var links = Links(Render<NavMenu>());
+
+        links.Should().Contain("/employees");
+        links.Should().NotContain("/separations");
     }
 
     [Fact]

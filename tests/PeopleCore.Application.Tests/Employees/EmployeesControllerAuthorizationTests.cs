@@ -8,6 +8,7 @@ using Moq;
 using PeopleCore.API.Controllers.Employees;
 using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Common.Interfaces;
+using PeopleCore.Application.Employees.Coe;
 using PeopleCore.Application.Employees.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Domain.Enums;
@@ -34,6 +35,7 @@ public class EmployeesControllerAuthorizationTests
     private readonly Mock<IEmployeeService> _service = new();
     private readonly Mock<IEmployeeDocumentService> _documents = new();
     private readonly Mock<ICurrentUserService> _currentUser = new();
+    private readonly Mock<ICoeService> _coe = new();
     private readonly EmployeesController _sut;
 
     public EmployeesControllerAuthorizationTests()
@@ -41,7 +43,7 @@ public class EmployeesControllerAuthorizationTests
         // Default caller: a rank-and-file employee holding no privileged role.
         _currentUser.Setup(c => c.EmployeeId).Returns(Caller);
         _currentUser.Setup(c => c.HasPermission(It.IsAny<string>())).Returns(false);
-        _sut = new EmployeesController(_service.Object, _documents.Object, _currentUser.Object);
+        _sut = new EmployeesController(_service.Object, _documents.Object, _currentUser.Object, _coe.Object);
     }
 
     private void SignInAs(Guid? employeeId, params string[] roles)
@@ -265,7 +267,8 @@ public class EmployeesControllerAuthorizationTests
             .Concat([
                 nameof(EmployeesController.Update),
                 nameof(EmployeesController.Deactivate),
-                nameof(EmployeesController.DeleteDocument)
+                nameof(EmployeesController.DeleteDocument),
+                nameof(EmployeesController.Coe)
             ])
             .ToHashSet();
 
