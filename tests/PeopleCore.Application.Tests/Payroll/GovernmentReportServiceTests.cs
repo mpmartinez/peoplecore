@@ -394,6 +394,48 @@ public class GovernmentReportServiceTests
     }
 
     [Fact]
+    public async Task BuildAnnualAsync_1604C_ExcludesNonPaidAndOtherYearRunsFromTheWithheldSplit()
+    {
+        // GetPaidRunsInYearAsync's name promises Paid runs in the year, but nothing stops a future
+        // change to that query from widening it - the same reason Bir2316Service.BuildAsync
+        // re-applies this predicate for Item 25A. This split must not silently disagree with that
+        // figure by counting a run Item 25A itself would not count.
+        var employeeId = Guid.NewGuid();
+        var employee = new Employee
+        {
+            Id = employeeId, LastName = "Cruz", FirstName = "Juan",
+            DateOfBirth = new DateOnly(1990, 1, 1), HireDate = new DateOnly(2020, 1, 6)
+        };
+        var form = new Bir2316Dto
+        {
+            EmployeeId = employeeId, EmployeeLastName = "Cruz", EmployeeFirstName = "Juan",
+            EmployeeTin = "111-222-333-000"
+        };
+        _bir2316.Setup(b => b.BuildAllAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([form]);
+        _employees.Setup(e => e.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+                  .ReturnsAsync([employee]);
+
+        var notPaid = Run(new(2026, 3, 20), new(2026, 3, 20), Entry(employee, tax: 9_000m));
+        notPaid.Status = PayrollRunStatus.Draft;
+        var decemberLastYear = Run(new(2025, 12, 20), new(2025, 12, 20), Entry(employee, tax: 8_000m));
+
+        _runs.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([
+            Run(new(2026, 3, 20), new(2026, 3, 20), Entry(employee, tax: 2_000m)),
+            notPaid,
+            decemberLastYear
+        ]);
+        _runs.Setup(r => r.CountUnpaidRunsPaidInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(0);
+
+        var report = await _sut.BuildAnnualAsync("1604c", 2026);
+
+        var section = report.Sections.Single(s => s.Title == "Employed as of December 31, no previous employer");
+        var row = section.Rows.Should().ContainSingle().Subject;
+        var columns = section.Columns.ToList();
+        row.Cells[columns.IndexOf("Tax withheld, January to November")].Should().Be("2000.00");
+        row.Cells[columns.IndexOf("Tax withheld, December")].Should().Be("0.00");
+    }
+
+    [Fact]
     public async Task BuildAnnualAsync_AnUnknownReport_IsNotFound()
     {
         var act = () => _sut.BuildAnnualAsync("sss", 2026);

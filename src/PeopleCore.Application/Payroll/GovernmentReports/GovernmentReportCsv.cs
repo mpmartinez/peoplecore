@@ -3,7 +3,10 @@ using System.Text;
 
 namespace PeopleCore.Application.Payroll.GovernmentReports;
 
-/// <summary>A government report as CSV: the employer, a blank line, the table, then any form lines.</summary>
+/// <summary>
+/// A government report as CSV: the employer, a blank line, the table (or, for the 1604-C alphalist,
+/// each of its sections' own table), then any form lines.
+/// </summary>
 public static class GovernmentReportCsv
 {
     public const string ContentType = "text/csv";

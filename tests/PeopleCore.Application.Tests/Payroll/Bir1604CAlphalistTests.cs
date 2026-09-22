@@ -1,3 +1,4 @@
+using System.Globalization;
 using FluentAssertions;
 using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.GovernmentReports;
@@ -103,6 +104,7 @@ public class Bir1604CAlphalistTests
         var report = Bir1604CAlphalist.Build(2026, Employer,
             [Person(Form("Santos", "Maria", prevTaxable: 80_000m, prevWithheld: 4_000m))], unpaidRuns: 0);
 
+        report.Sections[0].Columns.Should().Contain(["Previous employer's taxable compensation", "Previous employer's tax withheld"]);
         report.Sections[2].Columns.Should().Contain(["Previous employer's taxable compensation", "Previous employer's tax withheld"]);
         report.Sections[1].Columns.Should().NotContain("Previous employer's taxable compensation");
         var cells = report.Sections[2].Rows.Single().Cells;
@@ -171,7 +173,8 @@ public class Bir1604CAlphalistTests
         var columns = report.Sections[1].Columns;
         var rows = report.Sections[1].Rows;
         decimal Collect(string last) => decimal.Parse(
-            rows.Single(r => r.Cells[1] == last).Cells[columns.ToList().IndexOf("To collect / (refund)")]);
+            rows.Single(r => r.Cells[1] == last).Cells[columns.ToList().IndexOf("To collect / (refund)")],
+            CultureInfo.InvariantCulture);
 
         (Collect("Cruz") - Collect("Dizon")).Should().Be(pera);
     }

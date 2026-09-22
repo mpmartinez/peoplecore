@@ -131,7 +131,11 @@ public sealed class GovernmentReportService : IGovernmentReportService
 
         // January-November and December tax withheld aren't on the 2316; they come from the same
         // year's Paid runs by pay month, and add up to its present-employer tax withheld.
-        var runs = await _runs.GetPaidRunsInYearAsync(year, ct);
+        // Same Paid/PayDate.Year predicate as Bir2316Service.BuildAsync, re-applied here so this
+        // split can't silently disagree with the present-employer withheld tax (Item 25A) behind it.
+        var runs = (await _runs.GetPaidRunsInYearAsync(year, ct))
+            .Where(r => r.Status == PayrollRunStatus.Paid && r.PayDate.Year == year)
+            .ToList();
         var withheldByEmployee = runs
             .SelectMany(r => r.Employees.Select(e => (e.EmployeeId, December: r.PayDate.Month == 12, e.WithholdingTax)))
             .GroupBy(x => x.EmployeeId)

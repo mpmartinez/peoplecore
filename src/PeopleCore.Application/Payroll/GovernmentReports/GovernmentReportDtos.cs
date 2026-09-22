@@ -1,9 +1,10 @@
 namespace PeopleCore.Application.Payroll.GovernmentReports;
 
 /// <summary>
-/// One agency's report for one month, shaped as a table so the page and the CSV render every
-/// report the same way. <see cref="Summary"/> carries BIR 1601-C's form lines and is empty for
-/// the others.
+/// One agency's report - a single month for SSS, PhilHealth, Pag-IBIG and BIR 1601-C, a whole year
+/// for the BIR 1604-C alphalist (see <see cref="IsAnnual"/>) - shaped as a table (or, for the
+/// alphalist, <see cref="Sections"/> of tables) so the page and the CSV render every report the
+/// same way. <see cref="Summary"/> carries BIR 1601-C's form lines and is empty for the others.
 /// </summary>
 public sealed record GovernmentReportDto(
     string Report,
