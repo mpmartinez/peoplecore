@@ -352,6 +352,21 @@ public class Bir2316ServiceTests
     }
 
     [Fact]
+    public async Task BuildAllAsync_FormsCarryTheEmployeeId()
+    {
+        var run = Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+        [
+            Entry(_employeeId, regularPay: 30_000m, withholdingTax: 2_000m)
+        ]);
+        PaidRunsInYearAre([_employeeId], run);
+        EmployeesAre(TheEmployee());
+
+        var result = await _sut.BuildAllAsync(2026, CancellationToken.None);
+
+        result.Should().ContainSingle().Which.EmployeeId.Should().Be(_employeeId);
+    }
+
+    [Fact]
     public async Task BuildAllAsync_WhenNoEmployeeHasAPaidRunInTheYear_ReturnsEmptyWithoutFurtherQueries()
     {
         PaidRunsInYearAre([]);

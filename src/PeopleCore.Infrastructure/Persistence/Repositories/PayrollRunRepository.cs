@@ -97,6 +97,13 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
             : unpaid.CountAsync(r => r.PeriodEnd >= first && r.PeriodEnd < next, ct));
     }
 
+    public async Task<int> CountUnpaidRunsPaidInYearAsync(int year, CancellationToken ct = default)
+    {
+        var first = new DateOnly(year, 1, 1);
+        var next = first.AddYears(1);
+        return await Context.PayrollRuns.CountAsync(r => r.Status != PayrollRunStatus.Paid && r.PayDate >= first && r.PayDate < next, ct);
+    }
+
     // A half-open range so the index on the date column can be used, instead of the Year/Month
     // predicates it used to run as, which cannot.
     private static (DateOnly First, DateOnly Next) MonthRange(int year, int month)

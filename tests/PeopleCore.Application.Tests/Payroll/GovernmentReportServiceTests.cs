@@ -1,6 +1,8 @@
 using FluentAssertions;
 using Moq;
+using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Organization.Interfaces;
+using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.GovernmentReports;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Domain.Entities.Employees;
@@ -17,6 +19,8 @@ public class GovernmentReportServiceTests
     private readonly Mock<IPayrollRunRepository> _runs = new();
     private readonly Mock<ICompanyRepository> _companies = new();
     private readonly Mock<IPayrollSettingsRepository> _settings = new();
+    private readonly Mock<IBir2316Service> _bir2316 = new();
+    private readonly Mock<IEmployeeRepository> _employees = new();
     private readonly GovernmentReportService _sut;
 
     private sealed class FixedClock(DateTimeOffset now) : TimeProvider
@@ -34,8 +38,10 @@ public class GovernmentReportServiceTests
         _runs.Setup(r => r.GetPaidRunsByPeriodEndMonthAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
         _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
         _runs.Setup(r => r.GetPaidRunsInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _bir2316.Setup(b => b.BuildAllAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _employees.Setup(e => e.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
         _sut = new GovernmentReportService(_runs.Object, _companies.Object, _settings.Object,
-            new FixedClock(new DateTimeOffset(2026, 4, 10, 0, 0, 0, TimeSpan.Zero)));
+            new FixedClock(new DateTimeOffset(2026, 4, 10, 0, 0, 0, TimeSpan.Zero)), _bir2316.Object, _employees.Object);
     }
 
     private static Employee Person(string last, string first, params (GovernmentIdType Type, string Number)[] ids)
@@ -244,7 +250,8 @@ public class GovernmentReportServiceTests
         _runs.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([mayAdvance, december]);
         _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(2026, 12, It.IsAny<CancellationToken>())).ReturnsAsync([december]);
         var clock = new FixedClock(new DateTimeOffset(2027, 1, 10, 0, 0, 0, TimeSpan.Zero));
-        var sut = new GovernmentReportService(_runs.Object, _companies.Object, _settings.Object, clock);
+        var sut = new GovernmentReportService(_runs.Object, _companies.Object, _settings.Object, clock,
+            _bir2316.Object, _employees.Object);
 
         var report = await sut.BuildAsync("1601c", 2026, 12);
 
@@ -347,5 +354,58 @@ public class GovernmentReportServiceTests
         var report = await _sut.BuildAsync("sss", 2026, 3);
 
         report.Warnings.Should().Contain("The company's TIN is blank. Add it on the Company page.");
+    }
+
+    // ------------------------------------------------------------------
+    // BuildAnnualAsync — the 1604-C alphalist
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task BuildAnnualAsync_1604C_BuildsTheAlphalistFromThe2316Forms()
+    {
+        var employeeId = Guid.NewGuid();
+        var employee = new Employee
+        {
+            Id = employeeId, LastName = "Cruz", FirstName = "Juan",
+            DateOfBirth = new DateOnly(1990, 1, 1), HireDate = new DateOnly(2020, 1, 6)
+        };
+        var form = new Bir2316Dto
+        {
+            EmployeeId = employeeId, EmployeeLastName = "Cruz", EmployeeFirstName = "Juan",
+            EmployeeTin = "111-222-333-000"
+        };
+        _bir2316.Setup(b => b.BuildAllAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([form]);
+        _employees.Setup(e => e.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+                  .ReturnsAsync([employee]);
+        _runs.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([
+            Run(new(2026, 3, 20), new(2026, 3, 20), Entry(employee, tax: 2_000m)),
+            Run(new(2026, 12, 18), new(2026, 12, 18), Entry(employee, tax: 500m))
+        ]);
+        _runs.Setup(r => r.CountUnpaidRunsPaidInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(0);
+
+        var report = await _sut.BuildAnnualAsync("1604c", 2026);
+
+        report.Sections.Should().HaveCount(3);
+        var section = report.Sections.Single(s => s.Title == "Employed as of December 31, no previous employer");
+        var row = section.Rows.Should().ContainSingle().Subject;
+        var columns = section.Columns.ToList();
+        row.Cells[columns.IndexOf("Tax withheld, January to November")].Should().Be("2000.00");
+        row.Cells[columns.IndexOf("Tax withheld, December")].Should().Be("500.00");
+    }
+
+    [Fact]
+    public async Task BuildAnnualAsync_AnUnknownReport_IsNotFound()
+    {
+        var act = () => _sut.BuildAnnualAsync("sss", 2026);
+
+        await act.Should().ThrowAsync<KeyNotFoundException>();
+    }
+
+    [Fact]
+    public async Task BuildAnnualAsync_AYearThatHasNotStartedYet_IsRefused()
+    {
+        var act = () => _sut.BuildAnnualAsync("1604c", 2027);
+
+        await act.Should().ThrowAsync<DomainException>();
     }
 }

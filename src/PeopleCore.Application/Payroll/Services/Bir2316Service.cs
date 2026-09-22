@@ -212,6 +212,7 @@ public class Bir2316Service : IBir2316Service
 
         return new Bir2316Dto
         {
+            EmployeeId = employee.Id,
             Year = year,
             PeriodFrom = Format(runs.Min(r => r.PeriodStart)),
             PeriodTo = Format(runs.Max(r => r.PeriodEnd)),

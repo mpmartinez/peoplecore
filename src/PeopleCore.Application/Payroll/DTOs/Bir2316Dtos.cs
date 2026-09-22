@@ -18,6 +18,14 @@ namespace PeopleCore.Application.Payroll.DTOs;
 /// </summary>
 public record Bir2316Dto
 {
+    /// <summary>
+    /// The employee this certificate is for. Not printed on the form itself (the TIN and name are
+    /// what identifies a person there) - carried so <c>Bir1604CAlphalist</c> can match a
+    /// <c>IBir2316Service.BuildAllAsync</c> form back to the <c>Employee</c> row it needs
+    /// (hire/separation date) without re-deriving it from the TIN, which can be blank.
+    /// </summary>
+    public Guid EmployeeId { get; set; }
+
     // Header
     public int Year { get; set; }
     public string PeriodFrom { get; set; } = "";
