@@ -39,6 +39,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, ApplicationRole, 
     public DbSet<EmployeeGovernmentId> EmployeeGovernmentIds => Set<EmployeeGovernmentId>();
     public DbSet<EmergencyContact> EmergencyContacts => Set<EmergencyContact>();
     public DbSet<EmployeeDocument> EmployeeDocuments => Set<EmployeeDocument>();
+    public DbSet<Separation> Separations => Set<Separation>();
+    public DbSet<SeparationClearanceItem> SeparationClearanceItems => Set<SeparationClearanceItem>();
 
     // Attendance
     public DbSet<Holiday> Holidays => Set<Holiday>();

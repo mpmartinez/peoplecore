@@ -154,6 +154,7 @@ public static class ServiceExtensions
         services.AddScoped<IEmployeeService, EmployeeService>();
         services.AddScoped<IEmployeeAccessService, EmployeeAccessService>();
         services.AddScoped<IEmployeeDocumentService, EmployeeDocumentService>();
+        services.AddScoped<ISeparationRepository, SeparationRepository>();
 
         // Attendance
         services.AddScoped<IAttendanceRepository, AttendanceRepository>();
