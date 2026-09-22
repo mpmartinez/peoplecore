@@ -70,6 +70,24 @@ public class PayrollRunRepositoryMonthTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task CountUnpaidRunsPaidInYear_CountsRunsPaidInTheYearThatArentPaidYet()
+    {
+        var employee = AnEmployee();
+        Context.Employees.Add(employee);
+        var paid2026 = ARun("PAY-2026-001", new(2026, 1, 1), new(2026, 1, 15), new(2026, 1, 20));
+        var draft2026 = ARun("PAY-2026-002", new(2026, 2, 1), new(2026, 2, 15), new(2026, 2, 20), PayrollRunStatus.Draft);
+        var draft2025 = ARun("PAY-2025-010", new(2025, 12, 1), new(2025, 12, 15), new(2025, 12, 20), PayrollRunStatus.Draft);
+        foreach (var run in new[] { paid2026, draft2026, draft2025 })
+        {
+            Context.PayrollRuns.Add(run);
+            Context.PayrollRunEmployees.Add(AnEntry(run.Id, employee.Id));
+        }
+        await Context.SaveChangesAsync();
+
+        (await Sut.CountUnpaidRunsPaidInYearAsync(2026)).Should().Be(1);
+    }
+
+    [Fact]
     public async Task ByPeriodEndMonth_DoesNotMatchTheSameMonthInAnotherYear()
     {
         var employee = AnEmployee();

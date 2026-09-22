@@ -8,4 +8,11 @@ public interface IGovernmentReportService
     /// <see cref="Domain.Exceptions.DomainException"/> for a month outside 1-12 or still ahead.
     /// </summary>
     Task<GovernmentReportDto> BuildAsync(string report, int year, int month, CancellationToken ct = default);
+
+    /// <summary>
+    /// The annual BIR 1604-C alphalist for <paramref name="year"/> - <paramref name="report"/> must
+    /// be <c>1604c</c>. Throws <see cref="KeyNotFoundException"/> for any other name, and
+    /// <see cref="Domain.Exceptions.DomainException"/> for a year outside 1-9999 or still ahead.
+    /// </summary>
+    Task<GovernmentReportDto> BuildAnnualAsync(string report, int year, CancellationToken ct = default);
 }

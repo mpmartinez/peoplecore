@@ -23,6 +23,7 @@ public class Bir2316ServiceTests
     private readonly Mock<IPayrollRunRepository> _runRepo = new();
     private readonly Mock<IEmployeeRepository> _employeeRepo = new();
     private readonly Mock<ICompanyRepository> _companyRepo = new();
+    private readonly Mock<IBir2316InputsRepository> _inputsRepo = new();
     private readonly Bir2316Service _sut;
 
     public Bir2316ServiceTests()
@@ -31,11 +32,15 @@ public class Bir2316ServiceTests
                      .ReturnsAsync(() => TheEmployee());
         _companyRepo.Setup(r => r.GetDefaultAsync(It.IsAny<CancellationToken>()))
                     .ReturnsAsync(() => TheCompany());
+        // Default: nothing saved. Tests that need saved inputs override this per-employee stub
+        // (GetAsync) or replace this one (GetForYearAsync) directly.
+        _inputsRepo.Setup(r => r.GetForYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(new Dictionary<Guid, Bir2316Inputs>());
 
         // Default: nothing paid. Tests that need runs call PaidRunsAre.
         PaidRunsAre();
 
-        _sut = new Bir2316Service(_runRepo.Object, _employeeRepo.Object, _companyRepo.Object);
+        _sut = new Bir2316Service(_runRepo.Object, _employeeRepo.Object, _companyRepo.Object, _inputsRepo.Object);
     }
 
     // ------------------------------------------------------------------
@@ -347,6 +352,21 @@ public class Bir2316ServiceTests
     }
 
     [Fact]
+    public async Task BuildAllAsync_FormsCarryTheEmployeeId()
+    {
+        var run = Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+        [
+            Entry(_employeeId, regularPay: 30_000m, withholdingTax: 2_000m)
+        ]);
+        PaidRunsInYearAre([_employeeId], run);
+        EmployeesAre(TheEmployee());
+
+        var result = await _sut.BuildAllAsync(2026, CancellationToken.None);
+
+        result.Should().ContainSingle().Which.EmployeeId.Should().Be(_employeeId);
+    }
+
+    [Fact]
     public async Task BuildAllAsync_WhenNoEmployeeHasAPaidRunInTheYear_ReturnsEmptyWithoutFurtherQueries()
     {
         PaidRunsInYearAre([]);
@@ -406,6 +426,104 @@ public class Bir2316ServiceTests
         var act = () => _sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None);
 
         await act.Should().ThrowAsync<DomainException>();
+    }
+
+    // ------------------------------------------------------------------
+    // Saved manual inputs — GenerateAsync saves, BuildAsync never does, previews/bulk read them
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task GenerateAsync_SavesTheInputsItWasGenerated_With()
+    {
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 20_000m, withholdingTax: 2_000m)]));
+
+        var inputs = new Bir2316ManualInputs { PrevEmployerName = "Old Co.", Item22_PrevTaxableCompensation = 50_000m };
+
+        var dto = await _sut.GenerateAsync(_employeeId, 2026, inputs, CancellationToken.None);
+
+        dto.Should().NotBeNull();
+        _inputsRepo.Verify(r => r.SaveAsync(_employeeId, 2026, inputs, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_WhenTheEmployeeHasNoPaidRunsThatYear_SavesNothingAndReturnsNull()
+    {
+        PaidRunsAre();
+
+        var dto = await _sut.GenerateAsync(_employeeId, 2026, new Bir2316ManualInputs(), CancellationToken.None);
+
+        dto.Should().BeNull();
+        _inputsRepo.Verify(r => r.SaveAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<Bir2316ManualInputs>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task BuildAsync_SavesNothing()
+    {
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 20_000m, withholdingTax: 2_000m)]));
+
+        await _sut.BuildAsync(_employeeId, 2026, new Bir2316ManualInputs { Item27_PeraTaxCredit = 100m }, CancellationToken.None);
+
+        _inputsRepo.Verify(r => r.SaveAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<Bir2316ManualInputs>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GenerateAsync_RefusesInvalidInputs_BeforeSavingAnything()
+    {
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 20_000m, withholdingTax: 2_000m)]));
+
+        // Not digits/separators only and neither 9 nor 12 digits - Bir2316ManualInputsValidator
+        // rejects it on both grounds.
+        var act = () => _sut.GenerateAsync(_employeeId, 2026, new Bir2316ManualInputs { PrevEmployerTin = "not-a-tin" }, CancellationToken.None);
+
+        await act.Should().ThrowAsync<DomainException>();
+        _inputsRepo.Verify(r => r.SaveAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<Bir2316ManualInputs>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetPreviewAsync_UsesTheSavedInputs()
+    {
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 20_000m, withholdingTax: 2_000m)]));
+        _inputsRepo.Setup(r => r.GetAsync(_employeeId, 2026, It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(new Bir2316Inputs { EmployeeId = _employeeId, Year = 2026, Item22_PrevTaxableCompensation = 50_000m });
+
+        var dto = await _sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None);
+
+        dto!.Item22_PrevTaxableCompensation.Should().Be(50_000m);
+    }
+
+    [Fact]
+    public async Task BuildAllAsync_UsesEachEmployeesSavedInputs()
+    {
+        PaidRunsInYearAre([_employeeId],
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 20_000m, withholdingTax: 2_000m)]));
+        EmployeesAre(TheEmployee());
+        _inputsRepo.Setup(r => r.GetForYearAsync(2026, It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(new Dictionary<Guid, Bir2316Inputs>
+                   {
+                       [_employeeId] = new() { EmployeeId = _employeeId, Year = 2026, Item25B_PrevTaxWithheld = 1_200m }
+                   });
+
+        var forms = await _sut.BuildAllAsync(2026, CancellationToken.None);
+
+        forms.Single(f => f.EmployeeTin != null).Item25B_PrevTaxWithheld.Should().Be(1_200m);
+    }
+
+    [Fact]
+    public async Task GetInputsAsync_WithNothingSaved_IsEmpty()
+    {
+        (await _sut.GetInputsAsync(_employeeId, 2026, CancellationToken.None)).Should().BeEquivalentTo(new Bir2316ManualInputs());
     }
 
     // ------------------------------------------------------------------

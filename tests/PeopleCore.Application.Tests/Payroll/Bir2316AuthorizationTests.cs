@@ -51,6 +51,7 @@ public class Bir2316AuthorizationTests
     [InlineData("GetPreview")]
     [InlineData("Generate")]
     [InlineData("GenerateAll")]
+    [InlineData("GetInputs")]
     public void EveryAction_CarriesNoActionLevelAuthorizeOfItsOwn(string actionName)
     {
         // The class-level attribute is the only guard - no action here should carry its own

@@ -12,7 +12,7 @@ namespace PeopleCore.Web.Tests.TestSupport;
 /// </summary>
 public sealed class StubHttpHandler : HttpMessageHandler
 {
-    private readonly List<(HttpMethod Method, string PathAndQuery, Func<HttpResponseMessage> Respond)> _routes = [];
+    private readonly List<(HttpMethod Method, string PathAndQuery, Func<Task<HttpResponseMessage>> Respond)> _routes = [];
 
     public List<HttpRequestMessage> Requests { get; } = [];
 
@@ -27,8 +27,21 @@ public sealed class StubHttpHandler : HttpMessageHandler
 
     public StubHttpHandler On(HttpMethod method, string pathAndQuery, Func<HttpResponseMessage> respond)
     {
-        _routes.Add((method, pathAndQuery, respond));
+        _routes.Add((method, pathAndQuery, () => Task.FromResult(respond())));
         return this;
+    }
+
+    /// <summary>
+    /// Registers a route whose response doesn't complete until the caller completes the returned
+    /// source - lets a test hold one call in flight while later calls race ahead of it and resolve
+    /// first, to exercise a stale-response guard (a later load must win even though its response
+    /// arrived before an earlier, still-in-flight one).
+    /// </summary>
+    public TaskCompletionSource<HttpResponseMessage> OnGated(HttpMethod method, string pathAndQuery)
+    {
+        var gate = new TaskCompletionSource<HttpResponseMessage>();
+        _routes.Add((method, pathAndQuery, () => gate.Task));
+        return gate;
     }
 
     public static HttpClient ClientFor(HttpMessageHandler handler) =>
@@ -43,7 +56,7 @@ public sealed class StubHttpHandler : HttpMessageHandler
         foreach (var route in _routes)
         {
             if (route.Method == request.Method && route.PathAndQuery == pathAndQuery)
-                return route.Respond();
+                return await route.Respond();
         }
 
         return new HttpResponseMessage(HttpStatusCode.NotFound);

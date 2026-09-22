@@ -125,4 +125,9 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     /// leaves out.
     /// </summary>
     Task<int> CountUnpaidRunsAsync(int year, int month, bool byPayDate, CancellationToken ct = default);
+
+    /// <summary>
+    /// Runs whose pay date falls in the year that aren't Paid yet, for the 1604-C's "not included" note.
+    /// </summary>
+    Task<int> CountUnpaidRunsPaidInYearAsync(int year, CancellationToken ct = default);
 }

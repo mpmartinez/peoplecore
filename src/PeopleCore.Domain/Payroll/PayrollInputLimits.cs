@@ -43,6 +43,14 @@ public static class PayrollInputLimits
 
     public const int MaxEmployerAddressLength = 200;
 
+    /// <summary>
+    /// Matches <c>Bir2316InputsConfiguration</c>'s <c>HasMaxLength</c> on
+    /// <c>Bir2316Inputs.PrevEmployerTin</c>. A well-formed TIN (9 or 12 digits, however separated)
+    /// is always well under this, but a caller can still type more separators than the column
+    /// holds - see <c>Bir2316ManualInputsValidator</c>.
+    /// </summary>
+    public const int MaxPrevEmployerTinLength = 20;
+
     /// <summary>The days a month can physically contain.</summary>
     public const decimal MaxDaysInPeriod = 31m;
 

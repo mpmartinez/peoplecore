@@ -1,5 +1,6 @@
 using System.Globalization;
 using PeopleCore.Application.Common.Time;
+using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Organization.Interfaces;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Domain.Entities.Employees;
@@ -22,14 +23,18 @@ public sealed class GovernmentReportService : IGovernmentReportService
     private readonly ICompanyRepository _companies;
     private readonly IPayrollSettingsRepository _settings;
     private readonly TimeProvider _clock;
+    private readonly IBir2316Service _bir2316;
+    private readonly IEmployeeRepository _employees;
 
     public GovernmentReportService(IPayrollRunRepository runs, ICompanyRepository companies,
-        IPayrollSettingsRepository settings, TimeProvider clock)
+        IPayrollSettingsRepository settings, TimeProvider clock, IBir2316Service bir2316, IEmployeeRepository employees)
     {
         _runs = runs;
         _companies = companies;
         _settings = settings;
         _clock = clock;
+        _bir2316 = bir2316;
+        _employees = employees;
     }
 
     public async Task<GovernmentReportDto> BuildAsync(string report, int year, int month, CancellationToken ct = default)
@@ -109,7 +114,61 @@ public sealed class GovernmentReportService : IGovernmentReportService
         var employer = new GovernmentReportEmployerDto(
             company?.Name ?? "", company?.Address, company?.TIN ?? "", company?.RdoCode, employerNumber ?? "");
 
-        return new GovernmentReportDto(key, title, year, month, basis, employer, columns, rows, totals, summary, warnings);
+        return new GovernmentReportDto(key, title, year, month, basis, employer, columns, rows, totals, summary, warnings, []);
+    }
+
+    public async Task<GovernmentReportDto> BuildAnnualAsync(string report, int year, CancellationToken ct = default)
+    {
+        if (!string.Equals(report, "1604c", StringComparison.OrdinalIgnoreCase))
+            throw new KeyNotFoundException($"There is no annual '{report}' report.");
+        if (year is < 1 or > 9999)
+            throw new DomainException("Choose a year.");
+        var today = DateOnly.FromDateTime(PhilippineTime.Now(_clock));
+        if (year > today.Year)
+            throw new DomainException($"{year} hasn't started yet, so there is nothing to report.");
+
+        var forms = await _bir2316.BuildAllAsync(year, ct);
+
+        // January-November and December tax withheld aren't on the 2316; they come from the same
+        // year's Paid runs by pay month, and add up to its present-employer tax withheld.
+        // Same Paid/PayDate.Year predicate as Bir2316Service.BuildAsync, re-applied here so this
+        // split can't silently disagree with the present-employer withheld tax (Item 25A) behind it.
+        var runs = (await _runs.GetPaidRunsInYearAsync(year, ct))
+            .Where(r => r.Status == PayrollRunStatus.Paid && r.PayDate.Year == year)
+            .ToList();
+        var withheldByEmployee = runs
+            .SelectMany(r => r.Employees.Select(e => (e.EmployeeId, December: r.PayDate.Month == 12, e.WithholdingTax)))
+            .GroupBy(x => x.EmployeeId)
+            .ToDictionary(g => g.Key, g => (JanToNov: g.Where(x => !x.December).Sum(x => x.WithholdingTax),
+                                            December: g.Where(x => x.December).Sum(x => x.WithholdingTax)));
+
+        var employees = (await _employees.GetByIdsAsync(forms.Select(f => f.EmployeeId), ct)).ToDictionary(e => e.Id);
+        var people = forms
+            .Where(f => employees.ContainsKey(f.EmployeeId))
+            .Select(f =>
+            {
+                var e = employees[f.EmployeeId];
+                var withheld = withheldByEmployee.GetValueOrDefault(f.EmployeeId);
+                return new Bir1604CAlphalist.Person(f.EmployeeId, f, e.HireDate, e.SeparationDate, withheld.JanToNov, withheld.December);
+            })
+            .ToList();
+
+        var company = await _companies.GetDefaultAsync(ct);
+        var employer = new GovernmentReportEmployerDto(company?.Name ?? "", company?.Address, company?.TIN ?? "", company?.RdoCode, company?.TIN ?? "");
+        var result = Bir1604CAlphalist.Build(year, employer, people, await _runs.CountUnpaidRunsPaidInYearAsync(year, ct));
+
+        // Company checks, worded as the monthly reports word them.
+        var companyWarnings = new List<string>();
+        if (company is null)
+            companyWarnings.Add("The company's details are missing. Fill in the Company page.");
+        else
+        {
+            bool tinBlank = string.IsNullOrWhiteSpace(company.TIN), rdoBlank = string.IsNullOrWhiteSpace(company.RdoCode);
+            if (tinBlank && rdoBlank) companyWarnings.Add("The company's TIN and RDO code are blank. Add them on the Company page.");
+            else if (tinBlank) companyWarnings.Add("The company's TIN is blank. Add it on the Company page.");
+            else if (rdoBlank) companyWarnings.Add("The company's RDO code is blank. Add it on the Company page.");
+        }
+        return result with { Warnings = [.. companyWarnings, .. result.Warnings] };
     }
 
     private async Task<(IReadOnlyList<string>, List<GovernmentReportRowDto>, IReadOnlyList<string>, IReadOnlyList<GovernmentReportLineDto>)>
