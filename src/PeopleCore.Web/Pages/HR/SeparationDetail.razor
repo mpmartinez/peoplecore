@@ -1,0 +1,282 @@
+@page "/separations/{Id:guid}"
+@attribute [RequirePermission(Permissions.EmployeesManage)]
+@inject ApiClient Api
+@inject NavigationManager Nav
+
+@*
+    One employee's separation: the notice, the clearance checklist that gates final pay, and the
+    two actions that move it along - marking the last working day as reached, or cancelling the
+    notice outright. Both come back from the API as the same DTO the page already shows, so every
+    action simply replaces _separation with the response rather than reloading.
+*@
+
+<PageTitle>@(_separation?.EmployeeName ?? "Separation")</PageTitle>
+
+<PageHeader Title="@(_separation?.EmployeeName ?? "Separation")" Section="Employees" SectionHref="/separations"
+            Description="@(_separation is null ? null : $"{TypeLabel(_separation)} · {_separation.EmployeeNumber}")">
+    <ChildContent>
+        @if (_separation is not null)
+        {
+            <Badge Variant="@(_separation.Status == SeparationStatus.Separated ? "secondary" : "warning")" Class="mt-1">@_separation.Status</Badge>
+        }
+    </ChildContent>
+    <Actions>
+        @if (_separation is { Status: SeparationStatus.NoticeGiven })
+        {
+            <Button Variant="destructive" Size="sm" OnClick="@(() => _confirmingCancel = true)" data-cancel>Cancel separation</Button>
+            <Button Variant="primary" Size="sm" OnClick="MarkSeparated" Loading="@_marking" Disabled="@_marking" data-mark-separated>Mark separated</Button>
+        }
+    </Actions>
+</PageHeader>
+
+@if (_notFound)
+{
+    <div class="p-6 text-center text-muted-foreground text-sm">Separation not found.</div>
+}
+else if (_loadError is not null)
+{
+    <Alert Variant="destructive">@_loadError</Alert>
+}
+else if (_separation is null)
+{
+    <div class="p-6 flex justify-center"><Spinner /></div>
+}
+else
+{
+    @if (_pageError is not null)
+    {
+        <Alert Variant="destructive" Class="mb-4" data-page-error>@_pageError</Alert>
+    }
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <Card>
+            <CardContent Class="pt-4">
+                <InfoRow Label="Employee" Value="@_separation.EmployeeName" />
+                <InfoRow Label="Employee #" Value="@_separation.EmployeeNumber" />
+                <InfoRow Label="Position" Value="@_separation.Position" />
+                <InfoRow Label="Type" Value="@TypeLabel(_separation)" />
+                <InfoRow Label="Notice Date" Value="@_separation.NoticeDate.ToString("MMM d, yyyy")" />
+                <InfoRow Label="Last Working Day" Value="@_separation.LastWorkingDay.ToString("MMM d, yyyy")" />
+                <InfoRow Label="Reason" Value="@_separation.Reason" />
+                <InfoRow Label="Recorded By" Value="@_separation.RecordedBy" />
+                @if (_separation.Status == SeparationStatus.Separated)
+                {
+                    <InfoRow Label="Separated By" Value="@_separation.SeparatedBy" />
+                    <InfoRow Label="Separated At" Value="@_separation.SeparatedAt?.ToString("MMM d, yyyy")" />
+                }
+            </CardContent>
+        </Card>
+
+        <Card>
+            <CardContent Class="pt-4">
+                <p class="text-sm" data-final-pay-note>
+                    Final pay is due by @_separation.FinalPayDueBy.ToString("MMM d, yyyy").
+                    @if (_separation.FinalPayOverdue)
+                    {
+                        <Badge Variant="destructive" Class="ml-2" data-overdue>Overdue</Badge>
+                    }
+                </p>
+            </CardContent>
+        </Card>
+    </div>
+
+    <Card>
+        <CardHeader>
+            <CardTitle>Clearance</CardTitle>
+        </CardHeader>
+        <CardContent data-clearance>
+            @if (_separation.ClearanceItems.Count > 0 && _separation.ClearanceItems.All(i => i.ClearedAt is not null))
+            {
+                <Alert Variant="success" Class="mb-4" data-clearance-complete>Clearance complete.</Alert>
+            }
+
+            @if (_separation.ClearanceItems.Count == 0)
+            {
+                <p class="text-sm text-muted-foreground mb-4">No clearance items yet.</p>
+            }
+            else
+            {
+                <ul class="space-y-3 mb-4">
+                    @foreach (var item in _separation.ClearanceItems)
+                    {
+                        <li class="flex flex-wrap items-center justify-between gap-2 border-b pb-2 last:border-0" data-clearance-item="@item.Id">
+                            <div>
+                                <div class="font-medium">@item.Name</div>
+                                @if (item.ClearedAt is not null)
+                                {
+                                    <div class="text-xs text-muted-foreground">
+                                        Cleared by @item.ClearedBy on @item.ClearedAt?.ToString("MMM d, yyyy")
+                                        @if (!string.IsNullOrWhiteSpace(item.Note)) { <span> - @item.Note</span> }
+                                    </div>
+                                }
+                            </div>
+                            <div class="flex items-center gap-2">
+                                @if (item.ClearedAt is null)
+                                {
+                                    <Input TValue="string" Value="@NoteFor(item.Id)" ValueChanged="@(v => _clearNotes[item.Id] = v)"
+                                           Placeholder="Note (optional)" Type="text" Class="w-40" data-clear-note="@item.Id" />
+                                    <Button Variant="outline" Size="sm" OnClick="@(() => ClearItem(item.Id))" data-clear="@item.Id">Clear</Button>
+                                    <Button Variant="ghost" Size="sm" OnClick="@(() => RemoveItem(item.Id))" data-remove="@item.Id">Remove</Button>
+                                }
+                                else
+                                {
+                                    <Button Variant="ghost" Size="sm" OnClick="@(() => UndoItem(item.Id))" data-undo="@item.Id">Undo</Button>
+                                }
+                            </div>
+                        </li>
+                    }
+                </ul>
+            }
+
+            <div class="flex gap-2">
+                <Input TValue="string" Value="@_newItemName" ValueChanged="@(v => _newItemName = v)"
+                       Placeholder="New clearance item" Type="text" Class="max-w-xs" data-add-item />
+                <Button Variant="outline" Size="sm" OnClick="AddItem" Disabled="@string.IsNullOrWhiteSpace(_newItemName)" data-add-item-button>Add item</Button>
+            </div>
+        </CardContent>
+    </Card>
+}
+
+<AlertDialog IsOpen="@_confirmingCancel" Title="Cancel this separation?"
+             Description="This removes the notice; it can be recorded again from the Employees page."
+             ConfirmText="Cancel separation" ConfirmVariant="destructive" CancelText="Keep it"
+             Loading="@_cancelling" OnConfirm="Cancel" OnCancel="@(() => _confirmingCancel = false)" data-confirm-cancel />
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private SeparationDto? _separation;
+    private string? _loadError;
+    private bool _notFound;
+    private string? _pageError;
+    private bool _marking;
+    private bool _confirmingCancel;
+    private bool _cancelling;
+    private readonly Dictionary<Guid, string> _clearNotes = [];
+    private string? _newItemName;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    private async Task Load()
+    {
+        try
+        {
+            _separation = await Api.GetSeparationAsync(Id);
+            _notFound = _separation is null;
+            _loadError = null;
+        }
+        // The API answers an unknown id with a 404, which ApiClient throws like any other failure -
+        // not something to retry, so it gets the not-found state rather than a generic error banner.
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            _separation = null;
+            _notFound = true;
+            _loadError = null;
+        }
+        catch (Exception ex)
+        {
+            _separation = null;
+            _notFound = false;
+            _loadError = ex.Message;
+        }
+    }
+
+    private static string TypeLabel(SeparationDto s) =>
+        s.Type == SeparationType.AuthorizedCause && s.AuthorizedCause is { } cause ? $"{s.Type} ({cause})" : s.Type.ToString();
+
+    private string NoteFor(Guid itemId) => _clearNotes.TryGetValue(itemId, out var note) ? note : "";
+
+    private async Task MarkSeparated()
+    {
+        _pageError = null;
+        _marking = true;
+        try
+        {
+            _separation = await Api.MarkSeparatedAsync(Id);
+        }
+        catch (Exception ex)
+        {
+            _pageError = ex.Message;
+        }
+        finally
+        {
+            _marking = false;
+        }
+    }
+
+    private async Task Cancel()
+    {
+        _pageError = null;
+        _cancelling = true;
+        try
+        {
+            await Api.CancelSeparationAsync(Id);
+            Nav.NavigateTo("/separations");
+        }
+        catch (Exception ex)
+        {
+            _confirmingCancel = false;
+            _pageError = ex.Message;
+        }
+        finally
+        {
+            _cancelling = false;
+        }
+    }
+
+    private async Task AddItem()
+    {
+        if (string.IsNullOrWhiteSpace(_newItemName)) return;
+        _pageError = null;
+        try
+        {
+            _separation = await Api.AddClearanceItemAsync(Id, _newItemName.Trim());
+            _newItemName = null;
+        }
+        catch (Exception ex)
+        {
+            _pageError = ex.Message;
+        }
+    }
+
+    private async Task ClearItem(Guid itemId)
+    {
+        _pageError = null;
+        var note = NoteFor(itemId);
+        try
+        {
+            _separation = await Api.ClearItemAsync(Id, itemId, string.IsNullOrWhiteSpace(note) ? null : note.Trim());
+            _clearNotes.Remove(itemId);
+        }
+        catch (Exception ex)
+        {
+            _pageError = ex.Message;
+        }
+    }
+
+    private async Task UndoItem(Guid itemId)
+    {
+        _pageError = null;
+        try
+        {
+            _separation = await Api.UndoClearItemAsync(Id, itemId);
+        }
+        catch (Exception ex)
+        {
+            _pageError = ex.Message;
+        }
+    }
+
+    private async Task RemoveItem(Guid itemId)
+    {
+        _pageError = null;
+        try
+        {
+            _separation = await Api.DeleteClearanceItemAsync(Id, itemId);
+        }
+        catch (Exception ex)
+        {
+            _pageError = ex.Message;
+        }
+    }
+}

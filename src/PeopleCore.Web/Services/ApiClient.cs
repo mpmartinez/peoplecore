@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace PeopleCore.Web.Services;
 
@@ -8,9 +9,16 @@ public class ApiClient
 {
     private readonly HttpClient _http;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    // Built on the Web defaults (camelCase property names, case-insensitive matching) rather than
+    // JsonSerializerOptions.Default, because that is what JsonContent.Create/PostAsJsonAsync use
+    // internally when no options are given - the plain "new JsonSerializerOptions()" this used to
+    // be would have sent PascalCase property names once SendJsonAsync below started passing these
+    // options to its request bodies too, not just its response reads. JsonStringEnumConverter
+    // matches the API's own Program.cs setup: separation enums travel on the wire as strings
+    // ("Resignation", not 0), in both directions.
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
-        PropertyNameCaseInsensitive = true
+        Converters = { new JsonStringEnumConverter() }
     };
 
     public ApiClient(HttpClient http) => _http = http;
@@ -166,6 +174,42 @@ public class ApiClient
         await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<EmployeeListDto>(JsonOptions);
     }
+
+    /// <summary>A Certificate of Employment for a current or former employee, as a ready-to-save PDF.</summary>
+    public async Task<byte[]> GetCoeAsync(Guid employeeId, CoeRequest request)
+    {
+        var response = await _http.PostAsJsonAsync($"api/employees/{employeeId}/coe", request);
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadAsByteArrayAsync();
+    }
+
+    // Separations
+    public async Task<IReadOnlyList<SeparationDto>?> GetSeparationsAsync()
+        => await GetJsonAsync<List<SeparationDto>>("api/separations");
+
+    public async Task<SeparationDto?> GetSeparationAsync(Guid id)
+        => await GetJsonAsync<SeparationDto>($"api/separations/{id}");
+
+    public Task<SeparationDto?> RecordSeparationAsync(RecordSeparationRequest request)
+        => SendJsonAsync<SeparationDto>(HttpMethod.Post, "api/separations", request);
+
+    public Task<SeparationDto?> MarkSeparatedAsync(Guid id)
+        => SendJsonAsync<SeparationDto>(HttpMethod.Post, $"api/separations/{id}/mark-separated");
+
+    public async Task CancelSeparationAsync(Guid id)
+        => await EnsureSuccessAsync(await _http.PostAsync($"api/separations/{id}/cancel", null));
+
+    public Task<SeparationDto?> AddClearanceItemAsync(Guid id, string name)
+        => SendJsonAsync<SeparationDto>(HttpMethod.Post, $"api/separations/{id}/clearance", new AddClearanceItemRequest(name));
+
+    public Task<SeparationDto?> ClearItemAsync(Guid id, Guid itemId, string? note)
+        => SendJsonAsync<SeparationDto>(HttpMethod.Post, $"api/separations/{id}/clearance/{itemId}/clear", new ClearItemRequest(note));
+
+    public Task<SeparationDto?> UndoClearItemAsync(Guid id, Guid itemId)
+        => SendJsonAsync<SeparationDto>(HttpMethod.Post, $"api/separations/{id}/clearance/{itemId}/undo");
+
+    public Task<SeparationDto?> DeleteClearanceItemAsync(Guid id, Guid itemId)
+        => SendJsonAsync<SeparationDto>(HttpMethod.Delete, $"api/separations/{id}/clearance/{itemId}");
 
     // Leave
     public async Task<IReadOnlyList<LeaveBalanceDto>?> GetLeaveBalancesAsync(Guid employeeId)
@@ -629,7 +673,7 @@ public class ApiClient
 
     private async Task<T?> SendJsonAsync<T>(HttpMethod method, string url, object? body = null)
     {
-        using var request = new HttpRequestMessage(method, url) { Content = body is null ? null : JsonContent.Create(body) };
+        using var request = new HttpRequestMessage(method, url) { Content = body is null ? null : JsonContent.Create(body, options: JsonOptions) };
         var response = await _http.SendAsync(request);
         await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<T>(JsonOptions);
@@ -686,6 +730,48 @@ internal record ResetAvailability(bool Available);
 internal record TestEmailResult(bool Sent, string? To);
 public record PagedResult<T>(IReadOnlyList<T> Items, int TotalCount, int Page, int PageSize, int TotalPages);
 public record EmployeeListDto(Guid Id, string EmployeeNumber, string FirstName, string LastName, string FullName, string WorkEmail, string? DepartmentName, string? PositionTitle, string EmploymentStatus, bool IsActive);
+
+// Certificate of Employment - mirrors PeopleCore.Application.Employees.Coe.CoeRequest.
+public record CoeRequest(string? Purpose, string? SignatoryName, string? SignatoryTitle, bool IncludeSalary);
+
+// Separations - the enums mirror PeopleCore.Domain.Enums.SeparationEnums field-for-field; they
+// travel on the wire as strings, via the JsonStringEnumConverter added to JsonOptions above.
+public enum SeparationType { Resignation, TerminationJustCause, AuthorizedCause, EndOfContract, Retirement, Death }
+public enum AuthorizedCause { Redundancy, Retrenchment, ClosureNotDueToLosses, ClosureDueToSeriousLosses, LaborSavingDevices, Disease }
+public enum SeparationStatus { NoticeGiven, Separated }
+
+public record RecordSeparationRequest(
+    Guid EmployeeId,
+    SeparationType Type,
+    AuthorizedCause? AuthorizedCause,
+    DateOnly NoticeDate,
+    DateOnly LastWorkingDay,
+    string? Reason);
+
+public record SeparationDto(
+    Guid Id,
+    Guid EmployeeId,
+    string EmployeeName,
+    string EmployeeNumber,
+    string? Position,
+    SeparationType Type,
+    AuthorizedCause? AuthorizedCause,
+    DateOnly NoticeDate,
+    DateOnly LastWorkingDay,
+    string? Reason,
+    SeparationStatus Status,
+    string RecordedBy,
+    string? SeparatedBy,
+    DateTime? SeparatedAt,
+    DateOnly FinalPayDueBy,
+    bool FinalPayOverdue,
+    int ClearedCount,
+    int ClearanceCount,
+    IReadOnlyList<ClearanceItemDto> ClearanceItems);
+
+public record ClearanceItemDto(Guid Id, string Name, string? ClearedBy, DateTime? ClearedAt, string? Note);
+public record ClearItemRequest(string? Note);
+public record AddClearanceItemRequest(string Name);
 public record LeaveBalanceDto(Guid Id, Guid EmployeeId, string EmployeeName, Guid LeaveTypeId, string LeaveTypeName, int Year, decimal TotalDays, decimal UsedDays, decimal CarriedOverDays, decimal RemainingDays);
 public record LeaveRequestDto(Guid Id, Guid EmployeeId, string EmployeeName, string LeaveTypeName, string StartDate, string EndDate, decimal TotalDays, string Status, string? Reason);
 public record AttendanceImportEmployeeDto(Guid Id, string EmployeeNumber, string FullName, string? BiometricId, bool IsActive);

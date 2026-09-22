@@ -2,6 +2,7 @@
 @attribute [RequirePermission(Permissions.EmployeesViewAll)]
 @inject ApiClient Api
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
 <PageTitle>Employees</PageTitle>
 
@@ -96,6 +97,11 @@
                                         <Button Variant="ghost" Size="sm" OnClick="() => _createLoginFor = emp">Create login</Button>
                                     }
                                 }
+                                @if (emp.IsActive)
+                                {
+                                    <Button Variant="ghost" Size="sm" OnClick="() => GoToRecordSeparation(emp.Id)" data-record-separation="@emp.Id">Record separation</Button>
+                                }
+                                <Button Variant="ghost" Size="sm" OnClick="() => OpenCoeDialog(emp)" data-open-coe="@emp.Id">Certificate of Employment</Button>
                             </TableCell>
                         </TableRow>
                     }
@@ -246,6 +252,35 @@
 
 <TemporaryPasswordDialog Password="@_temporaryPassword" Email="@_temporaryPasswordFor" OnClosed="ClearTemporaryPassword" />
 
+<Dialog IsOpen="@(_coeFor is not null)" OnClose="CloseCoeDialog" Title="Certificate of Employment"
+        Description="@(_coeFor?.FullName)" data-coe-dialog>
+    <ChildContent>
+        @if (_coeError is not null)
+        {
+            <Alert Variant="destructive" Class="mb-4" data-coe-error>@_coeError</Alert>
+        }
+        <div class="space-y-4">
+            <FormField LabelText="Purpose" Id="coe-purpose">
+                <Textarea Id="coe-purpose" @bind-Value="_coeForm.Purpose" />
+            </FormField>
+            <FormField LabelText="Signatory Name" Id="coe-signatory-name">
+                <Input TValue="string" Id="coe-signatory-name" Value="@_coeForm.SignatoryName"
+                       ValueChanged="@(v => _coeForm.SignatoryName = v)" Type="text" />
+            </FormField>
+            <FormField LabelText="Signatory Title" Id="coe-signatory-title">
+                <Input TValue="string" Id="coe-signatory-title" Value="@_coeForm.SignatoryTitle"
+                       ValueChanged="@(v => _coeForm.SignatoryTitle = v)" Type="text" />
+            </FormField>
+            <Checkbox Value="@_coeForm.IncludeSalary"
+                      ValueChanged="@(v => _coeForm.IncludeSalary = v)" data-include-salary>Include monthly salary</Checkbox>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <Button Variant="outline" Size="sm" OnClick="CloseCoeDialog">Cancel</Button>
+        <Button Variant="primary" Size="sm" OnClick="DownloadCoe" Loading="@_coeDownloading" data-download-coe>Download</Button>
+    </FooterContent>
+</Dialog>
+
 @code {
     private PagedResult<EmployeeListDto>? _employees;
     private string? _loadError;
@@ -266,6 +301,12 @@
     private EmployeeListDto? _createLoginFor;
     private string? _temporaryPassword;
     private string? _temporaryPasswordFor;
+    private EmployeeListDto? _coeFor;
+    private CoeFormModel _coeForm = new();
+    private string? _coeError;
+    private bool _coeDownloading;
+
+    private const string DefaultCoePurpose = "This certification is issued upon the request of the employee for whatever legal purpose it may serve.";
 
     protected override async Task OnInitializedAsync()
     {
@@ -363,6 +404,47 @@
 
     private void GoToCompensation(Guid employeeId) => Nav.NavigateTo($"/employees/{employeeId}/compensation");
 
+    private void GoToRecordSeparation(Guid employeeId) => Nav.NavigateTo($"/separations?employee={employeeId}");
+
+    private void OpenCoeDialog(EmployeeListDto employee)
+    {
+        _coeFor = employee;
+        _coeForm = new CoeFormModel { Purpose = DefaultCoePurpose, SignatoryTitle = "HR Manager" };
+        _coeError = null;
+    }
+
+    private void CloseCoeDialog()
+    {
+        if (_coeDownloading) return;
+        _coeFor = null;
+    }
+
+    private async Task DownloadCoe()
+    {
+        if (_coeFor is null) return;
+        _coeError = null;
+        _coeDownloading = true;
+        try
+        {
+            var pdf = await Api.GetCoeAsync(_coeFor.Id, new CoeRequest(
+                string.IsNullOrWhiteSpace(_coeForm.Purpose) ? null : _coeForm.Purpose.Trim(),
+                string.IsNullOrWhiteSpace(_coeForm.SignatoryName) ? null : _coeForm.SignatoryName.Trim(),
+                string.IsNullOrWhiteSpace(_coeForm.SignatoryTitle) ? null : _coeForm.SignatoryTitle.Trim(),
+                _coeForm.IncludeSalary));
+            var fileName = $"COE-{_coeFor.LastName}{_coeFor.FirstName}.pdf";
+            await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(pdf), fileName, "application/pdf");
+            _coeFor = null;
+        }
+        catch (Exception ex)
+        {
+            _coeError = ex.Message;
+        }
+        finally
+        {
+            _coeDownloading = false;
+        }
+    }
+
     private async Task OnDepartmentChanged()
     {
         _form.PositionId = null;
@@ -448,5 +530,13 @@
         public string EmploymentStatus { get; set; } = "";
         public string EmploymentType { get; set; } = "";
         public DateOnly HireDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+    }
+
+    private class CoeFormModel
+    {
+        public string? Purpose { get; set; }
+        public string? SignatoryName { get; set; }
+        public string? SignatoryTitle { get; set; }
+        public bool IncludeSalary { get; set; }
     }
 }
