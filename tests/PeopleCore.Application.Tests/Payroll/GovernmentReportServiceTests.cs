@@ -220,10 +220,25 @@ public class GovernmentReportServiceTests
     [InlineData(2026, 13)]
     [InlineData(2026, 0)]
     [InlineData(2026, 5)]   // after April 2026, the clock's month
+    [InlineData(0, 3)]      // year missing from the query string binds to 0
     public async Task AMonthThatIsInvalidOrStillAhead_IsRefused(int year, int month)
     {
         var act = () => _sut.BuildAsync("sss", year, month);
 
         await act.Should().ThrowAsync<DomainException>();
+    }
+
+    [Fact]
+    public async Task Sss_WarnsAboutABlankTin_WhenTheSssNumberIsFilled()
+    {
+        _companies.Setup(c => c.GetDefaultAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new Company
+        {
+            Name = "Acme Inc.", TIN = "", SSSNumber = "03-9999999-1",
+            PhilHealthNumber = "20-000000001-2", PagIbigNumber = "2000-0000-0001", RdoCode = "050"
+        });
+
+        var report = await _sut.BuildAsync("sss", 2026, 3);
+
+        report.Warnings.Should().Contain("The company's TIN is blank. Add it on the Company page.");
     }
 }

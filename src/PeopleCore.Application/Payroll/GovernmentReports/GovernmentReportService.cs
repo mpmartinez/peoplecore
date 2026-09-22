@@ -40,6 +40,8 @@ public sealed class GovernmentReportService : IGovernmentReportService
 
         if (month is < 1 or > 12)
             throw new DomainException("Choose a month from 1 to 12.");
+        if (year is < 1 or > 9999)
+            throw new DomainException("Choose a year.");
         var today = DateOnly.FromDateTime(PhilippineTime.Now(_clock));
         if (new DateOnly(year, month, 1) > new DateOnly(today.Year, today.Month, 1))
             throw new DomainException($"{MonthName(year, month)} hasn't started yet, so there is nothing to report.");
@@ -69,8 +71,19 @@ public sealed class GovernmentReportService : IGovernmentReportService
 
         if (company is null)
             warnings.Add("The company's details are missing. Fill in the Company page.");
-        else if (string.IsNullOrWhiteSpace(employerNumber))
-            warnings.Add($"The company's {agency} number is blank. Add it on the Company page.");
+        else
+        {
+            bool tinBlank = string.IsNullOrWhiteSpace(company.TIN);
+            bool agencyNumberBlank = string.IsNullOrWhiteSpace(employerNumber);
+            // On 1601-C the agency number IS the TIN, so checking both here would warn twice
+            // about the same blank field.
+            if (key != "1601c" && tinBlank && agencyNumberBlank)
+                warnings.Add($"The company's TIN and {agency} number are blank. Add them on the Company page.");
+            else if (key != "1601c" && tinBlank)
+                warnings.Add("The company's TIN is blank. Add it on the Company page.");
+            else if (agencyNumberBlank)
+                warnings.Add($"The company's {agency} number is blank. Add it on the Company page.");
+        }
 
         (IReadOnlyList<string> columns, List<GovernmentReportRowDto> rows, IReadOnlyList<string> totals,
          IReadOnlyList<GovernmentReportLineDto> summary) = key switch
