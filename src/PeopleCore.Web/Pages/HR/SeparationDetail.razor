@@ -13,11 +13,11 @@
 <PageTitle>@(_separation?.EmployeeName ?? "Separation")</PageTitle>
 
 <PageHeader Title="@(_separation?.EmployeeName ?? "Separation")" Section="Employees" SectionHref="/separations"
-            Description="@(_separation is null ? null : $"{TypeLabel(_separation)} · {_separation.EmployeeNumber}")">
+            Description="@(_separation is null ? null : $"{SeparationLabels.TypeWithCause(_separation.Type, _separation.AuthorizedCause)} · {_separation.EmployeeNumber}")">
     <ChildContent>
         @if (_separation is not null)
         {
-            <Badge Variant="@(_separation.Status == SeparationStatus.Separated ? "secondary" : "warning")" Class="mt-1">@_separation.Status</Badge>
+            <Badge Variant="@(_separation.Status == SeparationStatus.Separated ? "secondary" : "warning")" Class="mt-1">@SeparationLabels.StatusOf(_separation.Status)</Badge>
         }
     </ChildContent>
     <Actions>
@@ -54,7 +54,7 @@ else
                 <InfoRow Label="Employee" Value="@_separation.EmployeeName" />
                 <InfoRow Label="Employee #" Value="@_separation.EmployeeNumber" />
                 <InfoRow Label="Position" Value="@_separation.Position" />
-                <InfoRow Label="Type" Value="@TypeLabel(_separation)" />
+                <InfoRow Label="Type" Value="@SeparationLabels.TypeWithCause(_separation.Type, _separation.AuthorizedCause)" />
                 <InfoRow Label="Notice Date" Value="@_separation.NoticeDate.ToString("MMM d, yyyy")" />
                 <InfoRow Label="Last Working Day" Value="@_separation.LastWorkingDay.ToString("MMM d, yyyy")" />
                 <InfoRow Label="Reason" Value="@_separation.Reason" />
@@ -186,9 +186,6 @@ else
             _loadError = ex.Message;
         }
     }
-
-    private static string TypeLabel(SeparationDto s) =>
-        s.Type == SeparationType.AuthorizedCause && s.AuthorizedCause is { } cause ? $"{s.Type} ({cause})" : s.Type.ToString();
 
     private string NoteFor(Guid itemId) => _clearNotes.TryGetValue(itemId, out var note) ? note : "";
 

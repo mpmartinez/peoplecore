@@ -55,9 +55,9 @@
                                 <div class="font-medium">@s.EmployeeName</div>
                                 <div class="text-xs text-muted-foreground">@s.EmployeeNumber</div>
                             </TableCell>
-                            <TableCell Class="px-4 py-3 cursor-pointer">@TypeLabel(s)</TableCell>
+                            <TableCell Class="px-4 py-3 cursor-pointer">@SeparationLabels.TypeWithCause(s.Type, s.AuthorizedCause)</TableCell>
                             <TableCell Class="px-4 py-3 cursor-pointer">@s.LastWorkingDay.ToString("MMM d, yyyy")</TableCell>
-                            <TableCell Class="px-4 py-3 cursor-pointer"><Badge Variant="@(s.Status == SeparationStatus.Separated ? "secondary" : "warning")">@s.Status</Badge></TableCell>
+                            <TableCell Class="px-4 py-3 cursor-pointer"><Badge Variant="@(s.Status == SeparationStatus.Separated ? "secondary" : "warning")">@SeparationLabels.StatusOf(s.Status)</Badge></TableCell>
                             <TableCell Class="px-4 py-3 cursor-pointer">@s.ClearedCount of @s.ClearanceCount</TableCell>
                             <TableCell Class="px-4 py-3 cursor-pointer">
                                 @s.FinalPayDueBy.ToString("MMM d, yyyy")
@@ -97,10 +97,11 @@
                 </Select>
             </FormField>
             <FormField LabelText="Type" Id="separation-type" Required="true">
-                <Select TValue="string" Id="separation-type" @bind-Value="_form.Type" Placeholder="Select...">
-                    @foreach (var type in Enum.GetNames<SeparationType>())
+                <Select TValue="string" Id="separation-type" Value="@_form.Type" Placeholder="Select..."
+                        ValueChanged="@(v => OnTypeChanged(v))">
+                    @foreach (var type in Enum.GetValues<SeparationType>())
                     {
-                        <option value="@type">@type</option>
+                        <option value="@type">@SeparationLabels.TypeOf(type)</option>
                     }
                 </Select>
             </FormField>
@@ -108,9 +109,9 @@
             {
                 <FormField LabelText="Cause" Id="separation-cause" Required="true">
                     <Select TValue="string" Id="separation-cause" @bind-Value="_form.Cause" Placeholder="Select...">
-                        @foreach (var cause in Enum.GetNames<AuthorizedCause>())
+                        @foreach (var cause in Enum.GetValues<AuthorizedCause>())
                         {
-                            <option value="@cause">@cause</option>
+                            <option value="@cause">@SeparationLabels.CauseOf(cause)</option>
                         }
                     </Select>
                 </FormField>
@@ -202,8 +203,14 @@
 
     private void CloseForm() => _showForm = false;
 
-    private static string TypeLabel(SeparationDto s) =>
-        s.Type == SeparationType.AuthorizedCause && s.AuthorizedCause is { } cause ? $"{s.Type} ({cause})" : s.Type.ToString();
+    // A cause chosen while the type was AuthorizedCause is stale as soon as the type changes away
+    // from it - clearing it here means SubmitForm never has to guess whether a leftover _form.Cause
+    // still applies.
+    private void OnTypeChanged(string type)
+    {
+        _form.Type = type;
+        if (type != nameof(SeparationType.AuthorizedCause)) _form.Cause = null;
+    }
 
     private async Task SubmitForm()
     {
@@ -220,7 +227,11 @@
         }
 
         var type = Enum.Parse<SeparationType>(_form.Type);
-        AuthorizedCause? cause = string.IsNullOrWhiteSpace(_form.Cause) ? null : Enum.Parse<AuthorizedCause>(_form.Cause);
+        // Only an AuthorizedCause separation has a cause - even if a stale one somehow survived
+        // in the form model, it isn't sent for any other type.
+        AuthorizedCause? cause = type == SeparationType.AuthorizedCause && !string.IsNullOrWhiteSpace(_form.Cause)
+            ? Enum.Parse<AuthorizedCause>(_form.Cause)
+            : null;
 
         _saving = true;
         SeparationDto? recorded;

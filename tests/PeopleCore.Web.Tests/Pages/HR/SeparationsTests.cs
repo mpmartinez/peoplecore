@@ -98,10 +98,9 @@ public class SeparationsTests : BunitContext
         var row = cut.Find("tbody tr");
         row.TextContent.Should().Contain("Maria Santos");
         row.TextContent.Should().Contain("EMP-001");
-        row.TextContent.Should().Contain("AuthorizedCause");
-        row.TextContent.Should().Contain("Redundancy");
+        row.TextContent.Should().Contain("Authorized cause: Redundancy");
         row.TextContent.Should().Contain("Apr 15, 2026");
-        row.TextContent.Should().Contain("NoticeGiven");
+        row.TextContent.Should().Contain("Notice given");
         row.TextContent.Should().Contain("2 of 5");
         row.TextContent.Should().Contain("Apr 20, 2026");
     }
@@ -172,6 +171,47 @@ public class SeparationsTests : BunitContext
         cut.Find("#separation-type").Change("AuthorizedCause");
 
         cut.Find("#separation-cause").Should().NotBeNull();
+    }
+
+    [Fact]
+    public void TheTypeAndCauseDropdowns_ShowReadableLabels_ButKeepTheEnumNamesAsValues()
+    {
+        var cut = RenderList();
+        cut.Find("[data-record-separation]").Click();
+        cut.WaitForElement("[data-record-form]");
+
+        var typeOptions = cut.FindAll("#separation-type option");
+        typeOptions.Select(o => o.TextContent).Should().Contain("Termination for just cause");
+        typeOptions.Single(o => o.TextContent == "Termination for just cause").GetAttribute("value").Should().Be("TerminationJustCause");
+
+        cut.Find("#separation-type").Change("AuthorizedCause");
+
+        var causeOptions = cut.FindAll("#separation-cause option");
+        causeOptions.Select(o => o.TextContent).Should().Contain("Closure (not due to losses)");
+        causeOptions.Single(o => o.TextContent == "Closure (not due to losses)").GetAttribute("value").Should().Be("ClosureNotDueToLosses");
+    }
+
+    [Fact]
+    public void ChangingTheTypeAwayFromAuthorizedCause_ClearsTheStaleCause_SoItIsNotSentOnSubmit()
+    {
+        _api.On(HttpMethod.Post, "/api/separations", HttpStatusCode.Created, Separation());
+        var cut = RenderList();
+        cut.Find("[data-record-separation]").Click();
+        cut.WaitForElement("[data-record-form]");
+        cut.Find("#separation-employee").Change(MariaId.ToString());
+        cut.Find("#separation-type").Change("AuthorizedCause");
+        cut.Find("#separation-cause").Change("Redundancy");
+
+        cut.Find("#separation-type").Change("Resignation");
+
+        cut.Find("#separation-notice-date").Input("2026-03-15");
+        cut.Find("#separation-last-day").Input("2026-04-15");
+        cut.Find("[data-submit-separation]").Click();
+
+        cut.WaitForAssertion(() => CurrentUri.Should().EndWith($"/separations/{SeparationId}"));
+        var body = BodyOf(HttpMethod.Post, "/api/separations");
+        body.TryGetProperty("authorizedCause", out var cause).Should().BeTrue();
+        cause.ValueKind.Should().Be(JsonValueKind.Null);
     }
 
     [Fact]
@@ -247,6 +287,15 @@ public class SeparationsTests : BunitContext
         cut.Markup.Should().Contain("hr@company.test");
         cut.Markup.Should().Contain("Mar 15, 2026");
         cut.Markup.Should().Contain("Apr 15, 2026");
+    }
+
+    [Fact]
+    public void TheStatusBadge_ShowsAReadableLabel_NotTheRawEnumName()
+    {
+        var cut = RenderDetail(Separation(status: "NoticeGiven"));
+
+        cut.Markup.Should().Contain("Notice given");
+        cut.Markup.Should().NotContain("NoticeGiven");
     }
 
     [Fact]
