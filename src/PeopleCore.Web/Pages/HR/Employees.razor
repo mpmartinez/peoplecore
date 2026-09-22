@@ -97,11 +97,13 @@
                                         <Button Variant="ghost" Size="sm" OnClick="() => _createLoginFor = emp">Create login</Button>
                                     }
                                 }
-                                @if (emp.IsActive)
-                                {
-                                    <Button Variant="ghost" Size="sm" OnClick="() => GoToRecordSeparation(emp.Id)" data-record-separation="@emp.Id">Record separation</Button>
-                                }
-                                <Button Variant="ghost" Size="sm" OnClick="() => OpenCoeDialog(emp)" data-open-coe="@emp.Id">Certificate of Employment</Button>
+                                <PermissionView AnyOf="@(new[] { Permissions.EmployeesManage })">
+                                    @if (emp.IsActive)
+                                    {
+                                        <Button Variant="ghost" Size="sm" OnClick="() => GoToRecordSeparation(emp.Id)" data-record-separation="@emp.Id">Record separation</Button>
+                                    }
+                                    <Button Variant="ghost" Size="sm" OnClick="() => OpenCoeDialog(emp)" data-open-coe="@emp.Id">Certificate of Employment</Button>
+                                </PermissionView>
                             </TableCell>
                         </TableRow>
                     }
@@ -271,8 +273,10 @@
                 <Input TValue="string" Id="coe-signatory-title" Value="@_coeForm.SignatoryTitle"
                        ValueChanged="@(v => _coeForm.SignatoryTitle = v)" Type="text" />
             </FormField>
-            <Checkbox Value="@_coeForm.IncludeSalary"
-                      ValueChanged="@(v => _coeForm.IncludeSalary = v)" data-include-salary>Include monthly salary</Checkbox>
+            <PermissionView AnyOf="@(new[] { Permissions.PayrollManage })">
+                <Checkbox Value="@_coeForm.IncludeSalary"
+                          ValueChanged="@(v => _coeForm.IncludeSalary = v)" data-include-salary>Include monthly salary</Checkbox>
+            </PermissionView>
         </div>
     </ChildContent>
     <FooterContent>

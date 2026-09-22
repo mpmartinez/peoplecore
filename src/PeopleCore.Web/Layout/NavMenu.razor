@@ -48,7 +48,7 @@
         new("Employees", [Permissions.EmployeesViewAll],
         [
             new("/employees", "All Employees", "bi-people"),
-            new("/separations", "Separations", "bi-box-arrow-right")
+            new("/separations", "Separations", "bi-box-arrow-right", AnyOf: [Permissions.EmployeesManage])
         ]),
         new("Time", [Permissions.AttendanceManage],
         [

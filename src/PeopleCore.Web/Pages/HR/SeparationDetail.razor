@@ -24,7 +24,7 @@
         @if (_separation is { Status: SeparationStatus.NoticeGiven })
         {
             <Button Variant="destructive" Size="sm" OnClick="@(() => _confirmingCancel = true)" data-cancel>Cancel separation</Button>
-            <Button Variant="primary" Size="sm" OnClick="MarkSeparated" Loading="@_marking" Disabled="@_marking" data-mark-separated>Mark separated</Button>
+            <Button Variant="primary" Size="sm" OnClick="@(() => _confirmingMark = true)" Loading="@_marking" Disabled="@_marking" data-mark-separated>Mark separated</Button>
         }
     </Actions>
 </PageHeader>
@@ -142,6 +142,11 @@ else
              ConfirmText="Cancel separation" ConfirmVariant="destructive" CancelText="Keep it"
              Loading="@_cancelling" OnConfirm="Cancel" OnCancel="@(() => _confirmingCancel = false)" data-confirm-cancel />
 
+<AlertDialog IsOpen="@_confirmingMark" Title="Mark separated?"
+             Description="@MarkSeparatedConfirmation()"
+             ConfirmText="Mark separated" ConfirmVariant="primary" CancelText="Keep as is"
+             Loading="@_marking" OnConfirm="MarkSeparated" OnCancel="@(() => _confirmingMark = false)" data-confirm-mark-separated />
+
 @code {
     [Parameter] public Guid Id { get; set; }
 
@@ -150,6 +155,7 @@ else
     private bool _notFound;
     private string? _pageError;
     private bool _marking;
+    private bool _confirmingMark;
     private bool _confirmingCancel;
     private bool _cancelling;
     private readonly Dictionary<Guid, string> _clearNotes = [];
@@ -186,6 +192,11 @@ else
 
     private string NoteFor(Guid itemId) => _clearNotes.TryGetValue(itemId, out var note) ? note : "";
 
+    private string MarkSeparatedConfirmation() =>
+        _separation is null ? "" :
+        $"Mark {_separation.EmployeeName} separated as of {_separation.LastWorkingDay:MMM d, yyyy}? " +
+        "They'll be deactivated, and this can't be undone.";
+
     private async Task MarkSeparated()
     {
         _pageError = null;
@@ -193,9 +204,11 @@ else
         try
         {
             _separation = await Api.MarkSeparatedAsync(Id);
+            _confirmingMark = false;
         }
         catch (Exception ex)
         {
+            _confirmingMark = false;
             _pageError = ex.Message;
         }
         finally

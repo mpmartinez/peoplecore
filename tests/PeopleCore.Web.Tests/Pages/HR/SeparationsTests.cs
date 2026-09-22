@@ -276,15 +276,36 @@ public class SeparationsTests : BunitContext
     }
 
     [Fact]
-    public void MarkingSeparated_UpdatesTheStatusFromTheResponse()
+    public void MarkingSeparated_AsksForConfirmation_BeforeCallingTheApi()
     {
-        var cut = RenderDetail(Separation(status: "NoticeGiven"));
+        var cut = RenderDetail(Separation(status: "NoticeGiven", lastWorkingDay: "2026-03-03"));
         _api.On(HttpMethod.Post, $"/api/separations/{SeparationId}/mark-separated", HttpStatusCode.OK,
             Separation(status: "Separated", separatedBy: "hr@company.test", separatedAt: "2026-04-15T09:00:00Z"));
 
         cut.Find("[data-mark-separated]").Click();
 
+        var dialog = cut.WaitForElement("[data-confirm-mark-separated]");
+        dialog.TextContent.Should().Contain("Mark Maria Santos separated as of Mar 3, 2026?")
+            .And.Contain("They'll be deactivated, and this can't be undone.");
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath.EndsWith("/mark-separated"));
+
+        dialog.QuerySelectorAll("button").Last().Click();
+
         cut.WaitForAssertion(() => cut.FindAll("[data-mark-separated]").Should().BeEmpty());
+        _api.Requests.Should().Contain(r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath.EndsWith("/mark-separated"));
+    }
+
+    [Fact]
+    public void MarkingSeparated_CancellingTheConfirmation_LeavesItUnseparated()
+    {
+        var cut = RenderDetail(Separation(status: "NoticeGiven"));
+
+        cut.Find("[data-mark-separated]").Click();
+        cut.WaitForElement("[data-confirm-mark-separated]").QuerySelectorAll("button").First().Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[data-confirm-mark-separated]").Should().BeEmpty());
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath.EndsWith("/mark-separated"));
+        cut.FindAll("[data-mark-separated]").Should().ContainSingle();
     }
 
     [Fact]
@@ -295,6 +316,7 @@ public class SeparationsTests : BunitContext
             """{"detail":"You can mark them separated on or after Apr 15, 2026."}""");
 
         cut.Find("[data-mark-separated]").Click();
+        cut.Find("[data-confirm-mark-separated]").QuerySelectorAll("button").Last().Click();
 
         cut.WaitForElement("[data-page-error]").TextContent.Should().Contain("on or after Apr 15, 2026");
     }

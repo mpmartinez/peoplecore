@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using AngleSharp.Dom;
@@ -7,6 +8,7 @@ using Bunit.TestDoubles;
 using FluentAssertions;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
+using PeopleCore.Web.Auth;
 using PeopleCore.Web.Pages.HR;
 using PeopleCore.Web.Services;
 using PeopleCore.Web.Tests.TestSupport;
@@ -531,6 +533,35 @@ public class EmployeesTests : BunitContext
         RowNamed(cut, "Maria Santos").QuerySelectorAll("button").Single(b => b.TextContent.Trim() == "Record separation").Click();
 
         CurrentUri.Should().EndWith($"/separations?employee={MariaId}");
+    }
+
+    [Fact]
+    public void AViewOnlyUser_DoesNotSeeRecordSeparationOrCertificateOfEmployment()
+    {
+        // employees.view-all alone, not employees.manage: someone who can look but not act.
+        _auth.SetClaims([new Claim(Permissions.ClaimType, Permissions.EmployeesViewAll)]);
+
+        var cut = RenderPage(Paged(1, Employee("EMP-1", "Maria Santos", id: MariaId)));
+
+        var buttons = ButtonsIn(RowNamed(cut, "Maria Santos"));
+        buttons.Should().NotContain("Record separation");
+        buttons.Should().NotContain("Certificate of Employment");
+    }
+
+    [Fact]
+    public void TheIncludeSalaryCheckbox_IsHiddenWithoutPayrollPermission()
+    {
+        // employees.manage without payroll.manage: can open the certificate, but not add pay to it.
+        _auth.SetClaims([
+            new Claim(Permissions.ClaimType, Permissions.EmployeesViewAll),
+            new Claim(Permissions.ClaimType, Permissions.EmployeesManage)
+        ]);
+        var cut = RenderPage(Paged(1, Employee("EMP-1", "Maria Santos", id: MariaId)));
+
+        RowNamed(cut, "Maria Santos").QuerySelectorAll("button").Single(b => b.TextContent.Trim() == "Certificate of Employment").Click();
+
+        cut.WaitForElement("[data-coe-dialog]");
+        cut.FindAll("[data-include-salary]").Should().BeEmpty();
     }
 
     [Fact]
