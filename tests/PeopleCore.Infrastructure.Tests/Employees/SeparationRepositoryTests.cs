@@ -199,6 +199,64 @@ public class SeparationRepositoryTests : DatabaseTestBase
         dto.ClearanceItems.Count(i => i.Name == "Library").Should().Be(1);
     }
 
+    /// <summary>
+    /// SeparateNowAsync completing a fresh separation is CompleteAsync's employee-update path
+    /// (separation.Employee ?? a fresh load) exercised against a real change tracker and read back
+    /// through a fresh context - a mocked ISeparationRepository/IEmployeeRepository can't prove the
+    /// employee row itself actually persisted as inactive with its separation date set.
+    /// </summary>
+    [Fact]
+    public async Task SeparateNowAsync_ThroughTheService_LeavesTheSeparationCompleteAndTheEmployeeInactive()
+    {
+        var currentUser = new Mock<ICurrentUserService>();
+        currentUser.Setup(c => c.Email).Returns("hr@company.test");
+        var clock = new FixedClock(new DateTimeOffset(2026, 9, 21, 0, 0, 0, TimeSpan.Zero));
+
+        await using var ctx = NewContext();
+        var service = new SeparationService(new SeparationRepository(ctx), new EmployeeRepository(ctx), currentUser.Object, clock);
+
+        var employee = AnEmployee();
+        ctx.Employees.Add(employee);
+        await ctx.SaveChangesAsync();
+
+        await service.SeparateNowAsync(employee.Id, new DateOnly(2026, 9, 15), SeparationType.Resignation);
+
+        await using var reader = NewContext();
+        var separation = await reader.Set<Separation>().SingleAsync(s => s.EmployeeId == employee.Id);
+        separation.Status.Should().Be(SeparationStatus.Separated);
+        var reloadedEmployee = await reader.Employees.SingleAsync(e => e.Id == employee.Id);
+        reloadedEmployee.IsActive.Should().BeFalse();
+        reloadedEmployee.SeparationDate.Should().Be(new DateOnly(2026, 9, 15));
+    }
+
+    [Fact]
+    public async Task MarkSeparatedAsync_ThroughTheService_LeavesTheSeparationCompleteAndTheEmployeeInactive()
+    {
+        var currentUser = new Mock<ICurrentUserService>();
+        currentUser.Setup(c => c.Email).Returns("hr@company.test");
+        // On the last working day, in Manila - MarkSeparatedAsync refuses to complete early.
+        var clock = new FixedClock(new DateTimeOffset(2026, 9, 20, 0, 0, 0, TimeSpan.Zero));
+
+        await using var ctx = NewContext();
+        var service = new SeparationService(new SeparationRepository(ctx), new EmployeeRepository(ctx), currentUser.Object, clock);
+
+        var employee = AnEmployee();
+        ctx.Employees.Add(employee);
+        await ctx.SaveChangesAsync();
+
+        var recorded = await service.RecordAsync(new RecordSeparationRequest(
+            employee.Id, SeparationType.Resignation, null, new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 20), null));
+
+        await service.MarkSeparatedAsync(recorded.Id);
+
+        await using var reader = NewContext();
+        var separation = await reader.Set<Separation>().SingleAsync(s => s.Id == recorded.Id);
+        separation.Status.Should().Be(SeparationStatus.Separated);
+        var reloadedEmployee = await reader.Employees.SingleAsync(e => e.Id == employee.Id);
+        reloadedEmployee.IsActive.Should().BeFalse();
+        reloadedEmployee.SeparationDate.Should().Be(new DateOnly(2026, 9, 20));
+    }
+
     [Fact]
     public async Task Delete_RemovesTheSeparationAndItsItems()
     {
