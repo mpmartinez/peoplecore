@@ -168,8 +168,7 @@ public class Bir2316Service : IBir2316Service
                 "No Company record is configured. The database seeder always creates one, so " +
                 "its absence means the database is misconfigured.");
 
-        var saved = await _inputsRepo.GetForYearAsync(year, ct)
-            ?? new Dictionary<Guid, Bir2316Inputs>();
+        var saved = await _inputsRepo.GetForYearAsync(year, ct);
 
         var forms = new List<Bir2316Dto>(employeeIds.Count);
         foreach (var employeeId in employeeIds)

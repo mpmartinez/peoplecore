@@ -32,6 +32,10 @@ public class Bir2316ServiceTests
                      .ReturnsAsync(() => TheEmployee());
         _companyRepo.Setup(r => r.GetDefaultAsync(It.IsAny<CancellationToken>()))
                     .ReturnsAsync(() => TheCompany());
+        // Default: nothing saved. Tests that need saved inputs override this per-employee stub
+        // (GetAsync) or replace this one (GetForYearAsync) directly.
+        _inputsRepo.Setup(r => r.GetForYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(new Dictionary<Guid, Bir2316Inputs>());
 
         // Default: nothing paid. Tests that need runs call PaidRunsAre.
         PaidRunsAre();
