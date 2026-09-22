@@ -8,16 +8,28 @@ public interface IBir2316Service
     Task<IReadOnlyList<int>> GetAvailableYearsAsync(Guid employeeId, CancellationToken ct = default);
 
     /// <summary>
-    /// The form with every derived figure populated and the manual fields blank, or null when the
-    /// employee has no paid runs in that year.
+    /// The form with every derived figure populated and the manual fields taken from whatever was
+    /// last saved for the employee and year (empty when nothing was), or null when the employee
+    /// has no paid runs in that year.
     /// </summary>
     Task<Bir2316Dto?> GetPreviewAsync(Guid employeeId, int year, CancellationToken ct = default);
 
     /// <summary>
     /// The form with derived figures recomputed from payroll and the manual fields taken from
-    /// <paramref name="manual"/>. Derived figures are never read from caller input.
+    /// <paramref name="manual"/>. Derived figures are never read from caller input. Side-effect
+    /// free: nothing is saved. <see cref="GenerateAsync"/> is the version that saves.
     /// </summary>
     Task<Bir2316Dto?> BuildAsync(Guid employeeId, int year, Bir2316ManualInputs manual, CancellationToken ct = default);
+
+    /// <summary>
+    /// Builds the certificate exactly as <see cref="BuildAsync"/> does and, when a form comes back
+    /// (the employee had a paid run in the year), saves <paramref name="manual"/> so the next
+    /// preview, "Generate all" and the 1604-C alphalist use the same figures.
+    /// </summary>
+    Task<Bir2316Dto?> GenerateAsync(Guid employeeId, int year, Bir2316ManualInputs manual, CancellationToken ct = default);
+
+    /// <summary>The inputs saved for the employee and year, or an empty instance when none are.</summary>
+    Task<Bir2316ManualInputs> GetInputsAsync(Guid employeeId, int year, CancellationToken ct = default);
 
     /// <summary>
     /// Every employee with at least one PAID run whose pay date falls in <paramref name="year"/>,
@@ -29,11 +41,11 @@ public interface IBir2316Service
 
     /// <summary>
     /// Every employee with at least one PAID run whose pay date falls in <paramref name="year"/>,
-    /// built with an empty <see cref="Bir2316ManualInputs"/> - the bulk equivalent of
-    /// <see cref="BuildAsync"/> for the "generate all" action. Fetches the year's paid runs once
-    /// and batches the employee lookup, rather than calling <see cref="BuildAsync"/> once per
-    /// employee, which would re-query and re-materialise every OTHER employee's entries on every
-    /// call.
+    /// each built with whatever <see cref="Bir2316ManualInputs"/> was last saved for that employee
+    /// and year (empty when nothing was) - the bulk equivalent of <see cref="BuildAsync"/> for the
+    /// "generate all" action. Fetches the year's paid runs once and batches the employee lookup,
+    /// rather than calling <see cref="BuildAsync"/> once per employee, which would re-query and
+    /// re-materialise every OTHER employee's entries on every call.
     /// </summary>
     Task<IReadOnlyList<Bir2316Dto>> BuildAllAsync(int year, CancellationToken ct = default);
 }

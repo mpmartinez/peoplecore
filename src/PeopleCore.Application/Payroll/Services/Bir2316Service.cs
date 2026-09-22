@@ -32,8 +32,9 @@ namespace PeopleCore.Application.Payroll.Services;
 /// could post any withheld-tax figure and receive a tax certificate stating it. Here
 /// <see cref="BuildAsync"/> recomputes every derived figure from payroll and overlays only
 /// <see cref="Bir2316ManualInputs"/>, whose fields are exactly what a human legitimately supplies.
-/// <see cref="GetPreviewAsync"/> is the same call with an empty overlay, so preview and generation
-/// cannot present two different sets of numbers.
+/// <see cref="GetPreviewAsync"/> is the same call overlaid with whatever inputs were last saved
+/// for the employee and year (empty when nothing was), so preview and generation present the same
+/// numbers.
 /// </para>
 /// </summary>
 public class Bir2316Service : IBir2316Service
@@ -41,15 +42,18 @@ public class Bir2316Service : IBir2316Service
     private readonly IPayrollRunRepository _runRepo;
     private readonly IEmployeeRepository _employeeRepo;
     private readonly ICompanyRepository _companyRepo;
+    private readonly IBir2316InputsRepository _inputsRepo;
 
     public Bir2316Service(
         IPayrollRunRepository runRepo,
         IEmployeeRepository employeeRepo,
-        ICompanyRepository companyRepo)
+        ICompanyRepository companyRepo,
+        IBir2316InputsRepository inputsRepo)
     {
         _runRepo = runRepo;
         _employeeRepo = employeeRepo;
         _companyRepo = companyRepo;
+        _inputsRepo = inputsRepo;
     }
 
     public async Task<IReadOnlyList<int>> GetAvailableYearsAsync(Guid employeeId, CancellationToken ct = default)
@@ -58,8 +62,27 @@ public class Bir2316Service : IBir2316Service
     public async Task<IReadOnlyList<Guid>> GetEmployeeIdsWithPaidRunsAsync(int year, CancellationToken ct = default)
         => await _runRepo.GetEmployeeIdsWithPaidRunsInYearAsync(year, ct);
 
-    public Task<Bir2316Dto?> GetPreviewAsync(Guid employeeId, int year, CancellationToken ct = default)
-        => BuildAsync(employeeId, year, new Bir2316ManualInputs(), ct);
+    public async Task<Bir2316Dto?> GetPreviewAsync(Guid employeeId, int year, CancellationToken ct = default)
+    {
+        var saved = await _inputsRepo.GetAsync(employeeId, year, ct);
+        return await BuildAsync(employeeId, year, saved?.ToManualInputs() ?? new Bir2316ManualInputs(), ct);
+    }
+
+    /// <summary>
+    /// Builds the certificate with the inputs HR entered and, when the employee was paid in the
+    /// year, saves them - so the next preview, "Generate all" and the 1604-C alphalist use the same
+    /// figures. <see cref="BuildAsync"/> itself saves nothing.
+    /// </summary>
+    public async Task<Bir2316Dto?> GenerateAsync(Guid employeeId, int year, Bir2316ManualInputs manual, CancellationToken ct = default)
+    {
+        var dto = await BuildAsync(employeeId, year, manual, ct);
+        if (dto is not null)
+            await _inputsRepo.SaveAsync(employeeId, year, manual, ct);
+        return dto;
+    }
+
+    public async Task<Bir2316ManualInputs> GetInputsAsync(Guid employeeId, int year, CancellationToken ct = default)
+        => (await _inputsRepo.GetAsync(employeeId, year, ct))?.ToManualInputs() ?? new Bir2316ManualInputs();
 
     public async Task<Bir2316Dto?> BuildAsync(
         Guid employeeId, int year, Bir2316ManualInputs manual, CancellationToken ct = default)
@@ -101,9 +124,9 @@ public class Bir2316Service : IBir2316Service
     }
 
     /// <summary>
-    /// Every employee with a paid run in <paramref name="year"/>, built with an empty
-    /// <see cref="Bir2316ManualInputs"/> - the bulk equivalent of <see cref="BuildAsync"/> for
-    /// GenerateAll.
+    /// Every employee with a paid run in <paramref name="year"/>, each built with whatever
+    /// <see cref="Bir2316ManualInputs"/> was last saved for that employee and year (empty when
+    /// nothing was) - the bulk equivalent of <see cref="BuildAsync"/> for GenerateAll.
     /// <para>
     /// <see cref="BuildAsync"/> re-queries this employee's paid runs (with the same predicate
     /// re-applied, plus a full 6-<c>Include</c> employee load and a company lookup) on every call,
@@ -145,6 +168,9 @@ public class Bir2316Service : IBir2316Service
                 "No Company record is configured. The database seeder always creates one, so " +
                 "its absence means the database is misconfigured.");
 
+        var saved = await _inputsRepo.GetForYearAsync(year, ct)
+            ?? new Dictionary<Guid, Bir2316Inputs>();
+
         var forms = new List<Bir2316Dto>(employeeIds.Count);
         foreach (var employeeId in employeeIds)
         {
@@ -158,8 +184,9 @@ public class Bir2316Service : IBir2316Service
 
             var employeeRuns = runsAndEntries.Select(x => x.Run).Distinct().ToList();
             var employeeEntries = runsAndEntries.Select(x => x.Entry).ToList();
+            var manual = saved.TryGetValue(employeeId, out var s) ? s.ToManualInputs() : new Bir2316ManualInputs();
 
-            forms.Add(BuildDto(employee, company, employeeRuns, employeeEntries, year, new Bir2316ManualInputs()));
+            forms.Add(BuildDto(employee, company, employeeRuns, employeeEntries, year, manual));
         }
 
         return forms;

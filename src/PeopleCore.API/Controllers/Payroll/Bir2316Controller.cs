@@ -35,9 +35,10 @@ public class Bir2316Controller : ControllerBase
         => Ok(await _service.GetAvailableYearsAsync(employeeId, ct));
 
     /// <summary>
-    /// The form with every derived figure populated and the manual fields blank - what the
-    /// Bir2316.razor page loads before the user fills in anything, and exactly what
-    /// <see cref="Generate"/> would produce with an empty <see cref="Bir2316ManualInputs"/>.
+    /// The form with every derived figure populated and the manual fields taken from whatever
+    /// inputs were last saved for the employee and year (blank when none were) - what the
+    /// Bir2316.razor page loads before the user changes anything, and exactly what
+    /// <see cref="Generate"/> would produce with those same saved inputs.
     /// </summary>
     [HttpGet("preview/{employeeId:guid}")]
     public async Task<ActionResult<Bir2316Dto>> GetPreview(
@@ -59,7 +60,9 @@ public class Bir2316Controller : ControllerBase
     /// no present-employer withholding, no gross taxable compensation - so this parameter type is
     /// what makes it structurally impossible to render caller-supplied money here, even by
     /// accident: every derived figure in the returned PDF comes back out of
-    /// <see cref="IBir2316Service.BuildAsync"/>, recomputed from payroll.
+    /// <see cref="IBir2316Service.GenerateAsync"/>, recomputed from payroll. That call also saves
+    /// <paramref name="manual"/>, so the next preview, "Generate all" and the 1604-C alphalist use
+    /// the same figures.
     /// <para>
     /// Do not widen this parameter to <see cref="Bir2316Dto"/>, and do not add a derived-figure
     /// field to <see cref="Bir2316ManualInputs"/> "for convenience" - the next person tempted to
@@ -72,7 +75,7 @@ public class Bir2316Controller : ControllerBase
     public async Task<IActionResult> Generate(
         Guid employeeId, [FromQuery] int year, [FromBody] Bir2316ManualInputs manual, CancellationToken ct = default)
     {
-        var dto = await _service.BuildAsync(employeeId, year, manual, ct);
+        var dto = await _service.GenerateAsync(employeeId, year, manual, ct);
         if (dto is null)
             return NotFound();
 
@@ -85,10 +88,10 @@ public class Bir2316Controller : ControllerBase
     /// <summary>
     /// Every employee with a PAID run in <paramref name="year"/>, merged into one PDF - the bulk
     /// equivalent of <see cref="Generate"/> for HR running the whole company's certificates at
-    /// once. Each employee's form is built with an empty <see cref="Bir2316ManualInputs"/>: the
-    /// manual fields (a previous employer, a PERA credit) are per-employee facts nobody has
-    /// supplied yet in a bulk run, so they come back blank here exactly as they do from
-    /// <see cref="GetPreview"/> - not omitted, not guessed.
+    /// once. Each employee's form is built with whatever <see cref="Bir2316ManualInputs"/> was
+    /// last saved for that employee and year: the manual fields (a previous employer, a PERA
+    /// credit) come back exactly as they do from <see cref="GetPreview"/> - blank only for an
+    /// employee nobody has entered them for yet.
     /// <para>
     /// Delegates the whole build to <see cref="IBir2316Service.BuildAllAsync"/> rather than
     /// looping <see cref="Generate"/>'s per-employee <c>BuildAsync</c> here: that loop would
@@ -113,4 +116,9 @@ public class Bir2316Controller : ControllerBase
 
         return File(pdf, "application/pdf", fileName);
     }
+
+    /// <summary>The 2316 inputs saved for the employee and year, or empty ones when none are.</summary>
+    [HttpGet("inputs/{employeeId:guid}")]
+    public async Task<ActionResult<Bir2316ManualInputs>> GetInputs(Guid employeeId, [FromQuery] int year, CancellationToken ct = default)
+        => Ok(await _service.GetInputsAsync(employeeId, year, ct));
 }
