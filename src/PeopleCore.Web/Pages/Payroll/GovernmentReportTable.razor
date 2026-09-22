@@ -1,0 +1,24 @@
+<div class="overflow-x-auto rounded-md border">
+    <table class="w-full text-sm" data-report-table>
+        <thead><tr>@foreach (var c in Columns) { <th class="px-3 py-2 text-left">@c</th> }</tr></thead>
+        <tbody>
+            @foreach (var row in Rows)
+            {
+                <tr class="@(row.MissingNumber ? "bg-destructive/10" : "")">
+                    @foreach (var cell in row.Cells) { <td class="px-3 py-2">@cell</td> }
+                </tr>
+            }
+        </tbody>
+        <tfoot><tr class="font-semibold" data-report-totals>@foreach (var t in Totals) { <td class="px-3 py-2">@t</td> }</tr></tfoot>
+    </table>
+</div>
+
+@code {
+    // Shared by GovernmentReports.razor for both the top-level table (the monthly reports) and
+    // each section's table (the 1604-C alphalist's employment-status groups), so the markup - and
+    // the data-report-table / data-report-totals hooks the tests key off - exist in exactly one
+    // place.
+    [Parameter, EditorRequired] public IReadOnlyList<string> Columns { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<GovernmentReportRowDto> Rows { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<string> Totals { get; set; } = [];
+}

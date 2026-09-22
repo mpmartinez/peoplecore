@@ -306,6 +306,25 @@ else if (_selectedYear.HasValue && !_previewLoadFailed)
         try
         {
             _preview = await Api.GetBir2316PreviewAsync(_selectedEmployeeId.Value, year);
+            if (_preview is not null)
+            {
+                var inputs = await Api.GetBir2316InputsAsync(_selectedEmployeeId.Value, year);
+                if (inputs is not null)
+                {
+                    _manual = new ManualInputsFormModel
+                    {
+                        PrevEmployerTin = inputs.PrevEmployerTin,
+                        PrevEmployerName = inputs.PrevEmployerName,
+                        PrevEmployerAddress = inputs.PrevEmployerAddress,
+                        PrevEmployerZipCode = inputs.PrevEmployerZipCode,
+                        Item22_PrevTaxableCompensation = inputs.Item22_PrevTaxableCompensation,
+                        Item25B_PrevTaxWithheld = inputs.Item25B_PrevTaxWithheld,
+                        Item27_PeraTaxCredit = inputs.Item27_PeraTaxCredit,
+                        Item35_DeMinimis = inputs.Item35_DeMinimis,
+                        Item33_HazardPayMwe = inputs.Item33_HazardPayMwe
+                    };
+                }
+            }
         }
         catch (Exception ex)
         {

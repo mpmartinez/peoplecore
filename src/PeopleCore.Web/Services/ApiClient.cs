@@ -592,16 +592,27 @@ public class ApiClient
         return await response.Content.ReadAsByteArrayAsync();
     }
 
-    // Government remittance reports
-    public async Task<GovernmentReportDto?> GetGovernmentReportAsync(string report, int year, int month)
-        => await GetJsonAsync<GovernmentReportDto>($"api/reports/government/{report}?year={year}&month={month}");
+    // The 2316 manual inputs last saved for this employee and year (blank if none were), used to
+    // pre-fill the Bir2316 page's form. The API always answers 200 - see Bir2316Controller.GetInputs -
+    // so this goes through GetJsonAsync like any other read, with no 404 case to special-case.
+    public async Task<Bir2316ManualInputsDto?> GetBir2316InputsAsync(Guid employeeId, int year)
+        => await GetJsonAsync<Bir2316ManualInputsDto>($"api/reports/2316/inputs/{employeeId}?year={year}");
 
-    public async Task<byte[]> GetGovernmentReportCsvAsync(string report, int year, int month)
+    // Government remittance reports
+    // month is null for the annual reports (the 1604-C alphalist, which take a year and no month);
+    // omitting the query parameter entirely rather than sending "&month=" mirrors how the API
+    // models it - GovernmentReportsController's month parameter is itself an int?.
+    public async Task<GovernmentReportDto?> GetGovernmentReportAsync(string report, int year, int? month)
+        => await GetJsonAsync<GovernmentReportDto>($"api/reports/government/{report}?year={year}{MonthQuery(month)}");
+
+    public async Task<byte[]> GetGovernmentReportCsvAsync(string report, int year, int? month)
     {
-        var response = await _http.GetAsync($"api/reports/government/{report}?year={year}&month={month}&format=csv");
+        var response = await _http.GetAsync($"api/reports/government/{report}?year={year}{MonthQuery(month)}&format=csv");
         await EnsureSuccessAsync(response);
         return await response.Content.ReadAsByteArrayAsync();
     }
+
+    private static string MonthQuery(int? month) => month.HasValue ? $"&month={month}" : "";
 
     // Every JSON read and every command goes through these two rather than GetFromJsonAsync or
     // EnsureSuccessStatusCode. Those throw "Response status code does not indicate success: 409
@@ -899,10 +910,27 @@ public class Bir2316Dto
 // Problem-detail body from ExceptionHandlingMiddleware (400 responses for DomainException)
 public record ProblemDetailResponse(string? Title, string? Detail, int? Status);
 
-// One month's SSS / PhilHealth / Pag-IBIG / 1601-C remittance report.
+// One month's SSS / PhilHealth / Pag-IBIG / 1601-C remittance report, or (Month == 0) an annual
+// one such as the 1604-C alphalist, whose data lives in Sections rather than the top-level
+// Columns/Rows/Totals - see GovernmentReportSectionDto.
 public record GovernmentReportDto(string Report, string Title, int Year, int Month, string Basis,
     GovernmentReportEmployerDto Employer, IReadOnlyList<string> Columns, IReadOnlyList<GovernmentReportRowDto> Rows,
-    IReadOnlyList<string> Totals, IReadOnlyList<GovernmentReportLineDto> Summary, IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Totals, IReadOnlyList<GovernmentReportLineDto> Summary, IReadOnlyList<string> Warnings,
+    IReadOnlyList<GovernmentReportSectionDto> Sections);
 public record GovernmentReportRowDto(Guid EmployeeId, IReadOnlyList<string> Cells, bool MissingNumber);
 public record GovernmentReportLineDto(string Label, decimal Amount);
 public record GovernmentReportEmployerDto(string Name, string? Address, string Tin, string? RdoCode, string AgencyNumber);
+
+// One table of a report that has several - the 1604-C alphalist's employment-status groups. A
+// report with a single table (every monthly report) uses the top-level Columns/Rows/Totals above
+// and an empty Sections list.
+public record GovernmentReportSectionDto(string Title, IReadOnlyList<string> Columns,
+    IReadOnlyList<GovernmentReportRowDto> Rows, IReadOnlyList<string> Totals, string EmptyMessage);
+
+// The Bir2316ManualInputs fields the Bir2316 page's form can display and edit - see
+// ManualInputsFormModel in Bir2316.razor. Deliberately leaves out IsMinimumWageEarner /
+// StatutoryMinWagePerDay / StatutoryMinWagePerMonth: the page offers no control for them, and the
+// API answers those fields too, so they are simply ignored on deserialization.
+public record Bir2316ManualInputsDto(string? PrevEmployerTin, string? PrevEmployerName, string? PrevEmployerAddress,
+    string? PrevEmployerZipCode, decimal Item22_PrevTaxableCompensation, decimal Item25B_PrevTaxWithheld,
+    decimal Item27_PeraTaxCredit, decimal Item35_DeMinimis, decimal Item33_HazardPayMwe);

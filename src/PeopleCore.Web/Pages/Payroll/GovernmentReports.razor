@@ -8,7 +8,7 @@
 <PageHeader Title="Government Reports" Section="Payroll"
             Description="Each month's SSS, PhilHealth, Pag-IBIG and BIR 1601-C figures, from paid payroll runs.">
     <Actions>
-        @if (_report is { Rows.Count: > 0 })
+        @if (HasData)
         {
             <Button Variant="outline" OnClick="DownloadCsv" Loading="@_downloading" Disabled="@_downloading" data-download-csv>
                 <i class="bi bi-download mr-1"></i> Download CSV
@@ -19,11 +19,22 @@
 
 <Card Class="mb-4">
     <CardContent Class="pt-6 flex flex-wrap items-end gap-4">
-        <div>
-            <Label For="report-month">Month</Label>
-            <input id="report-month" type="month" class="border rounded-md px-3 py-2 bg-background"
-                   value="@_month.ToString("yyyy-MM")" max="@DateTime.Today.ToString("yyyy-MM")" @onchange="ChangeMonth" />
-        </div>
+        @if (_tab == "1604c")
+        {
+            <div>
+                <Label For="report-year">Year</Label>
+                <input id="report-year" type="number" class="border rounded-md px-3 py-2 bg-background"
+                       value="@_year" max="@DateTime.Today.Year" @onchange="ChangeYear" />
+            </div>
+        }
+        else
+        {
+            <div>
+                <Label For="report-month">Month</Label>
+                <input id="report-month" type="month" class="border rounded-md px-3 py-2 bg-background"
+                       value="@_month.ToString("yyyy-MM")" max="@DateTime.Today.ToString("yyyy-MM")" @onchange="ChangeMonth" />
+            </div>
+        }
         <div class="flex gap-2" role="tablist">
             @foreach (var (key, label) in Tabs)
             {
@@ -63,26 +74,37 @@ else if (_report is not null)
         </Alert>
     }
 
-    @if (_report.Rows.Count == 0)
+    @if (_report.Sections.Count > 0)
+    {
+        @if (!HasData)
+        {
+            <p class="text-sm text-muted-foreground" data-report-empty>No payroll was paid in @_year.</p>
+        }
+        else
+        {
+            @foreach (var section in _report.Sections)
+            {
+                <section class="mb-6" data-report-section>
+                    <h3 class="font-semibold mb-2">@section.Title</h3>
+                    @if (section.Rows.Count == 0)
+                    {
+                        <p class="text-sm text-muted-foreground" data-section-empty>@section.EmptyMessage</p>
+                    }
+                    else
+                    {
+                        <GovernmentReportTable Columns="@section.Columns" Rows="@section.Rows" Totals="@section.Totals" />
+                    }
+                </section>
+            }
+        }
+    }
+    else if (_report.Rows.Count == 0)
     {
         <p class="text-sm text-muted-foreground" data-report-empty>No payroll was paid for @_month.ToString("MMMM yyyy").</p>
     }
     else
     {
-        <div class="overflow-x-auto rounded-md border">
-            <table class="w-full text-sm" data-report-table>
-                <thead><tr>@foreach (var c in _report.Columns) { <th class="px-3 py-2 text-left">@c</th> }</tr></thead>
-                <tbody>
-                    @foreach (var row in _report.Rows)
-                    {
-                        <tr class="@(row.MissingNumber ? "bg-destructive/10" : "")">
-                            @foreach (var cell in row.Cells) { <td class="px-3 py-2">@cell</td> }
-                        </tr>
-                    }
-                </tbody>
-                <tfoot><tr class="font-semibold" data-report-totals>@foreach (var t in _report.Totals) { <td class="px-3 py-2">@t</td> }</tr></tfoot>
-            </table>
-        </div>
+        <GovernmentReportTable Columns="@_report.Columns" Rows="@_report.Rows" Totals="@_report.Totals" />
 
         @if (_report.Summary.Count > 0)
         {
@@ -98,15 +120,23 @@ else if (_report is not null)
 
 @code {
     private static readonly (string Key, string Label)[] Tabs =
-        [("sss", "SSS"), ("philhealth", "PhilHealth"), ("pagibig", "Pag-IBIG"), ("1601c", "BIR 1601-C")];
+        [("sss", "SSS"), ("philhealth", "PhilHealth"), ("pagibig", "Pag-IBIG"), ("1601c", "BIR 1601-C"), ("1604c", "BIR 1604-C")];
 
     // Remittances are for the month just ended.
     private DateTime _month = new(DateTime.Today.AddMonths(-1).Year, DateTime.Today.AddMonths(-1).Month, 1);
+    // The 1604-C alphalist is annual and defaults to last year - this year's runs are still open.
+    private int _year = DateTime.Today.Year - 1;
     private string _tab = "sss";
     private GovernmentReportDto? _report;
     private bool _loading, _downloading;
     private string? _error;
     private string? _downloadError;
+
+    // True once the loaded report has something to show: either the top-level table (monthly
+    // reports) or at least one non-empty section (the 1604-C alphalist). Drives both the Download
+    // CSV button and, for a sectioned report, whether "No payroll was paid" replaces the sections.
+    private bool HasData => _report is not null &&
+        (_report.Rows.Count > 0 || _report.Sections.Any(s => s.Rows.Count > 0));
 
     // Guards against a slow earlier tab/month request resolving after a later one and
     // overwriting its (more current) result: each LoadAsync call claims the next number, and
@@ -130,6 +160,15 @@ else if (_report is not null)
         }
     }
 
+    private async Task ChangeYear(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var year))
+        {
+            _year = year;
+            await LoadAsync();
+        }
+    }
+
     private async Task LoadAsync()
     {
         var sequence = ++_loadSequence;
@@ -138,8 +177,10 @@ else if (_report is not null)
         _downloadError = null;
         try
         {
-            var report = await Api.GetGovernmentReportAsync(_tab, _month.Year, _month.Month);
-            if (sequence != _loadSequence) return; // a later tab/month change has since started; drop this stale result
+            var report = _tab == "1604c"
+                ? await Api.GetGovernmentReportAsync(_tab, _year, null)
+                : await Api.GetGovernmentReportAsync(_tab, _month.Year, _month.Month);
+            if (sequence != _loadSequence) return; // a later tab/month/year change has since started; drop this stale result
             _report = report;
         }
         catch (HttpRequestException ex)
@@ -156,16 +197,19 @@ else if (_report is not null)
 
     private async Task DownloadCsv()
     {
-        // Captured before the await: if a tab or month change lands while the download is in
-        // flight, the file name still matches the report that was actually downloaded.
-        var (tab, month) = (_tab, _month);
+        // Captured before the await: if a tab, month or year change lands while the download is
+        // in flight, the file name still matches the report that was actually downloaded.
+        var (tab, month, year) = (_tab, _month, _year);
         _downloading = true;
         _downloadError = null;
         try
         {
-            var csv = await Api.GetGovernmentReportCsvAsync(tab, month.Year, month.Month);
-            await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(csv),
-                $"{tab}-{month:yyyy-MM}.csv", "text/csv");
+            var isAnnual = tab == "1604c";
+            var csv = isAnnual
+                ? await Api.GetGovernmentReportCsvAsync(tab, year, null)
+                : await Api.GetGovernmentReportCsvAsync(tab, month.Year, month.Month);
+            var fileName = isAnnual ? $"{tab}-{year}.csv" : $"{tab}-{month:yyyy-MM}.csv";
+            await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(csv), fileName, "text/csv");
         }
         catch (HttpRequestException ex)
         {

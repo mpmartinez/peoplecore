@@ -27,10 +27,20 @@ public class Bir2316Tests : BunitContext
 
     private static string PreviewPath(Guid employeeId, int year) => $"/api/reports/2316/preview/{employeeId}?year={year}";
 
+    private static string InputsPath(Guid employeeId, int year) => $"/api/reports/2316/inputs/{employeeId}?year={year}";
+
     private static string Preview(int year) =>
         $$"""
         {"year":{{year}},"periodFrom":"01/01/{{year}}","periodTo":"12/31/{{year}}","employeeTin":"123-456-789-000",
          "employeeLastName":"Santos","employeeFirstName":"Maria","employeeMiddleName":"Cruz","rdoCode":"050"}
+        """;
+
+    private static string Inputs(string? prevTin = null) =>
+        $$"""
+        {"prevEmployerTin":{{(prevTin is null ? "null" : $"\"{prevTin}\"")}},"prevEmployerName":null,
+         "prevEmployerAddress":null,"prevEmployerZipCode":null,"item22_PrevTaxableCompensation":0,
+         "item25B_PrevTaxWithheld":0,"item27_PeraTaxCredit":0,"item35_DeMinimis":0,"item33_HazardPayMwe":0,
+         "statutoryMinWagePerDay":0,"statutoryMinWagePerMonth":0}
         """;
 
     private IRenderedComponent<Bir2316> RenderPage()
@@ -47,7 +57,9 @@ public class Bir2316Tests : BunitContext
     {
         _api.On(HttpMethod.Get, YearsPath(MariaId), HttpStatusCode.OK, "[2025,2024]")
             .On(HttpMethod.Get, PreviewPath(MariaId, 2025), HttpStatusCode.OK, Preview(2025))
-            .On(HttpMethod.Get, PreviewPath(MariaId, 2024), HttpStatusCode.OK, Preview(2024));
+            .On(HttpMethod.Get, PreviewPath(MariaId, 2024), HttpStatusCode.OK, Preview(2024))
+            .On(HttpMethod.Get, InputsPath(MariaId, 2025), HttpStatusCode.OK, Inputs())
+            .On(HttpMethod.Get, InputsPath(MariaId, 2024), HttpStatusCode.OK, Inputs());
         var cut = RenderPage();
         cut.Find("#employee").Change(MariaId.ToString());
         cut.WaitForAssertion(() => cut.FindAll("#prevTin").Should().ContainSingle());
@@ -92,6 +104,20 @@ public class Bir2316Tests : BunitContext
         cut.Markup.Should().Contain("123-456-789-000").And.Contain("Santos, Maria Cruz");
         Button(cut, "Download all for 2025");
         _api.Requests.Should().NotContain(r => r.RequestUri!.PathAndQuery == PreviewPath(MariaId, 2024));
+    }
+
+    [Fact]
+    public void ChoosingAnEmployeeAndYear_LoadsTheSavedManualInputs()
+    {
+        _api.On(HttpMethod.Get, YearsPath(MariaId), HttpStatusCode.OK, "[2025]")
+            .On(HttpMethod.Get, PreviewPath(MariaId, 2025), HttpStatusCode.OK, Preview(2025))
+            .On(HttpMethod.Get, InputsPath(MariaId, 2025), HttpStatusCode.OK, Inputs(prevTin: "111-222-333-000"));
+        var cut = RenderPage();
+
+        cut.Find("#employee").Change(MariaId.ToString());
+
+        cut.WaitForAssertion(() => cut.Find("#prevTin").GetAttribute("value").Should().Be("111-222-333-000"));
+        _api.Requests.Should().Contain(r => r.RequestUri!.PathAndQuery == InputsPath(MariaId, 2025));
     }
 
     [Fact]
