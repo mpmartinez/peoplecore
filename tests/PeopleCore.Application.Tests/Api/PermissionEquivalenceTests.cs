@@ -119,6 +119,16 @@ public class PermissionEquivalenceTests
         ["GovernmentReportsController.Get"] = [Permissions.PayrollManage],
 
         ["Bir2316Controller.GetInputs"] = [Permissions.PayrollManage],
+
+        ["SeparationsController.List"] = [Permissions.EmployeesManage],
+        ["SeparationsController.Get"] = [Permissions.EmployeesManage],
+        ["SeparationsController.Record"] = [Permissions.EmployeesManage],
+        ["SeparationsController.MarkSeparated"] = [Permissions.EmployeesManage],
+        ["SeparationsController.Cancel"] = [Permissions.EmployeesManage],
+        ["SeparationsController.AddClearanceItem"] = [Permissions.EmployeesManage],
+        ["SeparationsController.ClearItem"] = [Permissions.EmployeesManage],
+        ["SeparationsController.UndoClearItem"] = [Permissions.EmployeesManage],
+        ["SeparationsController.DeleteClearanceItem"] = [Permissions.EmployeesManage],
     };
 
     private static IEnumerable<(Type Controller, MethodInfo Action)> Endpoints() =>
