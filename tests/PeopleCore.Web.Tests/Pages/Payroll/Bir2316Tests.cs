@@ -162,6 +162,25 @@ public class Bir2316Tests : BunitContext
     }
 
     [Fact]
+    public void SwitchingToAnEmployeeWithNoPaidRuns_WhileThePreviousPreviewIsLoading_LeavesNoSpinner()
+    {
+        // Maria's preview is held open; the superseded load never clears the spinner itself, so the
+        // switch to Jose (no paid years) must.
+        _api.OnGated(HttpMethod.Get, PreviewPath(MariaId, 2025));
+        _api.On(HttpMethod.Get, YearsPath(MariaId), HttpStatusCode.OK, "[2025]")
+            .On(HttpMethod.Get, YearsPath(JoseId), HttpStatusCode.OK, "[]");
+        var cut = RenderPage();
+
+        cut.Find("#employee").Change(MariaId.ToString());
+        cut.WaitForAssertion(() => cut.FindComponents<PeopleCore.Web.Components.UI.Spinner>().Should().NotBeEmpty());
+
+        cut.Find("#employee").Change(JoseId.ToString());
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain("No paid runs for this employee."));
+        cut.FindComponents<PeopleCore.Web.Components.UI.Spinner>().Should().BeEmpty();
+    }
+
+    [Fact]
     public void AnEmployeeWithNoPaidRuns_SaysSo_AndOffersNoForm()
     {
         _api.On(HttpMethod.Get, YearsPath(JoseId), HttpStatusCode.OK, "[]");

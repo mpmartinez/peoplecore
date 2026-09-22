@@ -263,6 +263,11 @@ else if (_selectedYear.HasValue && !_previewLoadFailed)
         _preview = null;
         _years = [];
         _yearsLoadFailed = false;
+        // A superseded load no longer clears these itself (its finally checks the sequence), so a
+        // switch to an employee with no paid years would otherwise leave the previous spinner and
+        // form behind.
+        _loadingPreview = false;
+        _manual = new ManualInputsFormModel();
         _generateError = null;
         // A failure loading the PREVIOUS employee's years or preview must not linger under the
         // next employee's, or a stale error sits on screen above a perfectly good preview.
@@ -379,6 +384,8 @@ else if (_selectedYear.HasValue && !_previewLoadFailed)
         // Captured before the awaits: GenerateAsync saves the manual inputs, and the reload below
         // must apply to this same employee/year even if the selection has since moved on.
         var (employeeId, year) = (_selectedEmployeeId.Value, _selectedYear.Value);
+        var fileName = $"BIR2316-{year}-{_preview.EmployeeLastName}{_preview.EmployeeFirstName}.pdf";
+        var sequence = _loadSequence;
 
         _generateError = null;
         _generating = true;
@@ -400,15 +407,17 @@ else if (_selectedYear.HasValue && !_previewLoadFailed)
                 // inputs card for why.
             });
 
-            var fileName = $"BIR2316-{year}-{_preview.EmployeeLastName}{_preview.EmployeeFirstName}.pdf";
             await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(pdf), fileName, "application/pdf");
 
             // Reload so the on-screen totals match the saved inputs the PDF was just generated
-            // with, rather than what was on screen before Generate was clicked. Only applied if the
-            // selection is still this employee/year - a stale reload must not override a selection
-            // change made while Generate was in flight.
-            if (_selectedEmployeeId == employeeId && _selectedYear == year)
-                _preview = await Api.GetBir2316PreviewAsync(employeeId, year) ?? _preview;
+            // with. Only applied if no employee/year change has started since the click - checked
+            // after the await as well, so a change made while the reload is in flight isn't
+            // overwritten with this employee's figures.
+            if (sequence == _loadSequence)
+            {
+                var reloaded = await Api.GetBir2316PreviewAsync(employeeId, year);
+                if (sequence == _loadSequence && reloaded is not null) _preview = reloaded;
+            }
         }
         catch (Exception ex)
         {
