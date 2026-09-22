@@ -109,7 +109,7 @@ public sealed class GovernmentReportService : IGovernmentReportService
         var employer = new GovernmentReportEmployerDto(
             company?.Name ?? "", company?.Address, company?.TIN ?? "", company?.RdoCode, employerNumber ?? "");
 
-        return new GovernmentReportDto(key, title, year, month, basis, employer, columns, rows, totals, summary, warnings);
+        return new GovernmentReportDto(key, title, year, month, basis, employer, columns, rows, totals, summary, warnings, []);
     }
 
     private async Task<(IReadOnlyList<string>, List<GovernmentReportRowDto>, IReadOnlyList<string>, IReadOnlyList<GovernmentReportLineDto>)>

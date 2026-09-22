@@ -16,7 +16,7 @@ public class GovernmentReportsControllerTests
 
     private static readonly GovernmentReportDto Report = new(
         "sss", "SSS contributions", 2026, 3, "Pay earned in March 2026",
-        new GovernmentReportEmployerDto("Acme", null, "", null, ""), ["Employee"], [], ["Total"], [], []);
+        new GovernmentReportEmployerDto("Acme", null, "", null, ""), ["Employee"], [], ["Total"], [], [], []);
 
     [Fact]
     public void RequiresPayrollManage()
