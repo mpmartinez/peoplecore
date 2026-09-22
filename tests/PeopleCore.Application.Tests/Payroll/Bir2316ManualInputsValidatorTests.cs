@@ -153,6 +153,16 @@ public class Bir2316ManualInputsValidatorTests
             .Throw<DomainException>().WithMessage("*TIN*");
     }
 
+    [Fact]
+    public void Validate_RejectsAPreviousEmployerTinLongerThanTheColumnAllows()
+    {
+        // 12 digits with generous spacing - passes the digit-count rule above, but
+        // PrevEmployerTin is varchar(20) and this is 21 characters; without this check the insert
+        // fails with a 500 instead of a validation message.
+        Validating(new Bir2316ManualInputs { PrevEmployerTin = "123 - 456 - 789 - 000" }).Should()
+            .Throw<DomainException>().WithMessage("*TIN*");
+    }
+
     // ── ZIP ──────────────────────────────────────────────────────────────────
 
     [Fact]

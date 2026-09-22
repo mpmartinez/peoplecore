@@ -57,6 +57,12 @@ public static class Bir2316ManualInputsValidator
             var digitCount = tin.Count(char.IsDigit);
             var onlyDigitsAndSeparators = tin.All(c => char.IsDigit(c) || c is '-' or ' ');
 
+            // A separate check from the digit-count rule below: a caller can space or dash a
+            // 9-or-12-digit TIN out past what PrevEmployerTin's column holds (varchar(20)), which
+            // would otherwise pass here and fail the insert with a 500 instead of this message.
+            failures.AddIf(tin.Length > PayrollInputLimits.MaxPrevEmployerTinLength,
+                "Enter the previous employer's TIN as 9 or 12 digits, like 123-456-789-000.");
+
             failures.AddIf(!onlyDigitsAndSeparators || (digitCount != 9 && digitCount != 12),
                 "Previous employer TIN must be 9 digits, or 12 with a branch code.");
         }

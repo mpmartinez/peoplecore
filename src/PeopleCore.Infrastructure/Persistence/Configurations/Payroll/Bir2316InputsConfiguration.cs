@@ -14,7 +14,7 @@ public class Bir2316InputsConfiguration : IEntityTypeConfiguration<Bir2316Inputs
         // One set of inputs per employee per year.
         builder.HasIndex(x => new { x.EmployeeId, x.Year }).IsUnique();
 
-        builder.Property(x => x.PrevEmployerTin).HasMaxLength(20);
+        builder.Property(x => x.PrevEmployerTin).HasMaxLength(PayrollInputLimits.MaxPrevEmployerTinLength);
         builder.Property(x => x.PrevEmployerName).HasMaxLength(PayrollInputLimits.MaxEmployerNameLength);
         builder.Property(x => x.PrevEmployerAddress).HasMaxLength(PayrollInputLimits.MaxEmployerAddressLength);
         builder.Property(x => x.PrevEmployerZipCode).HasMaxLength(10);
