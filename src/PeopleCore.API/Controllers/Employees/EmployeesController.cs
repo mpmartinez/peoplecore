@@ -97,7 +97,7 @@ public class EmployeesController : ControllerBase
     [RequirePermission(Permissions.EmployeesManage)]
     public async Task<IActionResult> Deactivate(Guid id, [FromBody] DeactivateEmployeeRequest request, CancellationToken ct)
     {
-        await _service.DeactivateAsync(id, request.SeparationDate, ct);
+        await _service.DeactivateAsync(id, request.SeparationDate, request.Type, ct);
         return NoContent();
     }
 
@@ -199,4 +199,4 @@ public class EmployeesController : ControllerBase
     }
 }
 
-public record DeactivateEmployeeRequest(DateOnly SeparationDate);
+public record DeactivateEmployeeRequest(DateOnly SeparationDate, SeparationType Type = SeparationType.Resignation);

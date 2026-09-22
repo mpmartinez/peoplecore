@@ -14,11 +14,12 @@ namespace PeopleCore.Application.Tests.Employees;
 public class EmployeeServiceTests
 {
     private readonly Mock<IEmployeeRepository> _repo = new();
+    private readonly Mock<ISeparationService> _separationService = new();
     private readonly EmployeeService _sut;
 
     public EmployeeServiceTests()
     {
-        _sut = new EmployeeService(_repo.Object);
+        _sut = new EmployeeService(_repo.Object, _separationService.Object);
     }
 
     [Fact]

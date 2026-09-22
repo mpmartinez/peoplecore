@@ -4,6 +4,7 @@ using Moq;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Common.Options;
 using PeopleCore.Application.Employees.DTOs;
+using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Employees.Services;
 using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Enums;
@@ -20,7 +21,10 @@ public class EmployeeChildRecordTests : DatabaseTestBase
 {
     public EmployeeChildRecordTests(PostgresFixture fixture) : base(fixture) { }
 
-    private EmployeeService Service => new(new EmployeeRepository(Context));
+    /// <summary>None of these tests exercise Deactivate, so a bare mock stands in for the separation service.</summary>
+    private static ISeparationService NoopSeparationService => new Mock<ISeparationService>().Object;
+
+    private EmployeeService Service => new(new EmployeeRepository(Context), NoopSeparationService);
 
     private async Task<Guid> AnExistingEmployeeAsync()
     {
@@ -110,7 +114,7 @@ public class EmployeeChildRecordTests : DatabaseTestBase
         var contact = await Service.AddEmergencyContactAsync(
             employeeId, new CreateEmergencyContactDto("Maria", "Spouse", "0917", null));
 
-        await new EmployeeService(new EmployeeRepository(NewContext())).DeleteEmergencyContactAsync(employeeId, contact.Id);
+        await new EmployeeService(new EmployeeRepository(NewContext()), NoopSeparationService).DeleteEmergencyContactAsync(employeeId, contact.Id);
 
         await using var reader = NewContext();
         (await reader.EmergencyContacts.AnyAsync(c => c.EmployeeId == employeeId)).Should().BeFalse();
