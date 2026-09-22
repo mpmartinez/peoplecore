@@ -47,8 +47,11 @@ public class GovernmentReportServiceTests
     }
 
     private static PayrollRun Run(DateOnly periodEnd, DateOnly payDate, params PayrollRunEmployee[] entries)
+        => RunForPeriod(periodEnd.AddDays(-14), periodEnd, payDate, entries);
+
+    private static PayrollRun RunForPeriod(DateOnly periodStart, DateOnly periodEnd, DateOnly payDate, params PayrollRunEmployee[] entries)
     {
-        var run = new PayrollRun { RunNumber = "PAY", PeriodStart = periodEnd.AddDays(-14), PeriodEnd = periodEnd,
+        var run = new PayrollRun { RunNumber = "PAY", PeriodStart = periodStart, PeriodEnd = periodEnd,
                                    PayDate = payDate, Status = PayrollRunStatus.Paid };
         run.Employees.AddRange(entries);
         return run;
@@ -65,8 +68,8 @@ public class GovernmentReportServiceTests
     {
         var juan = Person("Cruz", "Juan", (GovernmentIdType.SSS, "34-1234567-8"));
         _runs.Setup(r => r.GetPaidRunsByPeriodEndMonthAsync(2026, 3, It.IsAny<CancellationToken>())).ReturnsAsync([
-            Run(new(2026, 3, 15), new(2026, 3, 20), Entry(juan, sssEe: 500m, sssEr: 1_015m)),
-            Run(new(2026, 3, 31), new(2026, 4, 5), Entry(juan, sssEe: 500m, sssEr: 1_015m))
+            RunForPeriod(new(2026, 3, 1), new(2026, 3, 15), new(2026, 3, 20), Entry(juan, sssEe: 500m, sssEr: 1_015m)),
+            RunForPeriod(new(2026, 3, 16), new(2026, 3, 31), new(2026, 4, 5), Entry(juan, sssEe: 500m, sssEr: 1_015m))
         ]);
 
         var report = await _sut.BuildAsync("sss", 2026, 3);
@@ -76,6 +79,40 @@ public class GovernmentReportServiceTests
             "Cruz, Juan", "34-1234567-8", "20000.00", "1000.00", "2000.00", "30.00", "2030.00", "3030.00");
         report.Totals.Should().Equal("Total", "", "", "1000.00", "2000.00", "30.00", "2030.00", "3030.00");
         report.Employer.AgencyNumber.Should().Be("03-9999999-1");
+    }
+
+    [Fact]
+    public async Task Sss_LeavesMscAndEcBlank_WhenOnlyOneCutoffOfTheMonthIsPaid()
+    {
+        // Only the 1-15 cutoff is in - working the MSC back from half the month's share would
+        // understate it, so it (and the EC that goes with it) is left blank instead.
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.SSS, "34-1234567-8"));
+        _runs.Setup(r => r.GetPaidRunsByPeriodEndMonthAsync(2026, 3, It.IsAny<CancellationToken>())).ReturnsAsync([
+            RunForPeriod(new(2026, 3, 1), new(2026, 3, 15), new(2026, 3, 20), Entry(juan, sssEe: 500m, sssEr: 1_015m))
+        ]);
+
+        var report = await _sut.BuildAsync("sss", 2026, 3);
+
+        report.Rows.Should().ContainSingle().Which.Cells.Should().Equal(
+            "Cruz, Juan", "34-1234567-8", "", "500.00", "", "", "1015.00", "1515.00");
+        report.Totals.Should().Equal("Total", "", "", "500.00", "", "", "1015.00", "1515.00");
+        report.Warnings.Should().Contain(
+            "The MSC and EC are left blank for 1 employee whose pay for the whole month isn't paid yet.");
+    }
+
+    [Fact]
+    public async Task Sss_ShowsValues_WhenASingleMonthlyRunCoversTheWholeMonth()
+    {
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.SSS, "34-1234567-8"));
+        _runs.Setup(r => r.GetPaidRunsByPeriodEndMonthAsync(2026, 3, It.IsAny<CancellationToken>())).ReturnsAsync([
+            RunForPeriod(new(2026, 3, 1), new(2026, 3, 31), new(2026, 4, 5), Entry(juan, sssEe: 1_000m, sssEr: 2_030m))
+        ]);
+
+        var report = await _sut.BuildAsync("sss", 2026, 3);
+
+        report.Rows.Should().ContainSingle().Which.Cells.Should().Equal(
+            "Cruz, Juan", "34-1234567-8", "20000.00", "1000.00", "2000.00", "30.00", "2030.00", "3030.00");
+        report.Warnings.Should().NotContain(w => w.Contains("whole month"));
     }
 
     [Fact]
