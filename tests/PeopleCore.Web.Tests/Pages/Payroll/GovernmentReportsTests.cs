@@ -92,6 +92,31 @@ public class GovernmentReportsTests : BunitContext
     }
 
     [Fact]
+    public void TheMonthInput_CannotBeSetPastTheCurrentMonth()
+    {
+        _api.On(HttpMethod.Get, Path("sss", LastMonth), HttpStatusCode.OK, Report("sss"));
+
+        var cut = Render<GovernmentReports>();
+
+        cut.WaitForElement("[data-report-table]");
+        cut.Find("#report-month").GetAttribute("max").Should().Be(DateTime.Today.ToString("yyyy-MM"));
+    }
+
+    [Fact]
+    public void ChangingTheMonth_RequestsThatMonthsReport()
+    {
+        var january2026 = new DateTime(2026, 1, 1);
+        _api.On(HttpMethod.Get, Path("sss", LastMonth), HttpStatusCode.OK, Report("sss"))
+            .On(HttpMethod.Get, Path("sss", january2026), HttpStatusCode.OK, Report("sss"));
+        var cut = Render<GovernmentReports>();
+        cut.WaitForElement("[data-report-table]");
+
+        cut.Find("#report-month").Change("2026-01");
+
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.RequestUri!.PathAndQuery == Path("sss", january2026)));
+    }
+
+    [Fact]
     public void FailedCsvDownload_KeepsTheReportVisible_AndShowsTheError()
     {
         _api.On(HttpMethod.Get, Path("sss", LastMonth), HttpStatusCode.OK, Report("sss"))

@@ -166,7 +166,8 @@ public class GovernmentReportServiceTests
             new GovernmentReportLineDto("Total non-taxable compensation", 92_600m),
             new GovernmentReportLineDto("Total taxable compensation", 58_400m),
             new GovernmentReportLineDto("Total taxes withheld", 9_000m));
-        report.Rows.Single().Cells[1].Should().Be("111-222-333-000");
+        report.Rows.Single().Cells.Should().Equal(
+            "Cruz, Juan", "111-222-333-000", "151000.00", "90000.00", "1600.00", "1000.00", "58400.00", "9000.00");
     }
 
     [Fact]
@@ -208,6 +209,35 @@ public class GovernmentReportServiceTests
         var report = await _sut.BuildAsync("pagibig", 2026, 3);
 
         report.Rows.Single().Cells.Take(5).Should().Equal("Cruz", "Juan", "Santos", "1990-05-01", "1234-5678-9012");
+    }
+
+    [Fact]
+    public async Task TwoEmployees_AreSortedByLastNameThenFirstName()
+    {
+        var ana = Person("Santos", "Ana");
+        var juan = Person("Cruz", "Juan");
+        _runs.Setup(r => r.GetPaidRunsByPeriodEndMonthAsync(2026, 3, It.IsAny<CancellationToken>()))
+             .ReturnsAsync([Run(new(2026, 3, 31), new(2026, 4, 5), Entry(ana, phEe: 100m), Entry(juan, phEe: 200m))]);
+
+        var report = await _sut.BuildAsync("philhealth", 2026, 3);
+
+        report.Rows.Select(r => r.Cells[0]).Should().Equal("Cruz, Juan", "Santos, Ana");
+    }
+
+    [Fact]
+    public async Task Sss_UsesThePeriodEndMonth_ForARunPaidTheFollowingMonth()
+    {
+        // A December 16-31 run only gets paid on January 5, but it still belongs to December's SSS
+        // report - the month the pay was earned, not the month it was paid.
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.SSS, "34-1234567-8"));
+        _runs.Setup(r => r.GetPaidRunsByPeriodEndMonthAsync(2025, 12, It.IsAny<CancellationToken>())).ReturnsAsync([
+            RunForPeriod(new(2025, 12, 16), new(2025, 12, 31), new(2026, 1, 5), Entry(juan, sssEe: 500m, sssEr: 1_015m))
+        ]);
+
+        var report = await _sut.BuildAsync("sss", 2025, 12);
+
+        report.Rows.Should().ContainSingle();
+        _runs.Verify(r => r.GetPaidRunsByPeriodEndMonthAsync(2025, 12, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

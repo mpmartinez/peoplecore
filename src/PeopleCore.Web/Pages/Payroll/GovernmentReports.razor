@@ -22,7 +22,7 @@
         <div>
             <Label For="report-month">Month</Label>
             <input id="report-month" type="month" class="border rounded-md px-3 py-2 bg-background"
-                   value="@_month.ToString("yyyy-MM")" @onchange="ChangeMonth" />
+                   value="@_month.ToString("yyyy-MM")" max="@DateTime.Today.ToString("yyyy-MM")" @onchange="ChangeMonth" />
         </div>
         <div class="flex gap-2" role="tablist">
             @foreach (var (key, label) in Tabs)
@@ -156,13 +156,16 @@ else if (_report is not null)
 
     private async Task DownloadCsv()
     {
+        // Captured before the await: if a tab or month change lands while the download is in
+        // flight, the file name still matches the report that was actually downloaded.
+        var (tab, month) = (_tab, _month);
         _downloading = true;
         _downloadError = null;
         try
         {
-            var csv = await Api.GetGovernmentReportCsvAsync(_tab, _month.Year, _month.Month);
+            var csv = await Api.GetGovernmentReportCsvAsync(tab, month.Year, month.Month);
             await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(csv),
-                $"{_tab}-{_month:yyyy-MM}.csv", "text/csv");
+                $"{tab}-{month:yyyy-MM}.csv", "text/csv");
         }
         catch (HttpRequestException ex)
         {
