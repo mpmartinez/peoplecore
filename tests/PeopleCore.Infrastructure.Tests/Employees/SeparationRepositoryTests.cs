@@ -1,5 +1,9 @@
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Moq;
+using PeopleCore.Application.Common.Interfaces;
+using PeopleCore.Application.Employees.DTOs;
+using PeopleCore.Application.Employees.Services;
 using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
@@ -156,6 +160,43 @@ public class SeparationRepositoryTests : DatabaseTestBase
         undone.ClearedBy.Should().BeNull();
         undone.ClearedAt.Should().BeNull();
         undone.Note.Should().BeNull();
+    }
+
+    private sealed class FixedClock(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    /// <summary>
+    /// Reproduces the reviewer's finding against a real DbContext: EF Core's relationship fix-up
+    /// notices the new item's SeparationId matches a tracked separation and adds it into
+    /// <see cref="Separation.ClearanceItems"/> itself, as soon as
+    /// <see cref="SeparationRepository.AddClearanceItemAsync"/> tracks it. A mocked
+    /// <c>ISeparationRepository</c> (the Application-layer tests) can never see this, because
+    /// nothing there is a real change tracker - only a real <see cref="SeparationService"/> over a
+    /// real repository, on the same <see cref="AppDbContext"/> instance for the whole call, can.
+    /// </summary>
+    [Fact]
+    public async Task AddClearanceItem_ThroughTheService_ReturnsTheNewItemExactlyOnce()
+    {
+        var currentUser = new Mock<ICurrentUserService>();
+        currentUser.Setup(c => c.Email).Returns("hr@company.test");
+        var clock = new FixedClock(new DateTimeOffset(2026, 9, 21, 0, 0, 0, TimeSpan.Zero));
+
+        await using var ctx = NewContext();
+        var service = new SeparationService(new SeparationRepository(ctx), new EmployeeRepository(ctx), currentUser.Object, clock);
+
+        var employee = AnEmployee();
+        ctx.Employees.Add(employee);
+        await ctx.SaveChangesAsync();
+
+        var recorded = await service.RecordAsync(new RecordSeparationRequest(
+            employee.Id, SeparationType.Resignation, null, new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 30), null));
+
+        var dto = await service.AddClearanceItemAsync(recorded.Id, "Library");
+
+        dto.ClearanceCount.Should().Be(6);
+        dto.ClearanceItems.Count(i => i.Name == "Library").Should().Be(1);
     }
 
     [Fact]

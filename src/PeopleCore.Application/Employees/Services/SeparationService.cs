@@ -130,7 +130,14 @@ public class SeparationService : ISeparationService
         // The dedicated insert, not separation.ClearanceItems.Add(item) + SaveAsync: see
         // ISeparationRepository.AddClearanceItemAsync's doc for the concurrency trap that avoids.
         await _separations.AddClearanceItemAsync(item, ct);
-        separation.ClearanceItems.Add(item);
+
+        // Against a real DbContext, EF's relationship fix-up already added `item` to
+        // separation.ClearanceItems itself the moment it was tracked (its SeparationId matches this
+        // tracked separation). A mocked repository does no such thing, so the Application-layer
+        // tests still need this - guard instead of dropping it, so the item lands in the DTO
+        // exactly once either way.
+        if (!separation.ClearanceItems.Contains(item))
+            separation.ClearanceItems.Add(item);
         return ToDto(separation, Today());
     }
 
@@ -199,7 +206,17 @@ public class SeparationService : ISeparationService
                 separation.Type = explicitType;
                 separation.AuthorizedCause = authorizedCause;
             }
-            // No type given: keep whatever this separation was already recorded with - Deactivate
+            else if (authorizedCause is not null)
+            {
+                // A cause given without a type: it only makes sense if the separation is already
+                // AuthorizedCause (its type isn't changing), the same rule RecordAsync applies to a
+                // freshly given type. Silently dropping the cause here would hide a caller's mistake.
+                if (separation.Type != SeparationType.AuthorizedCause)
+                    throw new DomainException("Only an authorized-cause separation has a cause.");
+
+                separation.AuthorizedCause = authorizedCause;
+            }
+            // Neither given: keep whatever this separation was already recorded with - Deactivate
             // is just asserting the date here, not re-classifying why the employee left.
 
             // HR is asserting the actual last working day directly (it can be earlier than the

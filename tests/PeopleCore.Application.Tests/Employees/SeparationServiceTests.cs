@@ -499,6 +499,29 @@ public class SeparationServiceTests
     }
 
     [Fact]
+    public async Task SeparateNow_WithAnExistingNoticeGivenSeparation_ACauseGivenWithoutATypeOnANonAuthorizedCauseSeparation_IsRefused()
+    {
+        // Recorded as a plain Resignation; a cause with no type shouldn't be silently dropped.
+        await Recorded(lastDay: new DateOnly(2026, 10, 30), type: SeparationType.Resignation);
+
+        var act = () => _sut.SeparateNowAsync(EmployeeId, new DateOnly(2026, 9, 25), authorizedCause: AuthorizedCause.Redundancy);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be("Only an authorized-cause separation has a cause.");
+    }
+
+    [Fact]
+    public async Task SeparateNow_WithAnExistingNoticeGivenSeparation_ACauseGivenWithoutATypeOnAnAuthorizedCauseSeparation_UpdatesTheCause()
+    {
+        var s = await Recorded(lastDay: new DateOnly(2026, 10, 30), type: SeparationType.AuthorizedCause, cause: AuthorizedCause.Redundancy);
+
+        var dto = await _sut.SeparateNowAsync(EmployeeId, new DateOnly(2026, 9, 25), authorizedCause: AuthorizedCause.Retrenchment);
+
+        dto.Id.Should().Be(s.Id);
+        dto.Type.Should().Be(SeparationType.AuthorizedCause);
+        dto.AuthorizedCause.Should().Be(AuthorizedCause.Retrenchment);
+    }
+
+    [Fact]
     public async Task SeparateNow_WithAnExistingNoticeGivenSeparation_IgnoresTheMarkSeparatedDateCheck()
     {
         var s = await Recorded(lastDay: new DateOnly(2026, 10, 30));
