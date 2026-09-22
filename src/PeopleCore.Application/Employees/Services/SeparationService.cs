@@ -1,3 +1,4 @@
+using System.Globalization;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Common.Time;
 using PeopleCore.Application.Employees.DTOs;
@@ -18,6 +19,8 @@ public class SeparationService : ISeparationService
 {
     private static readonly string[] DefaultClearanceItems = ["HR", "IT", "Finance", "Immediate supervisor", "Property / admin"];
     private const int MaxClearanceItemNameLength = 100;
+    private const int MaxReasonLength = 1000;
+    private const int MaxClearanceNoteLength = 500;
 
     private readonly ISeparationRepository _separations;
     private readonly IEmployeeRepository _employees;
@@ -47,6 +50,8 @@ public class SeparationService : ISeparationService
             throw new DomainException("Only an authorized-cause separation has a cause.");
         if (request.LastWorkingDay < request.NoticeDate)
             throw new DomainException("The last working day can't be before the notice date.");
+        if (request.Reason is { Length: > MaxReasonLength })
+            throw new DomainException($"Keep the reason to {MaxReasonLength} characters.");
 
         var separation = new Separation
         {
@@ -64,6 +69,9 @@ public class SeparationService : ISeparationService
                 .ToList()
         };
 
+        // AddAsync converts the unique-index violation from two HR users racing to record the same
+        // employee's separation into the same DomainException the check above throws - see
+        // SeparationRepository.AddAsync.
         await _separations.AddAsync(separation, ct);
         return await GetAsync(separation.Id, ct) ?? throw new InvalidOperationException("The separation was not saved.");
     }
@@ -108,16 +116,21 @@ public class SeparationService : ISeparationService
             throw new DomainException("Give a name for the clearance item.");
         if (trimmed.Length > MaxClearanceItemNameLength)
             throw new DomainException($"Keep the clearance item name to {MaxClearanceItemNameLength} characters.");
-        if (separation.ClearanceItems.Any(i => string.Equals(i.Name, trimmed, StringComparison.OrdinalIgnoreCase)))
-            throw new DomainException($"There's already a {trimmed} item.");
+        var duplicate = separation.ClearanceItems.FirstOrDefault(i => string.Equals(i.Name, trimmed, StringComparison.OrdinalIgnoreCase));
+        if (duplicate is not null)
+            throw new DomainException($"There's already a {duplicate.Name} item.");
 
-        separation.ClearanceItems.Add(new SeparationClearanceItem
+        var item = new SeparationClearanceItem
         {
             SeparationId = separation.Id,
             Name = trimmed,
             SortOrder = separation.ClearanceItems.Count
-        });
-        await _separations.SaveAsync(ct);
+        };
+
+        // The dedicated insert, not separation.ClearanceItems.Add(item) + SaveAsync: see
+        // ISeparationRepository.AddClearanceItemAsync's doc for the concurrency trap that avoids.
+        await _separations.AddClearanceItemAsync(item, ct);
+        separation.ClearanceItems.Add(item);
         return ToDto(separation, Today());
     }
 
@@ -128,6 +141,8 @@ public class SeparationService : ISeparationService
         var item = RequireItem(separation, itemId);
         if (item.ClearedAt is not null)
             throw new DomainException($"{item.Name} is already cleared.");
+        if (note is { Length: > MaxClearanceNoteLength })
+            throw new DomainException($"Keep the note to {MaxClearanceNoteLength} characters.");
 
         item.ClearedBy = _currentUser.Email;
         item.ClearedAt = PhilippineTime.Now(_clock);
@@ -164,7 +179,8 @@ public class SeparationService : ISeparationService
         return ToDto(separation, Today());
     }
 
-    public async Task<SeparationDto> SeparateNowAsync(Guid employeeId, DateOnly lastWorkingDay, SeparationType type, CancellationToken ct = default)
+    public async Task<SeparationDto> SeparateNowAsync(
+        Guid employeeId, DateOnly lastWorkingDay, SeparationType? type = null, AuthorizedCause? authorizedCause = null, CancellationToken ct = default)
     {
         var existing = await _separations.GetOpenForEmployeeAsync(employeeId, ct);
 
@@ -172,13 +188,34 @@ public class SeparationService : ISeparationService
         if (existing is { Status: SeparationStatus.NoticeGiven })
         {
             separation = existing;
+
+            if (type is { } explicitType)
+            {
+                if (explicitType == SeparationType.AuthorizedCause && authorizedCause is null)
+                    throw new DomainException("Choose the authorized cause.");
+                if (explicitType != SeparationType.AuthorizedCause && authorizedCause is not null)
+                    throw new DomainException("Only an authorized-cause separation has a cause.");
+
+                separation.Type = explicitType;
+                separation.AuthorizedCause = authorizedCause;
+            }
+            // No type given: keep whatever this separation was already recorded with - Deactivate
+            // is just asserting the date here, not re-classifying why the employee left.
+
+            // HR is asserting the actual last working day directly (it can be earlier than the
+            // notice originally given, e.g. an immediate termination that supersedes a resignation
+            // notice). Pulling the notice date back to match, rather than refusing, keeps
+            // "notice date <= last working day" true without treating HR's own assertion as invalid.
+            if (lastWorkingDay < separation.NoticeDate)
+                separation.NoticeDate = lastWorkingDay;
+
             separation.LastWorkingDay = lastWorkingDay;
-            separation.Type = type;
         }
         else
         {
+            var recordType = type ?? SeparationType.Resignation;
             var recorded = await RecordAsync(
-                new RecordSeparationRequest(employeeId, type, null, lastWorkingDay, lastWorkingDay, null), ct);
+                new RecordSeparationRequest(employeeId, recordType, authorizedCause, lastWorkingDay, lastWorkingDay, null), ct);
             separation = await _separations.GetAsync(recorded.Id, ct)
                 ?? throw new InvalidOperationException("The separation was not saved.");
         }
@@ -196,7 +233,8 @@ public class SeparationService : ISeparationService
         var today = Today();
         if (!ignoreDateCheck && today < separation.LastWorkingDay)
             throw new DomainException(
-                $"{separation.Employee.FullName}'s last working day is {separation.LastWorkingDay:MMM d, yyyy}; mark them separated on or after it.");
+                $"{separation.Employee.FullName}'s last working day is " +
+                $"{separation.LastWorkingDay.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)}; mark them separated on or after it.");
 
         separation.Status = SeparationStatus.Separated;
         separation.SeparatedBy = _currentUser.Email;

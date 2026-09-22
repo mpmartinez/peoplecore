@@ -131,6 +131,14 @@ public class SeparationServiceTests
     }
 
     [Fact]
+    public async Task Record_ReasonLongerThan1000Characters_IsRefused()
+    {
+        var act = () => Recorded(reason: new string('A', 1001));
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be("Keep the reason to 1000 characters.");
+    }
+
+    [Fact]
     public async Task Record_CreatesTheFiveDefaultClearanceItemsInOrder()
     {
         var dto = await _sut.RecordAsync(new RecordSeparationRequest(EmployeeId, SeparationType.Resignation, null,
@@ -169,6 +177,26 @@ public class SeparationServiceTests
 
         (await act.Should().ThrowAsync<DomainException>()).Which.Message
             .Should().Be("Juan dela Cruz's last working day is Sep 30, 2026; mark them separated on or after it.");
+    }
+
+    [Fact]
+    public async Task MarkSeparated_DateInMessage_IsFormattedWithInvariantCulture_RegardlessOfCurrentCulture()
+    {
+        var original = System.Threading.Thread.CurrentThread.CurrentCulture;
+        System.Threading.Thread.CurrentThread.CurrentCulture = new System.Globalization.CultureInfo("de-DE");
+        try
+        {
+            var s = await Recorded(lastDay: new DateOnly(2026, 9, 30));
+
+            var act = () => _sut.MarkSeparatedAsync(s.Id);
+
+            (await act.Should().ThrowAsync<DomainException>()).Which.Message
+                .Should().Be("Juan dela Cruz's last working day is Sep 30, 2026; mark them separated on or after it.");
+        }
+        finally
+        {
+            System.Threading.Thread.CurrentThread.CurrentCulture = original;
+        }
     }
 
     [Fact]
@@ -255,7 +283,19 @@ public class SeparationServiceTests
 
         var act = () => _sut.AddClearanceItemAsync(s.Id, "hr");
 
-        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be("There's already a hr item.");
+        // Uses the EXISTING item's stored casing ("HR"), not the caller's ("hr").
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be("There's already a HR item.");
+    }
+
+    [Fact]
+    public async Task AddClearanceItem_UsesTheRepositorysDedicatedInsert_NotSaveAsyncOnATrackedCollection()
+    {
+        var s = await Recorded();
+
+        await _sut.AddClearanceItemAsync(s.Id, "Library");
+
+        _separations.Verify(r => r.AddClearanceItemAsync(
+            It.Is<SeparationClearanceItem>(i => i.Name == "Library" && i.SeparationId == s.Id), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -294,6 +334,17 @@ public class SeparationServiceTests
         item.ClearedAt.Should().NotBeNull();
         item.Note.Should().Be("handed over badge");
         dto.ClearedCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ClearItem_NoteLongerThan500Characters_IsRefused()
+    {
+        var s = await Recorded();
+        var itemId = s.ClearanceItems[0].Id;
+
+        var act = () => _sut.ClearItemAsync(s.Id, itemId, new string('A', 501));
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be("Keep the note to 500 characters.");
     }
 
     [Fact]
@@ -369,28 +420,110 @@ public class SeparationServiceTests
     // ── SeparateNowAsync (Deactivate) ─────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task SeparateNow_WithNoExistingSeparation_RecordsAndSeparatesImmediately()
+    public async Task SeparateNow_WithNoExistingSeparation_AndNoTypeGiven_DefaultsToResignation()
     {
-        var dto = await _sut.SeparateNowAsync(EmployeeId, new DateOnly(2026, 9, 21), SeparationType.Resignation);
+        var dto = await _sut.SeparateNowAsync(EmployeeId, new DateOnly(2026, 9, 21));
 
         dto.Status.Should().Be(SeparationStatus.Separated);
+        dto.Type.Should().Be(SeparationType.Resignation);
         dto.LastWorkingDay.Should().Be(new DateOnly(2026, 9, 21));
         _employee.IsActive.Should().BeFalse();
         _employee.SeparationDate.Should().Be(new DateOnly(2026, 9, 21));
     }
 
     [Fact]
-    public async Task SeparateNow_WithAnExistingNoticeGivenSeparation_UpdatesItsLastWorkingDayAndIgnoresTheDateCheck()
+    public async Task SeparateNow_WithNoExistingSeparation_AuthorizedCauseWithoutACause_IsRefused()
+    {
+        var act = () => _sut.SeparateNowAsync(EmployeeId, new DateOnly(2026, 9, 21), SeparationType.AuthorizedCause);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be("Choose the authorized cause.");
+    }
+
+    [Fact]
+    public async Task SeparateNow_WithNoExistingSeparation_AuthorizedCauseWithACause_RecordsIt()
+    {
+        var dto = await _sut.SeparateNowAsync(EmployeeId, new DateOnly(2026, 9, 21), SeparationType.AuthorizedCause, AuthorizedCause.Redundancy);
+
+        dto.Type.Should().Be(SeparationType.AuthorizedCause);
+        dto.AuthorizedCause.Should().Be(AuthorizedCause.Redundancy);
+        dto.Status.Should().Be(SeparationStatus.Separated);
+    }
+
+    [Fact]
+    public async Task SeparateNow_WithAnExistingNoticeGivenSeparation_AndNoTypeGiven_KeepsItsExistingTypeAndCause()
     {
         // The clock is 2026-09-21; a future last working day would fail MarkSeparatedAsync's date check.
+        var s = await Recorded(lastDay: new DateOnly(2026, 10, 30), type: SeparationType.AuthorizedCause, cause: AuthorizedCause.Redundancy);
+
+        var dto = await _sut.SeparateNowAsync(EmployeeId, new DateOnly(2026, 9, 25));
+
+        dto.Id.Should().Be(s.Id);
+        dto.Status.Should().Be(SeparationStatus.Separated);
+        dto.Type.Should().Be(SeparationType.AuthorizedCause);
+        dto.AuthorizedCause.Should().Be(AuthorizedCause.Redundancy);
+        dto.LastWorkingDay.Should().Be(new DateOnly(2026, 9, 25));
+        _employee.IsActive.Should().BeFalse();
+        _employee.SeparationDate.Should().Be(new DateOnly(2026, 9, 25));
+    }
+
+    [Fact]
+    public async Task SeparateNow_WithAnExistingNoticeGivenSeparation_AndATypeGiven_AppliesItsOwnValidation()
+    {
         var s = await Recorded(lastDay: new DateOnly(2026, 10, 30));
 
-        var dto = await _sut.SeparateNowAsync(EmployeeId, new DateOnly(2026, 9, 25), SeparationType.Resignation);
+        var dto = await _sut.SeparateNowAsync(EmployeeId, new DateOnly(2026, 9, 25), SeparationType.AuthorizedCause, AuthorizedCause.Redundancy);
+
+        dto.Id.Should().Be(s.Id);
+        dto.Type.Should().Be(SeparationType.AuthorizedCause);
+        dto.AuthorizedCause.Should().Be(AuthorizedCause.Redundancy);
+    }
+
+    [Fact]
+    public async Task SeparateNow_WithAnExistingNoticeGivenSeparation_AuthorizedCauseTypeWithoutACause_IsRefused()
+    {
+        await Recorded(lastDay: new DateOnly(2026, 10, 30));
+
+        var act = () => _sut.SeparateNowAsync(EmployeeId, new DateOnly(2026, 9, 25), SeparationType.AuthorizedCause);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be("Choose the authorized cause.");
+    }
+
+    [Fact]
+    public async Task SeparateNow_WithAnExistingNoticeGivenSeparation_NonAuthorizedCauseTypeWithACause_IsRefused()
+    {
+        await Recorded(lastDay: new DateOnly(2026, 10, 30));
+
+        var act = () => _sut.SeparateNowAsync(EmployeeId, new DateOnly(2026, 9, 25), SeparationType.Resignation, AuthorizedCause.Redundancy);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be("Only an authorized-cause separation has a cause.");
+    }
+
+    [Fact]
+    public async Task SeparateNow_WithAnExistingNoticeGivenSeparation_IgnoresTheMarkSeparatedDateCheck()
+    {
+        var s = await Recorded(lastDay: new DateOnly(2026, 10, 30));
+
+        var dto = await _sut.SeparateNowAsync(EmployeeId, new DateOnly(2026, 9, 25));
 
         dto.Id.Should().Be(s.Id);
         dto.Status.Should().Be(SeparationStatus.Separated);
         dto.LastWorkingDay.Should().Be(new DateOnly(2026, 9, 25));
         _employee.IsActive.Should().BeFalse();
         _employee.SeparationDate.Should().Be(new DateOnly(2026, 9, 25));
+    }
+
+    [Fact]
+    public async Task SeparateNow_WhenTheGivenLastWorkingDayIsBeforeTheNoticeDate_PullsTheNoticeDateBackInsteadOfRefusing()
+    {
+        // Recorded with a notice given 2026-09-01 for a 2026-09-30 last day; HR now asserts the
+        // employee actually left 2026-08-15 - earlier than the notice date itself.
+        var s = await Recorded(noticeDate: new DateOnly(2026, 9, 1), lastDay: new DateOnly(2026, 9, 30));
+
+        var dto = await _sut.SeparateNowAsync(EmployeeId, new DateOnly(2026, 8, 15));
+
+        dto.Id.Should().Be(s.Id);
+        dto.NoticeDate.Should().Be(new DateOnly(2026, 8, 15));
+        dto.LastWorkingDay.Should().Be(new DateOnly(2026, 8, 15));
+        dto.Status.Should().Be(SeparationStatus.Separated);
     }
 }

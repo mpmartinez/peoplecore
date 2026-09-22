@@ -16,6 +16,14 @@ public interface ISeparationService
     Task<SeparationDto> UndoClearItemAsync(Guid id, Guid itemId, CancellationToken ct = default);
     Task<SeparationDto> DeleteClearanceItemAsync(Guid id, Guid itemId, CancellationToken ct = default);
 
-    /// <summary>Records and marks separated in one step - what Deactivate calls.</summary>
-    Task<SeparationDto> SeparateNowAsync(Guid employeeId, DateOnly lastWorkingDay, SeparationType type, CancellationToken ct = default);
+    /// <summary>
+    /// Records and marks separated in one step - what Deactivate calls. When the employee already
+    /// has a <see cref="Domain.Enums.SeparationStatus.NoticeGiven"/> separation, that record is
+    /// reused: a null <paramref name="type"/> keeps its existing type and cause, a given one is
+    /// validated and applied the same way <see cref="RecordAsync"/> validates a new one. Otherwise a
+    /// new record is created with <paramref name="type"/> defaulting to
+    /// <see cref="SeparationType.Resignation"/>.
+    /// </summary>
+    Task<SeparationDto> SeparateNowAsync(
+        Guid employeeId, DateOnly lastWorkingDay, SeparationType? type = null, AuthorizedCause? authorizedCause = null, CancellationToken ct = default);
 }

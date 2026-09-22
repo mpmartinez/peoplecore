@@ -87,14 +87,15 @@ public class EmployeeService : IEmployeeService
         return ToDto(employee);
     }
 
-    public async Task DeactivateAsync(Guid id, DateOnly separationDate, SeparationType type = SeparationType.Resignation, CancellationToken ct = default)
+    public async Task DeactivateAsync(
+        Guid id, DateOnly separationDate, SeparationType? type = null, AuthorizedCause? authorizedCause = null, CancellationToken ct = default)
     {
         var employee = await _repo.GetByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Employee {id} not found.");
         if (!employee.IsActive)
             throw new DomainException("Employee is already inactive.");
 
-        await _separationService.SeparateNowAsync(id, separationDate, type, ct);
+        await _separationService.SeparateNowAsync(id, separationDate, type, authorizedCause, ct);
     }
 
     public async Task<IReadOnlyList<GovernmentIdDto>> GetGovernmentIdsAsync(Guid employeeId, CancellationToken ct = default)
