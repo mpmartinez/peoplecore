@@ -67,8 +67,10 @@ This changes "Generate all": bulk 2316s now carry the previous-employer figures 
 paid in the year. The alphalist cannot disagree with the certificates because it is them.
 
 **Groups**, following BIR's 1604-C schedules:
-1. **Terminated before December 31:** the employee's `SeparationDate` falls within the year and
-   before December 31.
+1. **Terminated before December 31:** the employee has a `SeparationDate` before December 31 of
+   the year. That includes a separation in an earlier year: someone who left in December 2025 and
+   had their final pay released in January 2026 is on the 2026 alphalist, and they weren't
+   employed at the end of 2026.
 2. **Employed as of December 31, no previous employer:** not in group 1, and their saved inputs
    carry no previous-employer taxable compensation or tax withheld (Items 22 and 25B both zero).
 3. **Employed as of December 31, with previous employer:** not in group 1, and Item 22 or 25B is
@@ -76,13 +78,14 @@ paid in the year. The alphalist cannot disagree with the certificates because it
 
 Within a group, rows are sorted by last name then first name, as in BIR 2316's bulk order.
 
-**Columns** (every group; the two previous-employer columns only in group 3):
+**Columns** (every group; the two previous-employer columns in groups 1 and 3, since someone who
+left during the year can also have had an earlier employer that year):
 
 | Column | From the 2316 |
 |---|---|
 | TIN | `EmployeeTin` |
 | Last name, first name, middle name | `EmployeeLastName`, `EmployeeFirstName`, `EmployeeMiddleName` |
-| Employed from, employed to | the employee's `HireDate` and `SeparationDate`, clamped to the year |
+| Employed from, employed to | the employee's `HireDate` and `SeparationDate`, clamped to the year; "to" is never earlier than "from" (a prior-year separation shows the year's first day for both) |
 | Gross compensation | `Item19_GrossCompensation` |
 | 13th month and other benefits (non-taxable) | `Item34_ThirteenthMonthAndBenefits` |
 | De minimis | `Item35_DeMinimis` |
@@ -93,13 +96,13 @@ Within a group, rows are sorted by last name then first name, as in BIR 2316's b
 | 13th month and other benefits (taxable) | `Item48_TaxableThirteenthMonth` |
 | Other taxable compensation | `Item52_TotalTaxableCompensation` less the two above |
 | Total taxable (present employer) | `Item52_TotalTaxableCompensation` |
-| Previous employer's taxable compensation (group 3) | `Item22_PrevTaxableCompensation` |
-| Previous employer's tax withheld (group 3) | `Item25B_PrevTaxWithheld` |
+| Previous employer's taxable compensation (groups 1 and 3) | `Item22_PrevTaxableCompensation` |
+| Previous employer's tax withheld (groups 1 and 3) | `Item25B_PrevTaxWithheld` |
 | Tax due | `Item24_TaxDue` |
 | Tax withheld, January to November | present-employer tax withheld in runs paid January to November |
 | Tax withheld, December | present-employer tax withheld in runs paid in December |
 | Total tax withheld | `Item26_TotalTaxWithheld` (present plus previous employer) |
-| To collect / (refund) | tax due less total tax withheld; negative is a refund |
+| To collect / (refund) | tax due less total tax withheld less the PERA tax credit (`Item24_TaxDue` − `Item26_TotalTaxWithheld` − `Item27_PeraTaxCredit`); negative is a refund |
 
 The January-November and December split is not on the 2316. It comes from the same year's Paid
 runs (`GetPaidRunsInYearAsync`), summing each employee's `WithholdingTax` by the month of
