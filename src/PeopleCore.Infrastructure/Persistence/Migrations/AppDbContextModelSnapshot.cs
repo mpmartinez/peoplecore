@@ -905,6 +905,10 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("employee_id");
 
+                    b.Property<Guid?>("FinalPayRunId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("final_pay_run_id");
+
                     b.Property<DateOnly>("LastWorkingDay")
                         .HasColumnType("date")
                         .HasColumnName("last_working_day");
@@ -960,6 +964,9 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("ix_separations_employee_id");
 
+                    b.HasIndex("FinalPayRunId")
+                        .HasDatabaseName("ix_separations_final_pay_run_id");
+
                     b.ToTable("separations", (string)null);
                 });
 
@@ -986,6 +993,20 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("CreatedBy")
                         .HasColumnType("uuid")
                         .HasColumnName("created_by");
+
+                    b.Property<DateTime?>("LastUndoneAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_undone_at");
+
+                    b.Property<string>("LastUndoneBy")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("last_undone_by");
+
+                    b.Property<string>("LastUndoneNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("last_undone_note");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -1307,6 +1328,12 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(50)")
                         .HasColumnName("code");
 
+                    b.Property<bool>("CountsAsVacationForDeMinimis")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("counts_as_vacation_for_de_minimis");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -1326,6 +1353,12 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsCarryOver")
                         .HasColumnType("boolean")
                         .HasColumnName("is_carry_over");
+
+                    b.Property<bool>("IsConvertibleToCash")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_convertible_to_cash");
 
                     b.Property<bool>("IsPaid")
                         .HasColumnType("boolean")
@@ -1847,6 +1880,110 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.ToTable("employee_loans", (string)null);
                 });
 
+            modelBuilder.Entity("PeopleCore.Domain.Entities.Payroll.FinalPayDeduction", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("amount");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<Guid>("FinalPayInputsId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("final_pay_inputs_id");
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("label");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_final_pay_deductions");
+
+                    b.HasIndex("FinalPayInputsId")
+                        .HasDatabaseName("ix_final_pay_deductions_final_pay_inputs_id");
+
+                    b.ToTable("final_pay_deductions", (string)null);
+                });
+
+            modelBuilder.Entity("PeopleCore.Domain.Entities.Payroll.FinalPayInputs", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("OverrideNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("override_note");
+
+                    b.Property<Guid>("PayrollRunId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("payroll_run_id");
+
+                    b.Property<decimal?>("RetirementPayOverride")
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("retirement_pay_override");
+
+                    b.Property<Guid>("SeparationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("separation_id");
+
+                    b.Property<decimal?>("SeparationPayOverride")
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("separation_pay_override");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.Property<decimal>("WorkingDays")
+                        .HasColumnType("numeric(6,2)")
+                        .HasColumnName("working_days");
+
+                    b.HasKey("Id")
+                        .HasName("pk_final_pay_inputs");
+
+                    b.HasIndex("PayrollRunId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_final_pay_inputs_payroll_run_id");
+
+                    b.ToTable("final_pay_inputs", (string)null);
+                });
+
             modelBuilder.Entity("PeopleCore.Domain.Entities.Payroll.PayrollLoanDeduction", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1944,6 +2081,14 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("run_number");
 
+                    b.Property<string>("RunType")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Regular")
+                        .HasColumnName("run_type");
+
                     b.Property<int>("Status")
                         .HasColumnType("integer")
                         .HasColumnName("status");
@@ -2005,6 +2150,10 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("employee_id");
 
+                    b.Property<decimal>("FinalPayNonTaxable")
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("final_pay_non_taxable");
+
                     b.Property<decimal>("HolidayDays")
                         .HasColumnType("numeric(6,2)")
                         .HasColumnName("holiday_days");
@@ -2028,6 +2177,14 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("LateMinutes")
                         .HasColumnType("numeric(6,2)")
                         .HasColumnName("late_minutes");
+
+                    b.Property<decimal>("LeaveConversionNonTaxable")
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("leave_conversion_non_taxable");
+
+                    b.Property<decimal>("LeaveConversionPay")
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("leave_conversion_pay");
 
                     b.Property<decimal>("LoanDeductions")
                         .HasColumnType("numeric(18,2)")
@@ -2085,6 +2242,10 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(6,2)")
                         .HasColumnName("rest_day_ot_hours");
 
+                    b.Property<decimal>("RetirementPay")
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("retirement_pay");
+
                     b.Property<decimal>("SSSEmployee")
                         .HasColumnType("numeric(18,2)")
                         .HasColumnName("sss_employee");
@@ -2092,6 +2253,10 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("SSSEmployer")
                         .HasColumnType("numeric(18,2)")
                         .HasColumnName("sss_employer");
+
+                    b.Property<decimal>("SeparationPay")
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("separation_pay");
 
                     b.Property<decimal>("TardinessDeduction")
                         .HasColumnType("numeric(18,2)")
@@ -3285,7 +3450,15 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_separations_employees_employee_id");
 
+                    b.HasOne("PeopleCore.Domain.Entities.Payroll.PayrollRun", "FinalPayRun")
+                        .WithMany()
+                        .HasForeignKey("FinalPayRunId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_separations_payroll_runs_final_pay_run_id");
+
                     b.Navigation("Employee");
+
+                    b.Navigation("FinalPayRun");
                 });
 
             modelBuilder.Entity("PeopleCore.Domain.Entities.Employees.SeparationClearanceItem", b =>
@@ -3467,6 +3640,30 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_employee_loans_employees_employee_id");
+                });
+
+            modelBuilder.Entity("PeopleCore.Domain.Entities.Payroll.FinalPayDeduction", b =>
+                {
+                    b.HasOne("PeopleCore.Domain.Entities.Payroll.FinalPayInputs", "FinalPayInputs")
+                        .WithMany("Deductions")
+                        .HasForeignKey("FinalPayInputsId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_final_pay_deductions_final_pay_inputs_final_pay_inputs_id");
+
+                    b.Navigation("FinalPayInputs");
+                });
+
+            modelBuilder.Entity("PeopleCore.Domain.Entities.Payroll.FinalPayInputs", b =>
+                {
+                    b.HasOne("PeopleCore.Domain.Entities.Payroll.PayrollRun", "PayrollRun")
+                        .WithOne("FinalPayInputs")
+                        .HasForeignKey("PeopleCore.Domain.Entities.Payroll.FinalPayInputs", "PayrollRunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_final_pay_inputs_payroll_runs_payroll_run_id");
+
+                    b.Navigation("PayrollRun");
                 });
 
             modelBuilder.Entity("PeopleCore.Domain.Entities.Payroll.PayrollLoanDeduction", b =>
@@ -3699,9 +3896,16 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.Navigation("Teams");
                 });
 
+            modelBuilder.Entity("PeopleCore.Domain.Entities.Payroll.FinalPayInputs", b =>
+                {
+                    b.Navigation("Deductions");
+                });
+
             modelBuilder.Entity("PeopleCore.Domain.Entities.Payroll.PayrollRun", b =>
                 {
                     b.Navigation("Employees");
+
+                    b.Navigation("FinalPayInputs");
                 });
 
             modelBuilder.Entity("PeopleCore.Domain.Entities.Payroll.PayrollRunEmployee", b =>

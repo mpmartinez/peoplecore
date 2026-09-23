@@ -1,4 +1,5 @@
 using PeopleCore.Application.Payroll.DTOs;
+using PeopleCore.Application.Payroll.FinalPay;
 using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Payroll;
@@ -127,6 +128,25 @@ public class PayrollComputationService
     }
 
     /// <summary>
+    /// The applicable daily rate <see cref="Compute"/> prices a day at: monthly x 12 / factor,
+    /// rounded to centavos, with a missing or non-positive factor meaning the default 365. Public
+    /// so final pay prices leave conversion and retirement pay at exactly the same rate.
+    /// </summary>
+    public static decimal DailyRateFor(decimal monthlyBasic, decimal? dailyRateFactor)
+    {
+        decimal factor = dailyRateFactor is > 0m ? dailyRateFactor.Value : DefaultDailyRateFactor;
+        return Math.Round(monthlyBasic * 12m / factor, 2);
+    }
+
+    /// <summary>
+    /// Whether the salary pays rest days under <paramref name="dailyRateFactor"/> (a missing or
+    /// non-positive factor meaning the default 365). The 365 factor counts every day of the year,
+    /// rest days included; 313 and 261 leave rest days out, so a rest day is unpaid.
+    /// </summary>
+    public static bool PaysRestDays(decimal? dailyRateFactor)
+        => (dailyRateFactor is > 0m ? dailyRateFactor.Value : DefaultDailyRateFactor) >= 365m;
+
+    /// <summary>
     /// Full computation for one employee in one payroll run.
     /// </summary>
     /// <param name="attendance">
@@ -153,7 +173,8 @@ public class PayrollComputationService
         decimal overtimeHours = 0, decimal holidayDays = 0, bool includeThirteenthMonth = false,
         ContributionRates? rates = null, PayrollAttendanceInput? attendance = null,
         decimal? dailyRateFactor = null, decimal thirteenthMonthPaidEarlierInYear = 0m,
-        decimal basicEarnedEarlierInYear = 0m, bool isThirteenthMonthEligible = true)
+        decimal basicEarnedEarlierInYear = 0m, bool isThirteenthMonthEligible = true,
+        FinalPayExtras? finalPay = null)
     {
         bool isSemiMonthly = compensation.PayFrequency == PayFrequency.SemiMonthly;
         decimal periodsPerMonth = isSemiMonthly ? 2m : 1m;
@@ -163,13 +184,17 @@ public class PayrollComputationService
         // The handbook calls these formulas suggestions "without prejudice to existing company
         // policies", so the factor is configurable per company.
         decimal factor = dailyRateFactor is > 0m ? dailyRateFactor.Value : DefaultDailyRateFactor;
-        decimal dailyRate = Math.Round(compensation.BasicSalary * 12m / factor, 2);
+        decimal dailyRate = DailyRateFor(compensation.BasicSalary, factor);
         decimal hourlyRate = Math.Round(dailyRate / 8m, 2);
 
         // A full period pays the full salary slice, and attendance adjusts it from there.
         // Rebuilding gross from the daily rate would stop a full month reconciling to the
         // monthly salary, because the factor counts unworked rest days and holidays as paid.
-        decimal basePeriodPay = Math.Round(compensation.BasicSalary / periodsPerMonth, 2);
+        // A final-pay run instead covers a short, partial period, so it is priced day by day
+        // at the daily rate rather than as a share of the full monthly salary.
+        decimal basePeriodPay = finalPay is not null
+            ? Math.Round(dailyRate * finalPay.WorkingDays, 2)
+            : Math.Round(compensation.BasicSalary / periodsPerMonth, 2);
 
         decimal absenceDeduction = Math.Round(dailyRate * (attendance?.AbsenceDays ?? 0m), 2);
         decimal lostMinutes = (attendance?.LateMinutes ?? 0m) + (attendance?.UndertimeMinutes ?? 0m);
@@ -191,7 +216,7 @@ public class PayrollComputationService
             // adds 100%, not 200%, or it would be paid at 300%. It pays rest days too only under
             // the 365 factor; under 313 or 261 a rest day is unpaid, so work on one earns its
             // whole rate.
-            decimal alreadyPaid = IsRestDay(day.DayType) && factor < 365m ? 0m : 1m;
+            decimal alreadyPaid = IsRestDay(day.DayType) && !PaysRestDays(factor) ? 0m : 1m;
             decimal premium = DolePremiumRates.BaseRate(day.DayType) - alreadyPaid;
 
             // A worked day of this type, and the first eight hours of work on a rest day.
@@ -210,13 +235,18 @@ public class PayrollComputationService
         holidayPay = Math.Round(holidayPay, 2);
         nightDiffPay = Math.Round(nightDiffPay, 2);
 
-        // Allowances
+        // Allowances: a regular period pays each monthly allowance's share of the month. A final
+        // period is short, so each is pro-rated like its base pay instead - the monthly amount at
+        // the factor's daily rate (x 12 / factor) for each salary day, none for none.
+        decimal AllowanceFor(EmployeeAllowance allowance) => finalPay is not null
+            ? allowance.Amount * 12m / factor * finalPay.WorkingDays
+            : allowance.Amount / periodsPerMonth;
         decimal taxableAllowances = compensation.Allowances
             .Where(a => a.IsTaxable)
-            .Sum(a => a.Amount / periodsPerMonth);
+            .Sum(AllowanceFor);
         decimal nonTaxableAllowances = compensation.Allowances
             .Where(a => !a.IsTaxable)
-            .Sum(a => a.Amount / periodsPerMonth);
+            .Sum(AllowanceFor);
 
         taxableAllowances = Math.Round(taxableAllowances, 2);
         nonTaxableAllowances = Math.Round(nonTaxableAllowances, 2);
@@ -230,7 +260,9 @@ public class PayrollComputationService
         // both stay zero and the arithmetic below is unchanged. Phase 2 fills them from
         // PeopleCore's own custom attendance fields.
         decimal customEarnings = 0m;
-        decimal customDeductions = 0m;
+        // HR's final-pay deductions (unreturned property, unliquidated advances, ...) feed the
+        // same capped "other deductions" bucket as an ordinary custom deduction would.
+        decimal customDeductions = finalPay?.Deductions.Sum(d => d.Amount) ?? 0m;
         customDeductions = Math.Round(customDeductions, 2);
 
         // Custom earnings are taxable compensation, so they join the allowances before the
@@ -248,18 +280,51 @@ public class PayrollComputationService
             thirteenthMonth = Math.Max(0m, dueForYear - thirteenthMonthPaidEarlierInYear);
         }
 
-        // Gross pay for contribution base = regular pay + OT + holiday + taxable allowances (non-taxable excluded from BIR base)
-        decimal grossForContribs = regularPay + overtimePay + holidayPay + nightDiffPay + taxableAllowances;
+        // Final-pay earnings arrive already computed (see FinalPayMath). The non-taxable parts
+        // are recorded as-is. Separation or retirement pay that isn't exempt joins the
+        // withholding base below exactly like a taxable allowance. The leave beyond de minimis is
+        // "other benefits" instead: like the 13th month it stays out of the base and is taxed
+        // only past the 90,000 exemption the two share (see ComputeThirteenthMonthTax). Neither
+        // ever joins the SSS/PhilHealth/Pag-IBIG contributions, which statute fixes to the basic
+        // salary regardless of what else is paid out.
+        decimal leaveConversionPay = 0m, leaveConversionNonTaxable = 0m, separationPay = 0m, retirementPay = 0m;
+        decimal finalPayNonTaxable = 0m, finalPayTaxable = 0m, leaveOtherBenefits = 0m;
+        if (finalPay is not null)
+        {
+            leaveConversionPay = Math.Round(finalPay.LeaveConversionNonTaxable + finalPay.LeaveConversionOtherBenefits, 2);
+            leaveConversionNonTaxable = finalPay.LeaveConversionNonTaxable;
+            leaveOtherBenefits = leaveConversionPay - leaveConversionNonTaxable;
+            separationPay = finalPay.SeparationPay;
+            retirementPay = finalPay.RetirementPay;
+            finalPayNonTaxable = leaveConversionNonTaxable + finalPay.SeparationAndRetirementNonTaxable;
+            finalPayTaxable = separationPay + retirementPay - finalPay.SeparationAndRetirementNonTaxable;
+        }
+
+        // Gross taxable pay, the withholding base before contributions come off: regular pay,
+        // overtime, holiday and night premiums, taxable allowances and, on a final pay, the
+        // separation or retirement pay that isn't exempt. Non-taxable allowances, the 13th month
+        // and the leave beyond de minimis stay out (the last two are taxed only past their 90,000
+        // exemption, below). It is not the contribution base: SSS, PhilHealth and Pag-IBIG are
+        // computed on the monthly basic alone.
+        decimal grossTaxable = regularPay + overtimePay + holidayPay + nightDiffPay + taxableAllowances
+            + finalPayTaxable;
 
         // Mandatory contributions based on monthly salary
-        var (sssEmp, sssEmr) = ComputeSSS(compensation.BasicSalary, rates, run.PeriodStart);
+        // The SSS schedule in force for the run: a regular run's as of its period start; a final
+        // pay's as of its contribution month - the first of the last working day's month (its
+        // PeriodEnd), the month it tops up below - since its period can start in an earlier month.
+        var sssAsOf = finalPay is not null
+            ? new DateOnly(run.PeriodEnd.Year, run.PeriodEnd.Month, 1)
+            : run.PeriodStart;
+        var (sssEmp, sssEmr) = ComputeSSS(compensation.BasicSalary, rates, sssAsOf);
         var (phEmp, phEmr) = ComputePhilHealth(compensation.BasicSalary, rates);
         var (piEmp, piEmr) = ComputePagIbig(compensation.BasicSalary, rates);
 
         // For semi-monthly, SSS/PhilHealth/Pag-IBIG deducted once per month (half each period)
         // Standard practice: deduct full contribution in first cut-off, 0 in second; or split evenly.
-        // We split evenly (half each cut-off).
-        if (isSemiMonthly)
+        // We split evenly (half each cut-off). A final pay isn't a cutoff: it tops the month up
+        // below instead.
+        if (isSemiMonthly && finalPay is null)
         {
             sssEmp /= 2m; sssEmr /= 2m;
             phEmp /= 2m; phEmr /= 2m;
@@ -270,11 +335,31 @@ public class PayrollComputationService
         phEmp = Math.Round(phEmp, 2); phEmr = Math.Round(phEmr, 2);
         piEmp = Math.Round(piEmp, 2); piEmr = Math.Round(piEmr, 2);
 
+        // A final pay tops the separation month up to exactly one month's contributions: each
+        // share is the month's full amount less what the month's Paid runs already deducted, and
+        // never below zero - so a month regular payroll already covered costs nothing more.
+        if (finalPay is not null)
+        {
+            var deducted = finalPay.ContributionsDeductedInMonth ?? ContributionShares.None;
+            sssEmp = Math.Max(0m, sssEmp - deducted.SssEmployee);
+            sssEmr = Math.Max(0m, sssEmr - deducted.SssEmployer);
+            phEmp = Math.Max(0m, phEmp - deducted.PhilHealthEmployee);
+            phEmr = Math.Max(0m, phEmr - deducted.PhilHealthEmployer);
+            piEmp = Math.Max(0m, piEmp - deducted.PagIbigEmployee);
+            piEmr = Math.Max(0m, piEmr - deducted.PagIbigEmployer);
+        }
+
         // Taxable income for BIR = gross taxable - mandatory deductions
-        decimal taxableForBIR = grossForContribs - sssEmp - phEmp - piEmp;
-        decimal withholdingTax = ComputeWithholdingTax(taxableForBIR, compensation.PayFrequency)
-            + ComputeThirteenthMonthTax(taxableForBIR, compensation.PayFrequency,
-                thirteenthMonth, thirteenthMonthPaidEarlierInYear);
+        decimal taxableForBIR = grossTaxable - sssEmp - phEmp - piEmp;
+
+        // A settled final-pay tax replaces both the per-period withholding and the 13th-month
+        // excess tax below - it is the actual figure HR has already worked out, not an estimate
+        // to be layered on top of one. The leave beyond de minimis is taxed with the 13th month:
+        // both are "13th month and other benefits", exempt together up to 90,000.
+        decimal withholdingTax = finalPay?.WithholdingTaxOverride ??
+            (ComputeWithholdingTax(taxableForBIR, compensation.PayFrequency)
+                + ComputeThirteenthMonthTax(taxableForBIR, compensation.PayFrequency,
+                    thirteenthMonth + leaveOtherBenefits, thirteenthMonthPaidEarlierInYear));
 
         // Loan deductions. Each active loan contributes its per-period instalment, but never
         // more than is still owed - an employee must not be charged past the payoff - and only
@@ -286,7 +371,11 @@ public class PayrollComputationService
             if (loan.StartDate > run.PeriodEnd)
                 continue;
 
-            decimal instalment = Math.Round(loan.MonthlyDeduction / periodsPerMonth, 2);
+            // A final pay retires each loan outright instead of taking one more instalment -
+            // there is no next period left to keep collecting from.
+            decimal instalment = finalPay is not null
+                ? loan.RemainingBalance
+                : Math.Round(loan.MonthlyDeduction / periodsPerMonth, 2);
             decimal amount = Math.Min(instalment, loan.RemainingBalance);
             if (amount <= 0m)
                 continue;
@@ -306,13 +395,16 @@ public class PayrollComputationService
         decimal statutory = sssEmp + phEmp + piEmp + withholdingTax;
         decimal discretionaryBudget = Math.Max(0m,
             regularPay + overtimePay + holidayPay + nightDiffPay + taxableAllowances +
-            nonTaxableAllowances + thirteenthMonth - statutory);
+            nonTaxableAllowances + thirteenthMonth + leaveConversionPay + separationPay + retirementPay
+            - statutory);
 
         decimal loanDeductions = loanLines.Sum(l => l.Amount);
         if (loanDeductions > discretionaryBudget)
         {
             // Pro-rate the shortfall across the loans so no single one absorbs all of it; the
-            // remainder simply stays on the balance and is collected next period.
+            // remainder simply stays on the balance - collected next period on a regular run; on
+            // a final pay there is no next period, so it is left for HR to recover another way
+            // (the final-pay summary shows it as uncovered).
             decimal affordable = discretionaryBudget;
             decimal running = 0m;
             for (int i = 0; i < loanLines.Count; i++)
@@ -351,6 +443,11 @@ public class PayrollComputationService
             TaxableAllowances = taxableAllowances,
             NonTaxableAllowances = nonTaxableAllowances,
             ThirteenthMonth = thirteenthMonth,
+            LeaveConversionPay = leaveConversionPay,
+            LeaveConversionNonTaxable = leaveConversionNonTaxable,
+            SeparationPay = separationPay,
+            RetirementPay = retirementPay,
+            FinalPayNonTaxable = finalPayNonTaxable,
             SSSEmployee = sssEmp,
             SSSEmployer = sssEmr,
             PhilHealthEmployee = phEmp,

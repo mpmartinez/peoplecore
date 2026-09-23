@@ -28,12 +28,12 @@ public class PayrollRunsTests : BunitContext
 
     private string CurrentUri => Services.GetRequiredService<NavigationManager>().Uri;
 
-    private static string RunSummary(Guid id, string runNumber, string status, int employees) =>
+    private static string RunSummary(Guid id, string runNumber, string status, int employees, string runType = "Regular") =>
         $$"""
         {"id":"{{id}}","runNumber":"{{runNumber}}","periodLabel":"Sep 1-15, 2026","periodStart":"2026-09-01",
          "periodEnd":"2026-09-15","payDate":"2026-09-20","frequency":"SemiMonthly","status":"{{status}}",
          "employeeCount":{{employees}},"totalGrossPay":0,"totalNetPay":0,"employeesMissingAttendance":0,
-         "createdAt":"2026-09-01T00:00:00Z"}
+         "createdAt":"2026-09-01T00:00:00Z","runType":"{{runType}}"}
         """;
 
     private static string Runs(params string[] runs) => RunsPage(1, 1, runs);
@@ -85,12 +85,27 @@ public class PayrollRunsTests : BunitContext
 
         var rows = cut.FindAll("tbody tr");
         rows.Should().HaveCount(2);
-        rows[0].TextContent.Should().Contain("PR-2026-0017").And.Contain("ForApproval").And.Contain("12");
+        rows[0].TextContent.Should().Contain("PR-2026-0017").And.Contain("For approval").And.NotContain("ForApproval").And.Contain("12");
         rows[1].TextContent.Should().Contain("PR-2026-0016").And.Contain("Paid");
 
         rows[0].Click();
 
         CurrentUri.Should().Be($"http://localhost/payroll-runs/{runId}");
+    }
+
+    [Fact]
+    public void AFinalPayRun_CarriesAFinalPayBadge_AndARegularOneDoesNot()
+    {
+        _api.On(HttpMethod.Get, RunsPath, HttpStatusCode.OK,
+            Runs(RunSummary(Guid.NewGuid(), "FP-2026-001", "Draft", 1, runType: "FinalPay"),
+                 RunSummary(Guid.NewGuid(), "PR-2026-0016", "Paid", 11)));
+
+        var cut = RenderPage();
+
+        var rows = cut.FindAll("tbody tr");
+        rows[0].QuerySelector("[data-final-pay-badge]")!.TextContent.Should().Be("Final pay");
+        rows[1].QuerySelector("[data-final-pay-badge]").Should().BeNull();
+        cut.Markup.Should().NotContain("FinalPay");
     }
 
     [Fact]

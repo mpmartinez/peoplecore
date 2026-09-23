@@ -172,5 +172,5 @@ public class EmployeeService : IEmployeeService
         e.ReportingManagerId, e.ReportingManager?.FullName,
         e.TeamId,
         e.EmploymentStatus, e.EmploymentType, e.HireDate, e.RegularizationDate,
-        e.IsActive, e.Is13thMonthEligible);
+        e.IsActive, e.Is13thMonthEligible, e.SeparationDate);
 }

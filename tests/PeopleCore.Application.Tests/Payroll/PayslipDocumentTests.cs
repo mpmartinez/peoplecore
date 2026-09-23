@@ -79,6 +79,29 @@ public class PayslipDocumentTests
         act.Should().NotThrow("a fully populated breakdown must render without overflow");
     }
 
+    [Fact]
+    public void Renders_a_final_pay_with_its_earnings_and_a_tax_refund()
+    {
+        var employee = Employee() with
+        {
+            RegularPay = 5_000m,
+            ThirteenthMonth = 10_000m,
+            LeaveConversionPay = 7_500m,
+            LeaveConversionNonTaxable = 6_000m,
+            SeparationPay = 40_000m,
+            RetirementPay = 1_000m,
+            FinalPayNonTaxable = 47_000m,
+            GrossPay = 63_500m,
+            WithholdingTax = -1_800m,
+            TotalDeductions = -1_039m,
+            NetPay = 64_539m
+        };
+
+        var pdf = new PayslipDocument(Run() with { RunType = PayrollRunType.FinalPay }, employee, Company()).GeneratePdf();
+
+        pdf.Take(5).Should().Equal("%PDF-"u8.ToArray());
+    }
+
     private static PayrollRunDto Run() => new(
         Id: Guid.NewGuid(),
         RunNumber: "PR-2026-001",

@@ -8,6 +8,11 @@
     two actions that move it along - marking the last working day as reached, or cancelling the
     notice outright. Both come back from the API as the same DTO the page already shows, so every
     action simply replaces _separation with the response rather than reloading.
+
+    For someone who can manage payroll it also carries the Final pay section: the form that creates
+    the final-pay run, then its summary, an edit form until the run is Paid (saving an Approved one
+    sends it back for approval), and the clearance still standing between it and payment. The summary is reloaded after every
+    clearance change, since the API is what says what's outstanding.
 *@
 
 <PageTitle>@(_separation?.EmployeeName ?? "Separation")</PageTitle>
@@ -23,7 +28,11 @@
     <Actions>
         @if (_separation is { Status: SeparationStatus.NoticeGiven })
         {
-            <Button Variant="destructive" Size="sm" OnClick="@(() => _confirmingCancel = true)" data-cancel>Cancel separation</Button>
+            @* Once a final-pay run exists the API refuses to cancel ("Final pay has already been started"). *@
+            @if (_separation.FinalPayRunId is null && _finalPay is null)
+            {
+                <Button Variant="destructive" Size="sm" OnClick="@(() => _confirmingCancel = true)" data-cancel>Cancel separation</Button>
+            }
             <Button Variant="primary" Size="sm" OnClick="@(() => _confirmingMark = true)" Loading="@_marking" Disabled="@_marking" data-mark-separated>Mark separated</Button>
         }
     </Actions>
@@ -109,16 +118,23 @@ else
                                         @if (!string.IsNullOrWhiteSpace(item.Note)) { <span> - @item.Note</span> }
                                     </div>
                                 }
+                                @if (item.LastUndoneAt is not null)
+                                {
+                                    <div class="text-xs text-muted-foreground" data-undone="@item.Id">
+                                        Undone by @item.LastUndoneBy on @item.LastUndoneAt?.ToString("MMM d, yyyy")
+                                    </div>
+                                }
                             </div>
                             <div class="flex items-center gap-2">
-                                @if (item.ClearedAt is null)
+                                @* The API refuses every clearance change once final pay is Paid. *@
+                                @if (!ClearanceLocked && item.ClearedAt is null)
                                 {
                                     <Input TValue="string" Value="@NoteFor(item.Id)" ValueChanged="@(v => _clearNotes[item.Id] = v)"
                                            Placeholder="Note (optional)" Type="text" Class="w-40" data-clear-note="@item.Id" />
                                     <Button Variant="outline" Size="sm" OnClick="@(() => ClearItem(item.Id))" data-clear="@item.Id">Clear</Button>
                                     <Button Variant="ghost" Size="sm" OnClick="@(() => RemoveItem(item.Id))" data-remove="@item.Id">Remove</Button>
                                 }
-                                else
+                                else if (!ClearanceLocked)
                                 {
                                     <Button Variant="ghost" Size="sm" OnClick="@(() => UndoItem(item.Id))" data-undo="@item.Id">Undo</Button>
                                 }
@@ -128,13 +144,57 @@ else
                 </ul>
             }
 
-            <div class="flex gap-2">
-                <Input TValue="string" Value="@_newItemName" ValueChanged="@(v => _newItemName = v)"
-                       Placeholder="New clearance item" Type="text" Class="max-w-xs" data-add-item />
-                <Button Variant="outline" Size="sm" OnClick="AddItem" Disabled="@string.IsNullOrWhiteSpace(_newItemName)" data-add-item-button>Add item</Button>
-            </div>
+            @if (ClearanceLocked)
+            {
+                <p class="text-sm text-muted-foreground" data-clearance-locked>Final pay has been paid; clearance can't change now.</p>
+            }
+            else
+            {
+                <div class="flex gap-2">
+                    <Input TValue="string" Value="@_newItemName" ValueChanged="@(v => _newItemName = v)"
+                           Placeholder="New clearance item" Type="text" Class="max-w-xs" data-add-item />
+                    <Button Variant="outline" Size="sm" OnClick="AddItem" Disabled="@string.IsNullOrWhiteSpace(_newItemName)" data-add-item-button>Add item</Button>
+                </div>
+            }
         </CardContent>
     </Card>
+
+    @if (_canManagePayroll)
+    {
+        <Card Class="mt-4" data-final-pay>
+            <CardHeader>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <CardTitle>Final pay</CardTitle>
+                    @if (_finalPay is not null && !_editingFinalPay && CanEditFinalPay(_finalPay.Status))
+                    {
+                        <Button Variant="outline" Size="sm" OnClick="StartEditFinalPay" data-edit-final-pay>Edit</Button>
+                    }
+                </div>
+            </CardHeader>
+            <CardContent>
+                @if ((_finalPayLoadError ?? _finalPayActionError) is { } finalPayError)
+                {
+                    <Alert Variant="destructive" Class="mb-4" data-final-pay-error>@finalPayError</Alert>
+                }
+
+                @if (!_finalPayLoaded)
+                {
+                    @if (_finalPayLoadError is null)
+                    {
+                        <div class="p-4 flex justify-center"><Spinner /></div>
+                    }
+                }
+                else if (_finalPay is null || _editingFinalPay)
+                {
+                    @FinalPayForm()
+                }
+                else
+                {
+                    @FinalPaySummary(_finalPay)
+                }
+            </CardContent>
+        </Card>
+    }
 }
 
 <AlertDialog IsOpen="@_confirmingCancel" Title="Cancel this separation?"
@@ -150,6 +210,8 @@ else
 @code {
     [Parameter] public Guid Id { get; set; }
 
+    [CascadingParameter] private Task<AuthenticationState>? AuthenticationState { get; set; }
+
     private SeparationDto? _separation;
     private string? _loadError;
     private bool _notFound;
@@ -161,7 +223,27 @@ else
     private readonly Dictionary<Guid, string> _clearNotes = [];
     private string? _newItemName;
 
-    protected override Task OnInitializedAsync() => Load();
+    // Final pay
+    private bool _canManagePayroll;
+    private FinalPaySummaryDto? _finalPay;
+    private bool _finalPayLoaded;
+    private string? _finalPayLoadError;
+    private string? _finalPayActionError;
+    private bool _savingFinalPay;
+    private bool _editingFinalPay;
+    private FinalPayFormModel _finalPayForm = new();
+    // Bumped by every load and every save, so an answer that arrives after a newer one began (a
+    // slow load overtaken by a later load, or any load overtaken by a save) is dropped.
+    private int _finalPayVersion;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = AuthenticationState is null ? null : await AuthenticationState;
+        _canManagePayroll = state?.User.HasAnyPermission(Permissions.PayrollManage) ?? false;
+
+        await Load();
+        await LoadFinalPay();
+    }
 
     private async Task Load()
     {
@@ -188,6 +270,11 @@ else
     }
 
     private string NoteFor(Guid itemId) => _clearNotes.TryGetValue(itemId, out var note) ? note : "";
+
+    // The API refuses every clearance change once the final pay is Paid ("Final pay has been
+    // paid; clearance can't change now."), so the buttons go. The separation says so for anyone;
+    // the final-pay summary, loaded only for payroll managers, may be fresher.
+    private bool ClearanceLocked => _separation?.FinalPayStatus == "Paid" || _finalPay?.Status == "Paid";
 
     private string MarkSeparatedConfirmation() =>
         _separation is null ? "" :
@@ -242,6 +329,7 @@ else
         {
             _separation = await Api.AddClearanceItemAsync(Id, _newItemName.Trim());
             _newItemName = null;
+            await LoadFinalPay();
         }
         catch (Exception ex)
         {
@@ -257,6 +345,7 @@ else
         {
             _separation = await Api.ClearItemAsync(Id, itemId, string.IsNullOrWhiteSpace(note) ? null : note.Trim());
             _clearNotes.Remove(itemId);
+            await LoadFinalPay();
         }
         catch (Exception ex)
         {
@@ -270,6 +359,7 @@ else
         try
         {
             _separation = await Api.UndoClearItemAsync(Id, itemId);
+            await LoadFinalPay();
         }
         catch (Exception ex)
         {
@@ -283,10 +373,433 @@ else
         try
         {
             _separation = await Api.DeleteClearanceItemAsync(Id, itemId);
+            await LoadFinalPay();
         }
         catch (Exception ex)
         {
             _pageError = ex.Message;
         }
+    }
+
+    // ---------- Final pay ----------
+
+    private async Task LoadFinalPay()
+    {
+        if (!_canManagePayroll || _separation is null) return;
+
+        var version = ++_finalPayVersion;
+        try
+        {
+            var summary = await Api.GetFinalPayAsync(Id);
+            if (version != _finalPayVersion) return;
+            _finalPay = summary;
+            _finalPayLoaded = true;
+            _finalPayLoadError = null;
+        }
+        catch (Exception ex)
+        {
+            if (version != _finalPayVersion) return;
+            _finalPay = null;
+            _finalPayLoaded = false;
+            _finalPayLoadError = ex.Message;
+        }
+    }
+
+    private bool IsRetirement => _separation?.Type == SeparationType.Retirement;
+
+    // Same line the API draws: paid figures have retired loans, but an approved final pay can
+    // still change - clearance, which can finish after approval, turns up deductions - and saving
+    // it sends it back for approval.
+    private static bool CanEditFinalPay(string status) => status is "Draft" or "ForApproval" or "Approved";
+
+    /// <summary>
+    /// HR's stored override of the pay this separation's type pays, null when there is none. Read
+    /// from what was stored rather than inferred from the figures: an override equal to the
+    /// computed figure is still an override.
+    /// </summary>
+    private decimal? StoredOverride(FinalPaySummaryDto summary) =>
+        IsRetirement ? summary.RetirementPayOverride : summary.SeparationPayOverride;
+
+    private void StartEditFinalPay()
+    {
+        if (_finalPay is not { } summary) return;
+        _finalPayForm = new FinalPayFormModel
+        {
+            PayDate = summary.PayDate,
+            // A start HR didn't choose is left empty, so the default keeps applying rather than
+            // being pinned - including the no-salary path, whose stored start is only the last
+            // working day and would otherwise ask for a one-day salary period.
+            PeriodStart = summary.PeriodStartIsDefault ? null : summary.PeriodStart,
+            OverrideAmount = StoredOverride(summary),
+            OverrideNote = summary.OverrideNote,
+            Deductions = summary.Deductions.Select(d => new DeductionRow { Label = d.Label, Amount = d.Amount }).ToList(),
+        };
+        _finalPayActionError = null;
+        _editingFinalPay = true;
+    }
+
+    private void CancelEditFinalPay()
+    {
+        _editingFinalPay = false;
+        _finalPayActionError = null;
+    }
+
+    private void AddDeduction() => _finalPayForm.Deductions.Add(new DeductionRow());
+
+    private void RemoveDeduction(DeductionRow row) => _finalPayForm.Deductions.Remove(row);
+
+    private FinalPayRequest BuildFinalPayRequest()
+    {
+        var form = _finalPayForm;
+        // A row left completely blank is ignored; a half-filled one is sent, for the API to explain.
+        var deductions = form.Deductions
+            .Where(d => !string.IsNullOrWhiteSpace(d.Label) || d.Amount is not null)
+            .Select(d => new FinalPayDeductionDto(d.Label?.Trim() ?? "", d.Amount ?? 0m))
+            .ToList();
+
+        return new FinalPayRequest(
+            form.PayDate,
+            form.PeriodStart,
+            IsRetirement ? null : form.OverrideAmount,
+            IsRetirement ? form.OverrideAmount : null,
+            string.IsNullOrWhiteSpace(form.OverrideNote) ? null : form.OverrideNote.Trim(),
+            deductions);
+    }
+
+    private async Task SubmitFinalPay()
+    {
+        if (_savingFinalPay) return;
+        _finalPayActionError = null;
+        // The API's own rule and wording, checked here so the form says so before a round trip.
+        if (_finalPayForm.OverrideAmount is not null && string.IsNullOrWhiteSpace(_finalPayForm.OverrideNote))
+        {
+            _finalPayActionError = "Explain the separation or retirement pay override.";
+            return;
+        }
+        _savingFinalPay = true;
+        // Starting the save drops any load already out. If another load starts while the save is
+        // out (a clearance change), the save's answer may predate it, so it is not applied: the
+        // final pay is reloaded instead, which sees both.
+        var version = ++_finalPayVersion;
+        var reload = false;
+        try
+        {
+            var request = BuildFinalPayRequest();
+            var summary = _finalPay is null
+                ? await Api.CreateFinalPayAsync(Id, request)
+                : await Api.UpdateFinalPayAsync(Id, request);
+
+            _editingFinalPay = false;
+            if (version == _finalPayVersion)
+            {
+                _finalPay = summary;
+                _finalPayLoaded = true;
+                _finalPayLoadError = null;
+            }
+            else
+            {
+                reload = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _finalPayActionError = ex.Message;
+        }
+        finally
+        {
+            _savingFinalPay = false;
+        }
+
+        if (reload) await LoadFinalPay();
+    }
+
+    private static string Peso(decimal amount) => PayrollLabels.Peso(amount);
+
+    private static string Days(decimal days) => $"{days:0.##} {(days == 1m ? "day" : "days")}";
+
+    private RenderFragment FinalPayForm() => __builder =>
+    {
+        var creating = _finalPay is null;
+        <div data-final-pay-form>
+            <p class="text-sm font-medium mb-3">@(creating ? "Create final pay" : "Edit final pay")</p>
+            @if (_finalPay is { Status: "Approved" })
+            {
+                <Alert Variant="warning" Class="mb-4" data-reapproval-note>
+                    This final pay has been approved. Saving changes sends it back for approval.
+                </Alert>
+            }
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                <FormField LabelText="Pay Date" Id="final-pay-date" Required="true">
+                    <Input TValue="DateOnly" Id="final-pay-date" Type="date" Value="@_finalPayForm.PayDate"
+                           ValueChanged="@(v => _finalPayForm.PayDate = v)" />
+                </FormField>
+                <FormField LabelText="Period Start" Id="final-pay-period-start"
+                           Description="Leave empty for the day after the last paid payroll.">
+                    <Input TValue="DateOnly?" Id="final-pay-period-start" Type="date" Value="@_finalPayForm.PeriodStart"
+                           ValueChanged="@(v => _finalPayForm.PeriodStart = v)" />
+                </FormField>
+                <FormField LabelText="@(IsRetirement ? "Retirement pay override" : "Separation pay override")" Id="final-pay-override"
+                           Description="Leave empty to pay the computed figure.">
+                    <Input TValue="decimal?" Id="final-pay-override" Type="number" Step="0.01" Min="0" Value="@_finalPayForm.OverrideAmount"
+                           ValueChanged="@(v => _finalPayForm.OverrideAmount = v)" />
+                </FormField>
+                <FormField LabelText="Override Note" Id="final-pay-override-note" Description="Needed with an override.">
+                    <Input TValue="string" Id="final-pay-override-note" Type="text" Value="@_finalPayForm.OverrideNote"
+                           ValueChanged="@(v => _finalPayForm.OverrideNote = v)" />
+                </FormField>
+            </div>
+
+            <div class="mb-4">
+                <div class="flex items-center justify-between mb-2">
+                    <Label>Other deductions</Label>
+                    <Button Variant="outline" Size="sm" OnClick="AddDeduction" data-add-deduction>
+                        <i class="bi bi-plus-lg mr-1"></i> Add deduction
+                    </Button>
+                </div>
+                @if (_finalPayForm.Deductions.Count == 0)
+                {
+                    <p class="text-sm text-muted-foreground">None. Loans are deducted automatically.</p>
+                }
+                else
+                {
+                    <div class="space-y-2">
+                        @for (var i = 0; i < _finalPayForm.Deductions.Count; i++)
+                        {
+                            var index = i;
+                            var row = _finalPayForm.Deductions[i];
+                            <div class="flex gap-2" @key="row">
+                                <Input TValue="string" Type="text" Placeholder="What for" Class="flex-1" Value="@row.Label"
+                                       ValueChanged="@(v => row.Label = v)" data-deduction-label="@index" />
+                                <Input TValue="decimal?" Type="number" Step="0.01" Min="0" Placeholder="Amount" Class="w-36" Value="@row.Amount"
+                                       ValueChanged="@(v => row.Amount = v)" data-deduction-amount="@index" />
+                                <Button Variant="ghost" Size="sm" OnClick="@(() => RemoveDeduction(row))" data-remove-deduction="@index">Remove</Button>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+
+            <div class="flex gap-2 justify-end">
+                @if (!creating)
+                {
+                    <Button Variant="outline" Size="sm" OnClick="CancelEditFinalPay" Disabled="@_savingFinalPay" data-cancel-final-pay-edit>Cancel</Button>
+                }
+                <Button Variant="primary" Size="sm" OnClick="SubmitFinalPay" Loading="@_savingFinalPay" Disabled="@_savingFinalPay" data-submit-final-pay>
+                    @(creating ? "Create final pay" : "Save changes")
+                </Button>
+            </div>
+        </div>
+    };
+
+    private RenderFragment FinalPaySummary(FinalPaySummaryDto summary) => __builder =>
+    {
+        <div data-final-pay-summary>
+            @if (!summary.ClearanceComplete)
+            {
+                <Alert Variant="warning" Class="mb-4" data-clearance-outstanding>
+                    @if (summary.OutstandingClearance.Count > 0)
+                    {
+                        @($"Clearance outstanding: {string.Join(", ", summary.OutstandingClearance)}")
+                    }
+                    else
+                    {
+                        @("Add clearance items and clear them before paying final pay.")
+                    }
+                </Alert>
+            }
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-x-8">
+                <div>
+                    <div class="flex justify-between py-2 border-b border-dashed">
+                        <span class="text-muted-foreground text-sm">Run</span>
+                        <span class="text-sm font-medium text-right">
+                            <a href="@($"/payroll-runs/{summary.RunId}")" class="text-primary hover:underline" data-final-pay-run-link>@summary.RunNumber</a>
+                            <Badge Variant="@PayrollLabels.RunStatusVariant(summary.Status)" Class="ml-2">@PayrollLabels.RunStatusOf(summary.Status)</Badge>
+                        </span>
+                    </div>
+                    <InfoRow Label="Period" Value="@($"{summary.PeriodStart:MMM d, yyyy} - {summary.PeriodEnd:MMM d, yyyy}")" />
+                    <InfoRow Label="Pay Date" Value="@summary.PayDate.ToString("MMM d, yyyy")" />
+                    @if (summary.NoSalaryDays)
+                    {
+                        <p class="text-sm text-muted-foreground py-2 border-b border-dashed" data-no-salary-days>
+                            No salary days - the last payroll already paid up to the last working day.
+                        </p>
+                    }
+                    else
+                    {
+                        <div class="flex justify-between py-2 border-b border-dashed" data-salary-days>
+                            <span class="text-muted-foreground text-sm">Salary days</span>
+                            <span class="text-sm font-medium text-right">@summary.WorkingDays.ToString("0.##")</span>
+                        </div>
+                    }
+                    <div class="flex justify-between py-2 border-b border-dashed" data-daily-rate>
+                        <span class="text-muted-foreground text-sm">Daily rate</span>
+                        <span class="text-sm font-medium text-right">@Peso(summary.DailyRate)</span>
+                    </div>
+                    <InfoRow Label="Years of Service" Value="@summary.ServiceYears.ToString()" />
+
+                    <div class="py-2 border-b border-dashed" data-leave-lines>
+                        <div class="flex justify-between">
+                            <span class="text-muted-foreground text-sm">Leave converted to cash</span>
+                            <span class="text-sm font-medium text-right">@Peso(summary.LeaveConversionPay)</span>
+                        </div>
+                        @if (summary.LeaveLines.Count == 0)
+                        {
+                            <p class="text-xs text-muted-foreground mt-1" data-no-convertible-leave>
+                                @(summary.HasConvertibleLeaveType
+                                    ? "No convertible leave left to pay out."
+                                    : "No leave converts to cash - no leave type is marked convertible.")
+                            </p>
+                        }
+                        else
+                        {
+                            <ul class="text-xs text-muted-foreground mt-1 space-y-0.5">
+                                @foreach (var line in summary.LeaveLines)
+                                {
+                                    <li>@line.LeaveType: @Days(line.Days) x @Peso(summary.DailyRate)@(line.CountsAsVacation ? " (counts toward the de minimis ceiling)" : "")</li>
+                                }
+                            </ul>
+                            @if (summary.LeaveConversionNonTaxable > 0m)
+                            {
+                                <p class="text-xs text-muted-foreground mt-1">@Peso(summary.LeaveConversionNonTaxable) of it is non-taxable.</p>
+                            }
+                        }
+                    </div>
+
+                    @if (!IsRetirement || summary.SeparationPay != 0m)
+                    {
+                        <div class="py-2 border-b border-dashed" data-separation-pay>
+                            <div class="flex justify-between">
+                                <span class="text-muted-foreground text-sm">
+                                    Separation pay
+                                    @if (summary.SeparationPayOverride is not null)
+                                    {
+                                        <span class="font-medium text-foreground" data-overridden>(overridden)</span>
+                                    }
+                                </span>
+                                <span class="text-sm font-medium text-right">@Peso(summary.SeparationPay)</span>
+                            </div>
+                            @if (!IsRetirement)
+                            {
+                                @OverrideDetails(summary)
+                            }
+                        </div>
+                    }
+                    @if (IsRetirement || summary.RetirementPay != 0m)
+                    {
+                        <div class="py-2 border-b border-dashed" data-retirement-pay>
+                            <div class="flex justify-between">
+                                <span class="text-muted-foreground text-sm">
+                                    Retirement pay
+                                    @if (summary.RetirementPayOverride is not null)
+                                    {
+                                        <span class="font-medium text-foreground" data-overridden>(overridden)</span>
+                                    }
+                                </span>
+                                <span class="text-sm font-medium text-right">@Peso(summary.RetirementPay)</span>
+                            </div>
+                            @if (IsRetirement)
+                            {
+                                @OverrideDetails(summary)
+                            }
+                        </div>
+                    }
+                </div>
+
+                <div>
+                    <div class="py-2 border-b border-dashed" data-final-pay-deductions>
+                        <span class="text-muted-foreground text-sm">Other deductions</span>
+                        @if (summary.DeductionLines.Count == 0)
+                        {
+                            <p class="text-sm">None</p>
+                        }
+                        else
+                        {
+                            @* What was actually deducted: net pay caps HR's deductions after the loans. *@
+                            @foreach (var deduction in summary.DeductionLines)
+                            {
+                                <div class="flex justify-between text-sm">
+                                    <span>@deduction.Label@(deduction.Uncovered > 0m ? $" (of {Peso(deduction.Amount)})" : "")</span>
+                                    <span class="font-medium">@Peso(deduction.Deducted)</span>
+                                </div>
+                            }
+                        }
+                    </div>
+                    @foreach (var deduction in summary.DeductionLines.Where(d => d.Uncovered > 0m))
+                    {
+                        <Alert Variant="warning" Class="my-2" data-deduction-shortfall>
+                            The final pay can't cover @Peso(deduction.Uncovered) of @deduction.Label; collect it another way.
+                        </Alert>
+                    }
+
+                    <div class="py-2 border-b border-dashed" data-loans>
+                        <span class="text-muted-foreground text-sm">Loans</span>
+                        @if (summary.Loans.Count == 0)
+                        {
+                            <p class="text-sm">None</p>
+                        }
+                        else
+                        {
+                            @foreach (var loan in summary.Loans)
+                            {
+                                <div class="flex justify-between text-sm">
+                                    <span>@PayrollLabels.LoanTypeOf(loan.LoanType) (balance @Peso(loan.Balance))</span>
+                                    <span class="font-medium">@Peso(loan.Deducted)</span>
+                                </div>
+                            }
+                        }
+                    </div>
+                    @foreach (var loan in summary.Loans.Where(l => l.Uncovered > 0m))
+                    {
+                        <Alert Variant="warning" Class="my-2" data-loan-shortfall>
+                            The final pay can't cover @Peso(loan.Uncovered) of the @PayrollLabels.LoanTypeOf(loan.LoanType) balance; it stays on the loan.
+                        </Alert>
+                    }
+
+                    <div class="flex justify-between py-2 border-b border-dashed" data-tax>
+                        <span class="text-muted-foreground text-sm">@(summary.WithholdingTax < 0m ? "Tax refund" : "Withholding tax")</span>
+                        <span class="text-sm font-medium text-right">@Peso(Math.Abs(summary.WithholdingTax))</span>
+                    </div>
+                    <div class="flex justify-between py-2 border-b border-dashed" data-gross>
+                        <span class="text-muted-foreground text-sm">Gross pay</span>
+                        <span class="text-sm font-medium text-right">@Peso(summary.GrossPay)</span>
+                    </div>
+                    <div class="flex justify-between py-2" data-net>
+                        <span class="text-sm font-semibold">Net pay</span>
+                        <span class="text-base font-semibold text-right">@Peso(summary.NetPay)</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    };
+
+    // The computed figure and HR's note belong to an override, so neither shows without one - a
+    // note can outlive the override it explained.
+    private RenderFragment OverrideDetails(FinalPaySummaryDto summary) => __builder =>
+    {
+        if (StoredOverride(summary) is null) return;
+        if (summary.ComputedSeparationOrRetirementPay is decimal computed)
+        {
+            <p class="text-xs text-muted-foreground mt-1" data-computed-pay>Computed: @Peso(computed)</p>
+        }
+        if (!string.IsNullOrWhiteSpace(summary.OverrideNote))
+        {
+            <p class="text-xs text-muted-foreground mt-1" data-override-note>Note: @summary.OverrideNote</p>
+        }
+    };
+
+    private sealed class FinalPayFormModel
+    {
+        public DateOnly PayDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+        public DateOnly? PeriodStart { get; set; }
+        public decimal? OverrideAmount { get; set; }
+        public string? OverrideNote { get; set; }
+        public List<DeductionRow> Deductions { get; set; } = [];
+    }
+
+    private sealed class DeductionRow
+    {
+        public string? Label { get; set; }
+        public decimal? Amount { get; set; }
     }
 }

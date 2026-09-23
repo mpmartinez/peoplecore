@@ -257,6 +257,49 @@ public class SeparationRepositoryTests : DatabaseTestBase
         reloadedEmployee.SeparationDate.Should().Be(new DateOnly(2026, 9, 20));
     }
 
+    /// <summary>
+    /// Recording a separation for someone deactivated before separations were tracked saves it
+    /// already Separated, and undoing a clearance saves who undid it and the note it cleared - both
+    /// through the service and read back through a fresh context.
+    /// </summary>
+    [Fact]
+    public async Task RecordForAnInactiveEmployee_ThenUndoAClearance_RoundTripsThroughTheService()
+    {
+        var currentUser = new Mock<ICurrentUserService>();
+        currentUser.Setup(c => c.Email).Returns("hr@company.test");
+        var clock = new FixedClock(new DateTimeOffset(2026, 9, 21, 0, 0, 0, TimeSpan.Zero));
+
+        var employee = AnEmployee();
+        employee.IsActive = false;
+        employee.SeparationDate = new DateOnly(2026, 3, 3);
+        Context.Employees.Add(employee);
+        await Context.SaveChangesAsync();
+
+        Guid separationId, itemId;
+        await using (var ctx = NewContext())
+        {
+            var service = new SeparationService(new SeparationRepository(ctx), new EmployeeRepository(ctx), currentUser.Object, clock);
+            var recorded = await service.RecordAsync(new RecordSeparationRequest(
+                employee.Id, SeparationType.Resignation, null, new DateOnly(2026, 2, 16), new DateOnly(2026, 3, 3), null));
+            separationId = recorded.Id;
+            itemId = recorded.ClearanceItems[0].Id;
+            await service.ClearItemAsync(separationId, itemId, "handed over badge");
+            await service.UndoClearItemAsync(separationId, itemId);
+        }
+
+        await using var reader = NewContext();
+        var separation = await new SeparationRepository(reader).GetAsync(separationId);
+        separation!.Status.Should().Be(SeparationStatus.Separated);
+        separation.LastWorkingDay.Should().Be(new DateOnly(2026, 3, 3));
+        separation.SeparatedBy.Should().Be("hr@company.test");
+        separation.SeparatedAt.Should().NotBeNull();
+        var item = separation.ClearanceItems.Single(i => i.Id == itemId);
+        item.ClearedAt.Should().BeNull();
+        item.LastUndoneBy.Should().Be("hr@company.test");
+        item.LastUndoneAt.Should().NotBeNull();
+        item.LastUndoneNote.Should().Be("handed over badge");
+    }
+
     [Fact]
     public async Task Delete_RemovesTheSeparationAndItsItems()
     {

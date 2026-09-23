@@ -16,7 +16,8 @@ public class SeparationRepository : ISeparationRepository
     public SeparationRepository(AppDbContext context) => _context = context;
 
     private IQueryable<Separation> WithDetails() =>
-        _context.Separations.Include(s => s.ClearanceItems).Include(s => s.Employee).ThenInclude(e => e.Position);
+        _context.Separations.Include(s => s.ClearanceItems).Include(s => s.Employee).ThenInclude(e => e.Position)
+            .Include(s => s.FinalPayRun);
 
     public async Task<Separation?> GetAsync(Guid id, CancellationToken ct = default)
         => await WithDetails().FirstOrDefaultAsync(s => s.Id == id, ct);
@@ -26,6 +27,13 @@ public class SeparationRepository : ISeparationRepository
 
     public async Task<IReadOnlyList<Separation>> ListAsync(CancellationToken ct = default)
         => await WithDetails().OrderByDescending(s => s.LastWorkingDay).AsSplitQuery().ToListAsync(ct);
+
+    public async Task<IReadOnlyList<Separation>> GetForEmployeesAsync(IReadOnlyCollection<Guid> employeeIds, CancellationToken ct = default)
+        => employeeIds.Count == 0
+            ? []
+            : await _context.Separations.Include(s => s.Employee).Include(s => s.FinalPayRun)
+                .Where(s => employeeIds.Contains(s.EmployeeId))
+                .ToListAsync(ct);
 
     /// <summary>
     /// Two HR users recording the same employee's separation at once both pass

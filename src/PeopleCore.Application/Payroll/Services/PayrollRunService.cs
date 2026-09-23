@@ -1,7 +1,9 @@
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Payroll.DTOs;
+using PeopleCore.Application.Payroll.FinalPay;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Application.Payroll.Validation;
 using PeopleCore.Domain.Entities.Payroll;
@@ -21,8 +23,15 @@ public class PayrollRunService : IPayrollRunService
     private readonly PayrollComputationService _computationService;
     private readonly IPayrollAttendanceBridge _attendanceBridge;
     private readonly IEmployeeRepository _employeeRepo;
+    private readonly ISeparationRepository _separations;
     private readonly ILogger<PayrollRunService> _logger;
+    private readonly IFinalPayService? _finalPay;
 
+    /// <param name="finalPay">
+    /// Recomputes final-pay runs, which are built from a separation rather than from a list of
+    /// employees. Optional so callers that never see a final-pay run needn't supply one; computing
+    /// a final-pay run without it is refused.
+    /// </param>
     public PayrollRunService(
         IPayrollRunRepository runRepo,
         IEmployeeCompensationRepository compensationRepo,
@@ -32,7 +41,9 @@ public class PayrollRunService : IPayrollRunService
         PayrollComputationService computationService,
         IPayrollAttendanceBridge attendanceBridge,
         IEmployeeRepository employeeRepo,
-        ILogger<PayrollRunService> logger)
+        ISeparationRepository separations,
+        ILogger<PayrollRunService> logger,
+        IFinalPayService? finalPay = null)
     {
         _runRepo = runRepo;
         _compensationRepo = compensationRepo;
@@ -42,12 +53,16 @@ public class PayrollRunService : IPayrollRunService
         _computationService = computationService;
         _attendanceBridge = attendanceBridge;
         _employeeRepo = employeeRepo;
+        _separations = separations;
         _logger = logger;
+        _finalPay = finalPay;
     }
 
     public async Task<PayrollRunDto> CreateAsync(CreatePayrollRunRequest request, CancellationToken ct = default)
     {
         PayrollRunRequestValidator.Validate(request);
+        await EnsureNoOneHasLeftAsync(request.Employees.Select(e => e.EmployeeId).ToList(),
+            request.PeriodStart, request.PeriodEnd, ct);
 
         var year = request.PeriodStart.Year;
         var sequence = await _runRepo.CountForYearAsync(year, ct) + 1;
@@ -87,12 +102,34 @@ public class PayrollRunService : IPayrollRunService
 
         // A committed run is settled: an approver has signed off on these figures, or - worse,
         // for a paid run - they have already been used to retire loan balances. Recomputing
-        // either would silently change what someone was, or is about to be, paid.
-        if (run.Status is PayrollRunStatus.Approved or PayrollRunStatus.Paid)
+        // either would silently change what someone was, or is about to be, paid. A final pay is
+        // the one exception to the first: it can be approved before clearance is complete, and
+        // clearance is where deductions such as an unreturned laptop come up, so an approved
+        // final pay can still be recomputed - and goes back to Draft below, to be approved again.
+        if (run.RunType == PayrollRunType.FinalPay && run.Status == PayrollRunStatus.Paid)
+            throw new DomainException("A paid final pay can't be recomputed.");
+        if (run.RunType != PayrollRunType.FinalPay && run.Status is PayrollRunStatus.Approved or PayrollRunStatus.Paid)
             throw new DomainException("Only draft or for-approval payroll runs can be recomputed.");
 
         if (run.Employees.Count == 0)
             throw new DomainException("Payroll run has no employees to compute.");
+
+        // A final-pay run is rebuilt from its separation and stored inputs - its short period's
+        // working days, HR's overrides and deductions - and its tax is settled for the year, none
+        // of which the regular path below knows about.
+        if (run.RunType == PayrollRunType.FinalPay)
+        {
+            var finalPay = _finalPay ?? throw new InvalidOperationException(
+                "PayrollRunService was built without an IFinalPayService, so it can't recompute a final-pay run.");
+            var recomputed = await finalPay.RecomputeAsync(run, ct);
+
+            run.Status = PayrollRunStatus.Draft;
+            run.UpdatedAt = DateTime.UtcNow;
+            await _runRepo.ReplaceEntriesAsync(run, recomputed, ct);
+            return;
+        }
+
+        await EnsureNoOneHasLeftAsync(run, ct);
 
         // Recompute against current rates/settings, but from the attendance SNAPSHOT taken when
         // the run was created - never from the bridge. Re-deriving here would let a punch edited
@@ -123,9 +160,10 @@ public class PayrollRunService : IPayrollRunService
 
     /// <summary>
     /// Approves a run, freezing the figures it holds: this is the gate between computing and
-    /// paying. ComputeAsync refuses to run once a run is Approved, so approving a run locks in
+    /// paying. ComputeAsync refuses to run once a regular run is Approved, so approving it locks in
     /// its numbers against any further recompute, and MarkPaidAsync then retires loan balances
-    /// against exactly what was approved here.
+    /// against exactly what was approved here. A final pay can still be recomputed or changed once
+    /// approved, but that sends it back to Draft, so it is paid only as approved all the same.
     /// </summary>
     public async Task ApproveAsync(Guid runId, CancellationToken ct = default)
     {
@@ -134,6 +172,9 @@ public class PayrollRunService : IPayrollRunService
 
         if (run.Status is not (PayrollRunStatus.Draft or PayrollRunStatus.Processing or PayrollRunStatus.ForApproval))
             throw new DomainException("Only draft, processing or for-approval payroll runs can be approved.");
+
+        if (run.RunType == PayrollRunType.Regular)
+            await EnsureNoOneHasLeftAsync(run, ct);
 
         run.Status = PayrollRunStatus.Approved;
         run.UpdatedAt = DateTime.UtcNow;
@@ -148,6 +189,21 @@ public class PayrollRunService : IPayrollRunService
 
         if (run.Status != PayrollRunStatus.Approved)
             throw new DomainException("Only approved payroll runs can be marked as paid.");
+
+        // A final pay also pays out the employee's convertible leave: what it converted is
+        // checked against the balances now, before anything changes, and recorded as used below.
+        IReadOnlyList<LeavePaidOut> leavePaidOut = [];
+        if (run.RunType == PayrollRunType.FinalPay)
+        {
+            await EnsureClearanceCompleteAsync(run, ct);
+            var finalPay = _finalPay ?? throw new InvalidOperationException(
+                "PayrollRunService was built without an IFinalPayService, so it can't pay a final-pay run.");
+            leavePaidOut = await finalPay.LeavePaidOutAsync(run, ct);
+        }
+        else
+        {
+            await EnsureNoOneHasLeftAsync(run, ct);
+        }
 
         var loanIds = run.Employees
             .SelectMany(e => e.LoanDeductionLines)
@@ -176,9 +232,51 @@ public class PayrollRunService : IPayrollRunService
         run.Status = PayrollRunStatus.Paid;
         run.UpdatedAt = DateTime.UtcNow;
 
+        // The request's one DbContext saves the leave, the loans and the run's status together, on
+        // whichever of these saves comes first.
+        if (leavePaidOut.Count > 0)
+            await _finalPay!.RecordLeavePaidOutAsync(leavePaidOut, ct);
         if (loans.Count > 0)
             await _loanRepo.UpdateRangeAsync(loans, ct);
         await _runRepo.UpdateAsync(run, ct);
+    }
+
+    public async Task<PayrollRunDto> RemoveEmployeeAsync(Guid runId, Guid employeeId, CancellationToken ct = default)
+    {
+        var run = await _runRepo.GetWithEntriesAsync(runId, ct)
+            ?? throw new KeyNotFoundException($"Payroll run {runId} not found.");
+
+        // A final pay is built for its one employee from their separation.
+        if (run.RunType == PayrollRunType.FinalPay)
+            throw new DomainException("A final-pay run's employee can't be removed.");
+
+        // A paid run has already retired loan balances. An approved one can still lose someone -
+        // it has to, when they are separated after approval and the run can't otherwise be paid -
+        // and goes back to Draft below to be approved again.
+        if (run.Status == PayrollRunStatus.Paid)
+            throw new DomainException("A paid payroll run can't be changed.");
+
+        var entry = run.Employees.FirstOrDefault(e => e.EmployeeId == employeeId)
+            ?? throw new KeyNotFoundException($"Employee {employeeId} is not on payroll run {run.RunNumber}.");
+        if (run.Employees.Count == 1)
+            throw new DomainException("A payroll run needs at least one employee.");
+
+        // The stored count of employees without a shift schedule keeps no names, so the bridge is
+        // asked whether this one was among them - the same question that produced the count.
+        if (run.EmployeesMissingAttendance > 0)
+        {
+            var bridged = await _attendanceBridge.BuildAsync([employeeId], run.PeriodStart, run.PeriodEnd, ct);
+            if (bridged.EmployeesWithoutSchedule.Contains(employeeId))
+                run.EmployeesMissingAttendance--;
+        }
+
+        // The run's totals change, so any submission or approval no longer stands - as on a
+        // recompute.
+        run.Status = PayrollRunStatus.Draft;
+        run.UpdatedAt = DateTime.UtcNow;
+        await _runRepo.RemoveEntryAsync(run, entry, ct);
+
+        return ToDto(run);
     }
 
     public async Task<PayrollRunDto?> GetAsync(Guid runId, CancellationToken ct = default)
@@ -193,6 +291,63 @@ public class PayrollRunService : IPayrollRunService
         var (items, total) = await _runRepo.GetPagedAsync(page, pageSize, ct);
         return PagedResult<PayrollRunSummaryDto>.Create(
             items.Select(ToSummaryDto).ToList(), total, page, pageSize);
+    }
+
+    /// <summary>
+    /// A final pay is released only once the separation's clearance is complete: every item
+    /// cleared, and at least one item to clear.
+    /// </summary>
+    private async Task EnsureClearanceCompleteAsync(PayrollRun run, CancellationToken ct)
+    {
+        var separationId = run.FinalPayInputs?.SeparationId
+            ?? throw new InvalidOperationException($"Final-pay run {run.RunNumber} has no final-pay inputs.");
+        var separation = await _separations.GetAsync(separationId, ct)
+            ?? throw new KeyNotFoundException($"Separation {separationId} not found.");
+
+        if (separation.ClearanceComplete)
+            return;
+        if (separation.ClearanceItems.Count == 0)
+            throw new DomainException("Add the separation's clearance items and clear them before paying final pay.");
+
+        var outstanding = separation.ClearanceItems
+            .Where(i => i.ClearedAt is null)
+            .OrderBy(i => i.SortOrder)
+            .Select(i => i.Name);
+        throw new DomainException($"Clear {string.Join(", ", outstanding)} before paying final pay.");
+    }
+
+    private Task EnsureNoOneHasLeftAsync(PayrollRun run, CancellationToken ct)
+        => EnsureNoOneHasLeftAsync(run.Employees.Select(e => e.EmployeeId).ToList(), run.PeriodStart, run.PeriodEnd, ct);
+
+    /// <summary>
+    /// Keeps people who have left off a regular run: anyone whose last working day is before the
+    /// period (their pay for it, if any, goes in their final pay), and anyone whose final pay has
+    /// been started, in any status and whatever the two periods. The final pay's 13th month, tax
+    /// settle and contributions all take it as the employee's last pay, so a regular run paid
+    /// after it would fall outside all three - a Dec 1-15 run carrying the 13th month, say,
+    /// would pay it a second time. Someone leaving during the period, with no final pay yet,
+    /// stays - the run still pays them up to that day.
+    /// </summary>
+    private async Task EnsureNoOneHasLeftAsync(IReadOnlyList<Guid> employeeIds, DateOnly periodStart,
+        DateOnly periodEnd, CancellationToken ct)
+    {
+        var separations = (await _separations.GetForEmployeesAsync(employeeIds, ct) ?? [])
+            .ToDictionary(s => s.EmployeeId);
+
+        foreach (var employeeId in employeeIds)
+        {
+            if (!separations.TryGetValue(employeeId, out var separation))
+                continue;
+
+            var name = separation.Employee.FullName;
+            if (separation.LastWorkingDay < periodStart)
+                throw new DomainException(string.Create(CultureInfo.InvariantCulture,
+                    $"{name} left on {separation.LastWorkingDay:MMM d, yyyy}; take them off this payroll - their pay goes in final pay."));
+
+            if (separation.FinalPayRunId is not null || separation.FinalPayRun is not null)
+                throw new DomainException(
+                    $"{name}'s final pay has been started; the rest of their pay goes there. Take them off this payroll.");
+        }
     }
 
     /// <summary>
@@ -283,16 +438,7 @@ public class PayrollRunService : IPayrollRunService
                 basicEarnedEarlierInYear: earlierInYear.GetValueOrDefault(employee.EmployeeId).Basic,
                 isThirteenthMonthEligible: !ineligible.Contains(employee.EmployeeId));
 
-            // Snapshot the inputs the figures above were struck from. The entry's own
-            // OvertimeHours and HolidayDays are roll-ups Compute wrote; these seven are the
-            // parts, and a recompute is rebuilt from them rather than from today's punches.
-            entry.AbsenceDays        = attendance.AbsenceDays;
-            entry.LateMinutes        = attendance.LateMinutes;
-            entry.UndertimeMinutes   = attendance.UndertimeMinutes;
-            entry.NightDiffHours     = attendance.NightDiffHours;
-            entry.RestDayOTHours     = attendance.RestDayOTHours;
-            entry.HolidayRegularDays = attendance.HolidayRegularDays;
-            entry.HolidaySpecialDays = attendance.HolidaySpecialDays;
+            SnapshotAttendance(entry, attendance);
 
             entries.Add(entry);
         }
@@ -367,11 +513,27 @@ public class PayrollRunService : IPayrollRunService
         .ToList();
 
     /// <summary>
+    /// Snapshots onto the entry the attendance its figures were struck from. The entry's own
+    /// OvertimeHours and HolidayDays are roll-ups Compute wrote; these seven are the parts, and a
+    /// recompute is rebuilt from them (<see cref="FromSnapshot"/>) rather than from today's punches.
+    /// </summary>
+    internal static void SnapshotAttendance(PayrollRunEmployee entry, PayrollAttendanceInput attendance)
+    {
+        entry.AbsenceDays        = attendance.AbsenceDays;
+        entry.LateMinutes        = attendance.LateMinutes;
+        entry.UndertimeMinutes   = attendance.UndertimeMinutes;
+        entry.NightDiffHours     = attendance.NightDiffHours;
+        entry.RestDayOTHours     = attendance.RestDayOTHours;
+        entry.HolidayRegularDays = attendance.HolidayRegularDays;
+        entry.HolidaySpecialDays = attendance.HolidaySpecialDays;
+    }
+
+    /// <summary>
     /// Rebuilds the attendance a stored entry was computed from, so a recompute reproduces it
     /// exactly. An entry saved before the per-day breakdown existed has no premium days, and
     /// its totals are repriced the way they were then.
     /// </summary>
-    private static PayrollAttendanceInput FromSnapshot(PayrollRunEmployee entry) => new()
+    internal static PayrollAttendanceInput FromSnapshot(PayrollRunEmployee entry) => new()
     {
         // entry.OvertimeHours is the TOTAL that Compute wrote back; the input wants the
         // ordinary part only, or every rest-day hour reprices from 1.69x down to 1.25x.
@@ -388,7 +550,7 @@ public class PayrollRunService : IPayrollRunService
             .ToList()
     };
 
-    private static ContributionRates ToRates(PayrollSettings? settings) => settings is null
+    internal static ContributionRates ToRates(PayrollSettings? settings) => settings is null
         ? new ContributionRates()
         : new ContributionRates
         {
@@ -410,14 +572,14 @@ public class PayrollRunService : IPayrollRunService
         run.Frequency, run.Status,
         run.EmployeeCount, run.TotalGrossPay, run.TotalDeductions, run.TotalNetPay,
         run.CreatedAt, run.AttendancePeriodId, run.EmployeesMissingAttendance,
-        run.Employees.Select(ToEmployeeDto).ToList());
+        run.Employees.Select(ToEmployeeDto).ToList(), run.RunType);
 
     private static PayrollRunSummaryDto ToSummaryDto(PayrollRun run) => new(
         run.Id, run.RunNumber, run.PeriodLabel,
         run.PeriodStart, run.PeriodEnd, run.PayDate,
         run.Frequency, run.Status,
         run.EmployeeCount, run.TotalGrossPay, run.TotalNetPay,
-        run.EmployeesMissingAttendance, run.CreatedAt);
+        run.EmployeesMissingAttendance, run.CreatedAt, run.RunType);
 
     private static PayrollRunEmployeeDto ToEmployeeDto(PayrollRunEmployee e) => new(
         e.Id, e.EmployeeId, e.Employee?.FullName ?? string.Empty,
@@ -427,5 +589,6 @@ public class PayrollRunService : IPayrollRunService
         e.TaxableAllowances, e.NonTaxableAllowances, e.ThirteenthMonth,
         e.AbsenceDeduction, e.TardinessDeduction,
         e.SSSEmployee, e.SSSEmployer, e.PhilHealthEmployee, e.PhilHealthEmployer,
-        e.PagIbigEmployee, e.PagIbigEmployer, e.WithholdingTax, e.LoanDeductions, e.OtherDeductions);
+        e.PagIbigEmployee, e.PagIbigEmployer, e.WithholdingTax, e.LoanDeductions, e.OtherDeductions,
+        e.LeaveConversionPay, e.LeaveConversionNonTaxable, e.SeparationPay, e.RetirementPay, e.FinalPayNonTaxable);
 }

@@ -39,10 +39,20 @@ public class SeparationService : ISeparationService
     {
         var employee = await _employees.GetByIdAsync(request.EmployeeId, ct)
             ?? throw new KeyNotFoundException($"Employee {request.EmployeeId} not found.");
-        if (!employee.IsActive)
+
+        // Someone deactivated before separations were tracked can still have one recorded, so
+        // their final pay can be made - but only as what already happened: they are separated,
+        // and on the date they were deactivated with.
+        bool alreadyLeft = !employee.IsActive;
+        if (alreadyLeft && employee.SeparationDate is null)
             throw new DomainException($"{employee.FullName} is no longer active.");
         if (await _separations.GetOpenForEmployeeAsync(request.EmployeeId, ct) is not null)
             throw new DomainException($"{employee.FullName} already has a separation recorded.");
+        if (alreadyLeft && request.LastWorkingDay != employee.SeparationDate)
+            throw new DomainException(
+                $"{employee.FullName} left on " +
+                $"{employee.SeparationDate!.Value.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)}; " +
+                "record the separation with that last working day.");
 
         if (request.Type == SeparationType.AuthorizedCause && request.AuthorizedCause is null)
             throw new DomainException("Choose the authorized cause.");
@@ -62,8 +72,10 @@ public class SeparationService : ISeparationService
             NoticeDate = request.NoticeDate,
             LastWorkingDay = request.LastWorkingDay,
             Reason = request.Reason,
-            Status = SeparationStatus.NoticeGiven,
+            Status = alreadyLeft ? SeparationStatus.Separated : SeparationStatus.NoticeGiven,
             RecordedBy = _currentUser.Email ?? "",
+            SeparatedBy = alreadyLeft ? _currentUser.Email : null,
+            SeparatedAt = alreadyLeft ? PhilippineTime.Now(_clock) : null,
             ClearanceItems = DefaultClearanceItems
                 .Select((name, i) => new SeparationClearanceItem { Name = name, SortOrder = i })
                 .ToList()
@@ -102,6 +114,8 @@ public class SeparationService : ISeparationService
         var separation = await RequireAsync(id, ct);
         if (separation.Status != SeparationStatus.NoticeGiven)
             throw new DomainException("A completed separation can't be cancelled.");
+        if (separation.FinalPayRunId is not null)
+            throw new DomainException("Final pay has already been started for this separation.");
 
         await _separations.DeleteAsync(separation, ct);
     }
@@ -166,6 +180,11 @@ public class SeparationService : ISeparationService
         if (item.ClearedAt is null)
             throw new DomainException($"{item.Name} isn't cleared.");
 
+        // The undo is kept on the item, with the note it throws away, so a clearance that was given
+        // and then taken back still leaves a trace.
+        item.LastUndoneBy = _currentUser.Email;
+        item.LastUndoneAt = PhilippineTime.Now(_clock);
+        item.LastUndoneNote = item.Note;
         item.ClearedBy = null;
         item.ClearedAt = null;
         item.Note = null;
@@ -196,6 +215,8 @@ public class SeparationService : ISeparationService
         {
             separation = existing;
 
+            var newType = separation.Type;
+            var newCause = separation.AuthorizedCause;
             if (type is { } explicitType)
             {
                 if (explicitType == SeparationType.AuthorizedCause && authorizedCause is null)
@@ -203,8 +224,8 @@ public class SeparationService : ISeparationService
                 if (explicitType != SeparationType.AuthorizedCause && authorizedCause is not null)
                     throw new DomainException("Only an authorized-cause separation has a cause.");
 
-                separation.Type = explicitType;
-                separation.AuthorizedCause = authorizedCause;
+                newType = explicitType;
+                newCause = authorizedCause;
             }
             else if (authorizedCause is not null)
             {
@@ -214,10 +235,21 @@ public class SeparationService : ISeparationService
                 if (separation.Type != SeparationType.AuthorizedCause)
                     throw new DomainException("Only an authorized-cause separation has a cause.");
 
-                separation.AuthorizedCause = authorizedCause;
+                newCause = authorizedCause;
             }
             // Neither given: keep whatever this separation was already recorded with - Deactivate
             // is just asserting the date here, not re-classifying why the employee left.
+
+            // The final pay was computed from this separation's last working day, type and cause;
+            // changing any of them under it would leave it paying for a different separation.
+            // Deactivating on the recorded day, as recorded, just completes the separation.
+            if (separation.FinalPayRunId is not null
+                && (lastWorkingDay != separation.LastWorkingDay || newType != separation.Type
+                    || newCause != separation.AuthorizedCause))
+                throw new DomainException("Final pay has already been started for this separation.");
+
+            separation.Type = newType;
+            separation.AuthorizedCause = newCause;
 
             // HR is asserting the actual last working day directly (it can be earlier than the
             // notice originally given, e.g. an immediate termination that supersedes a resignation
@@ -242,8 +274,15 @@ public class SeparationService : ISeparationService
 
     // ── Rules ──────────────────────────────────────────────────────────────────────────────────
 
-    /// <summary>Plan 2 fills this in: every clearance change is refused once the separation's final pay is Paid.</summary>
-    private void EnsureClearanceEditable(Separation separation) { }
+    /// <summary>
+    /// Every clearance change is refused once the separation's final pay is Paid: paying it required
+    /// clearance to be complete, and it has to stay the clearance the payment was released on.
+    /// </summary>
+    private static void EnsureClearanceEditable(Separation separation)
+    {
+        if (separation.FinalPayRun?.Status == PayrollRunStatus.Paid)
+            throw new DomainException("Final pay has been paid; clearance can't change now.");
+    }
 
     private async Task<SeparationDto> CompleteAsync(Separation separation, bool ignoreDateCheck, CancellationToken ct)
     {
@@ -292,10 +331,13 @@ public class SeparationService : ISeparationService
         s.SeparatedBy,
         s.SeparatedAt,
         s.FinalPayDueBy,
-        s.Status == SeparationStatus.Separated && s.FinalPayDueBy < today,
+        s.Status == SeparationStatus.Separated && s.FinalPayDueBy < today && s.FinalPayRun?.Status != PayrollRunStatus.Paid,
         s.ClearanceItems.Count(i => i.ClearedAt is not null),
         s.ClearanceItems.Count,
         s.ClearanceItems.OrderBy(i => i.SortOrder)
-            .Select(i => new ClearanceItemDto(i.Id, i.Name, i.ClearedBy, i.ClearedAt, i.Note))
-            .ToList());
+            .Select(i => new ClearanceItemDto(i.Id, i.Name, i.ClearedBy, i.ClearedAt, i.Note, i.LastUndoneBy, i.LastUndoneAt))
+            .ToList(),
+        s.FinalPayRunId,
+        s.FinalPayRun?.RunNumber,
+        s.FinalPayRun?.Status);
 }

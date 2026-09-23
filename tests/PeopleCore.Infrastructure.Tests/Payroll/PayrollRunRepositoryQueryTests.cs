@@ -130,6 +130,49 @@ public class PayrollRunRepositoryQueryTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task CountForYear_LeavesFinalPayRunsToTheirOwnSequence()
+    {
+        // FP- runs are numbered by pay-date year on their own sequence; counting them here would
+        // leave gaps in the PAY- numbers.
+        var regular = ARun("PAY-2026-001", new(2026, 1, 1), new(2026, 1, 15), new(2026, 1, 20));
+        var finalPay = ARun("FP-2026-001", new(2026, 3, 1), new(2026, 3, 13), new(2026, 3, 31));
+        finalPay.RunType = PayrollRunType.FinalPay;
+        var finalPayPaidNextYear = ARun("FP-2027-001", new(2026, 12, 1), new(2026, 12, 15), new(2027, 1, 5));
+        finalPayPaidNextYear.RunType = PayrollRunType.FinalPay;
+
+        Context.PayrollRuns.AddRange(regular, finalPay, finalPayPaidNextYear);
+        await Context.SaveChangesAsync();
+
+        (await Sut.CountForYearAsync(2026)).Should().Be(1);
+        (await Sut.GetLastFinalPaySequenceAsync(2026)).Should().Be(1);
+        (await Sut.GetLastFinalPaySequenceAsync(2027)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetLastFinalPaySequence_IsTheYearsHighestNumber_NotItsCount()
+    {
+        // FP-2026-001 moved into 2027 and was renumbered, leaving 2026 with 002, 010, 999 and
+        // 1000: the next 2026 number must be 1001, where a count (4) would reissue 005... and
+        // eventually one in use. 999 sorts after 1000 as text, so the sequence is compared as a
+        // number, not a string.
+        var moved = ARun("FP-2027-001", new(2026, 3, 1), new(2026, 3, 13), new(2027, 1, 5));
+        var second = ARun("FP-2026-002", new(2026, 3, 1), new(2026, 3, 13), new(2026, 3, 31));
+        var tenth = ARun("FP-2026-010", new(2026, 9, 1), new(2026, 9, 15), new(2026, 9, 30));
+        var nineNineNine = ARun("FP-2026-999", new(2026, 10, 1), new(2026, 10, 15), new(2026, 10, 30));
+        var thousandth = ARun("FP-2026-1000", new(2026, 11, 1), new(2026, 11, 15), new(2026, 11, 30));
+        var regular = ARun("PAY-2026-050", new(2026, 12, 1), new(2026, 12, 15), new(2026, 12, 20));
+        foreach (var run in new[] { moved, second, tenth, nineNineNine, thousandth })
+            run.RunType = PayrollRunType.FinalPay;
+
+        Context.PayrollRuns.AddRange(moved, second, tenth, nineNineNine, thousandth, regular);
+        await Context.SaveChangesAsync();
+
+        (await Sut.GetLastFinalPaySequenceAsync(2026)).Should().Be(1000);
+        (await Sut.GetLastFinalPaySequenceAsync(2027)).Should().Be(1);
+        (await Sut.GetLastFinalPaySequenceAsync(2028)).Should().Be(0);
+    }
+
+    [Fact]
     public async Task GetPaidYearsForEmployee_IsDistinctAndDescending()
     {
         var employee = AnEmployee();

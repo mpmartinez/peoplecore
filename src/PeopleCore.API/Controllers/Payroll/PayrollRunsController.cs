@@ -55,4 +55,9 @@ public class PayrollRunsController : ControllerBase
         await _service.MarkPaidAsync(id, ct);
         return NoContent();
     }
+
+    /// <summary>Takes a separated employee off a regular run; the run goes back to Draft.</summary>
+    [HttpDelete("{id:guid}/employees/{employeeId:guid}")]
+    public async Task<IActionResult> RemoveEmployee(Guid id, Guid employeeId, CancellationToken ct = default)
+        => Ok(await _service.RemoveEmployeeAsync(id, employeeId, ct));
 }

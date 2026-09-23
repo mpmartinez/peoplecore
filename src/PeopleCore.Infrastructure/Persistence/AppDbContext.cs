@@ -66,6 +66,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, ApplicationRole, 
     public DbSet<PayrollRunPremiumDay> PayrollRunPremiumDays => Set<PayrollRunPremiumDay>();
     public DbSet<Bir2316Inputs> Bir2316Inputs => Set<Bir2316Inputs>();
     public DbSet<PayrollSettings> PayrollSettings => Set<PayrollSettings>();
+    public DbSet<FinalPayInputs> FinalPayInputs => Set<FinalPayInputs>();
+    public DbSet<FinalPayDeduction> FinalPayDeductions => Set<FinalPayDeduction>();
 
     // Recruitment
     public DbSet<JobPosting> JobPostings => Set<JobPosting>();

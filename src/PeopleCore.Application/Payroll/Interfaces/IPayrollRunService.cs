@@ -27,9 +27,18 @@ public interface IPayrollRunService
     /// <summary>
     /// Retires each active loan's balance by exactly what this run withheld (its
     /// PayrollLoanDeduction line), never by re-deriving the instalment from the loan's own
-    /// schedule, and marks the run Paid.
+    /// schedule, and marks the run Paid. A final-pay run is refused until its separation's
+    /// clearance is complete.
     /// </summary>
     Task MarkPaidAsync(Guid runId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Takes an employee off a regular run that isn't Paid yet - someone who left and whose pay
+    /// belongs in their final pay. The run goes back to Draft, as its totals have changed, so an
+    /// approved run has to be approved again. A run keeps at least one employee, and a final-pay
+    /// run's one employee can't be taken off.
+    /// </summary>
+    Task<PayrollRunDto> RemoveEmployeeAsync(Guid runId, Guid employeeId, CancellationToken ct = default);
 
     Task<PayrollRunDto?> GetAsync(Guid runId, CancellationToken ct = default);
 

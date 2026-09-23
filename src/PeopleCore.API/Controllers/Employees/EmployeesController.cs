@@ -66,8 +66,11 @@ public class EmployeesController : ControllerBase
         if (HoldsAnyOf(Permissions.EmployeesViewAll, Permissions.PayrollManage))
             return Ok(employees);
 
+        // Whoever records separations also gets the day someone left: the record form lists
+        // those who left without a separation, with that day as their last working day.
+        bool withSeparationDate = HoldsAnyOf(Permissions.EmployeesManage);
         return Ok(PagedResult<EmployeeDirectoryEntryDto>.Create(
-            employees.Items.Select(EmployeeDirectoryEntryDto.From).ToList(),
+            employees.Items.Select(e => EmployeeDirectoryEntryDto.From(e, withSeparationDate)).ToList(),
             employees.TotalCount, employees.Page, employees.PageSize));
     }
 

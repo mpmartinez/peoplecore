@@ -14,6 +14,8 @@ public class LeaveTypeConfiguration : IEntityTypeConfiguration<LeaveType>
         builder.Property(lt => lt.Code).IsRequired().HasMaxLength(50);
         builder.Property(lt => lt.MaxDaysPerYear).HasPrecision(5, 2);
         builder.Property(lt => lt.CarryOverMaxDays).HasPrecision(5, 2);
+        builder.Property(lt => lt.IsConvertibleToCash).HasDefaultValue(false);
+        builder.Property(lt => lt.CountsAsVacationForDeMinimis).HasDefaultValue(true);
         builder.ToTable("leave_types");
     }
 }

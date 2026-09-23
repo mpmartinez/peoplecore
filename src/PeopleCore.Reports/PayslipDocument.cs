@@ -106,10 +106,9 @@ public class PayslipDocument : IDocument
 
     private void ComposeEarningsDeductions(IContainer c)
     {
-        // Driven by PayslipLineBuilder - the DTO-shaped counterpart of PayrollLineBuilder,
-        // which the payroll register uses - so the two can never drift onto two different
-        // breakdowns of the same run, and so the reductions RegularPay already nets out
-        // (absences, tardiness) are visible on the document rather than silently folded away.
+        // Driven by PayslipLineBuilder, the one place a payslip's breakdown is built, so the
+        // reductions RegularPay already nets out (absences, tardiness) are visible on the
+        // document rather than silently folded away.
         // Zero-value lines are suppressed by the builder itself.
         var earningLines = PayslipLineBuilder.Earnings(_emp);
         var deductionLines = PayslipLineBuilder.Deductions(_emp).Where(l => !l.IsEmployer).ToList();
@@ -161,7 +160,7 @@ public class PayslipDocument : IDocument
                     .Background("#fff1f2").Padding(5).Row(r =>
                     {
                         r.RelativeItem().Text("TOTAL DEDUCTIONS").Bold().FontSize(9);
-                        r.AutoItem().Text($"₱ {_emp.TotalDeductions:N2}").Bold().FontSize(9);
+                        r.AutoItem().Text($"₱ {PayslipLineBuilder.DeductionsTotal(_emp):N2}").Bold().FontSize(9);
                     });
 
                 // Employer contributions (informational)
@@ -181,6 +180,29 @@ public class PayslipDocument : IDocument
     }
 
     private void ComposeNetPay(IContainer c)
+    {
+        // Gross less the deductions above, plus a final pay's tax refund, is the net pay.
+        var refund = PayslipLineBuilder.TaxRefund(_emp);
+        if (refund > 0m)
+        {
+            c.Column(col =>
+            {
+                col.Item().Border(1).BorderColor(Colors.Grey.Lighten2).Background("#f0fdf4")
+                    .Padding(6).Row(row =>
+                    {
+                        row.RelativeItem().Text("ADD: TAX REFUND (year-end adjustment)").Bold().FontSize(9);
+                        row.AutoItem().Text($"₱ {refund:N2}").Bold().FontSize(9);
+                    });
+                col.Item().Height(6);
+                col.Item().Element(ComposeNetPayBox);
+            });
+            return;
+        }
+
+        ComposeNetPayBox(c);
+    }
+
+    private void ComposeNetPayBox(IContainer c)
     {
         c.Border(1.5f).BorderColor("#1d4ed8").Background("#eff6ff")
             .Padding(10).Row(row =>

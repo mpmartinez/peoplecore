@@ -7,6 +7,13 @@ public interface ISeparationRepository
     Task<Separation?> GetAsync(Guid id, CancellationToken ct = default);
     Task<Separation?> GetOpenForEmployeeAsync(Guid employeeId, CancellationToken ct = default);
     Task<IReadOnlyList<Separation>> ListAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// The separations of any of the given employees, each with its employee and its final-pay run
+    /// (if one exists) - what a regular payroll run needs to keep people who have left off it.
+    /// </summary>
+    Task<IReadOnlyList<Separation>> GetForEmployeesAsync(IReadOnlyCollection<Guid> employeeIds, CancellationToken ct = default);
+
     Task AddAsync(Separation separation, CancellationToken ct = default);
 
     /// <summary>

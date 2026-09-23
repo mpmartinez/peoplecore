@@ -95,23 +95,7 @@ public class Bir2316Service : IBir2316Service
         if (employee is null)
             return null;
 
-        // The repository query already restricts to Paid runs in this pay-date year. Both rules
-        // are re-applied here rather than trusted: they are what makes the certificate right, so
-        // they belong somewhere unit-testable, and a future widening of the query - to feed a
-        // register, say - must not be able to admit a Draft run or another year's pay into a tax
-        // certificate as a side effect.
-        var runs = (await _runRepo.GetPaidRunsForEmployeeInYearAsync(employeeId, year, ct))
-            .Where(r => r.Status == PayrollRunStatus.Paid
-                        && r.PayDate.Year == year
-                        && r.Employees.Any(e => e.EmployeeId == employeeId))
-            .ToList();
-
-        // Whole runs come back, carrying every employee's entry - pick out only this employee's
-        // line, exactly as PayslipService already does for a single run.
-        var entries = runs
-            .SelectMany(r => r.Employees.Where(e => e.EmployeeId == employeeId))
-            .ToList();
-
+        var (runs, entries) = await LoadRunsAndEntriesAsync(employeeId, year, draftRun: null, draftEntry: null, ct);
         if (entries.Count == 0)
             return null;
 
@@ -192,6 +176,99 @@ public class Bir2316Service : IBir2316Service
     }
 
     /// <summary>
+    /// Builds the certificate exactly as <see cref="GetPreviewAsync"/> does - the employee's Paid
+    /// runs plus whatever manual inputs were last saved for the year - except
+    /// <paramref name="draftRun"/> and <paramref name="draftEntry"/> are added to the runs and
+    /// entries the certificate sums, even though the run itself is not Paid. This is how the
+    /// final-pay flow previews (and settles the withholding tax of) a certificate that includes
+    /// the final run before that run is marked Paid; <see cref="BuildAsync"/> and
+    /// <see cref="GetPreviewAsync"/> deliberately cannot do this - their Paid-only filter is what
+    /// keeps a certificate from changing after it was issued - so this is a separate, narrow entry
+    /// point rather than a parameter on those.
+    /// <para>
+    /// <b>Must never be reachable from an API endpoint.</b> <paramref name="draftRun"/> and
+    /// <paramref name="draftEntry"/> are caller-constructed entities, not rows this method loads
+    /// and verifies itself - exactly the trust boundary the class doc comment's "derived figures
+    /// are never read from caller input" rule exists to keep a request body from crossing. This
+    /// method is for a trusted server-side caller (the final-pay flow) that built
+    /// <paramref name="draftEntry"/> from payroll's own computation, never for one that forwards a
+    /// request payload into it.
+    /// </para>
+    /// </summary>
+    public async Task<Bir2316Dto?> BuildWithDraftEntryAsync(
+        Guid employeeId, int year, PayrollRun draftRun, PayrollRunEmployee draftEntry, CancellationToken ct = default)
+    {
+        // Before any database round trip, for the same reason BuildAsync validates its manual
+        // overlay first: a caller bug is a caller bug regardless of what payroll has on file, and
+        // admitting another employee's pay onto this one's certificate is exactly the kind of
+        // mistake that must never silently succeed.
+        if (draftEntry.EmployeeId != employeeId)
+            throw new DomainException(
+                $"The draft entry belongs to employee {draftEntry.EmployeeId}, not {employeeId} - " +
+                "refusing to put someone else's pay on this certificate.");
+
+        var employee = await _employeeRepo.GetByIdAsync(employeeId, ct);
+        if (employee is null)
+            return null;
+
+        var (runs, entries) = await LoadRunsAndEntriesAsync(employeeId, year, draftRun, draftEntry, ct);
+
+        var company = await _companyRepo.GetDefaultAsync(ct)
+            ?? throw new DomainException(
+                "No Company record is configured. The database seeder always creates one, so " +
+                "its absence means the database is misconfigured.");
+
+        var saved = await _inputsRepo.GetAsync(employeeId, year, ct);
+        var manual = saved?.ToManualInputs() ?? new Bir2316ManualInputs();
+        // Mirrors GetPreviewAsync, whose saved-inputs overlay reaches this same validation inside
+        // BuildAsync - the saved row is trusted storage, not a request body, but it was still
+        // written by GenerateAsync's own Validate call, and this path must not skip the check
+        // just because it does not route through BuildAsync.
+        Bir2316ManualInputsValidator.Validate(manual);
+
+        return BuildDto(employee, company, runs, entries, year, manual);
+    }
+
+    /// <summary>
+    /// Fetches this employee's Paid runs and entries for the year - the Paid/PayDate.Year/employee
+    /// filter shared by <see cref="BuildAsync"/> and <see cref="BuildWithDraftEntryAsync"/>, kept
+    /// in one place so it cannot silently drift between them. When
+    /// <paramref name="draftRun"/>/<paramref name="draftEntry"/> are supplied
+    /// (<see cref="BuildWithDraftEntryAsync"/>'s case), they are appended to what comes back -
+    /// unless a run with the same <see cref="PayrollRun.Id"/> is already among the Paid runs, in
+    /// which case nothing is added: that run's entry is already counted once, and adding it again
+    /// would double every figure on the certificate.
+    /// </summary>
+    private async Task<(List<PayrollRun> Runs, List<PayrollRunEmployee> Entries)> LoadRunsAndEntriesAsync(
+        Guid employeeId, int year, PayrollRun? draftRun, PayrollRunEmployee? draftEntry, CancellationToken ct)
+    {
+        // The repository query already restricts to Paid runs in this pay-date year. Both rules
+        // are re-applied here rather than trusted: they are what makes the certificate right, so
+        // they belong somewhere unit-testable, and a future widening of the query - to feed a
+        // register, say - must not be able to admit a Draft run or another year's pay into a tax
+        // certificate as a side effect.
+        var runs = (await _runRepo.GetPaidRunsForEmployeeInYearAsync(employeeId, year, ct))
+            .Where(r => r.Status == PayrollRunStatus.Paid
+                        && r.PayDate.Year == year
+                        && r.Employees.Any(e => e.EmployeeId == employeeId))
+            .ToList();
+
+        // Whole runs come back, carrying every employee's entry - pick out only this employee's
+        // line, exactly as PayslipService already does for a single run.
+        var entries = runs
+            .SelectMany(r => r.Employees.Where(e => e.EmployeeId == employeeId))
+            .ToList();
+
+        if (draftRun is not null && draftEntry is not null && runs.All(r => r.Id != draftRun.Id))
+        {
+            runs.Add(draftRun);
+            entries.Add(draftEntry);
+        }
+
+        return (runs, entries);
+    }
+
+    /// <summary>
     /// Builds the DTO from an employee's already-fetched runs and entries for the year - the
     /// aggregation shared by <see cref="BuildAsync"/> (one employee, its own queries) and
     /// <see cref="BuildAllAsync"/> (every employee, one shared query). Neither queries nor the
@@ -206,9 +283,23 @@ public class Bir2316Service : IBir2316Service
         int year,
         Bir2316ManualInputs manual)
     {
-        decimal thirteenthMonthTotal = entries.Sum(e => e.ThirteenthMonth);
-        decimal thirteenthMonthNonTaxable = Math.Min(thirteenthMonthTotal, StatutoryCaps.ThirteenthMonthExemption);
-        decimal thirteenthMonthTaxable = Math.Max(0m, thirteenthMonthTotal - StatutoryCaps.ThirteenthMonthExemption);
+        // "13th month and other benefits" (NIRC Sec. 32(B)(7)(e)): the 13th month plus the leave
+        // converted beyond de minimis, which RR 5-2011 (as amended by RR 11-2018) treats as other
+        // benefits. Together they are exempt up to 90,000 a year (Item 34) and taxable past it
+        // (Item 48). The excess leave goes to Item 48 rather than staying in 51B because Item 48
+        // is the form's own box for exactly this - "13th month pay and other benefits" in excess
+        // of the cap - and it is what the 1604-C alphalist reads as that column; 51B would file
+        // the same money under "others" and misstate the alphalist.
+        decimal thirteenthMonthAndOtherBenefits = entries.Sum(e => e.ThirteenthMonthAndOtherBenefits);
+        decimal thirteenthMonthNonTaxable = Math.Min(thirteenthMonthAndOtherBenefits, StatutoryCaps.ThirteenthMonthExemption);
+        decimal thirteenthMonthTaxable = Math.Max(0m, thirteenthMonthAndOtherBenefits - StatutoryCaps.ThirteenthMonthExemption);
+
+        // Final-pay earnings - zero on every entry for an employee who has never had a final run.
+        // FinalPayTaxable is the separation or retirement pay that isn't exempt; the leave beyond
+        // de minimis is already in the 13th-month split above.
+        decimal leaveConversionNonTaxable = entries.Sum(e => e.LeaveConversionNonTaxable);
+        decimal finalPayNonTaxable = entries.Sum(e => e.FinalPayNonTaxable);
+        decimal finalPayTaxable = entries.Sum(e => e.FinalPayTaxable);
 
         return new Bir2316Dto
         {
@@ -253,7 +344,12 @@ public class Bir2316Service : IBir2316Service
             // Part IV-B Section A — non-taxable.
             Item33_HazardPayMwe = manual.Item33_HazardPayMwe,
             Item34_ThirteenthMonthAndBenefits = thirteenthMonthNonTaxable,
-            Item35_DeMinimis = manual.Item35_DeMinimis,
+            // LeaveConversionNonTaxable is the de minimis slice of final pay - the cash value of
+            // convertible leave, up to the statutory de minimis ceiling, that PayrollComputationService
+            // already excluded from the final run's withholding base. Item 35 is the form's de
+            // minimis box, so it belongs there alongside whatever a human enters manually. The
+            // leave beyond the ceiling is other benefits, in Item 34 (or 48) with the 13th month.
+            Item35_DeMinimis = manual.Item35_DeMinimis + leaveConversionNonTaxable,
             Item36_SssPhicPagibigContributions =
                 entries.Sum(e => e.SSSEmployee + e.PhilHealthEmployee + e.PagIbigEmployee),
             // NonTaxableAllowances is non-taxable compensation that is not de minimis, not a
@@ -261,29 +357,49 @@ public class Bir2316Service : IBir2316Service
             // Compensation") is Section A's catch-all for exactly that: everything non-taxable
             // that lacks its own numbered box. Putting it here, rather than skipping it, is what
             // keeps Item 19 (gross compensation) from understating what the employee was actually
-            // paid.
-            Item37_SalariesOtherForms = entries.Sum(e => e.NonTaxableAllowances),
+            // paid. The non-de-minimis part of final pay's non-taxable amount - separation or
+            // retirement pay that qualifies for exemption - is the same kind of catch-all
+            // non-taxable compensation, so it lands here too (FinalPayNonTaxable minus the de
+            // minimis slice already claimed by Item 35, so nothing is counted twice).
+            Item37_SalariesOtherForms = entries.Sum(e => e.NonTaxableAllowances) +
+                                         (finalPayNonTaxable - leaveConversionNonTaxable),
 
             // Part IV-B Section B and the supplementary block — taxable.
             //
             // PayrollComputationService's withholding base is
-            // regularPay + overtimePay + holidayPay + nightDiffPay + taxableAllowances, so every
-            // one of those five components has to land in a taxable box here or Item 21/23 (the
-            // certificate's taxable compensation) understates what tax was actually withheld
-            // against - silently manufacturing a false "tax due < tax withheld" result for any
-            // employee who worked a holiday, drew night differential, or received a taxable
-            // allowance. Item39/50 already carry RegularPay/OvertimePay; HolidayPay,
-            // NightDiffPay and TaxableAllowances have no dedicated taxable box on the form (their
-            // only numbered boxes - Items 30-32 - are the Section A exemption for minimum-wage
-            // earners), so they go into the "Others (specify)" boxes Section B provides for
-            // exactly this: compensation that is real and taxable but has no line of its own.
-            // Holiday pay and night differential are placed in 44A/44B (alongside the regular
-            // per-period allowances 40-43); taxable allowances go in 51A (alongside the other
-            // supplemental, ad hoc pay in 45-49) since a fixed "allowance" bucket does not fit
-            // Section B's first group of named, per-period pay items as cleanly as it does the
-            // supplemental group. All four boxes are summed identically into Item 52, so this is
-            // a labeling choice, not a computation one.
-            Item39_BasicSalary = entries.Sum(e => e.RegularPay),
+            // regularPay + overtimePay + holidayPay + nightDiffPay + taxableAllowances +
+            // finalPayTaxable (the last only nonzero on a final-pay run - see
+            // PayrollRunEmployee.FinalPayTaxable), less the employee's SSS, PhilHealth and
+            // Pag-IBIG contributions; the 13th month and other benefits past the 90,000 are taxed
+            // on top of it (Item 48). Every one of those components has to land in a taxable box
+            // here or Item 21/23 (the certificate's taxable compensation) understates what tax was
+            // actually withheld against - silently manufacturing a false "tax due < tax withheld"
+            // result for any employee who worked a holiday, drew night differential, received a
+            // taxable allowance, or was paid taxable separation or retirement pay.
+            //
+            // The contributions come off Item 39. They are withheld from the basic salary, and
+            // Section A already reports them as non-taxable in Item 36; left inside Item 39 as
+            // well, Item 19 (non-taxable + taxable) would count them twice and Item 21/23 - and
+            // with it Item 24's tax due - would tax income the engine never withheld on. Taxable
+            // basic salary on the form is therefore net of the employee's mandatory contributions,
+            // exactly as the engine's base is. (They come off the basic even in a period whose
+            // contributions exceed it; the engine nets them against the whole taxable gross, so
+            // Item 52 still sums to the engine's base either way.)
+            //
+            // Item 50 carries OvertimePay; HolidayPay, NightDiffPay and TaxableAllowances have no
+            // dedicated taxable box on the form (their only numbered boxes - Items 30-32 - are the
+            // Section A exemption for minimum-wage earners), so they go into the "Others
+            // (specify)" boxes Section B provides for exactly this: compensation that is real and
+            // taxable but has no line of its own. Holiday pay and night differential are placed in
+            // 44A/44B (alongside the regular per-period allowances 40-43); taxable allowances go
+            // in 51A and final pay's taxable separation or retirement pay goes in 51B (alongside
+            // the other supplemental, ad hoc pay in 45-49) since a fixed "allowance" bucket does
+            // not fit Section B's first group of named, per-period pay items as cleanly as it does
+            // the supplemental group. All boxes are summed identically into Item 52, so this is a
+            // labeling choice, not a computation one. Item51B is left at its default (0, no label)
+            // when there is no taxable separation or retirement pay to report, so the "Others
+            // (specify)" box does not appear on an ordinary certificate.
+            Item39_BasicSalary = entries.Sum(e => e.RegularPay - e.SSSEmployee - e.PhilHealthEmployee - e.PagIbigEmployee),
             Item44A_OtherAmount = entries.Sum(e => e.HolidayPay),
             Item44A_OtherLabel = "Holiday Pay",
             Item44B_OtherAmount = entries.Sum(e => e.NightDiffPay),
@@ -292,6 +408,12 @@ public class Bir2316Service : IBir2316Service
             Item50_OvertimePay = entries.Sum(e => e.OvertimePay),
             Item51A_OtherAmount = entries.Sum(e => e.TaxableAllowances),
             Item51A_OtherLabel = "Taxable Allowances",
+            Item51B_OtherAmount = finalPayTaxable,
+            // Kept short deliberately: the printed form's "Others (specify)" box is 130.5pt wide,
+            // and a longer label (the original "Final pay (leave conversion,
+            // separation/retirement pay)") overflowed it and printed truncated with an ellipsis.
+            // Leave conversion no longer lands here (Items 34/48 and 35 take it).
+            Item51B_OtherLabel = finalPayTaxable != 0m ? "Final pay - separation/retirement pay" : "",
 
             // Part IVA. Item 25A is this employer's withholding, summed from the runs; 22, 25B and
             // 27 concern another employer or another account and can only come from a human.

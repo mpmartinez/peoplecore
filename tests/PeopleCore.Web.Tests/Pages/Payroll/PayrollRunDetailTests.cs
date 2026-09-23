@@ -29,17 +29,31 @@ public class PayrollRunDetailTests : BunitContext
 
     private string CurrentUri => Services.GetRequiredService<NavigationManager>().Uri;
 
-    private static string RunJson(string status, bool withEmployee = true, int missingAttendance = 0) =>
+    private static readonly Guid JoseId = Guid.Parse("0c6f9a3e-8b2d-4f71-a5c4-3e9d1b7f2a60");
+
+    private static string RunJson(string status, bool withEmployee = true, int missingAttendance = 0,
+        string runType = "Regular", string? employees = null, decimal totalDeductions = 0m) =>
         $$"""
         {"id":"{{RunId}}","runNumber":"PR-2026-0017","periodLabel":"Sep 1-15, 2026","periodStart":"2026-09-01",
          "periodEnd":"2026-09-15","payDate":"2026-09-20","frequency":"SemiMonthly","status":"{{status}}",
-         "employeeCount":1,"totalGrossPay":0,"totalDeductions":0,"totalNetPay":0,"createdAt":"2026-09-01T00:00:00Z",
-         "employeesMissingAttendance":{{missingAttendance}},
-         "employees":[{{(withEmployee ? EmployeeLine : "")}}]}
+         "employeeCount":1,"totalGrossPay":0,"totalDeductions":{{totalDeductions}},"totalNetPay":0,"createdAt":"2026-09-01T00:00:00Z",
+         "employeesMissingAttendance":{{missingAttendance}},"runType":"{{runType}}",
+         "employees":[{{employees ?? (withEmployee ? EmployeeLine : "")}}]}
         """;
 
     private static string EmployeeLine =>
         $$"""{"id":"{{Guid.NewGuid()}}","employeeId":"{{MariaId}}","employeeName":"Maria Santos","employeeNumber":"EMP-0042"}""";
+
+    private static string JoseLine =>
+        $$"""{"id":"{{Guid.NewGuid()}}","employeeId":"{{JoseId}}","employeeName":"Jose Reyes","employeeNumber":"EMP-0043"}""";
+
+    private static string FinalPayLine(decimal tax, decimal totalDeductions = 2500m) =>
+        $$"""
+        {"id":"{{Guid.NewGuid()}}","employeeId":"{{MariaId}}","employeeName":"Maria Santos","employeeNumber":"EMP-0042",
+         "grossPay":132500,"netPay":130000,"withholdingTax":{{tax}},"totalDeductions":{{totalDeductions}},
+         "leaveConversionPay":7500,"leaveConversionNonTaxable":6000,"separationPay":100000,"retirementPay":25000,
+         "finalPayNonTaxable":131000}
+        """;
 
     private IRenderedComponent<PayrollRunDetail> RenderPage()
     {
@@ -66,6 +80,16 @@ public class PayrollRunDetailTests : BunitContext
         // Without the warning, those employees' pay silently has no absences deducted.
         cut.Find("[role=alert]").TextContent.Should()
             .Contain("2 employees had no shift schedule for this period, so no absences were derived for those employees.");
+    }
+
+    [Fact]
+    public void TheStatusBadge_ReadsAsWords_NotTheRawStatusName()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("ForApproval"));
+
+        var cut = RenderPage();
+
+        cut.Markup.Should().Contain(">For approval<").And.NotContain("ForApproval");
     }
 
     [Theory]
@@ -117,11 +141,11 @@ public class PayrollRunDetailTests : BunitContext
     }
 
     [Theory]
-    [InlineData("Draft", "Compute", "compute", "ForApproval", new[] { "Compute", "Approve" })]
-    [InlineData("ForApproval", "Approve", "approve", "Approved", new[] { "Mark Paid" })]
-    [InlineData("Approved", "Mark Paid", "mark-paid", "Paid", new string[0])]
+    [InlineData("Draft", "Compute", "compute", "ForApproval", "For approval", new[] { "Compute", "Approve" })]
+    [InlineData("ForApproval", "Approve", "approve", "Approved", "Approved", new[] { "Mark Paid" })]
+    [InlineData("Approved", "Mark Paid", "mark-paid", "Paid", "Paid", new string[0])]
     public void AnAction_PutsToItsEndpoint_AndReloadsTheRunIntoItsNextStatus(
-        string status, string button, string endpoint, string nextStatus, string[] nextActions)
+        string status, string button, string endpoint, string nextStatus, string nextLabel, string[] nextActions)
     {
         _api.On(HttpMethod.Get, RunPath, () => Json(RunJson(status)))
             .On(HttpMethod.Put, $"{RunPath}/{endpoint}", () =>
@@ -133,7 +157,7 @@ public class PayrollRunDetailTests : BunitContext
 
         Button(cut, button).Click();
 
-        cut.WaitForAssertion(() => cut.Markup.Should().Contain($">{nextStatus}<"));
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain($">{nextLabel}<"));
         ActionButtons(cut).Should().Equal(nextActions);
         _api.Requests.Where(r => r.Method == HttpMethod.Put).Should().ContainSingle();
         cut.FindAll("[role=alert]").Should().BeEmpty();
@@ -242,6 +266,251 @@ public class PayrollRunDetailTests : BunitContext
 
         cut.Markup.Should().Contain("No employees on this run.");
         cut.FindAll("button").Should().NotContain(b => b.TextContent.Contains("Download all"));
+    }
+
+    // ---------- Final-pay runs ----------
+
+    [Fact]
+    public void AFinalPayRun_ShowsEachEmployeesLeaveConversionSeparationAndRetirementPay_AndTheNonTaxablePart()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", runType: "FinalPay", employees: FinalPayLine(1200m)));
+
+        var cut = RenderPage();
+
+        var headers = cut.FindAll("thead th").Select(h => h.TextContent.Trim()).ToList();
+        // The column leaves out the exempt share of leave beyond de minimis, so it says what it holds.
+        headers.Should().Contain(["Leave Conversion", "Separation Pay", "Retirement Pay",
+                                  "Non-taxable (de minimis + separation/retirement)"]);
+        headers.Should().NotContain("Final-Pay Non-Taxable");
+        cut.Find("[data-leave-conversion]").TextContent.Should().Contain("7,500.00");
+        cut.Find("[data-separation-pay]").TextContent.Should().Contain("100,000.00");
+        cut.Find("[data-retirement-pay]").TextContent.Should().Contain("25,000.00");
+        cut.Find("[data-final-pay-non-taxable]").TextContent.Should().Contain("131,000.00");
+        cut.Find("[data-final-pay-badge]").TextContent.Should().Be("Final pay");
+    }
+
+    [Theory]
+    [InlineData("FinalPay", "Approved", new[] { "Compute", "Mark Paid" })]
+    [InlineData("FinalPay", "Paid", new string[0])]
+    [InlineData("Regular", "Approved", new[] { "Mark Paid" })]
+    public void AnApprovedFinalPay_CanStillBeComputed_ARegularRunCannot(string runType, string status, string[] expected)
+    {
+        // The API recomputes an Approved final pay (and sends it back to Draft) - it's where a Mark
+        // Paid refused with "recompute it before paying" leads. A regular run's approval holds.
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson(status, runType: runType, employees: FinalPayLine(1200m)));
+
+        var cut = RenderPage();
+
+        ActionButtons(cut).Should().Equal(expected);
+    }
+
+    [Fact]
+    public void ComputingAnApprovedFinalPay_AsksFirst_SayingItGoesBackForApproval_ThenRecomputes()
+    {
+        var status = "Approved";
+        _api.On(HttpMethod.Get, RunPath, () => Json(RunJson(status, runType: "FinalPay", employees: FinalPayLine(1200m))))
+            .On(HttpMethod.Put, $"{RunPath}/compute", () =>
+            {
+                status = "Draft";
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            });
+        var cut = RenderPage();
+
+        Button(cut, "Compute").Click();
+
+        cut.WaitForElement("[data-confirm-compute]").TextContent.Should()
+            .Contain("goes back to Draft").And.Contain("approval again");
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Put);
+
+        cut.Find("[data-confirm-compute]").QuerySelectorAll("button").Last().Click();
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain(">Draft<"));
+        _api.Requests.Where(r => r.Method == HttpMethod.Put).Should().ContainSingle()
+            .Which.RequestUri!.AbsolutePath.Should().Be($"{RunPath}/compute");
+        ActionButtons(cut).Should().Equal("Compute", "Approve");
+    }
+
+    [Fact]
+    public void CancellingTheComputeOfAnApprovedFinalPay_LeavesItApproved()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Approved", runType: "FinalPay", employees: FinalPayLine(1200m)));
+        var cut = RenderPage();
+
+        Button(cut, "Compute").Click();
+        cut.WaitForElement("[data-confirm-compute]").QuerySelectorAll("button").First().Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[data-confirm-compute]").Should().BeEmpty());
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Put);
+    }
+
+    [Fact]
+    public void ComputingADraftRun_DoesNotAsk()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", runType: "FinalPay", employees: FinalPayLine(1200m)))
+            .On(HttpMethod.Put, $"{RunPath}/compute", HttpStatusCode.NoContent);
+        var cut = RenderPage();
+
+        Button(cut, "Compute").Click();
+
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Put));
+        cut.FindAll("[data-confirm-compute]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ARegularRun_HasNoFinalPayColumns()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft"));
+
+        var cut = RenderPage();
+
+        cut.FindAll("thead th").Select(h => h.TextContent.Trim()).Should().NotContain("Leave Conversion");
+        cut.FindAll("[data-final-pay-badge]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ANegativeTax_IsShownAsARefund()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", runType: "FinalPay", employees: FinalPayLine(-1800m)));
+
+        var cut = RenderPage();
+
+        var tax = cut.Find("[data-withholding-tax]").TextContent;
+        tax.Should().Contain("Refund").And.Contain("1,800.00").And.NotContain("-");
+    }
+
+    [Fact]
+    public void ARefund_IsNotNettedIntoTheDeductions_ButShownOnItsOwn()
+    {
+        // Stored: 5,550 of deductions after a 1,800 refund. The deductions actually taken are
+        // 7,350; the refund is shown apart from them.
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", runType: "FinalPay",
+            employees: FinalPayLine(-1800m, totalDeductions: 5550m), totalDeductions: 5550m));
+
+        var cut = RenderPage();
+
+        cut.Find("[data-employee-deductions]").TextContent.Should().Contain("7,350.00");
+        cut.Find("[data-run-deductions]").TextContent.Should().Contain("7,350.00");
+        cut.Find("[data-run-tax-refund]").TextContent.Should().Contain("1,800.00");
+    }
+
+    [Fact]
+    public void WithoutARefund_TheDeductionsAreAsStored_AndNoRefundIsShown()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", runType: "FinalPay",
+            employees: FinalPayLine(1200m, totalDeductions: 5550m), totalDeductions: 5550m));
+
+        var cut = RenderPage();
+
+        cut.Find("[data-employee-deductions]").TextContent.Should().Contain("5,550.00");
+        cut.Find("[data-run-deductions]").TextContent.Should().Contain("5,550.00");
+        cut.FindAll("[data-run-tax-refund]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void MarkPaidRefusedForOutstandingClearance_ShowsTheReason()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Approved", runType: "FinalPay", employees: FinalPayLine(0m)))
+            .On(HttpMethod.Put, $"{RunPath}/mark-paid", HttpStatusCode.BadRequest,
+                """{"title":"Bad request","detail":"Clear Return laptop, Turn in ID before paying final pay.","status":400}""");
+        var cut = RenderPage();
+
+        Button(cut, "Mark Paid").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should()
+            .Contain("Clear Return laptop, Turn in ID before paying final pay."));
+    }
+
+    // ---------- Removing an employee ----------
+
+    [Theory]
+    [InlineData("Regular", "Draft", true)]
+    [InlineData("Regular", "ForApproval", true)]
+    [InlineData("Regular", "Approved", true)]
+    [InlineData("Regular", "Paid", false)]
+    [InlineData("FinalPay", "Draft", false)]
+    public void RemoveIsOfferedOnRegularRunsThatArentPaid(string runType, string status, bool offered)
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson(status, runType: runType, employees: $"{EmployeeLine},{JoseLine}"));
+
+        var cut = RenderPage();
+
+        cut.FindAll($"[data-remove-employee='{MariaId}']").Should().HaveCount(offered ? 1 : 0);
+    }
+
+    [Fact]
+    public void RemoveIsNotOffered_WhenTheRunHasOnlyOneEmployee()
+    {
+        // The API refuses: a payroll run needs at least one employee.
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft"));
+
+        var cut = RenderPage();
+
+        cut.FindAll("[data-remove-employee]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void RemovingAnEmployee_AsksFirst_ThenDeletesAndShowsTheRunTheApiReturns()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", employees: $"{EmployeeLine},{JoseLine}"))
+            .On(HttpMethod.Delete, $"{RunPath}/employees/{JoseId}", HttpStatusCode.OK, RunJson("Draft"));
+        var cut = RenderPage();
+
+        cut.Find($"[data-remove-employee='{JoseId}']").Click();
+
+        var dialog = cut.WaitForElement("[data-confirm-remove]");
+        dialog.TextContent.Should().Contain("Jose Reyes");
+        dialog.TextContent.Should().NotContain("approval again");
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Delete);
+
+        dialog.QuerySelectorAll("button").Last().Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("tbody tr").Should().ContainSingle()
+            .Which.TextContent.Should().Contain("Maria Santos"));
+        _api.Requests.Should().ContainSingle(r => r.Method == HttpMethod.Delete);
+        cut.FindAll("[data-confirm-remove]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void RemovingFromAnApprovedRun_WarnsItGoesBackToDraftForApprovalAgain()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Approved", employees: $"{EmployeeLine},{JoseLine}"));
+        var cut = RenderPage();
+
+        cut.Find($"[data-remove-employee='{JoseId}']").Click();
+
+        cut.WaitForElement("[data-confirm-remove]").TextContent.Should()
+            .Contain("goes back to Draft").And.Contain("approval again");
+    }
+
+    [Fact]
+    public void CancellingTheRemoval_LeavesTheRunAlone()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", employees: $"{EmployeeLine},{JoseLine}"));
+        var cut = RenderPage();
+
+        cut.Find($"[data-remove-employee='{JoseId}']").Click();
+        cut.WaitForElement("[data-confirm-remove]").QuerySelectorAll("button").First().Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[data-confirm-remove]").Should().BeEmpty());
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Delete);
+        cut.FindAll("tbody tr").Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void ARefusedRemoval_ShowsTheApisReason()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", employees: $"{EmployeeLine},{JoseLine}"))
+            .On(HttpMethod.Delete, $"{RunPath}/employees/{JoseId}", HttpStatusCode.BadRequest,
+                """{"title":"Bad request","detail":"A paid payroll run can't be changed.","status":400}""");
+        var cut = RenderPage();
+
+        cut.Find($"[data-remove-employee='{JoseId}']").Click();
+        cut.WaitForElement("[data-confirm-remove]").QuerySelectorAll("button").Last().Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should()
+            .Contain("A paid payroll run can't be changed."));
+        cut.FindAll("[data-confirm-remove]").Should().BeEmpty();
+        cut.FindAll("tbody tr").Should().HaveCount(2);
     }
 
     private static HttpResponseMessage Json(string json) =>

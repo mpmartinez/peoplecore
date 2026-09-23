@@ -186,10 +186,11 @@ public sealed class GovernmentReportService : IGovernmentReportService
         // monthly run, so the MSC only works back once the month's cutoffs are all in; a single
         // cutoff's half share would understate the MSC and the EC that goes with it. Cutoffs are
         // counted rather than calendar days checked, because many companies' cutoffs (26th-10th,
-        // 21st-20th) never cover the end of the month they close in.
+        // 21st-20th) never cover the end of the month they close in. A final pay completes the
+        // month whatever its frequency: it tops the month's SSS up to the whole month.
         var sssCutoffsByEmployee = runs
-            .SelectMany(r => r.Employees.Where(e => e.SSSEmployee > 0).Select(e => (e.EmployeeId, r.Frequency)))
-            .ToLookup(x => x.EmployeeId, x => x.Frequency);
+            .SelectMany(r => r.Employees.Where(e => e.SSSEmployee > 0).Select(e => (e.EmployeeId, r.Frequency, r.RunType)))
+            .ToLookup(x => x.EmployeeId, x => (x.Frequency, x.RunType));
 
         var rows = new List<GovernmentReportRowDto>();
         decimal ee = 0, erSs = 0, ec = 0, er = 0;
@@ -199,8 +200,9 @@ public sealed class GovernmentReportService : IGovernmentReportService
             decimal employeeShare = entries.Sum(e => e.SSSEmployee);
             decimal employerTotal = entries.Sum(e => e.SSSEmployer);
             var cutoffs = sssCutoffsByEmployee[employee.Id].ToList();
-            bool fullMonth = cutoffs.Contains(PayFrequency.Monthly)
-                             || cutoffs.Count(f => f == PayFrequency.SemiMonthly) >= 2;
+            bool fullMonth = cutoffs.Any(c => c.RunType == PayrollRunType.FinalPay)
+                             || cutoffs.Any(c => c.Frequency == PayFrequency.Monthly)
+                             || cutoffs.Count(c => c.Frequency == PayFrequency.SemiMonthly) >= 2;
 
             (decimal? msc, decimal? credit) = (null, null);
             if (!overridden && fullMonth)
@@ -276,50 +278,65 @@ public sealed class GovernmentReportService : IGovernmentReportService
     private async Task<(IReadOnlyList<string>, List<GovernmentReportRowDto>, IReadOnlyList<string>, IReadOnlyList<GovernmentReportLineDto>)>
         Bir1601CAsync(List<(Employee Employee, List<PayrollRunEmployee> Entries)> people, int year, int month, CancellationToken ct)
     {
-        // 13th month paid earlier in the year has used its share of the exemption first, as it did
-        // when payroll withheld tax on this month's. Skip the year-wide query entirely when
-        // nothing this month even has a 13th month to offset - most months don't.
+        // "13th month and other benefits" - the 13th month plus leave converted beyond de minimis
+        // (PayrollRunEmployee.ThirteenthMonthAndOtherBenefits) - paid earlier in the year has used
+        // its share of the 90,000 exemption first, as the 2316 counts it. Skip the year-wide query
+        // entirely when nothing this month even has any to offset - most months don't.
         Dictionary<Guid, decimal> earlierThirteenth = [];
-        if (people.Any(p => p.Entries.Any(e => e.ThirteenthMonth > 0)))
+        if (people.Any(p => p.Entries.Any(e => e.ThirteenthMonthAndOtherBenefits > 0)))
         {
             var monthStart = new DateOnly(year, month, 1);
             earlierThirteenth = (await _runs.GetPaidRunsInYearAsync(year, ct))
                 .Where(r => r.PayDate < monthStart)
                 .SelectMany(r => r.Employees)
                 .GroupBy(e => e.EmployeeId)
-                .ToDictionary(g => g.Key, g => g.Sum(e => e.ThirteenthMonth));
+                .ToDictionary(g => g.Key, g => g.Sum(e => e.ThirteenthMonthAndOtherBenefits));
         }
 
         var rows = new List<GovernmentReportRowDto>();
-        decimal gross = 0, thirteenth = 0, shares = 0, allowances = 0, taxable = 0, tax = 0;
+        decimal gross = 0, thirteenth = 0, shares = 0, deMinimis = 0, otherNonTaxable = 0, taxable = 0, tax = 0;
         foreach (var (employee, entries) in people)
         {
             decimal g = entries.Sum(e => e.GrossPay);
-            decimal t13 = NonTaxableThirteenthMonth(entries.Sum(e => e.ThirteenthMonth),
+            decimal t13 = NonTaxableThirteenthMonth(entries.Sum(e => e.ThirteenthMonthAndOtherBenefits),
                                                     earlierThirteenth.GetValueOrDefault(employee.Id));
             decimal s = entries.Sum(e => e.SSSEmployee + e.PhilHealthEmployee + e.PagIbigEmployee);
-            decimal a = entries.Sum(e => e.NonTaxableAllowances);
-            decimal tx = g - t13 - s - a;
+            // LeaveConversionNonTaxable is final pay's de minimis slice - the form's own "De
+            // minimis" column/line, kept apart from the "Other non-taxable" column/line below so
+            // the two don't double-count it. It has its own column (between "13th month
+            // (non-taxable)" and "Employee shares") because, unlike allowances, it is subtracted
+            // from Compensation to reach Taxable - without the column the row's own numbers would
+            // no longer add up to what's printed.
+            decimal dm = entries.Sum(e => e.LeaveConversionNonTaxable);
+            // NonTaxableAllowances plus whatever of final pay's non-taxable amount is NOT the de
+            // minimis slice above (separation or retirement pay that qualifies for exemption) -
+            // both are non-taxable compensation with no line of their own, the same catch-all
+            // "Other non-taxable" bucket Bir2316Service.Item37 uses for the same reason.
+            decimal otherNt = entries.Sum(e => e.NonTaxableAllowances) +
+                               entries.Sum(e => e.FinalPayNonTaxable - e.LeaveConversionNonTaxable);
+            decimal tx = g - t13 - s - dm - otherNt;
             decimal w = entries.Sum(e => e.WithholdingTax);
 
-            gross += g; thirteenth += t13; shares += s; allowances += a; taxable += tx; tax += w;
+            gross += g; thirteenth += t13; shares += s; deMinimis += dm; otherNonTaxable += otherNt; taxable += tx; tax += w;
             var tin = Id(employee, GovernmentIdType.TIN);
-            rows.Add(new(employee.Id, [FullName(employee), tin ?? "", Money(g), Money(t13), Money(s), Money(a), Money(tx), Money(w)],
-                         tin is null));
+            rows.Add(new(employee.Id,
+                [FullName(employee), tin ?? "", Money(g), Money(t13), Money(dm), Money(s), Money(otherNt), Money(tx), Money(w)],
+                tin is null));
         }
 
-        decimal nonTaxable = thirteenth + shares + allowances;
-        return (["Employee", "TIN", "Compensation", "13th month (non-taxable)", "Employee shares", "Other non-taxable", "Taxable", "Tax withheld"],
+        decimal nonTaxable = thirteenth + shares + deMinimis + otherNonTaxable;
+        return (["Employee", "TIN", "Compensation", "13th month and other benefits (non-taxable)", "De minimis", "Employee shares",
+                 "Other non-taxable", "Taxable", "Tax withheld"],
                 rows,
-                ["Total", "", Money(gross), Money(thirteenth), Money(shares), Money(allowances), Money(taxable), Money(tax)],
+                ["Total", "", Money(gross), Money(thirteenth), Money(deMinimis), Money(shares), Money(otherNonTaxable), Money(taxable), Money(tax)],
                 [
                     new("Total amount of compensation", gross),
                     new("Statutory minimum wage (MWEs)", 0m),
                     new("Holiday, overtime, night differential and hazard pay (MWEs)", 0m),
                     new("13th month pay and other benefits", thirteenth),
-                    new("De minimis benefits", 0m),
+                    new("De minimis benefits", deMinimis),
                     new("SSS, PhilHealth and Pag-IBIG employee shares", shares),
-                    new("Other non-taxable compensation", allowances),
+                    new("Other non-taxable compensation", otherNonTaxable),
                     new("Total non-taxable compensation", nonTaxable),
                     new("Total taxable compensation", gross - nonTaxable),
                     new("Total taxes withheld", tax)

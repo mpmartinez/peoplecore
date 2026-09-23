@@ -6,8 +6,7 @@ using Xunit;
 namespace PeopleCore.Application.Tests.Payroll;
 
 /// <summary>
-/// Mirrors <see cref="PayrollLineBuilderTests"/> for the DTO-shaped builder the rendered PDF
-/// actually uses. The payslip prints GrossPay and TotalDeductions as the column totals rather
+/// The DTO-shaped builder the rendered payslip PDF uses. The payslip prints GrossPay and TotalDeductions as the column totals rather
 /// than summing these lines, so the lines have to add up to those figures or the document
 /// silently fails to foot.
 /// </summary>
@@ -74,6 +73,119 @@ public class PayslipLineBuilderTests
         lines.Should().ContainSingle();
         lines[0].Amount.Should().Be(10_000m);
     }
+
+    // ---------- Final pay ----------
+
+    [Fact]
+    public void A_final_pay_foots_gross_less_the_deductions_shown_plus_the_refund_to_net()
+    {
+        var e = FinalPay();
+
+        var earnings = PayslipLineBuilder.Earnings(e);
+        var deductions = PayslipLineBuilder.Deductions(e).Where(l => !l.IsEmployer).ToList();
+
+        earnings.Sum(l => l.Amount).Should().Be(e.GrossPay).And.Be(62_500m);
+        deductions.Sum(l => l.Amount).Should().Be(PayslipLineBuilder.DeductionsTotal(e)).And.Be(7_350m,
+            "500 + 250 + 100 contributions, 3,000 loans and 3,500 HR deductions - the refund is not among them");
+        PayslipLineBuilder.TaxRefund(e).Should().Be(1_800m);
+        (e.GrossPay - PayslipLineBuilder.DeductionsTotal(e) + PayslipLineBuilder.TaxRefund(e))
+            .Should().Be(e.NetPay).And.Be(56_950m);
+    }
+
+    [Fact]
+    public void Leave_conversion_beyond_de_minimis_is_flagged_like_the_13th_month()
+    {
+        // 7,500 of leave, 6,000 of it de minimis: the other 1,500 is "other benefits", which,
+        // like the 13th month, is taxed only past the year's 90,000 exemption - which one
+        // payslip can't see. So the line carries the 13th month's flag.
+        var lines = PayslipLineBuilder.Earnings(FinalPay());
+
+        var leave = lines.Single(l => l.Description == "Leave Conversion");
+        var thirteenth = lines.Single(l => l.Description == "13th Month Pay");
+        leave.IsTaxable.Should().Be(thirteenth.IsTaxable).And.BeFalse();
+    }
+
+    [Fact]
+    public void A_final_pay_shows_leave_conversion_and_separation_pay_as_earnings_and_omits_a_zero_retirement_pay()
+    {
+        var lines = PayslipLineBuilder.Earnings(FinalPay());
+
+        lines.Should().Contain(l => l.Description == "Leave Conversion" && l.Amount == 7_500m);
+        lines.Should().Contain(l => l.Description == "Separation Pay" && l.Amount == 40_000m && !l.IsTaxable,
+            "separation pay for an authorized cause is wholly non-taxable here");
+        lines.Should().NotContain(l => l.Description == "Retirement Pay");
+    }
+
+    [Fact]
+    public void Retirement_pay_is_shown_when_there_is_some()
+    {
+        var e = FinalPay() with { SeparationPay = 0m, RetirementPay = 40_000m };
+
+        var lines = PayslipLineBuilder.Earnings(e);
+
+        lines.Should().Contain(l => l.Description == "Retirement Pay" && l.Amount == 40_000m);
+        lines.Should().NotContain(l => l.Description == "Separation Pay");
+    }
+
+    [Fact]
+    public void A_negative_withholding_tax_withholds_nothing_and_is_added_back_as_a_refund()
+    {
+        // The year's tax settled on final pay can hand some back. Nothing is withheld, the
+        // deductions are only the real ones, and the refund is added after them, above net pay.
+        var e = FinalPay();
+
+        var lines = PayslipLineBuilder.Deductions(e);
+
+        lines.Should().Contain(l => l.Description == "Withholding Tax" && l.Amount == 0m);
+        lines.Should().NotContain(l => l.Amount < 0m);
+        PayslipLineBuilder.DeductionsTotal(e).Should().Be(e.TotalDeductions - e.WithholdingTax);
+    }
+
+    [Fact]
+    public void A_refund_larger_than_the_other_deductions_still_leaves_them_positive()
+    {
+        var e = FinalPay() with { LoanDeductions = 0m, OtherDeductions = 0m, TotalDeductions = -950m, NetPay = 63_450m };
+
+        PayslipLineBuilder.DeductionsTotal(e).Should().Be(850m);
+        PayslipLineBuilder.TaxRefund(e).Should().Be(1_800m);
+        (e.GrossPay - PayslipLineBuilder.DeductionsTotal(e) + PayslipLineBuilder.TaxRefund(e)).Should().Be(e.NetPay);
+    }
+
+    [Fact]
+    public void A_regular_run_has_no_final_pay_lines()
+    {
+        var e = FullyLoaded();
+
+        PayslipLineBuilder.Earnings(e).Should().NotContain(l =>
+            l.Description == "Leave Conversion" || l.Description == "Separation Pay" || l.Description == "Retirement Pay");
+        PayslipLineBuilder.Deductions(e).Should().Contain(l => l.Description == "Withholding Tax" && l.Amount == 1_234.56m);
+        PayslipLineBuilder.TaxRefund(e).Should().Be(0m);
+        PayslipLineBuilder.DeductionsTotal(e).Should().Be(e.TotalDeductions);
+    }
+
+    /// <summary>
+    /// A worked final pay: 5,000 salary, 10,000 13th month, 7,500 leave (6,000 of it de minimis)
+    /// and 40,000 authorized-cause separation pay; 3,000 of loans, 3,500 of HR deductions, and the
+    /// year's tax settling to a 1,800 refund.
+    /// </summary>
+    private static PayrollRunEmployeeDto FinalPay() => Clean() with
+    {
+        RegularPay = 5_000m,
+        ThirteenthMonth = 10_000m,
+        LeaveConversionPay = 7_500m,
+        LeaveConversionNonTaxable = 6_000m,
+        SeparationPay = 40_000m,
+        FinalPayNonTaxable = 46_000m,
+        GrossPay = 62_500m,
+        SSSEmployee = 500m,
+        PhilHealthEmployee = 250m,
+        PagIbigEmployee = 100m,
+        WithholdingTax = -1_800m,
+        LoanDeductions = 3_000m,
+        OtherDeductions = 3_500m,
+        TotalDeductions = 5_550m,
+        NetPay = 56_950m
+    };
 
     /// <summary>An entry exercising every pay component the builders know about.</summary>
     private static PayrollRunEmployeeDto FullyLoaded() => Clean() with

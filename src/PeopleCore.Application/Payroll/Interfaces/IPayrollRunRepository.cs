@@ -11,8 +11,29 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     /// </summary>
     Task<PayrollRun?> GetWithEntriesAsync(Guid id, CancellationToken ct = default);
 
-    /// <summary>Runs already created for a period's year, for the next sequential run number.</summary>
+    /// <summary>
+    /// Regular runs already created for a period's year, for the next sequential PAY- run number.
+    /// Final-pay runs are numbered on their own sequence (<see cref="GetLastFinalPaySequenceAsync"/>)
+    /// and don't count here, so they leave no gaps in the PAY- numbers.
+    /// </summary>
     Task<int> CountForYearAsync(int year, CancellationToken ct = default);
+
+    /// <summary>
+    /// The highest sequence among the FP-{<paramref name="payYear"/>}-nnn run numbers, or 0 if
+    /// there are none, for the next FP- run number. It is the highest number and not a count
+    /// because a run whose pay date moves to another year is renumbered onto that year's
+    /// sequence, leaving a gap a count would fill with a number still in use.
+    /// </summary>
+    Task<int> GetLastFinalPaySequenceAsync(int payYear, CancellationToken ct = default);
+
+    /// <summary>
+    /// Saves a new final-pay run - with its entry, its <see cref="PayrollRun.FinalPayInputs"/> and
+    /// their deductions - and links <paramref name="separation"/> to it, in one transaction.
+    /// The link is only made while the separation has no final-pay run: if another request linked
+    /// one first, nothing is saved and a <see cref="Domain.Exceptions.DomainException"/> is thrown,
+    /// so two HR users can't give one separation two final pays.
+    /// </summary>
+    Task AddFinalPayRunAsync(PayrollRun run, Domain.Entities.Employees.Separation separation, CancellationToken ct = default);
 
     /// <summary>
     /// The paid run that paid <paramref name="employeeId"/> for a period containing <paramref name="date"/>,
@@ -43,8 +64,19 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     /// lines) and inserts <paramref name="newEntries"/>, alongside the run's own updated fields
     /// (Status, UpdatedAt, ...), in one transaction so a failure between the two steps cannot
     /// leave the run with no entries at all.
+    /// <para>
+    /// For a final-pay run, the loaded <see cref="PayrollRun.FinalPayInputs"/> is saved too, and its
+    /// Deductions collection as it stands: deductions no longer in it are deleted and new ones are
+    /// inserted (never mistaken for existing rows because their keys are already set).
+    /// </para>
     /// </summary>
     Task ReplaceEntriesAsync(PayrollRun run, IReadOnlyList<PayrollRunEmployee> newEntries, CancellationToken ct = default);
+
+    /// <summary>
+    /// Deletes one entry from a loaded run (cascading its loan deduction lines and premium days),
+    /// saving the run's own changed fields (Status, UpdatedAt) with it.
+    /// </summary>
+    Task RemoveEntryAsync(PayrollRun run, PayrollRunEmployee entry, CancellationToken ct = default);
 
     /// <summary>
     /// Every run the given employee appears in, newest pay date first, each loaded with its full

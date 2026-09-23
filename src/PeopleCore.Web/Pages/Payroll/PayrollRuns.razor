@@ -50,11 +50,17 @@
                     @foreach (var r in _runs.Items)
                     {
                         <TableRow @onclick="() => GoToRun(r.Id)">
-                            <TableCell Class="px-4 py-3 font-medium cursor-pointer">@r.RunNumber</TableCell>
+                            <TableCell Class="px-4 py-3 font-medium cursor-pointer">
+                                @r.RunNumber
+                                @if (r.RunType == PayrollLabels.FinalPayRunType)
+                                {
+                                    <Badge Variant="outline" Class="ml-2" data-final-pay-badge>Final pay</Badge>
+                                }
+                            </TableCell>
                             <TableCell Class="px-4 py-3 cursor-pointer">@r.PeriodLabel</TableCell>
                             <TableCell Class="px-4 py-3 cursor-pointer">@r.PayDate</TableCell>
                             <TableCell Class="px-4 py-3 cursor-pointer">
-                                <Badge Variant="@RunStatusVariant(r.Status)">@r.Status</Badge>
+                                <Badge Variant="@PayrollLabels.RunStatusVariant(r.Status)">@PayrollLabels.RunStatusOf(r.Status)</Badge>
                             </TableCell>
                             <TableCell Class="px-4 py-3 cursor-pointer">@r.EmployeeCount</TableCell>
                             <TableCell Class="px-4 py-3 cursor-pointer">&#8369;@r.TotalNetPay.ToString("N2")</TableCell>
@@ -296,12 +302,6 @@
         }
     }
 
-    private static string RunStatusVariant(string status) => status switch
-    {
-        "Approved" or "Paid" => "success",
-        "Processing" or "ForApproval" => "warning",
-        _ => "secondary"
-    };
 
     private class CreateRunFormModel
     {

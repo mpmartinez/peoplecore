@@ -34,6 +34,8 @@ public class LeaveTypeService : ILeaveTypeService
             CarryOverMaxDays = dto.CarryOverMaxDays,
             GenderRestriction = dto.GenderRestriction,
             RequiresDocument = dto.RequiresDocument,
+            IsConvertibleToCash = dto.IsConvertibleToCash,
+            CountsAsVacationForDeMinimis = dto.CountsAsVacationForDeMinimis,
             IsActive = true
         };
         var created = await _repo.AddAsync(lt, ct);
@@ -52,6 +54,8 @@ public class LeaveTypeService : ILeaveTypeService
         lt.CarryOverMaxDays = dto.CarryOverMaxDays;
         lt.GenderRestriction = dto.GenderRestriction;
         lt.RequiresDocument = dto.RequiresDocument;
+        lt.IsConvertibleToCash = dto.IsConvertibleToCash;
+        lt.CountsAsVacationForDeMinimis = dto.CountsAsVacationForDeMinimis;
         lt.UpdatedAt = DateTime.UtcNow;
         await _repo.UpdateAsync(lt, ct);
         return ToDto(lt);
@@ -67,5 +71,6 @@ public class LeaveTypeService : ILeaveTypeService
     private static LeaveTypeDto ToDto(LeaveType lt) => new(
         lt.Id, lt.Name, lt.Code, lt.MaxDaysPerYear, lt.IsPaid,
         lt.IsCarryOver, lt.CarryOverMaxDays, lt.GenderRestriction,
-        lt.RequiresDocument, lt.IsActive);
+        lt.RequiresDocument, lt.IsActive,
+        lt.IsConvertibleToCash, lt.CountsAsVacationForDeMinimis);
 }

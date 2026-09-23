@@ -90,6 +90,17 @@ public class Bir2316Tests : BunitContext
     }
 
     [Fact]
+    public void Item39_SaysItIsNetOfTheEmployeesContributions()
+    {
+        var cut = RenderWithMariasPreview();
+
+        var field = cut.FindAll("[data-readonly-field]")
+            .Single(f => f.TextContent.Contains("Item 39 - Basic Salary"));
+        field.QuerySelector("[data-hint]")!.TextContent.Trim()
+            .Should().Be("net of employee SSS/PhilHealth/Pag-IBIG");
+    }
+
+    [Fact]
     public void AFailedEmployeeLoad_ShowsTheError()
     {
         _api.On(HttpMethod.Get, "/api/employees?page=1&pageSize=100", HttpStatusCode.InternalServerError);

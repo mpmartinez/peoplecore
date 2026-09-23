@@ -74,13 +74,76 @@ public class Bir2316ServiceTests
 
         result.Should().NotBeNull();
         result!.Year.Should().Be(2026);
-        result.Item39_BasicSalary.Should().Be(41_000m);            // 20,000 + 21,000
+        // Basic is certified net of the employee's contributions, which Item 36 reports instead:
+        // (20,000 - 1,500) + (21,000 - 1,500).
+        result.Item39_BasicSalary.Should().Be(38_000m);
         result.Item50_OvertimePay.Should().Be(2_000m);             // 1,500 + 500
         result.Item25A_PresentTaxWithheld.Should().Be(4_200m);     // 2,000 + 2,200
         result.Item36_SssPhicPagibigContributions.Should().Be(3_000m); // (900+500+100) x 2
+        result.Item19_GrossCompensation.Should().Be(43_000m);      // 41,000 basic + 2,000 overtime
 
         // Not one centavo of the other employee's line leaked in.
         result.Item39_BasicSalary.Should().NotBe(140_000m);
+    }
+
+    [Fact]
+    public async Task GetPreviewAsync_OverAYearOfEngineComputedPay_CountsContributionsOnce_AndTaxesWhatTheEngineTaxed()
+    {
+        // Twelve monthly runs computed by the real payroll engine: basic 50,000, a taxable
+        // allowance of 2,000 and a non-taxable one of 1,500. SSS is pinned at 5% (the table
+        // moves), PhilHealth and Pag-IBIG are the statutory defaults:
+        //   SSS 50,000 x 5% = 2,500; PhilHealth 50,000 x 5% / 2 = 1,250; Pag-IBIG 10,000 x 2% = 200
+        //   => 3,950 of employee contributions a month.
+        var engine = new PayrollComputationService();
+        var rates = new ContributionRates { SSSEmployeeRate = 0.05m, SSSEmployerRate = 0.10m };
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = _employeeId, BasicSalary = 50_000m, PayFrequency = PayFrequency.Monthly,
+            Allowances =
+            [
+                new EmployeeAllowance { EmployeeId = _employeeId, Amount = 2_000m, IsTaxable = true },
+                new EmployeeAllowance { EmployeeId = _employeeId, Amount = 1_500m, IsTaxable = false },
+            ],
+        };
+        var runs = Enumerable.Range(1, 12).Select(month =>
+        {
+            var start = new DateOnly(2026, month, 1);
+            var run = new PayrollRun
+            {
+                RunNumber = $"PAY-2026-{month:D3}", PeriodStart = start, PeriodEnd = start.AddMonths(1).AddDays(-1),
+                PayDate = start.AddMonths(1).AddDays(-1), Frequency = PayFrequency.Monthly, Status = PayrollRunStatus.Paid,
+            };
+            run.Employees.Add(engine.Compute(compensation, run, rates: rates));
+            return run;
+        }).ToArray();
+        PaidRunsAre(runs);
+
+        // The engine withheld against 50,000 + 2,000 - 3,950 = 48,050 a month: annualised,
+        // 576,600 -> 22,500 + 20% x 176,600 = 57,820 a year -> 4,818.33 a month.
+        var entries = runs.Select(r => r.Employees.Single()).ToList();
+        entries.Should().AllSatisfy(e =>
+        {
+            (e.SSSEmployee + e.PhilHealthEmployee + e.PagIbigEmployee).Should().Be(3_950m);
+            e.WithholdingTax.Should().Be(engine.ComputeWithholdingTax(48_050m, PayFrequency.Monthly)).And.Be(4_818.33m);
+        });
+
+        var result = (await _sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None))!;
+
+        // Item 19 is what was actually paid - 12 x (50,000 + 2,000 + 1,500) - with the
+        // contributions inside the basic counted once, in Item 36, and not again in Item 39.
+        result.Item19_GrossCompensation.Should().Be(642_000m).And.Be(entries.Sum(e => e.GrossPay));
+        result.Item36_SssPhicPagibigContributions.Should().Be(47_400m);   // 12 x 3,950
+        result.Item38_TotalNonTaxable.Should().Be(65_400m);               // 12 x (1,500 + 3,950)
+        result.Item39_BasicSalary.Should().Be(552_600m);                  // 12 x (50,000 - 3,950)
+
+        // Item 23 is the engine's withholding base over the year: 12 x 48,050.
+        result.Item52_TotalTaxableCompensation.Should().Be(576_600m);
+        result.Item23_GrossTaxable.Should().Be(576_600m);
+
+        // So the year's tax due is the tax the engine was withholding towards; the 4 centavos
+        // are twelve roundings of 4,818.333... (12 x 4,818.33 = 57,819.96).
+        result.Item24_TaxDue.Should().Be(57_820m);
+        result.Item25A_PresentTaxWithheld.Should().Be(57_819.96m);
     }
 
     [Fact]
@@ -207,6 +270,276 @@ public class Bir2316ServiceTests
     }
 
     [Fact]
+    public async Task GetPreviewAsync_CertifiesFinalPayLeaveConversionAndSeparationPay()
+    {
+        // A regular run plus a Paid final-pay entry: leave conversion of 6,000 (4,000 de minimis,
+        // 2,000 beyond it) and separation pay of 150,000, all non-taxable (separation for causes
+        // beyond the employee's control is fully exempt). FinalPayNonTaxable therefore carries
+        // both the leave conversion's de minimis slice and all of the separation pay: 4,000 +
+        // 150,000 = 154,000. The 2,000 beyond de minimis is "other benefits" (RR 5-2011 as
+        // amended by RR 11-2018): it shares the 90,000 exemption with the 13th month (none here),
+        // so it's all within it and goes to Item 34. Nothing is taxable outright, so Item 51B is
+        // blank.
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 20_000m)]),
+            Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Paid, entries:
+            [
+                Entry(_employeeId,
+                    leaveConversionPay: 6_000m, leaveConversionNonTaxable: 4_000m,
+                    separationPay: 150_000m, finalPayNonTaxable: 154_000m)
+            ]));
+
+        var result = await _sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Item34_ThirteenthMonthAndBenefits.Should().Be(2_000m);
+        result.Item35_DeMinimis.Should().Be(4_000m);
+        result.Item37_SalariesOtherForms.Should().Be(150_000m);
+        result.Item48_TaxableThirteenthMonth.Should().Be(0m);
+        result.Item51B_OtherAmount.Should().Be(0m);
+        result.Item51B_OtherLabel.Should().BeEmpty();
+        // Item 19 = everything paid: 20,000 + 6,000 + 150,000 = 176,000.
+        result.Item19_GrossCompensation.Should().Be(176_000m);
+        result.Item52_TotalTaxableCompensation.Should().Be(20_000m);
+    }
+
+    [Fact]
+    public async Task GetPreviewAsync_LeaveBeyondDeMinimis_SharesThe90000WithThe13thMonth()
+    {
+        // 85,000 of 13th month paid in a regular run, then a final pay with 1,000 more 13th month
+        // and 12,000 of leave (3,000 de minimis, 9,000 beyond it). 13th month and other benefits
+        // for the year = 85,000 + 1,000 + 9,000 = 95,000: 90,000 exempt (Item 34), 5,000 taxable
+        // (Item 48). The de minimis 3,000 stays in Item 35.
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 5, 15), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 20_000m, thirteenthMonth: 85_000m)]),
+            Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Paid, entries:
+            [
+                Entry(_employeeId, thirteenthMonth: 1_000m,
+                    leaveConversionPay: 12_000m, leaveConversionNonTaxable: 3_000m, finalPayNonTaxable: 3_000m)
+            ]));
+
+        var result = await _sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None);
+
+        result!.Item34_ThirteenthMonthAndBenefits.Should().Be(90_000m);
+        result.Item48_TaxableThirteenthMonth.Should().Be(5_000m);
+        result.Item35_DeMinimis.Should().Be(3_000m);
+        result.Item51B_OtherAmount.Should().Be(0m);
+        // Item 52 = 20,000 basic + 5,000 = 25,000; Item 19 = 20,000 + 86,000 + 12,000 = 118,000.
+        result.Item52_TotalTaxableCompensation.Should().Be(25_000m);
+        result.Item19_GrossCompensation.Should().Be(118_000m);
+    }
+
+    [Fact]
+    public async Task GetPreviewAsync_PutsTaxableSeparationPayInItem51B()
+    {
+        // A resignation with a 50,000 goodwill payment: taxable outright, so Item 51B.
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 10_000m, separationPay: 50_000m)]));
+
+        var result = await _sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None);
+
+        result!.Item51B_OtherAmount.Should().Be(50_000m);
+        result.Item51B_OtherLabel.Should().Be("Final pay - separation/retirement pay");
+        result.Item34_ThirteenthMonthAndBenefits.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task GetPreviewAsync_LeavesItem51BBlank_WhenThereIsNoFinalPay()
+    {
+        // No final-pay entry at all - the "Others (specify)" box for final pay must not appear
+        // with a zero amount and a label on an ordinary certificate.
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 20_000m)]));
+
+        var result = await _sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Item51B_OtherAmount.Should().Be(0m);
+        result.Item51B_OtherLabel.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task BuildWithDraftEntryAsync_AddsTheDraftRunAndEntryToThePaidRunsItSums()
+    {
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 20_000m, withholdingTax: 1_000m)]));
+
+        var draftRun = Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Draft, entries: []);
+        var draftEntry = Entry(_employeeId,
+            leaveConversionPay: 6_000m, leaveConversionNonTaxable: 4_000m,
+            separationPay: 150_000m, finalPayNonTaxable: 154_000m, withholdingTax: 300m);
+
+        var result = await _sut.BuildWithDraftEntryAsync(_employeeId, 2026, draftRun, draftEntry, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Item39_BasicSalary.Should().Be(20_000m);
+        result.Item35_DeMinimis.Should().Be(4_000m);
+        result.Item37_SalariesOtherForms.Should().Be(150_000m);
+        result.Item34_ThirteenthMonthAndBenefits.Should().Be(2_000m);   // the leave beyond de minimis
+        result.Item51B_OtherAmount.Should().Be(0m);
+        result.Item25A_PresentTaxWithheld.Should().Be(1_300m);
+    }
+
+    [Fact]
+    public async Task BuildWithDraftEntryAsync_UsesTheSavedManualInputs_LikeAPreview()
+    {
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 20_000m)]));
+        _inputsRepo.Setup(r => r.GetAsync(_employeeId, 2026, It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(new Bir2316Inputs { EmployeeId = _employeeId, Year = 2026, Item22_PrevTaxableCompensation = 50_000m });
+
+        var draftRun = Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Draft, entries: []);
+        var draftEntry = Entry(_employeeId, separationPay: 10_000m, finalPayNonTaxable: 10_000m);
+
+        var result = await _sut.BuildWithDraftEntryAsync(_employeeId, 2026, draftRun, draftEntry, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Item22_PrevTaxableCompensation.Should().Be(50_000m);
+    }
+
+    [Fact]
+    public async Task BuildWithDraftEntryAsync_SettlingTheDraftEntrysWithholdingTax_MakesTaxDueEqualTaxWithheld()
+    {
+        // The scenario BuildWithDraftEntryAsync exists for: solve the draft (final-pay) entry's
+        // WithholdingTax for Item24 (TaxDue) - Item25A(other runs) - Item25B - Item27, then rebuild
+        // with that figure, and the certificate is left with Item24 == Item26 + Item27 - the
+        // condition that qualifies the employee for substituted filing. Item24 depends only on
+        // taxable compensation (Item23), never on withheld tax, so it does not move between the
+        // two builds below - only Item25A/26 do.
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+            [
+                Entry(_employeeId, regularPay: 40_000m, withholdingTax: 3_000m)
+            ]));
+
+        var manual = new Bir2316ManualInputs
+        {
+            Item22_PrevTaxableCompensation = 10_000m, Item25B_PrevTaxWithheld = 1_000m, Item27_PeraTaxCredit = 500m
+        };
+        var draftRun = Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Draft, entries: []);
+
+        // First pass: find Item24 and the other-runs Item25A with the draft entry's withholding at
+        // zero, exactly as Task 5 would before it has solved for the figure.
+        var unsettledDraft = Entry(_employeeId,
+            leaveConversionPay: 6_000m, leaveConversionNonTaxable: 4_000m,
+            separationPay: 150_000m, finalPayNonTaxable: 154_000m, withholdingTax: 0m);
+        var withZeroWithholding = await BuildWithDraft(draftRun, unsettledDraft, manual);
+
+        decimal settledWithholding = withZeroWithholding!.Item24_TaxDue
+            - withZeroWithholding.Item25A_PresentTaxWithheld
+            - manual.Item25B_PrevTaxWithheld
+            - manual.Item27_PeraTaxCredit;
+
+        var settledDraft = Entry(_employeeId,
+            leaveConversionPay: 6_000m, leaveConversionNonTaxable: 4_000m,
+            separationPay: 150_000m, finalPayNonTaxable: 154_000m, withholdingTax: settledWithholding);
+
+        var settled = await BuildWithDraft(draftRun, settledDraft, manual);
+
+        settled.Should().NotBeNull();
+        settled!.Item24_TaxDue.Should().Be(withZeroWithholding.Item24_TaxDue, "Item24 is derived from taxable compensation, not withheld tax");
+        settled.Item24_TaxDue.Should().Be(settled.Item26_TotalTaxWithheld + settled.Item27_PeraTaxCredit);
+    }
+
+    private async Task<Bir2316Dto?> BuildWithDraft(PayrollRun draftRun, PayrollRunEmployee draftEntry, Bir2316ManualInputs manual)
+    {
+        _inputsRepo.Setup(r => r.GetAsync(_employeeId, 2026, It.IsAny<CancellationToken>())).ReturnsAsync(
+            new Bir2316Inputs
+            {
+                EmployeeId = _employeeId,
+                Year = 2026,
+                Item22_PrevTaxableCompensation = manual.Item22_PrevTaxableCompensation,
+                Item25B_PrevTaxWithheld = manual.Item25B_PrevTaxWithheld,
+                Item27_PeraTaxCredit = manual.Item27_PeraTaxCredit
+            });
+        return await _sut.BuildWithDraftEntryAsync(_employeeId, 2026, draftRun, draftEntry, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task BuildWithDraftEntryAsync_DoesNotDoubleCount_WhenTheDraftRunIsAlreadyAmongThePaidRuns()
+    {
+        // A caller who passes back a run that GetPaidRunsForEmployeeInYearAsync already returned
+        // (same Id) must not have its entry summed twice - that would double every figure on the
+        // certificate.
+        var alreadyPaidRun = Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Paid, entries:
+            [Entry(_employeeId, regularPay: 20_000m, withholdingTax: 1_000m)]);
+        PaidRunsAre(alreadyPaidRun);
+
+        // Same Id as the run already in the Paid set, but a distinct object with its own entry -
+        // the shape a caller could plausibly (if mistakenly) construct.
+        var duplicateRun = new PayrollRun
+        {
+            Id = alreadyPaidRun.Id,
+            RunNumber = alreadyPaidRun.RunNumber,
+            PayDate = alreadyPaidRun.PayDate,
+            PeriodStart = alreadyPaidRun.PeriodStart,
+            PeriodEnd = alreadyPaidRun.PeriodEnd,
+            Frequency = alreadyPaidRun.Frequency,
+            Status = alreadyPaidRun.Status
+        };
+        var duplicateEntry = Entry(_employeeId, regularPay: 20_000m, withholdingTax: 1_000m);
+
+        var result = await _sut.BuildWithDraftEntryAsync(_employeeId, 2026, duplicateRun, duplicateEntry, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Item39_BasicSalary.Should().Be(20_000m, "the duplicate run's entry must not be summed a second time");
+        result.Item25A_PresentTaxWithheld.Should().Be(1_000m);
+    }
+
+    [Fact]
+    public async Task BuildWithDraftEntryAsync_RefusesADraftEntryForADifferentEmployee()
+    {
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 20_000m)]));
+
+        var draftRun = Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Draft, entries: []);
+        // Wrong employee id on the entry - putting someone else's pay on this certificate.
+        var mismatchedEntry = Entry(_otherEmployeeId, separationPay: 10_000m, finalPayNonTaxable: 10_000m);
+
+        var act = () => _sut.BuildWithDraftEntryAsync(_employeeId, 2026, draftRun, mismatchedEntry, CancellationToken.None);
+
+        await act.Should().ThrowAsync<DomainException>();
+    }
+
+    [Fact]
+    public async Task BuildWithDraftEntryAsync_BuildsFromTheDraftAlone_WhenTheEmployeeHasNoPaidRuns()
+    {
+        // A first-year employee whose only pay this year IS the final run - there is nothing Paid
+        // yet for BuildAsync/GetPreviewAsync to find, but the draft entry alone is enough here.
+        PaidRunsAre();
+
+        var draftRun = Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Draft, entries: []);
+        var draftEntry = Entry(_employeeId, separationPay: 50_000m, finalPayNonTaxable: 50_000m, withholdingTax: 0m);
+
+        var result = await _sut.BuildWithDraftEntryAsync(_employeeId, 2026, draftRun, draftEntry, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Item37_SalariesOtherForms.Should().Be(50_000m);
+        result.Item25A_PresentTaxWithheld.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task BuildWithDraftEntryAsync_WhenTheEmployeeIsUnknown_ReturnsNull()
+    {
+        _employeeRepo.Setup(r => r.GetByIdAsync(_employeeId, It.IsAny<CancellationToken>()))
+                     .ReturnsAsync((Employee?)null);
+
+        var draftRun = Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Draft, entries: []);
+        var draftEntry = Entry(_employeeId, separationPay: 50_000m, finalPayNonTaxable: 50_000m);
+
+        var result = await _sut.BuildWithDraftEntryAsync(_employeeId, 2026, draftRun, draftEntry, CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
     public async Task GetPreviewAsync_WhenThereAreNoPaidRunsForTheYear_ReturnsNull()
     {
         PaidRunsAre();
@@ -255,7 +588,7 @@ public class Bir2316ServiceTests
 
         // Every derived figure comes off the payroll records, whatever the request said.
         result!.Item25A_PresentTaxWithheld.Should().Be(4_321m);
-        result.Item39_BasicSalary.Should().Be(30_000m);
+        result.Item39_BasicSalary.Should().Be(28_500m);   // 30,000 less the 1,500 of contributions
         result.Item50_OvertimePay.Should().Be(1_000m);
         result.Item36_SssPhicPagibigContributions.Should().Be(1_500m);
         result.Item34_ThirteenthMonthAndBenefits.Should().Be(90_000m);
@@ -276,8 +609,9 @@ public class Bir2316ServiceTests
         result.IsMinimumWageEarner.Should().BeFalse();
 
         // Item 24 is the liability computed on Item 23, never the withheld total. Item 23 here is
-        // 30,000 + 1,000 + 10,000 taxable 13th month + 500,000 previous = 541,000, so tax due is
-        // 22,500 + 20% of the 141,000 over 400,000 = 50,700 - nothing like the 79,321 withheld.
+        // (30,000 - 1,500 contributions) + 1,000 + 10,000 taxable 13th month + 500,000 previous
+        // = 539,500, so tax due is 22,500 + 20% of the 139,500 over 400,000 = 50,400 - nothing
+        // like the 79,321 withheld.
         //
         // Item 25B was 999,999 when this test was written, to dramatise a caller stating an
         // outlandish figure. That pair is impossible rather than merely large - no tax withheld
@@ -285,8 +619,8 @@ public class Bir2316ServiceTests
         // it - so the figure is a realistic 15% of Item 22. Nothing this test proves depended on
         // the old value: Item 25B is a legitimately caller-supplied field and is overlaid as
         // given, while the derived figure under test is Item 25A, which still comes off payroll.
-        result.Item23_GrossTaxable.Should().Be(541_000m);
-        result.Item24_TaxDue.Should().Be(50_700m);
+        result.Item23_GrossTaxable.Should().Be(539_500m);
+        result.Item24_TaxDue.Should().Be(50_400m);
         result.Item24_TaxDue.Should().Be(BirWithholdingTax.ComputeAnnualTaxDue(result.Item23_GrossTaxable));
         result.Item26_TotalTaxWithheld.Should().Be(79_321m);
         result.Item24_TaxDue.Should().NotBe(result.Item26_TotalTaxWithheld);
@@ -598,7 +932,12 @@ public class Bir2316ServiceTests
         decimal holidayPay = 0m,
         decimal nightDiffPay = 0m,
         decimal taxableAllowances = 0m,
-        decimal nonTaxableAllowances = 0m)
+        decimal nonTaxableAllowances = 0m,
+        decimal leaveConversionPay = 0m,
+        decimal leaveConversionNonTaxable = 0m,
+        decimal separationPay = 0m,
+        decimal retirementPay = 0m,
+        decimal finalPayNonTaxable = 0m)
         => new()
         {
             EmployeeId = employeeId,
@@ -612,7 +951,12 @@ public class Bir2316ServiceTests
             HolidayPay = holidayPay,
             NightDiffPay = nightDiffPay,
             TaxableAllowances = taxableAllowances,
-            NonTaxableAllowances = nonTaxableAllowances
+            NonTaxableAllowances = nonTaxableAllowances,
+            LeaveConversionPay = leaveConversionPay,
+            LeaveConversionNonTaxable = leaveConversionNonTaxable,
+            SeparationPay = separationPay,
+            RetirementPay = retirementPay,
+            FinalPayNonTaxable = finalPayNonTaxable
         };
 
     private Employee TheEmployee()

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 using PeopleCore.API.Controllers.Employees;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Employees.Coe;
@@ -237,10 +238,44 @@ public class EmployeesControllerAuthorizationTests
     {
         // Pinning the exact field set: adding DateOfBirth, MobileNumber or the like to the
         // directory would publish it to every signed-in user, and must be a deliberate decision.
+        // SeparationDate was added deliberately: it is filled in only for callers who record
+        // separations (see GetAll_ForCallersWhoManageEmployees_...), and is not personal data.
         typeof(EmployeeDirectoryEntryDto).GetProperties().Select(p => p.Name).Should().BeEquivalentTo([
             "Id", "EmployeeNumber", "FirstName", "LastName", "FullName", "WorkEmail",
-            "DepartmentName", "PositionTitle", "EmploymentStatus", "IsActive"
+            "DepartmentName", "PositionTitle", "EmploymentStatus", "IsActive", "SeparationDate"
         ]);
+    }
+
+    [Fact]
+    public async Task GetAll_ForCallersWhoManageEmployees_ButCannotReadRecords_IncludesTheSeparationDate()
+    {
+        // They record separations, and the record form lists people who left without one -
+        // pre-filling the last working day with the day they left.
+        var granted = new[] { Permissions.EmployeesManage };
+        _currentUser.Setup(c => c.HasPermission(It.IsAny<string>())).Returns((string key) => granted.Contains(key));
+        var filter = new EmployeeFilterDto(null, null, null, false);
+        _service.Setup(s => s.GetAllAsync(filter, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PagedResult<EmployeeDto>.Create([FullRecord() with { IsActive = false, SeparationDate = new DateOnly(2026, 3, 3) }], 1, 1, 20));
+
+        var result = await _sut.GetAll(filter, CancellationToken.None);
+
+        var page = result.Should().BeOfType<OkObjectResult>()
+            .Which.Value.Should().BeOfType<PagedResult<EmployeeDirectoryEntryDto>>().Subject;
+        page.Items.Single().SeparationDate.Should().Be(new DateOnly(2026, 3, 3));
+    }
+
+    [Fact]
+    public async Task GetAll_ForEveryoneElse_LeavesTheSeparationDateOut()
+    {
+        var filter = new EmployeeFilterDto(null, null, null, false);
+        _service.Setup(s => s.GetAllAsync(filter, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PagedResult<EmployeeDto>.Create([FullRecord() with { IsActive = false, SeparationDate = new DateOnly(2026, 3, 3) }], 1, 1, 20));
+
+        var result = await _sut.GetAll(filter, CancellationToken.None);
+
+        var page = result.Should().BeOfType<OkObjectResult>()
+            .Which.Value.Should().BeOfType<PagedResult<EmployeeDirectoryEntryDto>>().Subject;
+        page.Items.Single().SeparationDate.Should().BeNull();
     }
 
     [Fact]

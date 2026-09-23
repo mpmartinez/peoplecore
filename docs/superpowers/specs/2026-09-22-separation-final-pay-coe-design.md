@@ -55,13 +55,16 @@ Each separation has clearance items. Five are created with it: **HR, IT, Finance
 
 An item is **cleared** with who cleared it, when, and an optional note ("laptop returned"). Clearing can be undone, with the undo recorded, until the final pay is Paid.
 
-Clearance is complete when every item is cleared. A final-pay run can be computed and approved before that, but **cannot be marked Paid until clearance is complete**. The message says which items are outstanding.
+Clearance is complete when every item is cleared. A final-pay run can be computed and approved before that, but **cannot be marked Paid until clearance is complete**. Since clearance can turn up deductions (an unreturned laptop), an approved final pay can still be changed or recomputed; doing so sends it back to Draft, to be approved again. Only a Paid one is fixed. The message says which items are outstanding.
 
 ## Final pay as a payroll run
 
 `PayrollRun` gains a **run type**: Regular (every run today) or Final pay. A final-pay run:
 - has exactly one employee, who must have a separation record in either status;
-- by default runs from the day after the employee's last Paid regular run's period end to the last working day. HR can change the start;
+- by default runs from the day after the employee's last Paid regular run's period end (never paid: the first of the last working day's month, or the hire date when later) to the last working day. HR can change the start, but not to after the last working day, nor into a Paid regular run ("Payroll {RunNumber} already paid up to {date}; start final pay after that.");
+- when regular payroll has already paid past the last working day (that default start is after it), carries no salary: its period is the last working day alone, with no salary days and no attendance, and it pays only the 13th month, leave conversion, separation or retirement pay, loans, HR deductions and the tax settle;
+- can't be created, nor its period changed, while a regular run that includes the employee and isn't Paid ends on or after the earlier of the final period's start and the first of the last working day's month - it would overlap the final period, pay salary after the separation, or take the month's contributions again - or starts on or before the last working day, since the final pay's 13th month and tax settle take it as the employee's last pay ("Payroll {RunNumber} covers {period} and isn't paid yet; pay it, or take {name} off it, before creating final pay."; for a run starting after the last working day, "take them off it before creating final pay");
+- once started, in any status, takes the rest of the employee's pay: regular runs refuse them whatever the dates ("{name}'s final pay has been started; the rest of their pay goes there. Take them off this payroll."), so no regular pay falls outside the final pay's 13th month, tax settle or contributions;
 - pays on a date HR picks. The pay date decides the tax year, as for every run;
 - has its own run number sequence prefix, `FP-<year>-<nnn>`;
 - goes through Draft, Approve and Mark Paid like any run, with a payslip. It appears in the payroll run list, marked "Final pay".
@@ -69,12 +72,13 @@ Clearance is complete when every item is cleared. A final-pay run can be compute
 ### Earnings
 
 1. **Salary to the last working day.** The period's regular pay through the normal computation and attendance bridge. The period is usually shorter than a cutoff; the engine already deducts absences and tardiness from the period's base pay, and the base pay of a short final period is the daily rate times the working days in the period (see "Base pay of a short period").
-2. **13th month, pro-rated.** The run is computed with the 13th month included. The existing rule already gives one twelfth of the basic pay earned in the pay year, less any 13th month already paid that year. The 90,000 exemption and its tax work as they do today.
+2. **13th month, pro-rated.** The run is computed with the 13th month included: one twelfth of the basic pay earned in the **last working day's year** (that year's Paid runs, selected by pay date as elsewhere, plus this run's regular pay), less any 13th month already paid that year. A final pay made after the year end still owes the year the employee worked; the tax settle stays on the pay date's year. The 90,000 exemption and its tax work as they do today.
 3. **Leave conversion.**
    - `LeaveType` gains **Convertible to cash** (default off). Service Incentive Leave must be convertible by law; turning it on for vacation leave is company policy.
-   - For each convertible type, the employee's remaining days in the current year (`LeaveBalance.RemainingDays`) are paid at the daily rate.
-   - **Tax:** up to 10 days of converted *vacation-type* leave in the year is de minimis and non-taxable (RR 11-2018, as amended). The rest is taxable. This uses a per-leave-type setting, **Counts as vacation leave for de minimis** (default on for convertible types), so SIL and VL can be treated as the company's accountant advises.
-   - The page shows the days and rate used.
+   - For each convertible type, the employee's remaining days in the **last working day's year** - the year the 13th month is for, even when the final pay is paid after the year end - (`LeaveBalance.RemainingDays`) are paid at the daily rate.
+   - **Tax:** up to 10 days of converted *vacation-type* leave in the year is de minimis and non-taxable (RR 11-2018, as amended). The rest is "other benefits" (RR 5-2011 as amended by RR 11-2018): it shares the 90,000 exemption with the 13th month, so it is non-taxable as far as the pay year's earlier pay and this final pay's 13th month leave room, and taxable past it. (Confirm this treatment with the company's accountant.) This uses a per-leave-type setting, **Counts as vacation leave for de minimis** (default on for convertible types), so SIL and VL can be treated as the company's accountant advises.
+   - The page shows the days and the daily rate they were paid at (the summary carries `DailyRate`).
+   - Marking the final pay Paid records the converted days as used on their balances, so the year-end carry-over doesn't carry them forward. It's refused if the balances changed since the run was computed; recompute it first.
 4. **Separation pay** for an authorized cause (Labor Code Art. 298-299), from the sub-type:
    - one month's pay per year of service: redundancy and labor-saving devices;
    - half a month's pay per year of service: retrenchment, closure not due to serious losses, and disease;
@@ -87,13 +91,14 @@ Clearance is complete when every item is cleared. A final-pay run can be compute
    - a day's pay is the daily rate.
 
    It's **non-taxable** when those conditions hold. When they don't (for example an early retirement under a company plan), nothing is computed and HR enters an amount.
-6. **HR override.** HR can replace the computed separation or retirement amount, or add one where none is computed, with a required note. An overridden amount keeps the computed one's tax treatment only when the type is one of the non-taxable cases above; otherwise it is taxable. The note and both amounts are kept for audit.
+6. **Allowances**, each pro-rated over the final period's salary days like base pay: the monthly amount × 12 / daily-rate factor × salary days. They are taxable or non-taxable exactly as on a regular run; no salary days, no allowances.
+7. **HR override.** HR can replace the computed separation or retirement amount, or add one where none is computed, with a required note. An overridden amount keeps the computed one's tax treatment only when the type is one of the non-taxable cases above; otherwise it is taxable. The note and both amounts are kept for audit.
 
 ### Deductions
 
-- **SSS, PhilHealth and Pag-IBIG** for the period, by the normal rules.
+- **SSS, PhilHealth and Pag-IBIG** top the separation month (the last working day's month) up to exactly one month's contributions on the monthly basic, employee and employer shares alike: the month's full contribution less what that month's Paid runs (those whose period ends in it, as the remittance reports count them) already deducted, never below zero. A month regular payroll already covered costs nothing more.
 - **Loans:** every active loan's **remaining balance**, not the instalment, each capped so the total doesn't exceed what net pay can cover after statutory deductions. Any uncovered balance is shown as a warning on the run ("₱3,200 of the SSS loan can't be covered by final pay") and stays on the loan. Marking the run Paid retires what was deducted, as today.
-- **Other deductions HR adds**, each with a label and amount (unreturned property, cash advance not in the loans module). They are taken after the loans, under the same cap.
+- **Other deductions HR adds**, each with a label and amount (unreturned property, cash advance not in the loans module). They are taken after the loans, under the same cap, each in full in the order HR listed them until the pay runs out. The summary shows what was actually deducted, and warns about any part the final pay couldn't cover, as it does for loans.
 
 ### Tax: the separated employee's year-end adjustment
 
@@ -114,7 +119,7 @@ This makes the 2316 for the year agree with what was withheld: its tax due equal
 
 ### Base pay of a short period
 
-A final period is usually shorter than a full cutoff. Its base pay is the daily rate times the working days in the period, where working days are the days the employee's shift schedules in it (Monday to Friday where no shift is assigned). The engine's usual proration (half a month per semi-monthly cutoff) applies only to Regular runs. This rule is only for Final pay runs.
+A final period is usually shorter than a full cutoff. Its base pay is the daily rate times the salary days in the period, and which days the salary pays follows the daily-rate factor the rate is derived with. On the 365 factor rest days are paid, so the salary days are every calendar day from the period start to the last working day, inclusive. On 313 and 261 they are the days the employee's shift schedules (Monday to Friday where no shift is assigned). Absences from the attendance bridge still come off once, per scheduled day absent. The engine's usual proration (half a month per semi-monthly cutoff) applies only to Regular runs. This rule is only for Final pay runs.
 
 ## Certificate of Employment
 
@@ -159,7 +164,7 @@ The position is the current one, or the last one for a former employee; PeopleCo
   - `RetirementPay`;
   - `TaxAdjustment`.
 
-`GrossPay` includes the new earnings. The 2316's items take them in: non-taxable separation or retirement pay and the de minimis part of leave conversion go to the non-taxable other-compensation items, and the taxable part of leave conversion goes to taxable other compensation. `TaxAdjustment` counts as tax withheld. A test pins that the 2316 balances for a separated employee.
+`GrossPay` includes the new earnings. The 2316's items take them in: non-taxable separation or retirement pay and the de minimis part of leave conversion go to the non-taxable other-compensation items, and the leave beyond de minimis goes with the 13th month - exempt up to the year's 90,000 (Item 34), taxable past it (Item 48). Taxable separation or retirement pay goes to taxable other compensation (Item 51B). `TaxAdjustment` counts as tax withheld. A test pins that the 2316 balances for a separated employee.
 
 ## Testing
 

@@ -73,7 +73,15 @@ public record PayrollRunEmployeeDto(
     decimal PagIbigEmployer,
     decimal WithholdingTax,
     decimal LoanDeductions,
-    decimal OtherDeductions);
+    decimal OtherDeductions,
+    // Final-pay earnings, zero on a regular run. FinalPayNonTaxable is the part of the three
+    // non-taxable outright (LeaveConversionNonTaxable plus exempt separation/retirement pay); the
+    // leave beyond de minimis is other benefits, exempt with the 13th month up to the year's 90,000.
+    decimal LeaveConversionPay = 0m,
+    decimal LeaveConversionNonTaxable = 0m,
+    decimal SeparationPay = 0m,
+    decimal RetirementPay = 0m,
+    decimal FinalPayNonTaxable = 0m);
 
 public record PayrollRunDto(
     Guid Id,
@@ -91,7 +99,8 @@ public record PayrollRunDto(
     DateTime CreatedAt,
     Guid? AttendancePeriodId,
     int EmployeesMissingAttendance,
-    IReadOnlyList<PayrollRunEmployeeDto> Employees);
+    IReadOnlyList<PayrollRunEmployeeDto> Employees,
+    PayrollRunType RunType = PayrollRunType.Regular);
 
 /// <summary>
 /// A run as it appears in a list. Deliberately omits the Employees collection that
@@ -111,4 +120,5 @@ public record PayrollRunSummaryDto(
     decimal TotalGrossPay,
     decimal TotalNetPay,
     int EmployeesMissingAttendance,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    PayrollRunType RunType = PayrollRunType.Regular);

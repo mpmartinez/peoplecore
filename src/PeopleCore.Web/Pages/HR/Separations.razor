@@ -7,7 +7,9 @@
     Everyone whose separation has been recorded - notice given or already separated - and the
     clearance checklist each one is working through. Recording one opens with an employee already
     chosen when the page is reached from the Employees list's "Record separation" link
-    (?employee={id}); otherwise the picker starts empty.
+    (?employee={id}); otherwise the picker starts empty. The picker lists active employees, and
+    also those who already left (deactivated with a separation date) without a separation being
+    recorded - for them the last working day is the day they left.
 *@
 
 <PageTitle>Separations</PageTitle>
@@ -45,6 +47,7 @@
                         <TableHead Class="px-4">Status</TableHead>
                         <TableHead Class="px-4">Clearance</TableHead>
                         <TableHead Class="px-4">Final Pay Due By</TableHead>
+                        <TableHead Class="px-4">Final Pay</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -64,6 +67,17 @@
                                 @if (s.FinalPayOverdue)
                                 {
                                     <Badge Variant="destructive" Class="ml-2" data-overdue>Overdue</Badge>
+                                }
+                            </TableCell>
+                            <TableCell Class="px-4 py-3 cursor-pointer" data-final-pay-run>
+                                @if (s.FinalPayRunNumber is null)
+                                {
+                                    <span class="text-muted-foreground">Not started</span>
+                                }
+                                else
+                                {
+                                    <div class="font-medium">@s.FinalPayRunNumber</div>
+                                    <div class="text-xs text-muted-foreground">@PayrollLabels.RunStatusOf(s.FinalPayStatus)</div>
                                 }
                             </TableCell>
                         </TableRow>
@@ -89,10 +103,10 @@
         <div class="space-y-4">
             <FormField LabelText="Employee" Id="separation-employee" Required="true">
                 <Select TValue="Guid?" Id="separation-employee" Value="@_form.EmployeeId" Placeholder="Select..."
-                        ValueChanged="@(v => _form.EmployeeId = v)">
+                        ValueChanged="@(v => OnEmployeeChanged(v))">
                     @foreach (var employee in _employees)
                     {
-                        <option value="@employee.Id">@employee.FullName (@employee.EmployeeNumber)</option>
+                        <option value="@employee.Id">@EmployeeOption(employee)</option>
                     }
                 </Select>
             </FormField>
@@ -152,7 +166,7 @@
         if (query.TryGetValue("employee", out var employeeText) && Guid.TryParse(employeeText, out var employeeId))
         {
             OpenRecordForm();
-            _form.EmployeeId = employeeId;
+            OnEmployeeChanged(employeeId);
         }
     }
 
@@ -170,26 +184,65 @@
         }
     }
 
-    /// <summary>Every active employee, for the picker; a page at a time, as the list endpoint caps its pages.</summary>
+    /// <summary>
+    /// The picker's employees: every active one, then those who already left without a separation
+    /// being recorded - inactive, with a separation date, and not on the separations list.
+    /// </summary>
     private async Task LoadEmployees()
     {
         try
         {
-            var loaded = new List<EmployeeListDto>();
-            for (var page = 1; ; page++)
-            {
-                var result = await Api.GetEmployeesAsync(page, 100, isActive: true);
-                if (result is null) break;
-                loaded.AddRange(result.Items);
-                if (page >= result.TotalPages) break;
-            }
-            _employees = loaded;
+            var active = await LoadAllEmployees(isActive: true);
+            // Kept even if the second list fails: the active employees can still be recorded.
+            _employees = active;
+            // Without the separations list there's no telling who already has one, so no one who
+            // left is offered rather than someone who'd only be refused.
+            if (_separations is null) return;
+            var separated = _separations.Select(s => s.EmployeeId).ToHashSet();
+            var left = (await LoadAllEmployees(isActive: false))
+                .Where(e => e.SeparationDate is not null && !separated.Contains(e.Id))
+                .OrderBy(e => e.FullName);
+            _employees = [.. active, .. left];
             _employeesError = null;
         }
         catch (Exception ex)
         {
             _employeesError = ex.Message;
         }
+    }
+
+    /// <summary>A page at a time, as the list endpoint caps its pages.</summary>
+    private async Task<List<EmployeeListDto>> LoadAllEmployees(bool isActive)
+    {
+        var loaded = new List<EmployeeListDto>();
+        for (var page = 1; ; page++)
+        {
+            var result = await Api.GetEmployeesAsync(page, 100, isActive: isActive);
+            if (result is null) break;
+            loaded.AddRange(result.Items);
+            if (page >= result.TotalPages) break;
+        }
+        return loaded;
+    }
+
+    private static string EmployeeOption(EmployeeListDto employee) =>
+        !employee.IsActive && employee.SeparationDate is { } left
+            ? $"{employee.FullName} ({employee.EmployeeNumber}) (left {left:MMM d, yyyy})"
+            : $"{employee.FullName} ({employee.EmployeeNumber})";
+
+    // Someone who already left can only be recorded with the day they left as the last working
+    // day (the API refuses any other), so choosing them fills it in. Moving on from them to an
+    // active employee puts back the form's default (today) rather than leaving their date behind;
+    // a date typed for an active employee is left alone.
+    private void OnEmployeeChanged(Guid? employeeId)
+    {
+        var previous = _employees.FirstOrDefault(e => e.Id == _form.EmployeeId);
+        _form.EmployeeId = employeeId;
+        var employee = _employees.FirstOrDefault(e => e.Id == employeeId);
+        if (employee is { IsActive: false, SeparationDate: { } left })
+            _form.LastWorkingDay = left;
+        else if (previous is { IsActive: false, SeparationDate: not null })
+            _form.LastWorkingDay = DateOnly.FromDateTime(DateTime.Today);
     }
 
     private void GoToDetail(Guid id) => Nav.NavigateTo($"/separations/{id}");

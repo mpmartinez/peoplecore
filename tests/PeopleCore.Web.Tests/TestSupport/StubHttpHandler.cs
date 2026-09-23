@@ -32,6 +32,16 @@ public sealed class StubHttpHandler : HttpMessageHandler
     }
 
     /// <summary>
+    /// Registers a route answered asynchronously, call by call - lets a test hold the first call
+    /// to a route in flight while a later call to the same route resolves.
+    /// </summary>
+    public StubHttpHandler OnAsync(HttpMethod method, string pathAndQuery, Func<Task<HttpResponseMessage>> respond)
+    {
+        _routes.Add((method, pathAndQuery, respond));
+        return this;
+    }
+
+    /// <summary>
     /// Registers a route whose response doesn't complete until the caller completes the returned
     /// source - lets a test hold one call in flight while later calls race ahead of it and resolve
     /// first, to exercise a stale-response guard (a later load must win even though its response
