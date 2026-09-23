@@ -6,7 +6,12 @@ namespace PeopleCore.DemoSeed.Seeding;
 
 public sealed partial class Seeder
 {
-    private static readonly (string Code, string Name)[] LeaveTypes = [("VL", "Vacation Leave"), ("SL", "Sick Leave")];
+    /// <summary>
+    /// The demo's leave types, and how final pay treats each: unused Vacation Leave is paid out and
+    /// counts toward the de minimis ceiling on converted vacation days; Sick Leave is neither.
+    /// </summary>
+    private static readonly (string Code, string Name, bool ConvertsToCash)[] LeaveTypes =
+        [("VL", "Vacation Leave", true), ("SL", "Sick Leave", false)];
 
     private async Task CreateHolidaysAndScheduleAsync()
     {
@@ -97,7 +102,7 @@ public sealed partial class Seeder
         var admin = await AdminAsync();
         var types = (await api.GetAsync("Read leave types", "api/leave-types", admin))!.AsArray();
 
-        foreach (var (code, _) in LeaveTypes)
+        foreach (var (code, _, _) in LeaveTypes)
         {
             var type = types.FirstOrDefault(t => string.Equals(t!["code"]!.GetValue<string>(), code, StringComparison.OrdinalIgnoreCase));
             if (type is null) continue;
@@ -132,7 +137,7 @@ public sealed partial class Seeder
     private async Task CreateLeaveSetupAsync()
     {
         var admin = await AdminAsync();
-        foreach (var (code, name) in LeaveTypes)
+        foreach (var (code, name, convertsToCash) in LeaveTypes)
         {
             if (!_leaveTypeIds.ContainsKey(code))
             {
@@ -140,6 +145,7 @@ public sealed partial class Seeder
                 {
                     name, code, maxDaysPerYear = 15m, isPaid = true, isCarryOver = false,
                     carryOverMaxDays = (decimal?)null, genderRestriction = (string?)null, requiresDocument = false,
+                    isConvertibleToCash = convertsToCash, countsAsVacationForDeMinimis = convertsToCash,
                 }, admin));
                 Count("leave types");
             }

@@ -2,16 +2,25 @@ using PeopleCore.Domain.Enums;
 
 namespace PeopleCore.Application.Leave.DTOs;
 
+/// <param name="IsConvertibleToCash">Whether a remaining balance is paid out on final pay.</param>
+/// <param name="CountsAsVacationForDeMinimis">Whether converted days count toward the 10-day de minimis ceiling on vacation leave.</param>
 public record LeaveTypeDto(
     Guid Id, string Name, string Code,
     decimal MaxDaysPerYear, bool IsPaid, bool IsCarryOver,
     decimal? CarryOverMaxDays, string? GenderRestriction,
-    bool RequiresDocument, bool IsActive);
+    bool RequiresDocument, bool IsActive,
+    bool IsConvertibleToCash, bool CountsAsVacationForDeMinimis);
 
+/// <summary>
+/// A leave type to create, or the full replacement of one on update. The final-pay settings
+/// default to the entity's own defaults, so a body that leaves them out is still valid - but an
+/// update that leaves them out resets them, as it would any other field.
+/// </summary>
 public record CreateLeaveTypeDto(
     string Name, string Code, decimal MaxDaysPerYear,
     bool IsPaid, bool IsCarryOver, decimal? CarryOverMaxDays,
-    string? GenderRestriction, bool RequiresDocument);
+    string? GenderRestriction, bool RequiresDocument,
+    bool IsConvertibleToCash = false, bool CountsAsVacationForDeMinimis = true);
 
 public record LeaveBalanceDto(
     Guid Id, Guid EmployeeId, string EmployeeName,
