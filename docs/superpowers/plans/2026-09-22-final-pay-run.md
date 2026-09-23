@@ -22,11 +22,14 @@
 ## Global Constraints
 
 - **Run types:** `PayrollRunType { Regular, FinalPay }`. Every existing run is Regular.
-- **Final-pay run number:** `FP-<year>-<nnn>`, where year is the pay date's year and nnn counts final-pay runs that year.
+- **Final-pay run number:** `FP-<year>-<nnn>`, where year is the pay date's year and nnn is one past the highest `FP-<year>-` number already used (not a count: a run whose pay date moves year is renumbered, leaving a gap).
 - **One employee per final-pay run.** It must have a separation, and each separation has at most one final-pay run (`Separation.FinalPayRunId`).
 - **Default period:** from the day after the employee's last Paid Regular run's `PeriodEnd` (or the first of the last working day's month, if none) to the last working day. HR may set a different start, which must not be after the last working day.
-- **Base pay of the final period:** `DailyRate × WorkingDays`. WorkingDays are the days the employee's shift schedules in the period, falling back to Monday to Friday where no shift is assigned. They are stored on the run's final-pay inputs and reused on recompute. Regular runs are unchanged.
-- **13th month:** included, using the existing rule (one twelfth of basic earned in the pay year, less any already paid).
+  - **No salary left:** when that default start falls after the last working day, the final pay is still created, with no salary: its period is stored as the last working day alone (`PeriodStart = PeriodEnd = LastWorkingDay`), `WorkingDays = 0`, and no attendance. It carries only the 13th month, leave conversion, separation or retirement pay, loans, HR deductions and the tax settle. Recompute reproduces it from the stored inputs. Contributions follow the engine's normal final-period rule.
+  - **Unpaid regular runs:** creating a final pay, or changing its period, is refused while a Regular run that includes the employee and isn't Paid overlaps the final period: "Payroll {RunNumber} covers {PeriodLabel} and isn't paid yet; pay it before creating final pay."
+- **Base pay of the final period:** `DailyRate × WorkingDays`, where WorkingDays are the period's *salary days*, following the daily-rate factor the rate is derived with. On 365 (rest days paid) they are every calendar day from `PeriodStart` to the last working day, inclusive. On 313 and 261 they are the days the employee's shift schedules, falling back to Monday to Friday where no shift is assigned. The attendance bridge's absences still come off once, per scheduled day absent. They are stored on the run's final-pay inputs and reused on recompute. Regular runs are unchanged.
+- **Allowances:** each of the employee's allowances is paid for the salary days, pro-rated like base pay: monthly amount × 12 / factor × salary days. Taxable and non-taxable allowances are classified as on a regular run. No salary days, no allowances.
+- **13th month:** included. Its year is the **last working day's** year: one twelfth of the basic earned in that year's Paid runs (selected by pay date, as elsewhere) plus this final pay's own RegularPay, less the 13th month already paid in that year. The tax settle and the 2316 stay on the pay date's year.
 - **Leave conversion:** remaining days (`LeaveBalance.RemainingDays`, current pay year) of each leave type with `IsConvertibleToCash`, times the daily rate. Up to 10 days in total across types with `CountsAsVacationForDeMinimis` are non-taxable, and the rest is taxable.
 - **Separation pay** (type AuthorizedCause), per year of service:
   - one month: Redundancy, LaborSavingDevices;
@@ -38,7 +41,7 @@
 - **Service years:** from hire date to last working day, in whole years, plus one when the remaining fraction is at least 6 months.
 - **HR override:** replaces the computed separation or retirement pay, or adds one where none is computed, and requires a note. It is non-taxable only when the separation type and conditions make the computed amount non-taxable; otherwise taxable.
 - **Loans:** the full remaining balance of every active loan, capped so the total fits in net pay after statutory deductions, pro-rated across loans as today. HR-added deductions come after the loans, under the same cap.
-- **Tax:** `WithholdingTax` of the final-pay entry = 2316 `Item24_TaxDue` (built over the pay year's Paid runs plus this entry, with the employee's saved 2316 inputs) − the tax already withheld in Paid runs − `Item25B_PrevTaxWithheld` − `Item27_PeraTaxCredit`. It can be negative.
+- **Tax:** `WithholdingTax` of the final-pay entry = 2316 `Item24_TaxDue` (built over the pay year's Paid runs plus this entry, with the employee's saved 2316 inputs) − the tax already withheld in Paid runs − `Item25B_PrevTaxWithheld` − `Item27_PeraTaxCredit`. It can be negative. The pay year is the pay date's year, even when the last working day was in the year before.
 - **Mark Paid of a final-pay run:** refused until the separation's clearance is complete: "Clear {item, item} before paying final pay."
 - **Permissions:** `Permissions.PayrollManage` for creating, updating and paying final pay; `Permissions.EmployeesManage` for separations as before.
 - **Overdue:** `Status == Separated && FinalPayDueBy < today && (no final-pay run || its status != Paid)`.
@@ -378,7 +381,7 @@ public sealed record FinalPayExtras(
   - The period start defaults as in Global Constraints, and must not be after the last working day: "The final pay period can't start after the last working day."
   - An override needs a note: "Explain the separation or retirement pay override."
   - Deduction labels must be non-blank with a positive amount.
-- **Working days:** the days in the period that the employee's shift schedules (rest days excluded), falling back to Monday to Friday where unassigned. Stored on `FinalPayInputs`.
+- **Working days (salary days):** as in Global Constraints - every calendar day on the 365 factor; on 313 and 261 the days the employee's shift schedules (rest days excluded), falling back to Monday to Friday where unassigned; 0 when there's no salary left. Stored on `FinalPayInputs`.
 - **Separation and retirement pay:**
   - AuthorizedCause: `FinalPayMath.SeparationPay` (non-taxable).
   - Retirement and eligible: `RetirementPay` (non-taxable). Not eligible: 0.

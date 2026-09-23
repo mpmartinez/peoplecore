@@ -61,7 +61,9 @@ Clearance is complete when every item is cleared. A final-pay run can be compute
 
 `PayrollRun` gains a **run type**: Regular (every run today) or Final pay. A final-pay run:
 - has exactly one employee, who must have a separation record in either status;
-- by default runs from the day after the employee's last Paid regular run's period end to the last working day. HR can change the start;
+- by default runs from the day after the employee's last Paid regular run's period end to the last working day. HR can change the start, but not to after the last working day;
+- when regular payroll has already paid past the last working day (that default start is after it), carries no salary: its period is the last working day alone, with no salary days and no attendance, and it pays only the 13th month, leave conversion, separation or retirement pay, loans, HR deductions and the tax settle;
+- can't be created, nor its period changed, while a regular run that includes the employee and isn't Paid overlaps the final period ("Payroll {RunNumber} covers {period} and isn't paid yet; pay it before creating final pay.");
 - pays on a date HR picks. The pay date decides the tax year, as for every run;
 - has its own run number sequence prefix, `FP-<year>-<nnn>`;
 - goes through Draft, Approve and Mark Paid like any run, with a payslip. It appears in the payroll run list, marked "Final pay".
@@ -69,7 +71,7 @@ Clearance is complete when every item is cleared. A final-pay run can be compute
 ### Earnings
 
 1. **Salary to the last working day.** The period's regular pay through the normal computation and attendance bridge. The period is usually shorter than a cutoff; the engine already deducts absences and tardiness from the period's base pay, and the base pay of a short final period is the daily rate times the working days in the period (see "Base pay of a short period").
-2. **13th month, pro-rated.** The run is computed with the 13th month included. The existing rule already gives one twelfth of the basic pay earned in the pay year, less any 13th month already paid that year. The 90,000 exemption and its tax work as they do today.
+2. **13th month, pro-rated.** The run is computed with the 13th month included: one twelfth of the basic pay earned in the **last working day's year** (that year's Paid runs, selected by pay date as elsewhere, plus this run's regular pay), less any 13th month already paid that year. A final pay made after the year end still owes the year the employee worked; the tax settle stays on the pay date's year. The 90,000 exemption and its tax work as they do today.
 3. **Leave conversion.**
    - `LeaveType` gains **Convertible to cash** (default off). Service Incentive Leave must be convertible by law; turning it on for vacation leave is company policy.
    - For each convertible type, the employee's remaining days in the current year (`LeaveBalance.RemainingDays`) are paid at the daily rate.
@@ -87,7 +89,8 @@ Clearance is complete when every item is cleared. A final-pay run can be compute
    - a day's pay is the daily rate.
 
    It's **non-taxable** when those conditions hold. When they don't (for example an early retirement under a company plan), nothing is computed and HR enters an amount.
-6. **HR override.** HR can replace the computed separation or retirement amount, or add one where none is computed, with a required note. An overridden amount keeps the computed one's tax treatment only when the type is one of the non-taxable cases above; otherwise it is taxable. The note and both amounts are kept for audit.
+6. **Allowances**, each pro-rated over the final period's salary days like base pay: the monthly amount × 12 / daily-rate factor × salary days. They are taxable or non-taxable exactly as on a regular run; no salary days, no allowances.
+7. **HR override.** HR can replace the computed separation or retirement amount, or add one where none is computed, with a required note. An overridden amount keeps the computed one's tax treatment only when the type is one of the non-taxable cases above; otherwise it is taxable. The note and both amounts are kept for audit.
 
 ### Deductions
 
@@ -114,7 +117,7 @@ This makes the 2316 for the year agree with what was withheld: its tax due equal
 
 ### Base pay of a short period
 
-A final period is usually shorter than a full cutoff. Its base pay is the daily rate times the working days in the period, where working days are the days the employee's shift schedules in it (Monday to Friday where no shift is assigned). The engine's usual proration (half a month per semi-monthly cutoff) applies only to Regular runs. This rule is only for Final pay runs.
+A final period is usually shorter than a full cutoff. Its base pay is the daily rate times the salary days in the period, and which days the salary pays follows the daily-rate factor the rate is derived with. On the 365 factor rest days are paid, so the salary days are every calendar day from the period start to the last working day, inclusive. On 313 and 261 they are the days the employee's shift schedules (Monday to Friday where no shift is assigned). Absences from the attendance bridge still come off once, per scheduled day absent. The engine's usual proration (half a month per semi-monthly cutoff) applies only to Regular runs. This rule is only for Final pay runs.
 
 ## Certificate of Employment
 
