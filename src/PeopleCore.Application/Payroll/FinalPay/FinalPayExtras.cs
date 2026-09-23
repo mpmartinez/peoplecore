@@ -5,7 +5,12 @@ namespace PeopleCore.Application.Payroll.FinalPay;
 /// the extra final-pay earnings (already computed - see <see cref="FinalPayMath"/>), the HR
 /// deductions to withhold, and a settled tax figure.
 /// </summary>
-/// <param name="WorkingDays">Days actually worked in the short final period; prices the base period pay at the daily rate instead of a full salary share.</param>
+/// <param name="WorkingDays">
+/// The final period's salary days - every calendar day under a daily-rate factor that pays rest
+/// days (365), the scheduled days under one that doesn't (313, 261); never the days attended.
+/// Prices the base period pay at the daily rate instead of a full salary share; absences and
+/// tardiness still come off it through the attendance input.
+/// </param>
 /// <param name="LeaveConversionNonTaxable">The de minimis part of unused leave converted to cash.</param>
 /// <param name="LeaveConversionTaxable">The taxable part of unused leave converted to cash.</param>
 /// <param name="SeparationPay">Statutory separation pay, if any.</param>

@@ -18,7 +18,11 @@ public class FinalPayInputs : AuditableEntity
     /// <summary>The separation this final pay is for.</summary>
     public Guid SeparationId { get; set; }
 
-    /// <summary>Days the employee's shift schedules in the final period; Base pay = DailyRate × WorkingDays.</summary>
+    /// <summary>
+    /// The final period's salary days: every calendar day under a daily-rate factor that pays rest
+    /// days (365), the days the employee's shift schedules under one that doesn't (313, 261).
+    /// Base pay = DailyRate × WorkingDays, before absences and tardiness come off.
+    /// </summary>
     public decimal WorkingDays { get; set; }
 
     /// <summary>Replaces the computed separation pay, or adds one where none was computed. Requires <see cref="OverrideNote"/>.</summary>

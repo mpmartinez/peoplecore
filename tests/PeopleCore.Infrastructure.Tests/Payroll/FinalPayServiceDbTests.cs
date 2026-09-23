@@ -142,20 +142,20 @@ public class FinalPayServiceDbTests : DatabaseTestBase
         run.PeriodStart.Should().Be(new DateOnly(2026, 3, 1));
         run.PeriodEnd.Should().Be(LastDay);
         run.FinalPayInputs!.SeparationId.Should().Be(seeded.Id);
-        run.FinalPayInputs.WorkingDays.Should().Be(10m);
+        run.FinalPayInputs.WorkingDays.Should().Be(13m);   // Mar 1-13, calendar days on the 365 factor
         run.FinalPayInputs.Deductions.Select(d => (d.Label, d.Amount)).Should().Equal(("Unreturned laptop", 25_000m));
 
-        // The worked example's figures, now read back from Postgres.
+        // The worked example's figures (FinalPayServiceTests), now read back from Postgres.
         var entry = run.Employees.Single();
-        entry.RegularPay.Should().Be(12_000m);
-        entry.ThirteenthMonth.Should().Be(4_041.67m);
+        entry.RegularPay.Should().Be(15_600m);           // 1,200 x 13
+        entry.ThirteenthMonth.Should().Be(4_341.67m);    // (36,500 + 15,600) / 12
         entry.LeaveConversionPay.Should().Be(6_000m);
         entry.SeparationPay.Should().Be(182_500m);
         entry.WithholdingTax.Should().Be(-2_000m);
         entry.LoanDeductions.Should().Be(3_000m);
         entry.LoanDeductionLines.Should().ContainSingle().Which.Amount.Should().Be(3_000m);
         entry.OtherDeductions.Should().Be(25_000m);
-        entry.NetPay.Should().Be(175_679.17m);   // 200,679.17 less the 25,000 laptop
+        entry.NetPay.Should().Be(179_579.17m);   // 204,579.17 less the 25,000 laptop
     }
 
     [Fact]
@@ -195,7 +195,7 @@ public class FinalPayServiceDbTests : DatabaseTestBase
         var entry = run.Employees.Should().ContainSingle().Subject;
         entry.OtherDeductions.Should().Be(1_500m);
         entry.WithholdingTax.Should().Be(-2_000m);
-        entry.NetPay.Should().Be(199_179.17m);   // 200,679.17 less the 1,500 cash advance
+        entry.NetPay.Should().Be(203_079.17m);   // 204,579.17 less the 1,500 cash advance
     }
 
     [Fact]

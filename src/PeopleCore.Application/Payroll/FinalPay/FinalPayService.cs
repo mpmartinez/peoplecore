@@ -19,12 +19,15 @@ namespace PeopleCore.Application.Payroll.FinalPay;
 /// <para>
 /// <b>Attendance.</b> The final period goes through the attendance bridge like any cutoff (the
 /// spec's "normal computation and attendance bridge"). Its base pay is the daily rate times the
-/// <i>working days</i> - the days the shift schedules, Monday to Friday where none is assigned -
-/// never the days attended. The bridge's absences and tardiness then come off that base once,
-/// in the engine, exactly as they come off a regular cutoff's salary share. Counting attended
-/// days as the working days would take every absence off twice. An unassigned day is paid under
-/// the Monday-to-Friday fallback but, as the bridge never guesses a schedule, can't be marked
-/// absent - the bridge's own choice to err toward paying rather than over-deducting wages.
+/// <i>salary days</i> (stored as <see cref="FinalPayInputs.WorkingDays"/>), never the days
+/// attended. Which days the salary pays follows the daily-rate factor the rate itself is derived
+/// with: under 365 the salary pays rest days, so every calendar day of the period counts; under
+/// 313 or 261 it doesn't, so only the days the shift schedules count - Monday to Friday where none
+/// is assigned. The bridge's absences and tardiness then come off that base once, in the engine,
+/// per scheduled day absent, exactly as they come off a regular cutoff's salary share. Counting
+/// attended days as the salary days would take every absence off twice. An unassigned day is paid
+/// under the Monday-to-Friday fallback but, as the bridge never guesses a schedule, can't be
+/// marked absent - the bridge's own choice to err toward paying rather than over-deducting wages.
 /// </para>
 /// <para>
 /// <b>Allowances</b> are not paid on a final pay. The engine pays a recurring allowance as a whole
@@ -261,7 +264,7 @@ public sealed class FinalPayService : IFinalPayService
         return $"FP-{payYear}-{sequence:D3}";
     }
 
-    /// <summary>Writes the request onto the run and its inputs, counting the period's working days.</summary>
+    /// <summary>Writes the request onto the run and its inputs, counting the period's salary days.</summary>
     private async Task ApplyRequestAsync(PayrollRun run, FinalPayInputs inputs, Separation separation,
         FinalPayRequest request, DateOnly periodStart, CancellationToken ct)
     {
@@ -269,7 +272,9 @@ public sealed class FinalPayService : IFinalPayService
         run.PeriodEnd = separation.LastWorkingDay;
         run.PayDate = request.PayDate;
 
-        inputs.WorkingDays = await CountWorkingDaysAsync(separation.EmployeeId, run.PeriodStart, run.PeriodEnd, ct);
+        var settings = await _settings.GetDefaultAsync(ct);
+        inputs.WorkingDays = await CountSalaryDaysAsync(
+            separation.EmployeeId, run.PeriodStart, run.PeriodEnd, settings?.DailyRateFactor, ct);
         inputs.SeparationPayOverride = request.SeparationPayOverride;
         inputs.RetirementPayOverride = request.RetirementPayOverride;
         inputs.OverrideNote = string.IsNullOrWhiteSpace(request.OverrideNote) ? null : request.OverrideNote.Trim();
@@ -281,12 +286,18 @@ public sealed class FinalPayService : IFinalPayService
     }
 
     /// <summary>
-    /// The days in the period the employee's shift schedules - rest days excluded - with Monday to
-    /// Friday standing in for any day no shift is assigned. Days scheduled, not days attended:
-    /// absences come off separately, through the attendance bridge (see the class remarks).
+    /// The days in the period the salary pays. Under a factor that pays rest days (365) that is
+    /// every calendar day; otherwise (313, 261) the days the employee's shift schedules - rest
+    /// days excluded - with Monday to Friday standing in for any day no shift is assigned. Never
+    /// the days attended: absences come off separately, through the attendance bridge (see the
+    /// class remarks).
     /// </summary>
-    private async Task<decimal> CountWorkingDaysAsync(Guid employeeId, DateOnly from, DateOnly to, CancellationToken ct)
+    private async Task<decimal> CountSalaryDaysAsync(Guid employeeId, DateOnly from, DateOnly to,
+        decimal? dailyRateFactor, CancellationToken ct)
     {
+        if (PayrollComputationService.PaysRestDays(dailyRateFactor))
+            return to.DayNumber - from.DayNumber + 1;
+
         decimal days = 0m;
         for (var date = from; date <= to; date = date.AddDays(1))
         {

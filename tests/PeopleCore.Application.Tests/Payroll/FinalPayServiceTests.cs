@@ -27,8 +27,9 @@ namespace PeopleCore.Application.Tests.Payroll;
 /// The default world is the plan's worked example: 36,500 a month (daily rate 1,200.00 under the
 /// 365 factor), hired 2021-03-01, made redundant with a last working day of Friday 2026-03-13,
 /// one Paid regular run for February (RegularPay 36,500, tax withheld 2,000), 5 days of
-/// convertible vacation leave, one loan with 3,000 left, paid on 2026-03-31. No shift is
-/// assigned, so the working days fall back to Monday to Friday, and there is no attendance.
+/// convertible vacation leave, one loan with 3,000 left, paid on 2026-03-31. No payroll settings
+/// are saved, so the daily-rate factor is the default 365 - rest days are paid, and the final
+/// period's salary days are its calendar days. No shift is assigned and there is no attendance.
 /// </para>
 /// </summary>
 public class FinalPayServiceTests
@@ -223,21 +224,21 @@ public class FinalPayServiceTests
         entry.DailyRate.Should().Be(1_200m);
 
         // Period: the day after February's Paid regular run ended (2026-02-28) is 2026-03-01, a
-        // Sunday, to the last working day, Friday 2026-03-13. No shift is assigned, so Monday to
-        // Friday counts: Mar 2-6 (5) + Mar 9-13 (5) = 10 working days.
+        // Sunday, to the last working day, Friday 2026-03-13. The 365 factor pays rest days, so
+        // every calendar day of the period is a salary day: Mar 1-13 = 13.
         summary.PeriodStart.Should().Be(new DateOnly(2026, 3, 1));
         summary.PeriodEnd.Should().Be(LastDay);
-        summary.WorkingDays.Should().Be(10m);
-        _savedRun!.FinalPayInputs!.WorkingDays.Should().Be(10m);
+        summary.WorkingDays.Should().Be(13m);
+        _savedRun!.FinalPayInputs!.WorkingDays.Should().Be(13m);
 
-        // RegularPay = daily rate x working days = 1,200 x 10 = 12,000.00 (no attendance, so no
+        // RegularPay = daily rate x salary days = 1,200 x 13 = 15,600.00 (no attendance, so no
         // absence or tardiness comes off).
-        entry.RegularPay.Should().Be(12_000m);
+        entry.RegularPay.Should().Be(15_600m);
 
-        // 13th month = (basic earned earlier in the pay year + this period's basic) / 12
-        //            = (36,500 + 12,000) / 12 = 48,500 / 12 = 4,041.666... -> 4,041.67
+        // 13th month = (basic earned earlier in the year + this period's basic) / 12
+        //            = (36,500 + 15,600) / 12 = 52,100 / 12 = 4,341.666... -> 4,341.67
         // Nothing was paid as 13th month earlier in 2026, so all of it is due now.
-        entry.ThirteenthMonth.Should().Be(4_041.67m);
+        entry.ThirteenthMonth.Should().Be(4_341.67m);
 
         // Leave: 5 days of vacation leave, convertible, x 1,200 = 6,000.00. All 5 days are within
         // the 10-day de minimis ceiling, so all 6,000 is non-taxable. Sick leave (7 days) is not
@@ -261,33 +262,34 @@ public class FinalPayServiceTests
         entry.PagIbigEmployee.Should().Be(200m);
 
         // Tax, settled through the 2316:
-        //   First compute (no override): withholding base = 12,000 + 0 taxable final pay
-        //     - 1,750 - 912.50 - 200 = 9,137.50 a month -> 109,650 a year -> 0 tax; the 13th
-        //     month (4,041.67) is inside the 90,000 exemption -> 0. So this entry withholds 0.
+        //   First compute (no override): withholding base = 15,600 + 0 taxable final pay
+        //     - 1,750 - 912.50 - 200 = 12,737.50 a month -> 152,850 a year -> 0 tax; the 13th
+        //     month (4,341.67) is inside the 90,000 exemption -> 0. So this entry withholds 0.
         //   2316 over February + this draft:
-        //     Item 39 basic = 36,500 + 12,000 = 48,500; Item 48 taxable 13th month = 0;
+        //     Item 39 basic, net of contributions = 36,500 + (15,600 - 2,862.50) = 49,237.50;
+        //     Item 48 taxable 13th month = 0;
         //     Item 51B taxable final pay = 6,000 + 182,500 - 188,500 = 0.
-        //     Item 52 = Item 23 = 48,500 -> Item 24 tax due = 0 (under 250,000).
+        //     Item 52 = Item 23 = 49,237.50 -> Item 24 tax due = 0 (under 250,000).
         //     Item 25A = 2,000 (February) + 0 (this entry); Item 25B = 0; Item 27 = 0.
         //   Settled = Item24 - (Item25A - this entry's 0) - Item25B - Item27
         //           = 0 - (2,000 - 0) - 0 - 0 = -2,000.00, a refund of February's over-withholding.
         entry.WithholdingTax.Should().Be(-2_000m);
 
         // Loan: statutory = 1,750 + 912.50 + 200 + (-2,000) = 862.50. The budget for loans is
-        //   12,000 + 4,041.67 + 6,000 + 182,500 - 862.50 = 203,679.17, which covers the whole
+        //   15,600 + 4,341.67 + 6,000 + 182,500 - 862.50 = 207,579.17, which covers the whole
         //   3,000 balance.
         entry.LoanDeductions.Should().Be(3_000m);
         entry.OtherDeductions.Should().Be(0m);
 
-        // Gross = 12,000 + 4,041.67 + 6,000 + 182,500 = 204,541.67
+        // Gross = 15,600 + 4,341.67 + 6,000 + 182,500 = 208,441.67
         // Deductions = 1,750 + 912.50 + 200 + (-2,000) + 3,000 + 0 = 3,862.50
-        // Net = 204,541.67 - 3,862.50 = 200,679.17
-        entry.GrossPay.Should().Be(204_541.67m);
-        entry.NetPay.Should().Be(200_679.17m);
+        // Net = 208,441.67 - 3,862.50 = 204,579.17
+        entry.GrossPay.Should().Be(208_441.67m);
+        entry.NetPay.Should().Be(204_579.17m);
 
-        summary.GrossPay.Should().Be(204_541.67m);
+        summary.GrossPay.Should().Be(208_441.67m);
         summary.WithholdingTax.Should().Be(-2_000m);
-        summary.NetPay.Should().Be(200_679.17m);
+        summary.NetPay.Should().Be(204_579.17m);
         summary.LeaveConversionPay.Should().Be(6_000m);
         summary.LeaveConversionNonTaxable.Should().Be(6_000m);
         summary.SeparationPay.Should().Be(182_500m);
@@ -310,8 +312,8 @@ public class FinalPayServiceTests
     public async Task CreateAsync_SettledTax_TakesOffThePreviousEmployersTaxAndThePeraCredit()
     {
         // The saved 2316 inputs carry a previous employer's 100,000 taxable compensation with 500
-        // withheld from it, and a 100 PERA credit. Taxable for the year is 48,500 + 100,000 =
-        // 148,500, still under 250,000, so tax due stays 0 and the settlement is
+        // withheld from it, and a 100 PERA credit. Taxable for the year is 49,237.50 + 100,000 =
+        // 149,237.50, still under 250,000, so tax due stays 0 and the settlement is
         // 0 - (2,000 - 0) - 500 - 100 = -2,600.00.
         _bir2316Inputs.Setup(r => r.GetAsync(_employee.Id, 2026, It.IsAny<CancellationToken>()))
                       .ReturnsAsync(new Bir2316Inputs
@@ -330,13 +332,14 @@ public class FinalPayServiceTests
     public async Task CreateAsync_SettledTax_CollectsWhatTheYearStillOwes()
     {
         // A 150,000 monthly salary, and 300,000 paid earlier in the year with only 1,000 withheld.
-        // The final period pays 10 x 4,931.51 = 49,315.10 of basic, less the employee's
-        // contributions on a 150,000 salary: SSS 1,750 (the top bracket), PhilHealth 2,500 (the
-        // ceiling) and Pag-IBIG 200 = 4,450, which aren't taxable. Separation pay and the 5 leave
-        // days are non-taxable too, so taxable for the year = 300,000 + 49,315.10 - 4,450 =
-        // 344,865.10 and tax due = (344,865.10 - 250,000) x 15% = 14,229.765, which
-        // BirWithholdingTax rounds half-to-even (Math.Round's default) to 14,229.76. The
-        // settlement collects 14,229.76 - 1,000 = 13,229.76.
+        // Daily rate = 150,000 x 12 / 365 = 4,931.506... -> 4,931.51. The final period pays
+        // 13 x 4,931.51 = 64,109.63 of basic, less the employee's contributions on a 150,000
+        // salary: SSS 1,750 (the top bracket), PhilHealth 2,500 (the ceiling) and Pag-IBIG 200 =
+        // 4,450, which aren't taxable. Separation pay and the 5 leave days are non-taxable too, and
+        // the 13th month ((300,000 + 64,109.63) / 12 = 30,342.47) is inside the 90,000 exemption,
+        // so taxable for the year = 300,000 + 64,109.63 - 4,450 = 359,659.63 and tax due =
+        // (359,659.63 - 250,000) x 15% = 16,448.9445 -> 16,448.94. The settlement collects
+        // 16,448.94 - 1,000 = 15,448.94.
         _compensation.BasicSalary = 150_000m;
         _februaryRun.Employees.Single().RegularPay = 300_000m;
         _februaryRun.Employees.Single().WithholdingTax = 1_000m;
@@ -347,9 +350,9 @@ public class FinalPayServiceTests
         var cert = await bir2316.BuildWithDraftEntryAsync(_employee.Id, 2026, _savedRun!, SavedEntry);
 
         (SavedEntry.SSSEmployee + SavedEntry.PhilHealthEmployee + SavedEntry.PagIbigEmployee).Should().Be(4_450m);
-        cert!.Item23_GrossTaxable.Should().Be(344_865.10m);
-        SavedEntry.WithholdingTax.Should().Be(13_229.76m);
-        cert.Item24_TaxDue.Should().Be(14_229.76m);
+        cert!.Item23_GrossTaxable.Should().Be(359_659.63m);
+        SavedEntry.WithholdingTax.Should().Be(15_448.94m);
+        cert.Item24_TaxDue.Should().Be(16_448.94m);
         cert.Item24_TaxDue.Should().Be(cert.Item26_TotalTaxWithheld);
     }
 
@@ -560,29 +563,52 @@ public class FinalPayServiceTests
     // Working days
     // ------------------------------------------------------------------
 
-    [Fact]
-    public async Task CreateAsync_WorkingDays_AreTheDaysTheShiftSchedules_FallingBackToWeekdaysWhereUnassigned()
+    private void SixDayShiftForTheFirstWeek()
+        => _shifts.Setup(s => s.ResolveShiftForDayAsync(_employee.Id, It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                  .ReturnsAsync((Guid _, DateOnly date, CancellationToken _) => date <= new DateOnly(2026, 3, 7)
+                      ? new DailyScheduleDto(date, "Six-day", new TimeOnly(8, 0), new TimeOnly(17, 0),
+                                             IsRestDay: date.DayOfWeek == DayOfWeek.Sunday, IsNightShift: false)
+                      : null);
+
+    [Theory]
+    [InlineData(313)]
+    [InlineData(261)]
+    public async Task CreateAsync_SalaryDays_OnAFactorThatLeavesRestDaysUnpaid_AreTheDaysTheShiftSchedules(int factor)
     {
+        // Under 313 or 261 a rest day is unpaid, so only scheduled days count.
         // First week (Mar 1-7) on a six-day shift, Sunday off: Mar 2-7 = 6 days.
         // Second week (Mar 8-13) unassigned: weekdays Mar 9-13 = 5 days. Total 11.
-        _shifts.Setup(s => s.ResolveShiftForDayAsync(_employee.Id, It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
-               .ReturnsAsync((Guid _, DateOnly date, CancellationToken _) => date <= new DateOnly(2026, 3, 7)
-                   ? new DailyScheduleDto(date, "Six-day", new TimeOnly(8, 0), new TimeOnly(17, 0),
-                                          IsRestDay: date.DayOfWeek == DayOfWeek.Sunday, IsNightShift: false)
-                   : null);
+        _settings.Setup(s => s.GetDefaultAsync(It.IsAny<CancellationToken>()))
+                 .ReturnsAsync(new PayrollSettings { DailyRateFactor = factor });
+        SixDayShiftForTheFirstWeek();
 
         var summary = await _sut.CreateAsync(_separation.Id, Request());
 
         summary.WorkingDays.Should().Be(11m);
         _savedRun!.FinalPayInputs!.WorkingDays.Should().Be(11m);
-        SavedEntry.RegularPay.Should().Be(13_200m);
+        // Daily rate = 36,500 x 12 / factor: 438,000 / 313 = 1,399.36 (x 11 = 15,392.96);
+        // 438,000 / 261 = 1,678.16 (x 11 = 18,459.76).
+        SavedEntry.RegularPay.Should().Be(factor == 313 ? 15_392.96m : 18_459.76m);
+    }
+
+    [Fact]
+    public async Task CreateAsync_SalaryDays_OnThe365Factor_AreEveryCalendarDay_WhateverTheShift()
+    {
+        // The 365 factor pays rest days, so the six-day shift's Sunday off and the unassigned
+        // weekend still count: Mar 1-13 = 13 days.
+        SixDayShiftForTheFirstWeek();
+
+        var summary = await _sut.CreateAsync(_separation.Id, Request());
+
+        summary.WorkingDays.Should().Be(13m);
+        SavedEntry.RegularPay.Should().Be(15_600m);
     }
 
     [Fact]
     public async Task CreateAsync_AbsencesComeOffOnceThroughTheAttendanceBridge()
     {
-        // Working days count the schedule (10), not attendance; the bridge's 2 absent days then
-        // come off the base once: 1,200 x 10 - 1,200 x 2 = 9,600.
+        // Salary days count the calendar (13), not attendance; the bridge's 2 absent scheduled
+        // days then come off the base once: 1,200 x 13 - 1,200 x 2 = 13,200.
         _attendance.Setup(b => b.BuildAsync(It.IsAny<IReadOnlyList<Guid>>(), new DateOnly(2026, 3, 1), LastDay,
                                             It.IsAny<CancellationToken>()))
                    .ReturnsAsync(new AttendanceBridgeResult(
@@ -590,10 +616,10 @@ public class FinalPayServiceTests
 
         var summary = await _sut.CreateAsync(_separation.Id, Request());
 
-        summary.WorkingDays.Should().Be(10m);
+        summary.WorkingDays.Should().Be(13m);
         SavedEntry.AbsenceDeduction.Should().Be(2_400m);
         SavedEntry.AbsenceDays.Should().Be(2m);   // snapshotted for a recompute
-        SavedEntry.RegularPay.Should().Be(9_600m);
+        SavedEntry.RegularPay.Should().Be(13_200m);
     }
 
     // ------------------------------------------------------------------
@@ -705,12 +731,12 @@ public class FinalPayServiceTests
     public async Task CreateAsync_Summary_ShowsEachLoansBalanceDeductionAndWhatIsLeftUncovered()
     {
         // A 500,000 balance can't be covered: the budget after statutory deductions is
-        // 204,541.67 - 862.50 = 203,679.17, so 296,320.83 stays on the loan.
+        // 208,441.67 - 862.50 = 207,579.17, so 500,000 - 207,579.17 = 292,420.83 stays on the loan.
         _activeLoans[0].RemainingBalance = 500_000m;
 
         var summary = await _sut.CreateAsync(_separation.Id, Request());
 
-        summary.Loans.Should().Equal(new FinalPayLoanLineDto("SSSLoan", 500_000m, 203_679.17m, 296_320.83m));
+        summary.Loans.Should().Equal(new FinalPayLoanLineDto("SSSLoan", 500_000m, 207_579.17m, 292_420.83m));
     }
 
     [Fact]
@@ -737,8 +763,8 @@ public class FinalPayServiceTests
 
         loaded.Should().NotBeNull();
         loaded!.RunNumber.Should().Be(created.RunNumber);
-        loaded.NetPay.Should().Be(200_679.17m);
-        loaded.WorkingDays.Should().Be(10m);
+        loaded.NetPay.Should().Be(204_579.17m);
+        loaded.WorkingDays.Should().Be(13m);
         loaded.Loans.Should().Equal(new FinalPayLoanLineDto("SSSLoan", 3_000m, 3_000m, 0m));
     }
 
@@ -769,11 +795,11 @@ public class FinalPayServiceTests
         var entries = await _sut.RecomputeAsync(run);
 
         var entry = entries.Should().ContainSingle().Subject;
-        entry.RegularPay.Should().Be(12_000m);                 // still 10 stored working days
+        entry.RegularPay.Should().Be(15_600m);                 // still the 13 stored salary days
         entry.WithholdingTax.Should().Be(-3_000m);             // 0 - (2,000 + 1,000)
         entry.SeparationPay.Should().Be(182_500m);
         entry.LoanDeductions.Should().Be(3_000m);
-        run.FinalPayInputs!.WorkingDays.Should().Be(10m);
+        run.FinalPayInputs!.WorkingDays.Should().Be(13m);
     }
 
     [Fact]
@@ -814,7 +840,7 @@ public class FinalPayServiceTests
         var entry = (await _sut.RecomputeAsync(_savedRun!)).Single();
 
         entry.AbsenceDays.Should().Be(1m);
-        entry.RegularPay.Should().Be(10_800m);
+        entry.RegularPay.Should().Be(14_400m);   // 1,200 x 13 - 1,200 x 1
     }
 
     [Fact]

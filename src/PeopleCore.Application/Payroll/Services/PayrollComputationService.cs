@@ -139,6 +139,14 @@ public class PayrollComputationService
     }
 
     /// <summary>
+    /// Whether the salary pays rest days under <paramref name="dailyRateFactor"/> (a missing or
+    /// non-positive factor meaning the default 365). The 365 factor counts every day of the year,
+    /// rest days included; 313 and 261 leave rest days out, so a rest day is unpaid.
+    /// </summary>
+    public static bool PaysRestDays(decimal? dailyRateFactor)
+        => (dailyRateFactor is > 0m ? dailyRateFactor.Value : DefaultDailyRateFactor) >= 365m;
+
+    /// <summary>
     /// Full computation for one employee in one payroll run.
     /// </summary>
     /// <param name="attendance">
@@ -208,7 +216,7 @@ public class PayrollComputationService
             // adds 100%, not 200%, or it would be paid at 300%. It pays rest days too only under
             // the 365 factor; under 313 or 261 a rest day is unpaid, so work on one earns its
             // whole rate.
-            decimal alreadyPaid = IsRestDay(day.DayType) && factor < 365m ? 0m : 1m;
+            decimal alreadyPaid = IsRestDay(day.DayType) && !PaysRestDays(factor) ? 0m : 1m;
             decimal premium = DolePremiumRates.BaseRate(day.DayType) - alreadyPaid;
 
             // A worked day of this type, and the first eight hours of work on a rest day.
