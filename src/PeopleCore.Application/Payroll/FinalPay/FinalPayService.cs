@@ -639,6 +639,7 @@ public sealed class FinalPayService : IFinalPayService
             inputs.SeparationPayOverride, inputs.RetirementPayOverride,
             inputs.OverrideNote, figures.ServiceYears,
             inputs.Deductions.Select(d => new FinalPayDeductionDto(d.Label, d.Amount)).ToList(),
+            DeductionLines(inputs, entry),
             await LoanLinesAsync(separation.EmployeeId, run, entry, ct),
             entry.WithholdingTax, entry.GrossPay, entry.NetPay,
             separation.ClearanceComplete,
@@ -647,6 +648,25 @@ public sealed class FinalPayService : IFinalPayService
                 .OrderBy(i => i.SortOrder)
                 .Select(i => i.Name)
                 .ToList());
+    }
+
+    /// <summary>
+    /// HR's deductions as the entry took them. The engine caps their total by what net pay has
+    /// left after the loans (<see cref="PayrollRunEmployee.OtherDeductions"/>); that total is
+    /// shared out in the order HR listed them, each taken in full until it runs out, and whatever
+    /// a deduction didn't get is uncovered.
+    /// </summary>
+    private static IReadOnlyList<FinalPayDeductionLineDto> DeductionLines(FinalPayInputs inputs, PayrollRunEmployee entry)
+    {
+        decimal left = entry.OtherDeductions;
+        var lines = new List<FinalPayDeductionLineDto>();
+        foreach (var deduction in inputs.Deductions)
+        {
+            decimal deducted = Math.Min(deduction.Amount, Math.Max(0m, left));
+            left -= deducted;
+            lines.Add(new FinalPayDeductionLineDto(deduction.Label, deduction.Amount, deducted, deduction.Amount - deducted));
+        }
+        return lines;
     }
 
     /// <summary>

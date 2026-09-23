@@ -1055,6 +1055,33 @@ public class FinalPayServiceTests
         SavedEntry.OtherDeductions.Should().Be(26_500m);
         summary.Deductions.Should().Equal(
             new FinalPayDeductionDto("Unreturned laptop", 25_000m), new FinalPayDeductionDto("Cash advance", 1_500m));
+        summary.DeductionLines.Should().Equal(
+            new FinalPayDeductionLineDto("Unreturned laptop", 25_000m, 25_000m, 0m),
+            new FinalPayDeductionLineDto("Cash advance", 1_500m, 1_500m, 0m));
+    }
+
+    [Fact]
+    public async Task TheSummary_ShowsWhatEachHrDeductionActuallyTook_WhenNetPayCantCoverThemAll()
+    {
+        // The worked example leaves 207,579.17 for loans and HR's deductions (gross 208,441.67
+        // less statutory 862.50). The 3,000 loan comes first: 204,579.17 left. HR's deductions
+        // are taken in the order HR listed them: the 200,000 laptop in full, then 4,579.17 of the
+        // 10,000 cash advance - 5,420.83 of it uncovered.
+        var summary = await _sut.CreateAsync(_separation.Id, Request(deductions:
+        [
+            new FinalPayDeductionDto("Unreturned laptop", 200_000m),
+            new FinalPayDeductionDto("Cash advance", 10_000m),
+        ]));
+
+        SavedEntry.LoanDeductions.Should().Be(3_000m);
+        SavedEntry.OtherDeductions.Should().Be(204_579.17m);
+        SavedEntry.NetPay.Should().Be(0m);
+        // What HR asked for is kept as asked, for the edit form.
+        summary.Deductions.Should().Equal(
+            new FinalPayDeductionDto("Unreturned laptop", 200_000m), new FinalPayDeductionDto("Cash advance", 10_000m));
+        summary.DeductionLines.Should().Equal(
+            new FinalPayDeductionLineDto("Unreturned laptop", 200_000m, 200_000m, 0m),
+            new FinalPayDeductionLineDto("Cash advance", 10_000m, 4_579.17m, 5_420.83m));
     }
 
     // ------------------------------------------------------------------

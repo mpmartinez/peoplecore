@@ -60,7 +60,7 @@ public class FinalPayTests : BunitContext
         string deductions = "[]", string loans = "[]", decimal tax = 1250.50m,
         bool clearanceComplete = true, string outstanding = "[]", string periodStart = "2026-04-01",
         string separationPayOverride = "null", string retirementPayOverride = "null", bool periodStartIsDefault = false,
-        bool hasConvertibleLeaveType = true) =>
+        bool hasConvertibleLeaveType = true, string? deductionLines = null) =>
         $$"""
         {"runId":"{{RunId}}","runNumber":"FP-2026-001","status":"{{status}}","periodStart":"{{periodStart}}","periodEnd":"2026-04-15",
          "payDate":"2026-04-30","workingDays":{{workingDays}},"noSalaryDays":{{(noSalaryDays ? "true" : "false")}},
@@ -70,9 +70,19 @@ public class FinalPayTests : BunitContext
          "separationPay":{{separationPay}},"retirementPay":{{retirementPay}},"computedSeparationOrRetirementPay":{{computed}},
          "separationPayOverride":{{separationPayOverride}},"retirementPayOverride":{{retirementPayOverride}},
          "overrideNote":{{(overrideNote is null ? "null" : $"\"{overrideNote}\"")}},"serviceYears":6,
-         "deductions":{{deductions}},"loans":{{loans}},"withholdingTax":{{tax}},"grossPay":32500,"netPay":28000,
+         "deductions":{{deductions}},"deductionLines":{{deductionLines ?? FullyTaken(deductions)}},"loans":{{loans}},"withholdingTax":{{tax}},"grossPay":32500,"netPay":28000,
          "clearanceComplete":{{(clearanceComplete ? "true" : "false")}},"outstandingClearance":{{outstanding}}}
         """;
+
+    /// <summary>The deduction lines of HR deductions all taken in full.</summary>
+    private static string FullyTaken(string deductions) =>
+        JsonSerializer.Serialize(JsonDocument.Parse(deductions).RootElement.EnumerateArray().Select(d => new
+        {
+            label = d.GetProperty("label").GetString(),
+            amount = d.GetProperty("amount").GetDecimal(),
+            deducted = d.GetProperty("amount").GetDecimal(),
+            uncovered = 0m,
+        }));
 
     private static HttpResponseMessage Json(string json, HttpStatusCode status = HttpStatusCode.OK) =>
         new(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
@@ -369,6 +379,29 @@ public class FinalPayTests : BunitContext
 
         Text(cut, "[data-loans]").Should().Contain("SSS loan").And.NotContain("SSSLoan");
         Text(cut, "[data-loan-shortfall]").Should().Contain("2,000.00").And.Contain("SSS loan");
+    }
+
+    [Fact]
+    public void AnHrDeductionTheFinalPayCantCover_ShowsWhatWasTaken_AndIsWarnedAbout()
+    {
+        var cut = RenderWithRun(Summary(
+            deductions: """[{"label":"Unreturned laptop","amount":20000},{"label":"Cash advance","amount":5000}]""",
+            deductionLines: """[{"label":"Unreturned laptop","amount":20000,"deducted":20000,"uncovered":0},{"label":"Cash advance","amount":5000,"deducted":1200,"uncovered":3800}]"""));
+
+        var section = Text(cut, "[data-final-pay-deductions]");
+        section.Should().Contain("Unreturned laptop").And.Contain("20,000.00");
+        section.Should().Contain("Cash advance").And.Contain("1,200.00");
+        cut.FindAll("[data-deduction-shortfall]").Should().ContainSingle()
+            .Which.TextContent.Should().Contain("3,800.00").And.Contain("Cash advance");
+    }
+
+    [Fact]
+    public void FullyTakenHrDeductions_HaveNoShortfallWarning()
+    {
+        var cut = RenderWithRun(Summary(deductions: """[{"label":"Unreturned phone","amount":3500}]"""));
+
+        Text(cut, "[data-final-pay-deductions]").Should().Contain("3,500.00");
+        cut.FindAll("[data-deduction-shortfall]").Should().BeEmpty();
     }
 
     [Fact]

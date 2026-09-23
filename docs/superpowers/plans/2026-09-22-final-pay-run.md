@@ -42,7 +42,7 @@
 - **Retirement pay** (type Retirement): age 60 to 65 inclusive on the last working day, and at least 5 years of service. It is 22.5 × daily rate × service years. Non-taxable when eligible; when not eligible, nothing is computed.
 - **Service years:** from hire date to last working day, in whole years, plus one when the remaining fraction is at least 6 months.
 - **HR override:** replaces the computed separation or retirement pay, or adds one where none is computed, and requires a note. It is non-taxable only when the separation type and conditions make the computed amount non-taxable; otherwise taxable.
-- **Loans:** the full remaining balance of every active loan, capped so the total fits in net pay after statutory deductions, pro-rated across loans as today. HR-added deductions come after the loans, under the same cap.
+- **Loans:** the full remaining balance of every active loan, capped so the total fits in net pay after statutory deductions, pro-rated across loans as today. HR-added deductions come after the loans, under the same cap, each taken in full in the order HR listed them until the pay runs out. The summary keeps the amounts HR asked for (`Deductions`, for the edit form) and adds what was taken (`DeductionLines`: label, amount, deducted, uncovered).
 - **Tax:** `WithholdingTax` of the final-pay entry = 2316 `Item24_TaxDue` (built over the pay year's Paid runs plus this entry, with the employee's saved 2316 inputs) − the tax already withheld in Paid runs − `Item25B_PrevTaxWithheld` − `Item27_PeraTaxCredit`. It can be negative. The pay year is the pay date's year, even when the last working day was in the year before.
 - **Mark Paid of a final-pay run:** refused until the separation's clearance is complete: "Clear {item, item} before paying final pay."
 - **Permissions:** `Permissions.PayrollManage` for creating, updating and paying final pay; `Permissions.EmployeesManage` for separations as before.
@@ -455,7 +455,7 @@ public sealed record FinalPayExtras(
 - **Separation detail, Final pay section** (`data-final-pay`), shown when the separation exists and the user has `payroll.manage`:
   - Without a run: a "Create final pay" form (`data-final-pay-form`) with the pay date (default today), an optional period start, the override amount and note, and extra deductions (add or remove label/amount rows). Submitting posts, then shows the summary.
   - With a run:
-    - a summary: run number, status, period, working days, the leave lines, separation or retirement pay (with the computed figure when overridden, and the note), deductions, loans with any uncovered balance as a warning (`data-loan-shortfall`), tax (labelled "Tax refund" when negative), gross and net;
+    - a summary: run number, status, period, working days, the leave lines, separation or retirement pay (with the computed figure when overridden, and the note), deductions as taken, with any the cap cut short as a warning (`data-deduction-shortfall`), loans with any uncovered balance as a warning (`data-loan-shortfall`), tax (labelled "Tax refund" when negative), gross and net;
     - a link to the run (`/payroll-runs/{id}`);
     - an "Edit" form while Draft, ForApproval or Approved (PUT); on Approved it notes that saving sends it back for approval;
     - "Clearance outstanding: {items}" (`data-clearance-outstanding`) while clearance isn't complete.

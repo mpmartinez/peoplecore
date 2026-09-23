@@ -810,6 +810,10 @@ public record FinalPayRequest(
     IReadOnlyList<FinalPayDeductionDto> Deductions);
 
 public record FinalPayDeductionDto(string Label, decimal Amount);
+
+// One of HR's deductions as the final pay took it: asked for, deducted, and left uncovered when
+// net pay ran out.
+public record FinalPayDeductionLineDto(string Label, decimal Amount, decimal Deducted, decimal Uncovered);
 public record FinalPayLeaveLineDto(string LeaveType, decimal Days, bool CountsAsVacation);
 public record FinalPayLoanLineDto(string LoanType, decimal Balance, decimal Deducted, decimal Uncovered);
 
@@ -838,7 +842,9 @@ public record FinalPaySummaryDto(
     decimal? RetirementPayOverride,
     string? OverrideNote,
     int ServiceYears,
+    // As HR asked for them (what the edit form starts from), then as the final pay took them.
     IReadOnlyList<FinalPayDeductionDto> Deductions,
+    IReadOnlyList<FinalPayDeductionLineDto> DeductionLines,
     IReadOnlyList<FinalPayLoanLineDto> Loans,
     decimal WithholdingTax,
     decimal GrossPay,

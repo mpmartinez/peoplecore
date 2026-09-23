@@ -97,7 +97,7 @@ Clearance is complete when every item is cleared. A final-pay run can be compute
 
 - **SSS, PhilHealth and Pag-IBIG** top the separation month (the last working day's month) up to exactly one month's contributions on the monthly basic, employee and employer shares alike: the month's full contribution less what that month's Paid runs (those whose period ends in it, as the remittance reports count them) already deducted, never below zero. A month regular payroll already covered costs nothing more.
 - **Loans:** every active loan's **remaining balance**, not the instalment, each capped so the total doesn't exceed what net pay can cover after statutory deductions. Any uncovered balance is shown as a warning on the run ("₱3,200 of the SSS loan can't be covered by final pay") and stays on the loan. Marking the run Paid retires what was deducted, as today.
-- **Other deductions HR adds**, each with a label and amount (unreturned property, cash advance not in the loans module). They are taken after the loans, under the same cap.
+- **Other deductions HR adds**, each with a label and amount (unreturned property, cash advance not in the loans module). They are taken after the loans, under the same cap, each in full in the order HR listed them until the pay runs out. The summary shows what was actually deducted, and warns about any part the final pay couldn't cover, as it does for loans.
 
 ### Tax: the separated employee's year-end adjustment
 

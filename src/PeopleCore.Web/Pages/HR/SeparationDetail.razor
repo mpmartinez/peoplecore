@@ -692,21 +692,28 @@ else
                 <div>
                     <div class="py-2 border-b border-dashed" data-final-pay-deductions>
                         <span class="text-muted-foreground text-sm">Other deductions</span>
-                        @if (summary.Deductions.Count == 0)
+                        @if (summary.DeductionLines.Count == 0)
                         {
                             <p class="text-sm">None</p>
                         }
                         else
                         {
-                            @foreach (var deduction in summary.Deductions)
+                            @* What was actually deducted: net pay caps HR's deductions after the loans. *@
+                            @foreach (var deduction in summary.DeductionLines)
                             {
                                 <div class="flex justify-between text-sm">
-                                    <span>@deduction.Label</span>
-                                    <span class="font-medium">@Peso(deduction.Amount)</span>
+                                    <span>@deduction.Label@(deduction.Uncovered > 0m ? $" (of {Peso(deduction.Amount)})" : "")</span>
+                                    <span class="font-medium">@Peso(deduction.Deducted)</span>
                                 </div>
                             }
                         }
                     </div>
+                    @foreach (var deduction in summary.DeductionLines.Where(d => d.Uncovered > 0m))
+                    {
+                        <Alert Variant="warning" Class="my-2" data-deduction-shortfall>
+                            The final pay can't cover @Peso(deduction.Uncovered) of @deduction.Label; collect it another way.
+                        </Alert>
+                    }
 
                     <div class="py-2 border-b border-dashed" data-loans>
                         <span class="text-muted-foreground text-sm">Loans</span>

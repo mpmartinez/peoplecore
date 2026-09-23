@@ -20,6 +20,13 @@ public record FinalPayRequest(
 
 public record FinalPayDeductionDto(string Label, decimal Amount);
 
+/// <summary>
+/// One of HR's deductions as the final pay took it: the amount HR asked for, what was actually
+/// deducted, and what net pay couldn't cover. HR's deductions come after the loans, under the same
+/// cap, each taken in full in the order HR listed them until the pay runs out.
+/// </summary>
+public record FinalPayDeductionLineDto(string Label, decimal Amount, decimal Deducted, decimal Uncovered);
+
 /// <summary>One convertible leave type paid out, and whether its days count toward the 10-day de minimis ceiling.</summary>
 public record FinalPayLeaveLineDto(string LeaveType, decimal Days, bool CountsAsVacation);
 
@@ -48,6 +55,11 @@ public record FinalPayLoanLineDto(string LoanType, decimal Balance, decimal Dedu
 /// <param name="HasConvertibleLeaveType">
 /// Whether any leave type converts to cash. With no <paramref name="LeaveLines"/>, false means
 /// nothing is marked convertible, true that the convertible leave is all used up.
+/// </param>
+/// <param name="Deductions">HR's deductions as HR asked for them - what an edit form starts from.</param>
+/// <param name="DeductionLines">
+/// The same deductions as the final pay took them, capped by net pay after the loans; see
+/// <see cref="FinalPayDeductionLineDto"/>.
 /// </param>
 /// <param name="LeaveConversionNonTaxable">
 /// The part of <paramref name="LeaveConversionPay"/> that isn't taxed: the de minimis days (the
@@ -82,6 +94,7 @@ public record FinalPaySummaryDto(
     string? OverrideNote,
     int ServiceYears,
     IReadOnlyList<FinalPayDeductionDto> Deductions,
+    IReadOnlyList<FinalPayDeductionLineDto> DeductionLines,
     IReadOnlyList<FinalPayLoanLineDto> Loans,
     decimal WithholdingTax,
     decimal GrossPay,
