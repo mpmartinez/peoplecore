@@ -519,13 +519,55 @@ public class FinalPayTests : BunitContext
     [Theory]
     [InlineData("Draft", true)]
     [InlineData("ForApproval", true)]
-    [InlineData("Approved", false)]
+    [InlineData("Approved", true)]
     [InlineData("Paid", false)]
-    public void EditIsOfferedOnlyWhileTheRunIsDraftOrForApproval(string status, bool offered)
+    public void EditIsOfferedUntilTheRunIsPaid(string status, bool offered)
     {
         var cut = RenderWithRun(Summary(status: status));
 
         cut.FindAll("[data-edit-final-pay]").Should().HaveCount(offered ? 1 : 0);
+    }
+
+    [Fact]
+    public void EditingAnApprovedFinalPay_SaysSavingSendsItBackForApproval()
+    {
+        var cut = RenderWithRun(Summary(status: "Approved"));
+
+        cut.Find("[data-edit-final-pay]").Click();
+
+        Text(cut, "[data-final-pay-form] [data-reapproval-note]")
+            .Should().Contain("approved").And.Contain("back for approval");
+    }
+
+    [Theory]
+    [InlineData("Draft")]
+    [InlineData("ForApproval")]
+    public void EditingAFinalPayNotYetApproved_HasNoReapprovalNote(string status)
+    {
+        var cut = RenderWithRun(Summary(status: status));
+
+        cut.Find("[data-edit-final-pay]").Click();
+
+        cut.FindAll("[data-reapproval-note]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void SavingAnApprovedFinalPay_PutsTheChanges_AndShowsItBackInDraft()
+    {
+        _api.On(HttpMethod.Put, FinalPayPath, HttpStatusCode.OK,
+            Summary(status: "Draft", deductions: """[{"label":"Unreturned laptop","amount":2500}]"""));
+        var cut = RenderWithRun(Summary(status: "Approved"));
+
+        cut.Find("[data-edit-final-pay]").Click();
+        cut.Find("[data-add-deduction]").Click();
+        cut.Find("[data-deduction-label='0']").Input("Unreturned laptop");
+        cut.Find("[data-deduction-amount='0']").Input("2500");
+        cut.Find("[data-submit-final-pay]").Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[data-final-pay-form]").Should().BeEmpty());
+        Text(cut, "[data-final-pay-summary]").Should().Contain("Draft");
+        BodyOf(HttpMethod.Put, FinalPayPath).GetProperty("deductions").EnumerateArray().Should().ContainSingle()
+            .Which.GetProperty("label").GetString().Should().Be("Unreturned laptop");
     }
 
     [Fact]
@@ -642,13 +684,13 @@ public class FinalPayTests : BunitContext
     public void ARefusedEdit_ShowsTheApisReason_AndKeepsTheEditForm()
     {
         _api.On(HttpMethod.Put, FinalPayPath, HttpStatusCode.BadRequest,
-            """{"title":"Bad request","detail":"Only draft or for-approval final pay can be changed.","status":400}""");
+            """{"title":"Bad request","detail":"A paid final pay can't be changed.","status":400}""");
         var cut = RenderWithRun(Summary());
 
         cut.Find("[data-edit-final-pay]").Click();
         cut.Find("[data-submit-final-pay]").Click();
 
-        cut.WaitForElement("[data-final-pay-error]").TextContent.Should().Contain("Only draft or for-approval final pay can be changed.");
+        cut.WaitForElement("[data-final-pay-error]").TextContent.Should().Contain("A paid final pay can't be changed.");
         cut.FindAll("[data-final-pay-form]").Should().ContainSingle();
     }
 

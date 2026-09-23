@@ -1502,17 +1502,39 @@ public class FinalPayServiceTests
         summary.Deductions.Should().Equal(new FinalPayDeductionDto("Cash advance", 1_500m));
     }
 
-    [Theory]
-    [InlineData(PayrollRunStatus.Approved)]
-    [InlineData(PayrollRunStatus.Paid)]
-    public async Task UpdateAsync_Refuses_OnceTheRunIsApprovedOrPaid(PayrollRunStatus status)
+    [Fact]
+    public async Task UpdateAsync_OnAnApprovedFinalPay_ChangesIt_AndSendsItBackForApproval()
+    {
+        // Approved before clearance was complete; clearance then turns up an unreturned laptop.
+        await _sut.CreateAsync(_separation.Id, Request());
+        var run = _savedRun!;
+        _separation.FinalPayRun = run;
+        IReadOnlyList<PayrollRunEmployee>? replaced = null;
+        _runs.Setup(r => r.ReplaceEntriesAsync(run, It.IsAny<IReadOnlyList<PayrollRunEmployee>>(), It.IsAny<CancellationToken>()))
+             .Callback((PayrollRun _, IReadOnlyList<PayrollRunEmployee> entries, CancellationToken _) => replaced = entries)
+             .Returns(Task.CompletedTask);
+        run.Status = PayrollRunStatus.Approved;
+
+        var summary = await _sut.UpdateAsync(_separation.Id, Request(
+            deductions: [new FinalPayDeductionDto("Unreturned laptop", 2_500m)]));
+
+        run.Status.Should().Be(PayrollRunStatus.Draft);
+        summary.Status.Should().Be(PayrollRunStatus.Draft);
+        replaced.Should().ContainSingle().Which.OtherDeductions.Should().Be(2_500m);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_Refuses_OnceTheRunIsPaid()
     {
         await _sut.CreateAsync(_separation.Id, Request());
-        _savedRun!.Status = status;
+        _savedRun!.Status = PayrollRunStatus.Paid;
 
         var act = () => _sut.UpdateAsync(_separation.Id, Request());
 
-        await act.Should().ThrowAsync<DomainException>().WithMessage("Only draft or for-approval final pay can be changed.");
+        await act.Should().ThrowAsync<DomainException>().WithMessage("A paid final pay can't be changed.");
+        _runs.Verify(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyList<PayrollRunEmployee>>(),
+                                                It.IsAny<CancellationToken>()), Times.Never);
+        _savedRun.Status.Should().Be(PayrollRunStatus.Paid);
     }
 
     [Fact]

@@ -55,7 +55,7 @@ Each separation has clearance items. Five are created with it: **HR, IT, Finance
 
 An item is **cleared** with who cleared it, when, and an optional note ("laptop returned"). Clearing can be undone, with the undo recorded, until the final pay is Paid.
 
-Clearance is complete when every item is cleared. A final-pay run can be computed and approved before that, but **cannot be marked Paid until clearance is complete**. The message says which items are outstanding.
+Clearance is complete when every item is cleared. A final-pay run can be computed and approved before that, but **cannot be marked Paid until clearance is complete**. Since clearance can turn up deductions (an unreturned laptop), an approved final pay can still be changed or recomputed; doing so sends it back to Draft, to be approved again. Only a Paid one is fixed. The message says which items are outstanding.
 
 ## Final pay as a payroll run
 

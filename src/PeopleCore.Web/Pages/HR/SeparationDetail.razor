@@ -10,8 +10,8 @@
     action simply replaces _separation with the response rather than reloading.
 
     For someone who can manage payroll it also carries the Final pay section: the form that creates
-    the final-pay run, then its summary, an edit form while the run is still Draft or For approval,
-    and the clearance still standing between it and payment. The summary is reloaded after every
+    the final-pay run, then its summary, an edit form until the run is Paid (saving an Approved one
+    sends it back for approval), and the clearance still standing between it and payment. The summary is reloaded after every
     clearance change, since the API is what says what's outstanding.
 *@
 
@@ -394,8 +394,10 @@ else
 
     private bool IsRetirement => _separation?.Type == SeparationType.Retirement;
 
-    // Same line the API draws: approved figures are signed off, and paid ones have retired loans.
-    private static bool CanEditFinalPay(string status) => status is "Draft" or "ForApproval";
+    // Same line the API draws: paid figures have retired loans, but an approved final pay can
+    // still change - clearance, which can finish after approval, turns up deductions - and saving
+    // it sends it back for approval.
+    private static bool CanEditFinalPay(string status) => status is "Draft" or "ForApproval" or "Approved";
 
     /// <summary>
     /// HR's stored override of the pay this separation's type pays, null when there is none. Read
@@ -507,6 +509,12 @@ else
         var creating = _finalPay is null;
         <div data-final-pay-form>
             <p class="text-sm font-medium mb-3">@(creating ? "Create final pay" : "Edit final pay")</p>
+            @if (_finalPay is { Status: "Approved" })
+            {
+                <Alert Variant="warning" Class="mb-4" data-reapproval-note>
+                    This final pay has been approved. Saving changes sends it back for approval.
+                </Alert>
+            }
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                 <FormField LabelText="Pay Date" Id="final-pay-date" Required="true">
                     <Input TValue="DateOnly" Id="final-pay-date" Type="date" Value="@_finalPayForm.PayDate"

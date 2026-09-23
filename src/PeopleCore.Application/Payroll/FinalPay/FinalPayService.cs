@@ -162,10 +162,12 @@ public sealed class FinalPayService : IFinalPayService
         var run = await _runs.GetWithEntriesAsync(runId, ct)
             ?? throw new KeyNotFoundException($"Payroll run {runId} not found.");
 
-        // Same line PayrollRunService.ComputeAsync draws: approved figures are signed off, and
-        // paid ones have already retired loan balances.
-        if (run.Status is not (PayrollRunStatus.Draft or PayrollRunStatus.ForApproval))
-            throw new DomainException("Only draft or for-approval final pay can be changed.");
+        // Same line PayrollRunService.ComputeAsync draws for a final pay: paid figures have
+        // already retired loan balances, but approved ones can still change - approval can come
+        // before clearance is complete, and clearance is where deductions such as an unreturned
+        // laptop come up. The change sends the run back to Draft below, to be approved again.
+        if (run.Status == PayrollRunStatus.Paid)
+            throw new DomainException("A paid final pay can't be changed.");
 
         var inputs = run.FinalPayInputs
             ?? throw new InvalidOperationException($"Final-pay run {run.RunNumber} has no final-pay inputs.");

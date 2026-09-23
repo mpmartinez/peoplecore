@@ -370,7 +370,7 @@ public sealed record FinalPayExtras(
   - `FinalPayLoanLineDto(string LoanType, decimal Balance, decimal Deducted, decimal Uncovered)`.
   - `IFinalPayService`:
     - `CreateAsync(Guid separationId, FinalPayRequest)` → `FinalPaySummaryDto`;
-    - `UpdateAsync(Guid separationId, FinalPayRequest)` → `FinalPaySummaryDto` (Draft or ForApproval only; recomputes);
+    - `UpdateAsync(Guid separationId, FinalPayRequest)` → `FinalPaySummaryDto` (Draft, ForApproval or Approved - an Approved one goes back to Draft, to be approved again; Paid is refused: "A paid final pay can't be changed."; recomputes);
     - `GetAsync(Guid separationId)` → `FinalPaySummaryDto?`;
     - `RecomputeAsync(PayrollRun run)` → `List<PayrollRunEmployee>` (called by `PayrollRunService.ComputeAsync` for FinalPay runs).
 
@@ -454,7 +454,7 @@ public sealed record FinalPayExtras(
   - With a run:
     - a summary: run number, status, period, working days, the leave lines, separation or retirement pay (with the computed figure when overridden, and the note), deductions, loans with any uncovered balance as a warning (`data-loan-shortfall`), tax (labelled "Tax refund" when negative), gross and net;
     - a link to the run (`/payroll-runs/{id}`);
-    - an "Edit" form while Draft or ForApproval (PUT);
+    - an "Edit" form while Draft, ForApproval or Approved (PUT); on Approved it notes that saving sends it back for approval;
     - "Clearance outstanding: {items}" (`data-clearance-outstanding`) while clearance isn't complete.
   - API errors show in `data-final-pay-error`.
 - **Separations list:** a Final pay column showing the run number and status, or "Not started". Overdue still uses `FinalPayOverdue`.

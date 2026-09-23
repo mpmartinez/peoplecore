@@ -289,7 +289,10 @@ public class PayrollRunServiceTests
 
         var act = () => _sut.ComputeAsync(run.Id, CancellationToken.None);
 
-        await act.Should().ThrowAsync<DomainException>();
+        // Only a final pay's approval gives way to a recompute; a regular run's holds.
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("Only draft or for-approval payroll runs can be recomputed.");
+        run.Status.Should().Be(PayrollRunStatus.Approved);
     }
 
     [Fact]
@@ -900,15 +903,20 @@ public class PayrollRunServiceTests
     // Final-pay runs: ComputeAsync hands them to FinalPayService
     // ------------------------------------------------------------------
 
-    [Fact]
-    public async Task ComputeAsync_OnAFinalPayRun_RecomputesThroughFinalPayService_AndSendsItBackToDraft()
+    [Theory]
+    [InlineData(PayrollRunStatus.ForApproval)]
+    // Approval can come before clearance is complete, and clearance is where deductions such as an
+    // unreturned laptop come up - so an approved final pay can still change, and goes back for
+    // approval when it does.
+    [InlineData(PayrollRunStatus.Approved)]
+    public async Task ComputeAsync_OnAFinalPayRun_RecomputesThroughFinalPayService_AndSendsItBackToDraft(PayrollRunStatus status)
     {
         var employeeId = Guid.NewGuid();
         var run = new PayrollRun
         {
             RunNumber = "FP-2026-001",
             RunType = PayrollRunType.FinalPay,
-            Status = PayrollRunStatus.ForApproval,
+            Status = status,
             PeriodStart = new DateOnly(2026, 3, 1),
             PeriodEnd = new DateOnly(2026, 3, 13),
             PayDate = new DateOnly(2026, 3, 31),
@@ -934,6 +942,30 @@ public class PayrollRunServiceTests
         _runRepo.Verify(r => r.ReplaceEntriesAsync(run, recomputed, It.IsAny<CancellationToken>()), Times.Once);
         // The regular path (compensation lookups, the attendance bridge) is never taken.
         _compensationRepo.Verify(r => r.GetByEmployeeIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ComputeAsync_OnAPaidFinalPayRun_IsRefused()
+    {
+        var run = new PayrollRun
+        {
+            RunNumber = "FP-2026-001",
+            RunType = PayrollRunType.FinalPay,
+            Status = PayrollRunStatus.Paid,
+        };
+        run.Employees.Add(new PayrollRunEmployee { PayrollRunId = run.Id, EmployeeId = Guid.NewGuid() });
+        _runRepo.Setup(r => r.GetWithEntriesAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        var finalPay = new Mock<PeopleCore.Application.Payroll.FinalPay.IFinalPayService>();
+        var sut = new PayrollRunService(
+            _runRepo.Object, _compensationRepo.Object, _allowanceRepo.Object, _loanRepo.Object,
+            _settingsRepo.Object, new PayrollComputationService(), _attendanceBridge.Object,
+            _employeeRepo.Object, _separations.Object, NullLogger<PayrollRunService>.Instance, finalPay.Object);
+
+        var act = () => sut.ComputeAsync(run.Id);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("A paid final pay can't be recomputed.");
+        run.Status.Should().Be(PayrollRunStatus.Paid);
+        finalPay.Verify(f => f.RecomputeAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

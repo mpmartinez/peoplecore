@@ -102,8 +102,13 @@ public class PayrollRunService : IPayrollRunService
 
         // A committed run is settled: an approver has signed off on these figures, or - worse,
         // for a paid run - they have already been used to retire loan balances. Recomputing
-        // either would silently change what someone was, or is about to be, paid.
-        if (run.Status is PayrollRunStatus.Approved or PayrollRunStatus.Paid)
+        // either would silently change what someone was, or is about to be, paid. A final pay is
+        // the one exception to the first: it can be approved before clearance is complete, and
+        // clearance is where deductions such as an unreturned laptop come up, so an approved
+        // final pay can still be recomputed - and goes back to Draft below, to be approved again.
+        if (run.RunType == PayrollRunType.FinalPay && run.Status == PayrollRunStatus.Paid)
+            throw new DomainException("A paid final pay can't be recomputed.");
+        if (run.RunType != PayrollRunType.FinalPay && run.Status is PayrollRunStatus.Approved or PayrollRunStatus.Paid)
             throw new DomainException("Only draft or for-approval payroll runs can be recomputed.");
 
         if (run.Employees.Count == 0)
@@ -155,9 +160,10 @@ public class PayrollRunService : IPayrollRunService
 
     /// <summary>
     /// Approves a run, freezing the figures it holds: this is the gate between computing and
-    /// paying. ComputeAsync refuses to run once a run is Approved, so approving a run locks in
+    /// paying. ComputeAsync refuses to run once a regular run is Approved, so approving it locks in
     /// its numbers against any further recompute, and MarkPaidAsync then retires loan balances
-    /// against exactly what was approved here.
+    /// against exactly what was approved here. A final pay can still be recomputed or changed once
+    /// approved, but that sends it back to Draft, so it is paid only as approved all the same.
     /// </summary>
     public async Task ApproveAsync(Guid runId, CancellationToken ct = default)
     {
