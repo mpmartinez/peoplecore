@@ -77,7 +77,7 @@ public class PayslipLineBuilderTests
     // ---------- Final pay ----------
 
     [Fact]
-    public void A_final_pay_foots_earnings_to_gross_and_gross_less_deductions_to_net()
+    public void A_final_pay_foots_gross_less_the_deductions_shown_plus_the_refund_to_net()
     {
         var e = FinalPay();
 
@@ -85,8 +85,11 @@ public class PayslipLineBuilderTests
         var deductions = PayslipLineBuilder.Deductions(e).Where(l => !l.IsEmployer).ToList();
 
         earnings.Sum(l => l.Amount).Should().Be(e.GrossPay).And.Be(62_500m);
-        deductions.Sum(l => l.Amount).Should().Be(e.TotalDeductions).And.Be(5_550m);
-        (earnings.Sum(l => l.Amount) - deductions.Sum(l => l.Amount)).Should().Be(e.NetPay).And.Be(56_950m);
+        deductions.Sum(l => l.Amount).Should().Be(PayslipLineBuilder.DeductionsTotal(e)).And.Be(7_350m,
+            "500 + 250 + 100 contributions, 3,000 loans and 3,500 HR deductions - the refund is not among them");
+        PayslipLineBuilder.TaxRefund(e).Should().Be(1_800m);
+        (e.GrossPay - PayslipLineBuilder.DeductionsTotal(e) + PayslipLineBuilder.TaxRefund(e))
+            .Should().Be(e.NetPay).And.Be(56_950m);
     }
 
     [Fact]
@@ -112,15 +115,27 @@ public class PayslipLineBuilderTests
     }
 
     [Fact]
-    public void A_negative_withholding_tax_is_a_tax_refund_not_a_negative_withholding_line()
+    public void A_negative_withholding_tax_withholds_nothing_and_is_added_back_as_a_refund()
     {
-        // The year's tax settled on final pay can hand some back. It stays in the deductions
-        // column - where it keeps TOTAL DEDUCTIONS and NET PAY footing - but as a credit that says
-        // what it is, the way "Less: Absences" reads against the basic pay.
-        var lines = PayslipLineBuilder.Deductions(FinalPay());
+        // The year's tax settled on final pay can hand some back. Nothing is withheld, the
+        // deductions are only the real ones, and the refund is added after them, above net pay.
+        var e = FinalPay();
 
-        lines.Should().Contain(l => l.Description == "Less: Tax refund" && l.Amount == -1_800m);
-        lines.Should().NotContain(l => l.Description == "Withholding Tax");
+        var lines = PayslipLineBuilder.Deductions(e);
+
+        lines.Should().Contain(l => l.Description == "Withholding Tax" && l.Amount == 0m);
+        lines.Should().NotContain(l => l.Amount < 0m);
+        PayslipLineBuilder.DeductionsTotal(e).Should().Be(e.TotalDeductions - e.WithholdingTax);
+    }
+
+    [Fact]
+    public void A_refund_larger_than_the_other_deductions_still_leaves_them_positive()
+    {
+        var e = FinalPay() with { LoanDeductions = 0m, OtherDeductions = 0m, TotalDeductions = -950m, NetPay = 63_450m };
+
+        PayslipLineBuilder.DeductionsTotal(e).Should().Be(850m);
+        PayslipLineBuilder.TaxRefund(e).Should().Be(1_800m);
+        (e.GrossPay - PayslipLineBuilder.DeductionsTotal(e) + PayslipLineBuilder.TaxRefund(e)).Should().Be(e.NetPay);
     }
 
     [Fact]
@@ -131,6 +146,8 @@ public class PayslipLineBuilderTests
         PayslipLineBuilder.Earnings(e).Should().NotContain(l =>
             l.Description == "Leave Conversion" || l.Description == "Separation Pay" || l.Description == "Retirement Pay");
         PayslipLineBuilder.Deductions(e).Should().Contain(l => l.Description == "Withholding Tax" && l.Amount == 1_234.56m);
+        PayslipLineBuilder.TaxRefund(e).Should().Be(0m);
+        PayslipLineBuilder.DeductionsTotal(e).Should().Be(e.TotalDeductions);
     }
 
     /// <summary>

@@ -32,11 +32,11 @@ public class PayrollRunDetailTests : BunitContext
     private static readonly Guid JoseId = Guid.Parse("0c6f9a3e-8b2d-4f71-a5c4-3e9d1b7f2a60");
 
     private static string RunJson(string status, bool withEmployee = true, int missingAttendance = 0,
-        string runType = "Regular", string? employees = null) =>
+        string runType = "Regular", string? employees = null, decimal totalDeductions = 0m) =>
         $$"""
         {"id":"{{RunId}}","runNumber":"PR-2026-0017","periodLabel":"Sep 1-15, 2026","periodStart":"2026-09-01",
          "periodEnd":"2026-09-15","payDate":"2026-09-20","frequency":"SemiMonthly","status":"{{status}}",
-         "employeeCount":1,"totalGrossPay":0,"totalDeductions":0,"totalNetPay":0,"createdAt":"2026-09-01T00:00:00Z",
+         "employeeCount":1,"totalGrossPay":0,"totalDeductions":{{totalDeductions}},"totalNetPay":0,"createdAt":"2026-09-01T00:00:00Z",
          "employeesMissingAttendance":{{missingAttendance}},"runType":"{{runType}}",
          "employees":[{{employees ?? (withEmployee ? EmployeeLine : "")}}]}
         """;
@@ -47,10 +47,10 @@ public class PayrollRunDetailTests : BunitContext
     private static string JoseLine =>
         $$"""{"id":"{{Guid.NewGuid()}}","employeeId":"{{JoseId}}","employeeName":"Jose Reyes","employeeNumber":"EMP-0043"}""";
 
-    private static string FinalPayLine(decimal tax) =>
+    private static string FinalPayLine(decimal tax, decimal totalDeductions = 2500m) =>
         $$"""
         {"id":"{{Guid.NewGuid()}}","employeeId":"{{MariaId}}","employeeName":"Maria Santos","employeeNumber":"EMP-0042",
-         "grossPay":132500,"netPay":130000,"withholdingTax":{{tax}},
+         "grossPay":132500,"netPay":130000,"withholdingTax":{{tax}},"totalDeductions":{{totalDeductions}},
          "leaveConversionPay":7500,"leaveConversionNonTaxable":6000,"separationPay":100000,"retirementPay":25000,
          "finalPayNonTaxable":131000}
         """;
@@ -306,6 +306,34 @@ public class PayrollRunDetailTests : BunitContext
 
         var tax = cut.Find("[data-withholding-tax]").TextContent;
         tax.Should().Contain("Refund").And.Contain("1,800.00").And.NotContain("-");
+    }
+
+    [Fact]
+    public void ARefund_IsNotNettedIntoTheDeductions_ButShownOnItsOwn()
+    {
+        // Stored: 5,550 of deductions after a 1,800 refund. The deductions actually taken are
+        // 7,350; the refund is shown apart from them.
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", runType: "FinalPay",
+            employees: FinalPayLine(-1800m, totalDeductions: 5550m), totalDeductions: 5550m));
+
+        var cut = RenderPage();
+
+        cut.Find("[data-employee-deductions]").TextContent.Should().Contain("7,350.00");
+        cut.Find("[data-run-deductions]").TextContent.Should().Contain("7,350.00");
+        cut.Find("[data-run-tax-refund]").TextContent.Should().Contain("1,800.00");
+    }
+
+    [Fact]
+    public void WithoutARefund_TheDeductionsAreAsStored_AndNoRefundIsShown()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", runType: "FinalPay",
+            employees: FinalPayLine(1200m, totalDeductions: 5550m), totalDeductions: 5550m));
+
+        var cut = RenderPage();
+
+        cut.Find("[data-employee-deductions]").TextContent.Should().Contain("5,550.00");
+        cut.Find("[data-run-deductions]").TextContent.Should().Contain("5,550.00");
+        cut.FindAll("[data-run-tax-refund]").Should().BeEmpty();
     }
 
     [Fact]

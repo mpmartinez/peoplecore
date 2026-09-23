@@ -8,9 +8,9 @@ namespace PeopleCore.Application.Payroll.Services;
 /// PeopleCore.Reports, which does not reference the Domain project) has in hand. It is the one
 /// place a payslip's breakdown is built.
 /// <para>
-/// The payslip prints GrossPay and TotalDeductions as the column totals rather than summing
-/// these lines, so the lines have to add up to those figures or the document visibly fails to
-/// foot.
+/// The payslip prints GrossPay and <see cref="DeductionsTotal"/> as the column totals rather than
+/// summing these lines, so the lines have to add up to those figures or the document visibly fails
+/// to foot. Gross less those deductions plus any <see cref="TaxRefund"/> is the net pay.
 /// </para>
 /// </summary>
 public static class PayslipLineBuilder
@@ -46,6 +46,20 @@ public static class PayslipLineBuilder
         return lines;
     }
 
+    /// <summary>
+    /// The tax handed back when a final pay settles the year's tax below what was already
+    /// withheld (a negative <see cref="PayrollRunEmployeeDto.WithholdingTax"/>); zero otherwise.
+    /// The payslip adds it after the deductions, above net pay.
+    /// </summary>
+    public static decimal TaxRefund(PayrollRunEmployeeDto e) => Math.Max(-e.WithholdingTax, 0m);
+
+    /// <summary>
+    /// The deductions actually taken, which is what the payslip prints as its total:
+    /// <see cref="PayrollRunEmployeeDto.TotalDeductions"/> nets a refund in, so it is added back
+    /// here. Never negative. The stored figures are untouched.
+    /// </summary>
+    public static decimal DeductionsTotal(PayrollRunEmployeeDto e) => e.TotalDeductions + TaxRefund(e);
+
     public static List<PayrollDeductionLineDto> Deductions(PayrollRunEmployeeDto e)
     {
         var lines = new List<PayrollDeductionLineDto>
@@ -53,12 +67,9 @@ public static class PayslipLineBuilder
             new("SSS (Employee)", e.SSSEmployee),
             new("PhilHealth (Employee)", e.PhilHealthEmployee),
             new("Pag-IBIG (Employee)", e.PagIbigEmployee),
-            // A final pay settles the year's tax, which can come out as a refund. It stays in this
-            // column, so the lines still add up to TotalDeductions and gross less that to net pay,
-            // but as a credit named for what it is rather than a negative "Withholding Tax".
-            e.WithholdingTax < 0
-                ? new("Less: Tax refund", e.WithholdingTax)
-                : new("Withholding Tax", e.WithholdingTax)
+            // A refund withholds nothing; it is shown on its own (TaxRefund), never as a negative
+            // deduction.
+            new("Withholding Tax", Math.Max(e.WithholdingTax, 0m))
         };
 
         if (e.LoanDeductions > 0) lines.Add(new("Loan Deduction", e.LoanDeductions));

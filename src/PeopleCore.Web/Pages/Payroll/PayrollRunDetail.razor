@@ -71,7 +71,11 @@ else
         <Card>
             <CardContent Class="pt-4">
                 <div class="text-xs text-muted-foreground">Total Deductions</div>
-                <div class="text-xl font-semibold">&#8369;@_run.TotalDeductions.ToString("N2")</div>
+                <div class="text-xl font-semibold" data-run-deductions>&#8369;@RunDeductions.ToString("N2")</div>
+                @if (RunTaxRefund > 0m)
+                {
+                    <div class="text-xs text-muted-foreground mt-1" data-run-tax-refund>Plus &#8369;@RunTaxRefund.ToString("N2") tax refund (year-end adjustment)</div>
+                }
             </CardContent>
         </Card>
         <Card>
@@ -163,7 +167,7 @@ else
                                         <span>&#8369;@e.WithholdingTax.ToString("N2")</span>
                                     }
                                 </TableCell>
-                                <TableCell Class="px-4 py-3">&#8369;@e.TotalDeductions.ToString("N2")</TableCell>
+                                <TableCell Class="px-4 py-3" data-employee-deductions>&#8369;@DeductionsTaken(e).ToString("N2")</TableCell>
                                 <TableCell Class="px-4 py-3 font-medium">&#8369;@e.NetPay.ToString("N2")</TableCell>
                                 <TableCell Class="px-4 py-3">
                                     <Button Variant="ghost" Size="sm" Title="@($"Download payslip for {e.EmployeeName}")" OnClick="@(() => DownloadPayslip(e))" Loading="@_downloadingEmployeeIds.Contains(e.EmployeeId)" Disabled="@_downloadingEmployeeIds.Contains(e.EmployeeId)">
@@ -209,6 +213,15 @@ else
     private bool _removing;
 
     private bool IsFinalPay => _run?.RunType == PayrollLabels.FinalPayRunType;
+
+    // A final pay's settled tax can be a refund, which the stored TotalDeductions nets in. The page
+    // shows the deductions actually taken and the refund on its own (the tax column says
+    // "Refund"), as the payslip does; net pay is unchanged. Mirrors PayslipLineBuilder's
+    // TaxRefund and DeductionsTotal.
+    private static decimal TaxRefund(PayrollRunEmployeeDto e) => Math.Max(-e.WithholdingTax, 0m);
+    private static decimal DeductionsTaken(PayrollRunEmployeeDto e) => e.TotalDeductions + TaxRefund(e);
+    private decimal RunTaxRefund => _run?.Employees.Sum(TaxRefund) ?? 0m;
+    private decimal RunDeductions => (_run?.TotalDeductions ?? 0m) + RunTaxRefund;
 
     // A final pay is built for its one employee from their separation, a paid run has already
     // retired loan balances, and a run needs at least one employee - the API refuses all three,
