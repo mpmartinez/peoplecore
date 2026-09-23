@@ -629,7 +629,9 @@ else
                         @if (summary.LeaveLines.Count == 0)
                         {
                             <p class="text-xs text-muted-foreground mt-1" data-no-convertible-leave>
-                                No leave converts to cash - no leave type is marked convertible.
+                                @(summary.HasConvertibleLeaveType
+                                    ? "No convertible leave left to pay out."
+                                    : "No leave converts to cash - no leave type is marked convertible.")
                             </p>
                         }
                         else

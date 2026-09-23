@@ -43,7 +43,7 @@ public class FinalPayServiceDbTests : DatabaseTestBase
         return new FinalPayService(
             new SeparationRepository(context), runs, new EmployeeCompensationRepository(context),
             new EmployeeLoanRepository(context), new EmployeeAllowanceRepository(context),
-            new LeaveBalanceRepository(context), shifts.Object,
+            new LeaveBalanceRepository(context), new LeaveTypeRepository(context), shifts.Object,
             attendance.Object, new PayrollSettingsRepository(context),
             new Bir2316Service(runs, new EmployeeRepository(context), new CompanyRepository(context),
                                new Bir2316InputsRepository(context)),

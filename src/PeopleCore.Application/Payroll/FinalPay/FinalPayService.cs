@@ -89,6 +89,7 @@ public sealed class FinalPayService : IFinalPayService
     private readonly IEmployeeLoanRepository _loans;
     private readonly IEmployeeAllowanceRepository _allowances;
     private readonly ILeaveBalanceRepository _leaveBalances;
+    private readonly ILeaveTypeRepository _leaveTypes;
     private readonly IShiftService _shifts;
     private readonly IPayrollAttendanceBridge _attendance;
     private readonly IPayrollSettingsRepository _settings;
@@ -103,6 +104,7 @@ public sealed class FinalPayService : IFinalPayService
         IEmployeeLoanRepository loans,
         IEmployeeAllowanceRepository allowances,
         ILeaveBalanceRepository leaveBalances,
+        ILeaveTypeRepository leaveTypes,
         IShiftService shifts,
         IPayrollAttendanceBridge attendance,
         IPayrollSettingsRepository settings,
@@ -116,6 +118,7 @@ public sealed class FinalPayService : IFinalPayService
         _loans = loans;
         _allowances = allowances;
         _leaveBalances = leaveBalances;
+        _leaveTypes = leaveTypes;
         _shifts = shifts;
         _attendance = attendance;
         _settings = settings;
@@ -631,6 +634,7 @@ public sealed class FinalPayService : IFinalPayService
             entry.LeaveConversionPay,
             entry.LeaveConversionNonTaxable + await LeaveOtherBenefitsExemptAsync(separation.EmployeeId, run, entry, ct),
             figures.LeaveLines,
+            await _leaveTypes.CountAsync(t => t.IsConvertibleToCash, ct) > 0,
             entry.SeparationPay, entry.RetirementPay, figures.ComputedSeparationOrRetirementPay,
             inputs.SeparationPayOverride, inputs.RetirementPayOverride,
             inputs.OverrideNote, figures.ServiceYears,

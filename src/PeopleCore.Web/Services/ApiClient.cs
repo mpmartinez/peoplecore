@@ -828,6 +828,9 @@ public record FinalPaySummaryDto(
     decimal LeaveConversionPay,
     decimal LeaveConversionNonTaxable,
     IReadOnlyList<FinalPayLeaveLineDto> LeaveLines,
+    // False when no leave type converts to cash at all - as against one that does, with no days
+    // left to pay out - so the page can say which.
+    bool HasConvertibleLeaveType,
     decimal SeparationPay,
     decimal RetirementPay,
     decimal? ComputedSeparationOrRetirementPay,

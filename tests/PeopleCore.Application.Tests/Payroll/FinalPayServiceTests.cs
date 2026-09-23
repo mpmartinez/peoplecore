@@ -45,6 +45,9 @@ public class FinalPayServiceTests
     private readonly Mock<IEmployeeAllowanceRepository> _allowances = new();
     private readonly List<EmployeeAllowance> _allowanceList = [];
     private readonly Mock<ILeaveBalanceRepository> _leaveBalances = new();
+    private readonly Mock<ILeaveTypeRepository> _leaveTypes = new();
+    // Leave types with no balance for the employee; the balances' own types count too.
+    private readonly List<LeaveType> _otherLeaveTypes = [];
     private readonly Mock<IShiftService> _shifts = new();
     private readonly Mock<IPayrollAttendanceBridge> _attendance = new();
     private readonly Mock<IPayrollSettingsRepository> _settings = new();
@@ -151,6 +154,11 @@ public class FinalPayServiceTests
                    .ReturnsAsync(() => _allowanceList);
         _leaveBalances.Setup(r => r.GetByEmployeeAsync(_employee.Id, It.IsAny<int?>(), It.IsAny<CancellationToken>()))
                       .ReturnsAsync(() => _balances);
+        _leaveTypes.Setup(r => r.CountAsync(It.IsAny<System.Linq.Expressions.Expression<Func<LeaveType, bool>>?>(),
+                                            It.IsAny<CancellationToken>()))
+                   .ReturnsAsync((System.Linq.Expressions.Expression<Func<LeaveType, bool>>? predicate, CancellationToken _) =>
+                       _balances.Select(b => b.LeaveType).Concat(_otherLeaveTypes)
+                           .Count(predicate?.Compile() ?? (_ => true)));
 
         // No shift assigned anywhere: Monday to Friday.
         _shifts.Setup(s => s.ResolveShiftForDayAsync(_employee.Id, It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
@@ -188,7 +196,7 @@ public class FinalPayServiceTests
 
         _sut = new FinalPayService(
             _separations.Object, _runs.Object, _compensations.Object, _loans.Object, _allowances.Object,
-            _leaveBalances.Object,
+            _leaveBalances.Object, _leaveTypes.Object,
             _shifts.Object, _attendance.Object, _settings.Object, bir2316, new PayrollComputationService(),
             TimeProvider.System);
     }
@@ -1427,6 +1435,42 @@ public class FinalPayServiceTests
         summary.LeaveConversionPay.Should().Be(18_000m);
         summary.LeaveConversionNonTaxable.Should().Be(14_000m);   // 12,000 + 2,000
         (await _sut.GetAsync(_separation.Id))!.LeaveConversionNonTaxable.Should().Be(14_000m);
+    }
+
+    [Fact]
+    public async Task TheSummary_SaysALeaveTypeConvertsToCash_EvenWithNoDaysLeftToPay()
+    {
+        // Vacation leave converts, but all 5 days were taken.
+        _balances.Clear();
+        _balances.Add(Balance("Vacation Leave", totalDays: 5m, usedDays: 5m, convertible: true, countsAsVacation: true));
+
+        var summary = await _sut.CreateAsync(_separation.Id, Request());
+
+        summary.LeaveLines.Should().BeEmpty();
+        summary.HasConvertibleLeaveType.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task TheSummary_SaysALeaveTypeConvertsToCash_EvenOneTheEmployeeHasNoBalanceFor()
+    {
+        _balances.Clear();
+        _otherLeaveTypes.Add(new LeaveType { Name = "Vacation Leave", Code = "VL", IsConvertibleToCash = true });
+
+        var summary = await _sut.CreateAsync(_separation.Id, Request());
+
+        summary.LeaveLines.Should().BeEmpty();
+        summary.HasConvertibleLeaveType.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task TheSummary_SaysNoLeaveTypeConvertsToCash_WhenNoneIsMarked()
+    {
+        _balances.Clear();
+        _balances.Add(Balance("Sick Leave", totalDays: 7m, convertible: false, countsAsVacation: false));
+
+        var summary = await _sut.CreateAsync(_separation.Id, Request());
+
+        summary.HasConvertibleLeaveType.Should().BeFalse();
     }
 
     // ------------------------------------------------------------------

@@ -59,12 +59,14 @@ public class FinalPayTests : BunitContext
         decimal separationPay = 0m, decimal retirementPay = 0m, string computed = "null", string? overrideNote = null,
         string deductions = "[]", string loans = "[]", decimal tax = 1250.50m,
         bool clearanceComplete = true, string outstanding = "[]", string periodStart = "2026-04-01",
-        string separationPayOverride = "null", string retirementPayOverride = "null", bool periodStartIsDefault = false) =>
+        string separationPayOverride = "null", string retirementPayOverride = "null", bool periodStartIsDefault = false,
+        bool hasConvertibleLeaveType = true) =>
         $$"""
         {"runId":"{{RunId}}","runNumber":"FP-2026-001","status":"{{status}}","periodStart":"{{periodStart}}","periodEnd":"2026-04-15",
          "payDate":"2026-04-30","workingDays":{{workingDays}},"noSalaryDays":{{(noSalaryDays ? "true" : "false")}},
          "periodStartIsDefault":{{(periodStartIsDefault ? "true" : "false")}},
          "leaveConversionPay":7500,"leaveConversionNonTaxable":7500,"leaveLines":{{leaveLines}},
+         "hasConvertibleLeaveType":{{(hasConvertibleLeaveType ? "true" : "false")}},
          "separationPay":{{separationPay}},"retirementPay":{{retirementPay}},"computedSeparationOrRetirementPay":{{computed}},
          "separationPayOverride":{{separationPayOverride}},"retirementPayOverride":{{retirementPayOverride}},
          "overrideNote":{{(overrideNote is null ? "null" : $"\"{overrideNote}\"")}},"serviceYears":6,
@@ -390,10 +392,19 @@ public class FinalPayTests : BunitContext
     [Fact]
     public void NoConvertibleLeave_SaysNoLeaveTypeIsMarkedConvertible()
     {
-        var cut = RenderWithRun(Summary(leaveLines: "[]"));
+        var cut = RenderWithRun(Summary(leaveLines: "[]", hasConvertibleLeaveType: false));
 
         Text(cut, "[data-no-convertible-leave]").Should()
             .Contain("No leave converts to cash - no leave type is marked convertible.");
+    }
+
+    [Fact]
+    public void ConvertibleLeaveWithNoDaysLeft_SaysThereIsNoneLeftToPayOut()
+    {
+        var cut = RenderWithRun(Summary(leaveLines: "[]", hasConvertibleLeaveType: true));
+
+        Text(cut, "[data-no-convertible-leave]").Should().Contain("No convertible leave left to pay out.")
+            .And.NotContain("no leave type is marked convertible");
     }
 
     [Fact]

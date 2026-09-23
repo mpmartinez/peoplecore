@@ -45,6 +45,10 @@ public record FinalPayLoanLineDto(string LoanType, decimal Balance, decimal Dedu
 /// equal to the computed figure can't be told apart from the figures alone.
 /// </param>
 /// <param name="RetirementPayOverride">HR's stored retirement pay override, null when there is none.</param>
+/// <param name="HasConvertibleLeaveType">
+/// Whether any leave type converts to cash. With no <paramref name="LeaveLines"/>, false means
+/// nothing is marked convertible, true that the convertible leave is all used up.
+/// </param>
 /// <param name="LeaveConversionNonTaxable">
 /// The part of <paramref name="LeaveConversionPay"/> that isn't taxed: the de minimis days (the
 /// first 10 vacation-type days), plus as much of the rest - "other benefits" under RR 5-2011 as
@@ -69,6 +73,7 @@ public record FinalPaySummaryDto(
     decimal LeaveConversionPay,
     decimal LeaveConversionNonTaxable,
     IReadOnlyList<FinalPayLeaveLineDto> LeaveLines,
+    bool HasConvertibleLeaveType,
     decimal SeparationPay,
     decimal RetirementPay,
     decimal? ComputedSeparationOrRetirementPay,
