@@ -8,7 +8,9 @@ public sealed partial class Seeder
 {
     /// <summary>
     /// The demo's leave types, and how final pay treats each: unused Vacation Leave is paid out and
-    /// counts toward the de minimis ceiling on converted vacation days; Sick Leave is neither.
+    /// counts toward the de minimis ceiling on converted vacation days; Sick Leave is neither. These
+    /// settings apply only to types the seeder creates: a VL or SL the site already has is reused as
+    /// it is (the MarkVacationLeaveConvertible migration has already marked an existing VL convertible).
     /// </summary>
     private static readonly (string Code, string Name, bool ConvertsToCash)[] LeaveTypes =
         [("VL", "Vacation Leave", true), ("SL", "Sick Leave", false)];
