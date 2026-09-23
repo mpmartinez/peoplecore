@@ -95,6 +95,29 @@ public class FinalPayServiceDbTests : DatabaseTestBase
         return separation;
     }
 
+    /// <summary>Another separated employee with pay on file - nothing else - for numbering tests.</summary>
+    private async Task<Separation> SeedAnotherSeparationAsync(string lastName)
+    {
+        var employee = AnEmployee(lastName, "Ana");
+        Context.Employees.Add(employee);
+        Context.EmployeeCompensations.Add(new EmployeeCompensation
+        {
+            EmployeeId = employee.Id, BasicSalary = 30_000m, PayFrequency = PayFrequency.Monthly,
+        });
+        var separation = new Separation
+        {
+            EmployeeId = employee.Id,
+            Type = SeparationType.Resignation,
+            NoticeDate = LastDay.AddDays(-30),
+            LastWorkingDay = LastDay,
+            Status = SeparationStatus.Separated,
+            RecordedBy = "hr@company.test",
+        };
+        Context.Separations.Add(separation);
+        await Context.SaveChangesAsync();
+        return separation;
+    }
+
     private static FinalPayRequest Request(params FinalPayDeductionDto[] deductions)
         => new(new DateOnly(2026, 3, 31), null, null, null, null, deductions);
 
@@ -211,5 +234,30 @@ public class FinalPayServiceDbTests : DatabaseTestBase
         reader.PayrollRuns.Count(r => r.RunType == PayrollRunType.FinalPay).Should().Be(1);
         reader.FinalPayInputs.Count().Should().Be(1);
         (await new SeparationRepository(reader).GetAsync(seeded.Id))!.FinalPayRunId.Should().Be(firstRunId);
+    }
+
+    [Fact]
+    public async Task CreateAsync_AfterARunMovedToAnotherYear_DrawsTheNextUnusedNumber()
+    {
+        // FP-2026-001 (A) and FP-2026-002 (B) exist; A's pay date moves into 2027, so A becomes
+        // FP-2027-001 and 2026 is left with one run - numbered 002. Counting that year's runs
+        // would hand the next 2026 final pay 002 again and trip the unique index on RunNumber.
+        var a = await SeedAsync();
+        var b = await SeedAnotherSeparationAsync("Reyes");
+        var c = await SeedAnotherSeparationAsync("Garcia");
+
+        await using (var context = NewContext())
+            (await Service(context).CreateAsync(a.Id, Request())).RunNumber.Should().Be("FP-2026-001");
+        await using (var context = NewContext())
+            (await Service(context).CreateAsync(b.Id, Request())).RunNumber.Should().Be("FP-2026-002");
+        await using (var context = NewContext())
+        {
+            var moved = await Service(context).UpdateAsync(a.Id,
+                new FinalPayRequest(new DateOnly(2027, 1, 5), null, null, null, null, []));
+            moved.RunNumber.Should().Be("FP-2027-001");
+        }
+
+        await using (var context = NewContext())
+            (await Service(context).CreateAsync(c.Id, Request())).RunNumber.Should().Be("FP-2026-003");
     }
 }

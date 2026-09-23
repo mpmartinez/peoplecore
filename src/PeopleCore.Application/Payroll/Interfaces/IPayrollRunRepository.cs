@@ -13,15 +13,18 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
 
     /// <summary>
     /// Regular runs already created for a period's year, for the next sequential PAY- run number.
-    /// Final-pay runs are numbered on their own sequence (<see cref="CountFinalPayForYearAsync"/>)
+    /// Final-pay runs are numbered on their own sequence (<see cref="GetLastFinalPaySequenceAsync"/>)
     /// and don't count here, so they leave no gaps in the PAY- numbers.
     /// </summary>
     Task<int> CountForYearAsync(int year, CancellationToken ct = default);
 
     /// <summary>
-    /// Final-pay runs whose pay date falls in <paramref name="payYear"/>, for the next FP- run number.
+    /// The highest sequence among the FP-{<paramref name="payYear"/>}-nnn run numbers, or 0 if
+    /// there are none, for the next FP- run number. It is the highest number and not a count
+    /// because a run whose pay date moves to another year is renumbered onto that year's
+    /// sequence, leaving a gap a count would fill with a number still in use.
     /// </summary>
-    Task<int> CountFinalPayForYearAsync(int payYear, CancellationToken ct = default);
+    Task<int> GetLastFinalPaySequenceAsync(int payYear, CancellationToken ct = default);
 
     /// <summary>
     /// Saves a new final-pay run - with its entry, its <see cref="PayrollRun.FinalPayInputs"/> and

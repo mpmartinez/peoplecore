@@ -928,6 +928,33 @@ public class PayrollRunServiceTests
     }
 
     [Fact]
+    public async Task ComputeAsync_OnAFinalPayRun_WithoutAFinalPayService_RefusesRatherThanComputeItAsRegular()
+    {
+        // _sut is built without an IFinalPayService. Falling through to the regular path would
+        // recompute the final pay as an ordinary period - dropping its separation pay, leave
+        // conversion and settled tax - so it must refuse and leave the entries alone.
+        var run = new PayrollRun
+        {
+            RunNumber = "FP-2026-001",
+            RunType = PayrollRunType.FinalPay,
+            Status = PayrollRunStatus.Draft,
+            PeriodStart = new DateOnly(2026, 3, 1),
+            PeriodEnd = new DateOnly(2026, 3, 13),
+            PayDate = new DateOnly(2026, 3, 31),
+        };
+        run.Employees.Add(new PayrollRunEmployee { PayrollRunId = run.Id, EmployeeId = Guid.NewGuid(), RegularPay = 12_000m });
+        _runRepo.Setup(r => r.GetWithEntriesAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+
+        var act = () => _sut.ComputeAsync(run.Id);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*without an IFinalPayService*");
+        _runRepo.Verify(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyList<PayrollRunEmployee>>(),
+                                                   It.IsAny<CancellationToken>()), Times.Never);
+        _compensationRepo.Verify(r => r.GetByEmployeeIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task GetAsync_CarriesTheRunType()
     {
         var run = new PayrollRun { RunNumber = "FP-2026-001", RunType = PayrollRunType.FinalPay };

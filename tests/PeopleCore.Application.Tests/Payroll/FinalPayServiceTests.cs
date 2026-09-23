@@ -161,7 +161,7 @@ public class FinalPayServiceTests
         _runs.Setup(r => r.GetPaidRunsForEmployeeInYearAsync(_employee.Id, It.IsAny<int>(), It.IsAny<CancellationToken>()))
              .ReturnsAsync((Guid _, int year, CancellationToken _) =>
                  _paidRuns.Where(r => r.Status == PayrollRunStatus.Paid && r.PayDate.Year == year).ToList());
-        _runs.Setup(r => r.CountFinalPayForYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(0);
+        _runs.Setup(r => r.GetLastFinalPaySequenceAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(0);
         _runs.Setup(r => r.AddFinalPayRunAsync(It.IsAny<PayrollRun>(), It.IsAny<Separation>(), It.IsAny<CancellationToken>()))
              .Callback((PayrollRun run, Separation _, CancellationToken _) => _savedRun = run)
              .Returns(Task.CompletedTask);
@@ -489,7 +489,7 @@ public class FinalPayServiceTests
     public async Task CreateAsync_SavesOneFinalPayRunForTheEmployee_LinkedToTheSeparation()
     {
         _compensation.PayFrequency = PayFrequency.SemiMonthly;
-        _runs.Setup(r => r.CountFinalPayForYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(3);
+        _runs.Setup(r => r.GetLastFinalPaySequenceAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(3);
 
         var summary = await _sut.CreateAsync(_separation.Id, Request());
 
@@ -516,7 +516,7 @@ public class FinalPayServiceTests
     [Fact]
     public async Task CreateAsync_NumbersTheRunByThePayDatesYear()
     {
-        _runs.Setup(r => r.CountFinalPayForYearAsync(2027, It.IsAny<CancellationToken>())).ReturnsAsync(0);
+        _runs.Setup(r => r.GetLastFinalPaySequenceAsync(2027, It.IsAny<CancellationToken>())).ReturnsAsync(0);
 
         await _sut.CreateAsync(_separation.Id, Request(payDate: new DateOnly(2027, 1, 5)));
 

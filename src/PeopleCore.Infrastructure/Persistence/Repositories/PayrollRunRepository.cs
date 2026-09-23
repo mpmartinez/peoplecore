@@ -25,9 +25,21 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
         => await Context.PayrollRuns.CountAsync(
             r => r.RunType == PayrollRunType.Regular && r.PeriodStart.Year == year, ct);
 
-    public async Task<int> CountFinalPayForYearAsync(int payYear, CancellationToken ct = default)
-        => await Context.PayrollRuns.CountAsync(
-            r => r.RunType == PayrollRunType.FinalPay && r.PayDate.Year == payYear, ct);
+    public async Task<int> GetLastFinalPaySequenceAsync(int payYear, CancellationToken ct = default)
+    {
+        // Keyed on the number itself, as the unique index on RunNumber is: a year holds only a
+        // handful of final pays, so their suffixes are parsed here rather than in SQL.
+        var prefix = $"FP-{payYear}-";
+        var numbers = await Context.PayrollRuns
+            .Where(r => r.RunType == PayrollRunType.FinalPay && r.RunNumber.StartsWith(prefix))
+            .Select(r => r.RunNumber)
+            .ToListAsync(ct);
+
+        return numbers
+            .Select(n => int.TryParse(n.AsSpan(prefix.Length), out var sequence) ? sequence : 0)
+            .DefaultIfEmpty(0)
+            .Max();
+    }
 
     public async Task<IReadOnlyList<PayrollRun>> GetRunsForEmployeeAsync(Guid employeeId, CancellationToken ct = default)
         => await Context.PayrollRuns

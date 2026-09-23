@@ -255,7 +255,9 @@ public sealed class FinalPayService : IFinalPayService
 
     private async Task<string> NextRunNumberAsync(int payYear, CancellationToken ct)
     {
-        var sequence = await _runs.CountFinalPayForYearAsync(payYear, ct) + 1;
+        // One past the year's highest number, not its count: Update moves a run whose pay date
+        // changes year onto the other sequence, and a count would then reissue a number in use.
+        var sequence = await _runs.GetLastFinalPaySequenceAsync(payYear, ct) + 1;
         return $"FP-{payYear}-{sequence:D3}";
     }
 
