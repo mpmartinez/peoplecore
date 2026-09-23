@@ -1,3 +1,5 @@
+using PeopleCore.Domain.Entities.Payroll;
+
 namespace PeopleCore.Application.Payroll.FinalPay;
 
 /// <summary>
@@ -21,6 +23,11 @@ namespace PeopleCore.Application.Payroll.FinalPay;
 /// A settled tax figure that replaces both the per-period withholding calculation and the
 /// 13th-month excess tax. May be negative (a refund). Null leaves the ordinary calculation in place.
 /// </param>
+/// <param name="ContributionsDeductedInMonth">
+/// The SSS, PhilHealth and Pag-IBIG shares the separation month's Paid runs already deducted. The
+/// final pay takes each share only up to the month's full contribution on the monthly basic -
+/// never a semi-monthly half, never past the month. Null means nothing was deducted.
+/// </param>
 public sealed record FinalPayExtras(
     decimal WorkingDays,
     decimal LeaveConversionNonTaxable,
@@ -29,4 +36,27 @@ public sealed record FinalPayExtras(
     decimal RetirementPay,
     decimal SeparationAndRetirementNonTaxable,
     IReadOnlyList<(string Label, decimal Amount)> Deductions,
-    decimal? WithholdingTaxOverride);
+    decimal? WithholdingTaxOverride,
+    ContributionShares? ContributionsDeductedInMonth = null);
+
+/// <summary>SSS, PhilHealth and Pag-IBIG contributions, employee and employer shares.</summary>
+public sealed record ContributionShares(
+    decimal SssEmployee,
+    decimal SssEmployer,
+    decimal PhilHealthEmployee,
+    decimal PhilHealthEmployer,
+    decimal PagIbigEmployee,
+    decimal PagIbigEmployer)
+{
+    public static readonly ContributionShares None = new(0m, 0m, 0m, 0m, 0m, 0m);
+
+    /// <summary>The shares the entries deducted, added up.</summary>
+    public static ContributionShares Sum(IEnumerable<PayrollRunEmployee> entries)
+    {
+        var list = entries.ToList();
+        return new ContributionShares(
+            list.Sum(e => e.SSSEmployee), list.Sum(e => e.SSSEmployer),
+            list.Sum(e => e.PhilHealthEmployee), list.Sum(e => e.PhilHealthEmployer),
+            list.Sum(e => e.PagIbigEmployee), list.Sum(e => e.PagIbigEmployer));
+    }
+}

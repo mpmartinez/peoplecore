@@ -164,6 +164,12 @@ public class FinalPayServiceTests
 
         _runs.Setup(r => r.GetRunsForEmployeeAsync(_employee.Id, It.IsAny<CancellationToken>()))
              .ReturnsAsync(() => _paidRuns);
+        // As the repository does: every Paid run whose period ends in the month.
+        _runs.Setup(r => r.GetPaidRunsByPeriodEndMonthAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+             .ReturnsAsync((int year, int month, CancellationToken _) => _paidRuns
+                 .Where(r => r.Status == PayrollRunStatus.Paid && r.PeriodEnd.Year == year && r.PeriodEnd.Month == month)
+                 .OrderBy(r => r.PeriodEnd)
+                 .ToList());
         _runs.Setup(r => r.GetPaidRunsForEmployeeInYearAsync(_employee.Id, It.IsAny<int>(), It.IsAny<CancellationToken>()))
              .ReturnsAsync((Guid _, int year, CancellationToken _) =>
                  _paidRuns.Where(r => r.Status == PayrollRunStatus.Paid && r.PayDate.Year == year).ToList());
@@ -266,6 +272,11 @@ public class FinalPayServiceTests
         entry.SSSEmployee.Should().Be(1_750m);
         entry.PhilHealthEmployee.Should().Be(912.50m);
         entry.PagIbigEmployee.Should().Be(200m);
+        // No regular run was paid for March, so the final pay takes March's full month, the
+        // employer's too: SSS 3,530 (3,500 + 30 EC), PhilHealth 912.50, Pag-IBIG 200.
+        entry.SSSEmployer.Should().Be(3_530m);
+        entry.PhilHealthEmployer.Should().Be(912.50m);
+        entry.PagIbigEmployer.Should().Be(200m);
 
         // Tax, settled through the 2316:
         //   First compute (no override): withholding base = 15,600 + 0 taxable final pay
@@ -487,6 +498,7 @@ public class FinalPayServiceTests
         {
             PayrollRunId = march.Id, EmployeeId = _employee.Id, RegularPay = 36_500m,
             SSSEmployee = 1_750m, PhilHealthEmployee = 912.50m, PagIbigEmployee = 200m,
+            SSSEmployer = 3_530m, PhilHealthEmployer = 912.50m, PagIbigEmployer = 200m,
         });
         _paidRuns.Add(march);
         return march;
@@ -518,18 +530,23 @@ public class FinalPayServiceTests
         entry.SeparationPay.Should().Be(182_500m);          // 36,500 x 5 years
         entry.LoanDeductions.Should().Be(3_000m);
 
-        // Contributions: the engine's normal final-period rule, a Monthly employee's full month -
-        // 1,750 + 912.50 + 200 = 2,862.50 - on top of what March's run already took.
-        (entry.SSSEmployee + entry.PhilHealthEmployee + entry.PagIbigEmployee).Should().Be(2_862.50m);
+        // Contributions: March's run already took the full month (employee 2,862.50, employer
+        // 4,642.50), so the final pay tops it up by nothing.
+        entry.SSSEmployee.Should().Be(0m);
+        entry.PhilHealthEmployee.Should().Be(0m);
+        entry.PagIbigEmployee.Should().Be(0m);
+        entry.SSSEmployer.Should().Be(0m);
+        entry.PhilHealthEmployer.Should().Be(0m);
+        entry.PagIbigEmployer.Should().Be(0m);
 
-        // Tax: 2316 Item 23 = 36,500 + (36,500 - 2,862.50) + (0 - 2,862.50) = 67,275 -> 0 due.
+        // Tax: 2316 Item 23 = 36,500 + (36,500 - 2,862.50) + 0 = 70,137.50 -> 0 due.
         // Withheld elsewhere: February's 2,000. Settled = 0 - 2,000 = -2,000.
         entry.WithholdingTax.Should().Be(-2_000m);
 
         // Gross = 0 + 6,083.33 + 6,000 + 182,500 = 194,583.33
-        // Deductions = 2,862.50 - 2,000 + 3,000 = 3,862.50; net = 190,720.83.
+        // Deductions = 0 - 2,000 + 3,000 = 1,000; net = 193,583.33.
         entry.GrossPay.Should().Be(194_583.33m);
-        entry.NetPay.Should().Be(190_720.83m);
+        entry.NetPay.Should().Be(193_583.33m);
 
         // A recompute reproduces it from what was stored.
         var recomputed = (await _sut.RecomputeAsync(_savedRun!)).Single();
@@ -552,43 +569,103 @@ public class FinalPayServiceTests
         _savedRun!.FinalPayInputs!.WorkingDays.Should().Be(0m);
     }
 
-    [Fact]
-    public async Task CreateAsync_ASemiMonthlyEmployeeLeavingOnThe15th_WithTheFirstCutoffPaid_PaysNoSalary()
+    /// <summary>A semi-monthly March cutoff, Paid, with its half of the month's contributions.</summary>
+    private PayrollRun PaidMarchCutoff(string runNumber, DateOnly start, DateOnly end)
     {
-        // Leaves on Sunday 2026-03-15; the Mar 1-15 cutoff is Paid, having taken the first half
-        // of March's contributions: SSS 1,750 / 2 = 875, PhilHealth 912.50 / 2 = 456.25,
-        // Pag-IBIG 200 / 2 = 100 - 1,431.25.
+        // Half of March's month: employee SSS 1,750 / 2 = 875, PhilHealth 912.50 / 2 = 456.25,
+        // Pag-IBIG 200 / 2 = 100 (1,431.25); employer 3,530 / 2 = 1,765, 456.25, 100 (2,321.25).
+        var cutoff = new PayrollRun
+        {
+            RunNumber = runNumber, PeriodStart = start, PeriodEnd = end, PayDate = end.AddDays(5),
+            Frequency = PayFrequency.SemiMonthly, Status = PayrollRunStatus.Paid,
+        };
+        cutoff.Employees.Add(new PayrollRunEmployee
+        {
+            PayrollRunId = cutoff.Id, EmployeeId = _employee.Id, Employee = _employee, RegularPay = 18_250m,
+            SSSEmployee = 875m, PhilHealthEmployee = 456.25m, PagIbigEmployee = 100m,
+            SSSEmployer = 1_765m, PhilHealthEmployer = 456.25m, PagIbigEmployer = 100m,
+        });
+        _paidRuns.Add(cutoff);
+        return cutoff;
+    }
+
+    [Fact]
+    public async Task CreateAsync_ASemiMonthlyEmployeeLeavingOnThe15th_WithTheFirstCutoffPaid_TakesTheMonthsOtherHalf()
+    {
+        // Leaves on Sunday 2026-03-15 with the Mar 1-15 cutoff Paid: no salary left, and the
+        // cutoff took half of March's contributions.
         var lastDay = new DateOnly(2026, 3, 15);
         _separation.LastWorkingDay = lastDay;
         _compensation.PayFrequency = PayFrequency.SemiMonthly;
-        var firstCutoff = new PayrollRun
-        {
-            RunNumber = "PAY-2026-005",
-            PeriodStart = new DateOnly(2026, 3, 1),
-            PeriodEnd = lastDay,
-            PayDate = new DateOnly(2026, 3, 20),
-            Frequency = PayFrequency.SemiMonthly,
-            Status = PayrollRunStatus.Paid,
-        };
-        firstCutoff.Employees.Add(new PayrollRunEmployee
-        {
-            PayrollRunId = firstCutoff.Id, EmployeeId = _employee.Id, RegularPay = 18_250m,
-            SSSEmployee = 875m, PhilHealthEmployee = 456.25m, PagIbigEmployee = 100m,
-        });
-        _paidRuns.Add(firstCutoff);
+        PaidMarchCutoff("PAY-2026-005", new DateOnly(2026, 3, 1), lastDay);
 
         var summary = await _sut.CreateAsync(_separation.Id, Request());
+        var entry = SavedEntry;
 
         summary.WorkingDays.Should().Be(0m);
-        SavedEntry.RegularPay.Should().Be(0m);
+        entry.RegularPay.Should().Be(0m);
 
-        // The final pay takes the engine's semi-monthly half again: 875 + 456.25 + 100 = 1,431.25.
-        // With the cutoff's 1,431.25, March's contributions total 2,862.50 - one month's worth
-        // (1,750 + 912.50 + 200), neither short nor doubled.
-        var finalPay = SavedEntry.SSSEmployee + SavedEntry.PhilHealthEmployee + SavedEntry.PagIbigEmployee;
-        finalPay.Should().Be(1_431.25m);
-        var cutoff = firstCutoff.Employees.Single();
-        (finalPay + cutoff.SSSEmployee + cutoff.PhilHealthEmployee + cutoff.PagIbigEmployee).Should().Be(2_862.50m);
+        // The final pay tops March up to one month: employee 2,862.50 - 1,431.25 = 1,431.25
+        // (SSS 1,750 - 875, PhilHealth 912.50 - 456.25, Pag-IBIG 200 - 100); employer
+        // 4,642.50 - 2,321.25 = 2,321.25 (3,530 - 1,765, 912.50 - 456.25, 200 - 100).
+        entry.SSSEmployee.Should().Be(875m);
+        entry.PhilHealthEmployee.Should().Be(456.25m);
+        entry.PagIbigEmployee.Should().Be(100m);
+        entry.SSSEmployer.Should().Be(1_765m);
+        entry.PhilHealthEmployer.Should().Be(456.25m);
+        entry.PagIbigEmployer.Should().Be(100m);
+
+        // A recompute reproduces it.
+        var recomputed = (await _sut.RecomputeAsync(_savedRun!)).Single();
+        (recomputed.SSSEmployee, recomputed.PhilHealthEmployee, recomputed.PagIbigEmployee,
+         recomputed.SSSEmployer, recomputed.PhilHealthEmployer, recomputed.PagIbigEmployer)
+            .Should().Be((875m, 456.25m, 100m, 1_765m, 456.25m, 100m));
+
+        // The 2316 over February (no contributions on it here), the cutoff and the final pay:
+        // Item 36 = 1,431.25 + 1,431.25 = 2,862.50, one month; Item 39 = 36,500 + (18,250 -
+        // 1,431.25) + (0 - 1,431.25) = 51,887.50.
+        var bir2316 = new Bir2316Service(_runs.Object, _employees.Object, _companies.Object, _bir2316Inputs.Object);
+        var cert = (await bir2316.BuildWithDraftEntryAsync(_employee.Id, 2026, _savedRun!, entry))!;
+        cert.Item36_SssPhicPagibigContributions.Should().Be(2_862.50m);
+        cert.Item39_BasicSalary.Should().Be(51_887.50m);
+
+        // Once paid, March's remittance reports show exactly one month.
+        _savedRun!.Status = PayrollRunStatus.Paid;
+        entry.Employee = _employee;
+        _paidRuns.Add(_savedRun);
+        var reports = new GovernmentReportService(_runs.Object, _companies.Object, _settings.Object, new AprilClock(),
+                                                  Mock.Of<IBir2316Service>(), _employees.Object);
+
+        var sss = await reports.BuildAsync("sss", 2026, 3);
+        var sssRow = sss.Rows.Should().ContainSingle().Subject;
+        sssRow.Cells[sss.Columns.ToList().IndexOf("MSC")].Should().Be("35000.00");
+        sssRow.Cells[sss.Columns.ToList().IndexOf("Employee share")].Should().Be("1750.00");
+        sssRow.Cells[sss.Columns.ToList().IndexOf("Employer total")].Should().Be("3530.00");
+
+        var philHealth = await reports.BuildAsync("philhealth", 2026, 3);
+        philHealth.Rows.Single().Cells.Skip(2).Should().Equal("912.50", "912.50", "1825.00");
+
+        var pagIbig = await reports.BuildAsync("pagibig", 2026, 3);
+        pagIbig.Rows.Single().Cells.Skip(5).Should().Equal("200.00", "200.00", "400.00");
+    }
+
+    [Fact]
+    public async Task CreateAsync_ASemiMonthlyEmployee_WithBothMarchCutoffsPaid_TakesNoContributions()
+    {
+        // Leaves on Friday 2026-03-27; both March cutoffs are Paid, together a full month.
+        _separation.LastWorkingDay = new DateOnly(2026, 3, 27);
+        _compensation.PayFrequency = PayFrequency.SemiMonthly;
+        PaidMarchCutoff("PAY-2026-005", new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 15));
+        PaidMarchCutoff("PAY-2026-006", new DateOnly(2026, 3, 16), new DateOnly(2026, 3, 31));
+
+        await _sut.CreateAsync(_separation.Id, Request());
+        var entry = SavedEntry;
+
+        _savedRun!.FinalPayInputs!.WorkingDays.Should().Be(0m);
+        // 2,862.50 - (1,431.25 x 2) = 0 for the employee; 4,642.50 - (2,321.25 x 2) = 0 for the employer.
+        (entry.SSSEmployee, entry.PhilHealthEmployee, entry.PagIbigEmployee,
+         entry.SSSEmployer, entry.PhilHealthEmployer, entry.PagIbigEmployer)
+            .Should().Be((0m, 0m, 0m, 0m, 0m, 0m));
     }
 
     [Theory]

@@ -308,8 +308,9 @@ public class PayrollComputationService
 
         // For semi-monthly, SSS/PhilHealth/Pag-IBIG deducted once per month (half each period)
         // Standard practice: deduct full contribution in first cut-off, 0 in second; or split evenly.
-        // We split evenly (half each cut-off).
-        if (isSemiMonthly)
+        // We split evenly (half each cut-off). A final pay isn't a cutoff: it tops the month up
+        // below instead.
+        if (isSemiMonthly && finalPay is null)
         {
             sssEmp /= 2m; sssEmr /= 2m;
             phEmp /= 2m; phEmr /= 2m;
@@ -319,6 +320,20 @@ public class PayrollComputationService
         sssEmp = Math.Round(sssEmp, 2); sssEmr = Math.Round(sssEmr, 2);
         phEmp = Math.Round(phEmp, 2); phEmr = Math.Round(phEmr, 2);
         piEmp = Math.Round(piEmp, 2); piEmr = Math.Round(piEmr, 2);
+
+        // A final pay tops the separation month up to exactly one month's contributions: each
+        // share is the month's full amount less what the month's Paid runs already deducted, and
+        // never below zero - so a month regular payroll already covered costs nothing more.
+        if (finalPay is not null)
+        {
+            var deducted = finalPay.ContributionsDeductedInMonth ?? ContributionShares.None;
+            sssEmp = Math.Max(0m, sssEmp - deducted.SssEmployee);
+            sssEmr = Math.Max(0m, sssEmr - deducted.SssEmployer);
+            phEmp = Math.Max(0m, phEmp - deducted.PhilHealthEmployee);
+            phEmr = Math.Max(0m, phEmr - deducted.PhilHealthEmployer);
+            piEmp = Math.Max(0m, piEmp - deducted.PagIbigEmployee);
+            piEmr = Math.Max(0m, piEmr - deducted.PagIbigEmployer);
+        }
 
         // Taxable income for BIR = gross taxable - mandatory deductions
         decimal taxableForBIR = grossForContribs - sssEmp - phEmp - piEmp;

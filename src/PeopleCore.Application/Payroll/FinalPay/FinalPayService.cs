@@ -44,6 +44,13 @@ namespace PeopleCore.Application.Payroll.FinalPay;
 /// after it.
 /// </para>
 /// <para>
+/// <b>Contributions</b> top the separation month - the last working day's month - up to exactly
+/// one month's SSS, PhilHealth and Pag-IBIG on the monthly basic, employee and employer shares
+/// alike: the month's full contribution less what that month's Paid runs already deducted, never
+/// below zero. The month's runs are picked as the SSS, PhilHealth and Pag-IBIG remittance reports
+/// pick them - Paid runs whose period ends in the month - so those reports show one month.
+/// </para>
+/// <para>
 /// <b>Years.</b> The 13th month belongs to the last working day's year: its basis is that year's
 /// Paid runs plus this final pay's regular pay, less the 13th month already paid in it. The tax
 /// settle and the 2316 it builds are the pay date's year's. The two differ only when the final
@@ -481,6 +488,14 @@ public sealed class FinalPayService : IFinalPayService
         decimal basicEarlier = earlier.Sum(e => e.RegularPay);
         decimal thirteenthEarlier = earlier.Sum(e => e.ThirteenthMonth);
 
+        // What the separation month's Paid runs already deducted, the month taken as the
+        // remittance reports take it (GetPaidRunsByPeriodEndMonthAsync) - this run excluded.
+        var lastDay = separation.LastWorkingDay;
+        var deductedInMonth = ContributionShares.Sum(
+            (await _runs.GetPaidRunsByPeriodEndMonthAsync(lastDay.Year, lastDay.Month, ct))
+                .Where(r => r.Id != run.Id)
+                .SelectMany(r => r.Employees.Where(e => e.EmployeeId == employeeId)));
+
         var figures = await FiguresAsync(separation, inputs, compensation.BasicSalary, dailyRate, ct);
         var extras = new FinalPayExtras(
             inputs.WorkingDays,
@@ -490,7 +505,8 @@ public sealed class FinalPayService : IFinalPayService
             figures.RetirementPay,
             figures.SeparationAndRetirementNonTaxable,
             inputs.Deductions.Select(d => (d.Label, d.Amount)).ToList(),
-            WithholdingTaxOverride: null);
+            WithholdingTaxOverride: null,
+            ContributionsDeductedInMonth: deductedInMonth);
 
         PayrollRunEmployee Compute(FinalPayExtras finalPay) => _engine.Compute(
             compensation, run,

@@ -218,6 +218,41 @@ public class PayrollComputationServiceFinalPayTests
         result.NonTaxableAllowances.Should().Be(0m);
     }
 
+    [Theory]
+    [InlineData(PayFrequency.Monthly)]
+    [InlineData(PayFrequency.SemiMonthly)]
+    public void Compute_with_final_pay_extras_takes_the_months_full_contributions_when_nothing_was_deducted(PayFrequency frequency)
+    {
+        // A whole month on 36,500 whatever the frequency - never a semi-monthly half:
+        // employee SSS 1,750, PhilHealth 912.50, Pag-IBIG 200; employer 3,530, 912.50, 200.
+        var employee = NewEmployee();
+        employee.PayFrequency = frequency;
+
+        var result = _sut.Compute(employee, NewRun(), finalPay: NewExtras(workingDays: 5m));
+
+        (result.SSSEmployee, result.PhilHealthEmployee, result.PagIbigEmployee).Should().Be((1_750m, 912.50m, 200m));
+        (result.SSSEmployer, result.PhilHealthEmployer, result.PagIbigEmployer).Should().Be((3_530m, 912.50m, 200m));
+    }
+
+    [Fact]
+    public void Compute_with_final_pay_extras_tops_the_month_up_and_never_past_it()
+    {
+        // Already deducted: employee SSS 875, PhilHealth 456.25, Pag-IBIG 250 (more than the 200
+        // month); employer 1,765, 1,000 (more than 912.50), 100. Each share is topped up to the
+        // month and no further: 875, 456.25, 0; 1,765, 0, 100.
+        var extras = NewExtras(workingDays: 5m) with
+        {
+            ContributionsDeductedInMonth = new ContributionShares(
+                SssEmployee: 875m, SssEmployer: 1_765m, PhilHealthEmployee: 456.25m, PhilHealthEmployer: 1_000m,
+                PagIbigEmployee: 250m, PagIbigEmployer: 100m)
+        };
+
+        var result = _sut.Compute(NewEmployee(), NewRun(), finalPay: extras);
+
+        (result.SSSEmployee, result.PhilHealthEmployee, result.PagIbigEmployee).Should().Be((875m, 456.25m, 0m));
+        (result.SSSEmployer, result.PhilHealthEmployer, result.PagIbigEmployer).Should().Be((1_765m, 0m, 100m));
+    }
+
     private static EmployeeCompensation NewEmployee(decimal basicSalary = 36_500m) => new()
     {
         BasicSalary = basicSalary,
