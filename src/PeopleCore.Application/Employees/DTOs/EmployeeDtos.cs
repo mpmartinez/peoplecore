@@ -36,6 +36,8 @@ public record EmployeeDto(
 /// One row of the company directory, which every signed-in user may list. Deliberately a subset of
 /// <see cref="EmployeeDto"/>: nothing personal (date of birth, gender, civil status, mobile) and
 /// nothing about the employment terms (type, hire or regularization date, 13th-month eligibility).
+/// <see cref="SeparationDate"/> is filled in only for callers who record separations, whose form
+/// lists people who left without one; it is null for everyone else.
 /// </summary>
 public record EmployeeDirectoryEntryDto(
     Guid Id,
@@ -47,11 +49,13 @@ public record EmployeeDirectoryEntryDto(
     string? DepartmentName,
     string? PositionTitle,
     EmploymentStatus EmploymentStatus,
-    bool IsActive)
+    bool IsActive,
+    DateOnly? SeparationDate = null)
 {
-    public static EmployeeDirectoryEntryDto From(EmployeeDto e) => new(
+    public static EmployeeDirectoryEntryDto From(EmployeeDto e, bool includeSeparationDate = false) => new(
         e.Id, e.EmployeeNumber, e.FirstName, e.LastName, e.FullName, e.WorkEmail,
-        e.DepartmentName, e.PositionTitle, e.EmploymentStatus, e.IsActive);
+        e.DepartmentName, e.PositionTitle, e.EmploymentStatus, e.IsActive,
+        includeSeparationDate ? e.SeparationDate : null);
 }
 
 public record CreateEmployeeDto(
