@@ -30,6 +30,20 @@ namespace PeopleCore.Application.Payroll.FinalPay;
 /// marked absent - the bridge's own choice to err toward paying rather than over-deducting wages.
 /// </para>
 /// <para>
+/// <b>No salary left to pay.</b> When regular payroll has already paid past the last working
+/// day (the day after the last Paid regular run ends is later than it), the final pay carries no
+/// salary: its period is stored as the last working day alone with no salary days, and no
+/// attendance is taken, since there's no salary for absences to come off. It still carries the
+/// 13th month, leave conversion, separation or retirement pay, loans, HR's deductions and the tax
+/// settle. A start HR gives that's after the last working day is still refused.
+/// </para>
+/// <para>
+/// <b>Unpaid regular runs.</b> A final pay isn't created, nor its period changed, while a regular
+/// run that includes the employee and isn't Paid yet overlaps the final period: the same days
+/// would be paid twice. The run has to be paid first - after which the default period starts
+/// after it.
+/// </para>
+/// <para>
 /// <b>Allowances</b> are not paid on a final pay. The engine pays a recurring allowance as a whole
 /// period's share with no pro-rating, which a short final period would overpay, and the spec's
 /// list of final-pay earnings doesn't include them.
@@ -91,7 +105,7 @@ public sealed class FinalPayService : IFinalPayService
 
         var compensation = await LoadCompensationAsync(separation, ct);
         Validate(request);
-        var periodStart = await ResolvePeriodStartAsync(separation, request.PeriodStart, ct);
+        var period = await ResolvePeriodAsync(separation, request.PeriodStart, ct);
 
         var run = new PayrollRun
         {
@@ -102,9 +116,9 @@ public sealed class FinalPayService : IFinalPayService
         };
         var inputs = new FinalPayInputs { PayrollRunId = run.Id, SeparationId = separation.Id };
         run.FinalPayInputs = inputs;
-        await ApplyRequestAsync(run, inputs, separation, request, periodStart, ct);
+        await ApplyRequestAsync(run, inputs, separation, request, period, ct);
 
-        var attendance = await DeriveAttendanceAsync(run, separation.EmployeeId, ct);
+        var attendance = await DeriveAttendanceAsync(run, inputs, separation.EmployeeId, ct);
         var (entry, figures) = await ComputeSettledAsync(run, inputs, separation, compensation, attendance, ct);
         run.Employees = [entry];
 
@@ -134,18 +148,18 @@ public sealed class FinalPayService : IFinalPayService
 
         var compensation = await LoadCompensationAsync(separation, ct);
         Validate(request);
-        var periodStart = await ResolvePeriodStartAsync(separation, request.PeriodStart, ct);
+        var period = await ResolvePeriodAsync(separation, request.PeriodStart, ct);
 
         // The number follows the pay date's year, so moving the pay date into another year moves
         // the run onto that year's sequence.
         if (request.PayDate.Year != run.PayDate.Year)
             run.RunNumber = await NextRunNumberAsync(request.PayDate.Year, ct);
         run.Frequency = compensation.PayFrequency;
-        await ApplyRequestAsync(run, inputs, separation, request, periodStart, ct);
+        await ApplyRequestAsync(run, inputs, separation, request, period, ct);
 
         // HR is redefining the run, possibly its period, so attendance is derived afresh; only a
         // plain recompute (RecomputeAsync) holds to the snapshot.
-        var attendance = await DeriveAttendanceAsync(run, separation.EmployeeId, ct);
+        var attendance = await DeriveAttendanceAsync(run, inputs, separation.EmployeeId, ct);
         var (entry, figures) = await ComputeSettledAsync(run, inputs, separation, compensation, attendance, ct);
 
         // Changed figures need a fresh approval, as on any recompute.
@@ -191,7 +205,7 @@ public sealed class FinalPayService : IFinalPayService
         var current = run.Employees.FirstOrDefault(e => e.EmployeeId == separation.EmployeeId);
         var attendance = current is not null
             ? PayrollRunService.FromSnapshot(current)
-            : await DeriveAttendanceAsync(run, separation.EmployeeId, ct);
+            : await DeriveAttendanceAsync(run, inputs, separation.EmployeeId, ct);
 
         var (entry, _) = await ComputeSettledAsync(run, inputs, separation, compensation, attendance, ct);
         return [entry];
@@ -232,28 +246,52 @@ public sealed class FinalPayService : IFinalPayService
     }
 
     /// <summary>
+    /// Where the final period starts, and whether it pays no salary at all (see the class remarks).
+    /// </summary>
+    private sealed record FinalPeriod(DateOnly Start, bool NoSalary);
+
+    /// <summary>
     /// HR's start, or by default the day after the employee's last Paid regular run ended - the
     /// first day nobody has paid them for yet - or, when they were never paid, the first of the
-    /// last working day's month.
+    /// last working day's month. A default start past the last working day means regular payroll
+    /// already paid the whole of it: the period is then the last working day alone, with no
+    /// salary. Refused while an unpaid regular run the employee is in overlaps the period.
     /// </summary>
-    private async Task<DateOnly> ResolvePeriodStartAsync(Separation separation, DateOnly? requested, CancellationToken ct)
+    private async Task<FinalPeriod> ResolvePeriodAsync(Separation separation, DateOnly? requested, CancellationToken ct)
     {
-        var start = requested;
-        if (start is null)
+        var lastDay = separation.LastWorkingDay;
+        var runs = await _runs.GetRunsForEmployeeAsync(separation.EmployeeId, ct);
+        var regular = runs.Where(r => r.RunType == PayrollRunType.Regular).ToList();
+
+        FinalPeriod period;
+        if (requested is DateOnly start)
         {
-            var runs = await _runs.GetRunsForEmployeeAsync(separation.EmployeeId, ct);
-            var lastPaidEnd = runs
-                .Where(r => r.Status == PayrollRunStatus.Paid && r.RunType == PayrollRunType.Regular)
+            if (start > lastDay)
+                throw new DomainException("The final pay period can't start after the last working day.");
+            period = new FinalPeriod(start, NoSalary: false);
+        }
+        else
+        {
+            var lastPaidEnd = regular
+                .Where(r => r.Status == PayrollRunStatus.Paid)
                 .Select(r => (DateOnly?)r.PeriodEnd)
                 .Max();
-            start = lastPaidEnd?.AddDays(1)
-                    ?? new DateOnly(separation.LastWorkingDay.Year, separation.LastWorkingDay.Month, 1);
+            var defaultStart = lastPaidEnd?.AddDays(1) ?? new DateOnly(lastDay.Year, lastDay.Month, 1);
+            period = defaultStart > lastDay
+                ? new FinalPeriod(lastDay, NoSalary: true)
+                : new FinalPeriod(defaultStart, NoSalary: false);
         }
 
-        if (start > separation.LastWorkingDay)
-            throw new DomainException("The final pay period can't start after the last working day.");
+        // GetRunsForEmployeeAsync returns only runs the employee is in.
+        var unpaid = regular
+            .Where(r => r.Status != PayrollRunStatus.Paid && r.PeriodStart <= lastDay && r.PeriodEnd >= period.Start)
+            .OrderBy(r => r.PeriodStart)
+            .FirstOrDefault();
+        if (unpaid is not null)
+            throw new DomainException(
+                $"Payroll {unpaid.RunNumber} covers {unpaid.PeriodLabel} and isn't paid yet; pay it before creating final pay.");
 
-        return start.Value;
+        return period;
     }
 
     private async Task<string> NextRunNumberAsync(int payYear, CancellationToken ct)
@@ -266,15 +304,17 @@ public sealed class FinalPayService : IFinalPayService
 
     /// <summary>Writes the request onto the run and its inputs, counting the period's salary days.</summary>
     private async Task ApplyRequestAsync(PayrollRun run, FinalPayInputs inputs, Separation separation,
-        FinalPayRequest request, DateOnly periodStart, CancellationToken ct)
+        FinalPayRequest request, FinalPeriod period, CancellationToken ct)
     {
-        run.PeriodStart = periodStart;
+        run.PeriodStart = period.Start;
         run.PeriodEnd = separation.LastWorkingDay;
         run.PayDate = request.PayDate;
 
         var settings = await _settings.GetDefaultAsync(ct);
-        inputs.WorkingDays = await CountSalaryDaysAsync(
-            separation.EmployeeId, run.PeriodStart, run.PeriodEnd, settings?.DailyRateFactor, ct);
+        inputs.WorkingDays = period.NoSalary
+            ? 0m
+            : await CountSalaryDaysAsync(
+                separation.EmployeeId, run.PeriodStart, run.PeriodEnd, settings?.DailyRateFactor, ct);
         inputs.SeparationPayOverride = request.SeparationPayOverride;
         inputs.RetirementPayOverride = request.RetirementPayOverride;
         inputs.OverrideNote = string.IsNullOrWhiteSpace(request.OverrideNote) ? null : request.OverrideNote.Trim();
@@ -310,8 +350,19 @@ public sealed class FinalPayService : IFinalPayService
         return days;
     }
 
-    private async Task<PayrollAttendanceInput> DeriveAttendanceAsync(PayrollRun run, Guid employeeId, CancellationToken ct)
+    /// <summary>
+    /// The period's attendance from the bridge - none when there are no salary days, as there is
+    /// then no salary for absences or tardiness to come off.
+    /// </summary>
+    private async Task<PayrollAttendanceInput> DeriveAttendanceAsync(PayrollRun run, FinalPayInputs inputs,
+        Guid employeeId, CancellationToken ct)
     {
+        if (inputs.WorkingDays == 0m)
+        {
+            run.EmployeesMissingAttendance = 0;
+            return new PayrollAttendanceInput();
+        }
+
         var bridged = await _attendance.BuildAsync([employeeId], run.PeriodStart, run.PeriodEnd, ct);
         run.EmployeesMissingAttendance = bridged.EmployeesWithoutSchedule.Count;
         return bridged.Inputs.TryGetValue(employeeId, out var input) ? input : new PayrollAttendanceInput();

@@ -423,11 +423,12 @@ public class FinalPayServiceTests
     [Fact]
     public async Task CreateAsync_DefaultPeriod_StartsTheDayAfterTheLastPaidRegularRun_IgnoringUnpaidAndFinalPayRuns()
     {
-        // A later draft regular run and a paid run of another type must not move the start.
+        // A later draft regular run and a paid run of another type must not move the start. (The
+        // draft lies after the final period: one overlapping it would refuse the final pay.)
         var draft = new PayrollRun
         {
-            PeriodStart = new DateOnly(2026, 3, 1), PeriodEnd = new DateOnly(2026, 3, 15),
-            PayDate = new DateOnly(2026, 3, 15), Status = PayrollRunStatus.Draft,
+            PeriodStart = new DateOnly(2026, 3, 14), PeriodEnd = new DateOnly(2026, 3, 31),
+            PayDate = new DateOnly(2026, 3, 31), Status = PayrollRunStatus.Draft,
         };
         var otherFinalPay = new PayrollRun
         {
@@ -458,6 +459,191 @@ public class FinalPayServiceTests
         var summary = await _sut.CreateAsync(_separation.Id, Request());
 
         summary.PeriodStart.Should().Be(new DateOnly(2026, 3, 1));
+    }
+
+    // ------------------------------------------------------------------
+    // Nothing left to pay as salary, and unpaid regular runs
+    // ------------------------------------------------------------------
+
+    /// <summary>March paid in full as a regular run, through the 31st - past the last working day.</summary>
+    private PayrollRun PaidThroughMarch()
+    {
+        var march = new PayrollRun
+        {
+            RunNumber = "PAY-2026-003",
+            PeriodStart = new DateOnly(2026, 3, 1),
+            PeriodEnd = new DateOnly(2026, 3, 31),
+            PayDate = new DateOnly(2026, 3, 31),
+            Frequency = PayFrequency.Monthly,
+            Status = PayrollRunStatus.Paid,
+        };
+        march.Employees.Add(new PayrollRunEmployee
+        {
+            PayrollRunId = march.Id, EmployeeId = _employee.Id, RegularPay = 36_500m,
+            SSSEmployee = 1_750m, PhilHealthEmployee = 912.50m, PagIbigEmployee = 200m,
+        });
+        _paidRuns.Add(march);
+        return march;
+    }
+
+    [Fact]
+    public async Task CreateAsync_WhenRegularPayrollAlreadyPaidPastTheLastWorkingDay_PaysNoSalary_AndTheRest()
+    {
+        // February and all of March are Paid regular runs, so the default start (Apr 1) falls
+        // after the last working day (Mar 13). Nothing is left to pay as salary, but the final
+        // pay still carries the 13th month, leave, separation pay, loans and the tax settle.
+        PaidThroughMarch();
+
+        var summary = await _sut.CreateAsync(_separation.Id, Request());
+        var entry = SavedEntry;
+
+        // Stored as the last working day alone, with no salary days - and no attendance, as
+        // there's no salary for absences to come off.
+        summary.PeriodStart.Should().Be(LastDay);
+        summary.PeriodEnd.Should().Be(LastDay);
+        summary.WorkingDays.Should().Be(0m);
+        _attendance.Verify(b => b.BuildAsync(It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(),
+                                             It.IsAny<CancellationToken>()), Times.Never);
+        entry.RegularPay.Should().Be(0m);
+
+        // 13th month = (36,500 Feb + 36,500 Mar + 0) / 12 = 73,000 / 12 = 6,083.33.
+        entry.ThirteenthMonth.Should().Be(6_083.33m);
+        entry.LeaveConversionPay.Should().Be(6_000m);       // 5 x 1,200
+        entry.SeparationPay.Should().Be(182_500m);          // 36,500 x 5 years
+        entry.LoanDeductions.Should().Be(3_000m);
+
+        // Contributions: the engine's normal final-period rule, a Monthly employee's full month -
+        // 1,750 + 912.50 + 200 = 2,862.50 - on top of what March's run already took.
+        (entry.SSSEmployee + entry.PhilHealthEmployee + entry.PagIbigEmployee).Should().Be(2_862.50m);
+
+        // Tax: 2316 Item 23 = 36,500 + (36,500 - 2,862.50) + (0 - 2,862.50) = 67,275 -> 0 due.
+        // Withheld elsewhere: February's 2,000. Settled = 0 - 2,000 = -2,000.
+        entry.WithholdingTax.Should().Be(-2_000m);
+
+        // Gross = 0 + 6,083.33 + 6,000 + 182,500 = 194,583.33
+        // Deductions = 2,862.50 - 2,000 + 3,000 = 3,862.50; net = 190,720.83.
+        entry.GrossPay.Should().Be(194_583.33m);
+        entry.NetPay.Should().Be(190_720.83m);
+
+        // A recompute reproduces it from what was stored.
+        var recomputed = (await _sut.RecomputeAsync(_savedRun!)).Single();
+        recomputed.Should().BeEquivalentTo(entry, o => o
+            .Excluding(e => e.Id).Excluding(e => e.CreatedAt).Excluding(e => e.UpdatedAt)
+            .Excluding(e => e.PayrollRun).Excluding(e => e.LoanDeductionLines).Excluding(e => e.PremiumDays));
+    }
+
+    [Fact]
+    public async Task UpdateAsync_WithNoStart_KeepsTheNoSalaryPeriod()
+    {
+        PaidThroughMarch();
+        await _sut.CreateAsync(_separation.Id, Request());
+        _separation.FinalPayRun = _savedRun;
+
+        var summary = await _sut.UpdateAsync(_separation.Id, Request(deductions: [new FinalPayDeductionDto("Cash advance", 500m)]));
+
+        summary.PeriodStart.Should().Be(LastDay);
+        summary.WorkingDays.Should().Be(0m);
+        _savedRun!.FinalPayInputs!.WorkingDays.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task CreateAsync_ASemiMonthlyEmployeeLeavingOnThe15th_WithTheFirstCutoffPaid_PaysNoSalary()
+    {
+        // Leaves on Sunday 2026-03-15; the Mar 1-15 cutoff is Paid, having taken the first half
+        // of March's contributions: SSS 1,750 / 2 = 875, PhilHealth 912.50 / 2 = 456.25,
+        // Pag-IBIG 200 / 2 = 100 - 1,431.25.
+        var lastDay = new DateOnly(2026, 3, 15);
+        _separation.LastWorkingDay = lastDay;
+        _compensation.PayFrequency = PayFrequency.SemiMonthly;
+        var firstCutoff = new PayrollRun
+        {
+            RunNumber = "PAY-2026-005",
+            PeriodStart = new DateOnly(2026, 3, 1),
+            PeriodEnd = lastDay,
+            PayDate = new DateOnly(2026, 3, 20),
+            Frequency = PayFrequency.SemiMonthly,
+            Status = PayrollRunStatus.Paid,
+        };
+        firstCutoff.Employees.Add(new PayrollRunEmployee
+        {
+            PayrollRunId = firstCutoff.Id, EmployeeId = _employee.Id, RegularPay = 18_250m,
+            SSSEmployee = 875m, PhilHealthEmployee = 456.25m, PagIbigEmployee = 100m,
+        });
+        _paidRuns.Add(firstCutoff);
+
+        var summary = await _sut.CreateAsync(_separation.Id, Request());
+
+        summary.WorkingDays.Should().Be(0m);
+        SavedEntry.RegularPay.Should().Be(0m);
+
+        // The final pay takes the engine's semi-monthly half again: 875 + 456.25 + 100 = 1,431.25.
+        // With the cutoff's 1,431.25, March's contributions total 2,862.50 - one month's worth
+        // (1,750 + 912.50 + 200), neither short nor doubled.
+        var finalPay = SavedEntry.SSSEmployee + SavedEntry.PhilHealthEmployee + SavedEntry.PagIbigEmployee;
+        finalPay.Should().Be(1_431.25m);
+        var cutoff = firstCutoff.Employees.Single();
+        (finalPay + cutoff.SSSEmployee + cutoff.PhilHealthEmployee + cutoff.PagIbigEmployee).Should().Be(2_862.50m);
+    }
+
+    [Theory]
+    [InlineData(PayrollRunStatus.Draft)]
+    [InlineData(PayrollRunStatus.ForApproval)]
+    [InlineData(PayrollRunStatus.Approved)]
+    public async Task CreateAsync_Refuses_WhileAnUnpaidRegularRunCoversTheFinalPeriod(PayrollRunStatus status)
+    {
+        // Mar 1-15 includes the employee and overlaps the final period Mar 1-13: paying both would
+        // pay those days twice.
+        var cutoff = new PayrollRun
+        {
+            RunNumber = "PAY-2026-005",
+            PeriodStart = new DateOnly(2026, 3, 1), PeriodEnd = new DateOnly(2026, 3, 15),
+            PayDate = new DateOnly(2026, 3, 20), Status = status,
+        };
+        _runs.Setup(r => r.GetRunsForEmployeeAsync(_employee.Id, It.IsAny<CancellationToken>()))
+             .ReturnsAsync([cutoff, _februaryRun]);
+
+        var act = () => _sut.CreateAsync(_separation.Id, Request());
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Payroll PAY-2026-005 covers Mar 1 – Mar 15, 2026 and isn't paid yet; pay it before creating final pay.");
+        _runs.Verify(r => r.AddFinalPayRunAsync(It.IsAny<PayrollRun>(), It.IsAny<Separation>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_Refuses_APeriodAnUnpaidRegularRunCovers()
+    {
+        await _sut.CreateAsync(_separation.Id, Request());
+        _separation.FinalPayRun = _savedRun;
+        var cutoff = new PayrollRun
+        {
+            RunNumber = "PAY-2026-005",
+            PeriodStart = new DateOnly(2026, 3, 1), PeriodEnd = new DateOnly(2026, 3, 15),
+            PayDate = new DateOnly(2026, 3, 20), Status = PayrollRunStatus.Draft,
+        };
+        _runs.Setup(r => r.GetRunsForEmployeeAsync(_employee.Id, It.IsAny<CancellationToken>()))
+             .ReturnsAsync([cutoff, _februaryRun, _savedRun!]);
+
+        var act = () => _sut.UpdateAsync(_separation.Id, Request(periodStart: new DateOnly(2026, 3, 9)));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Payroll PAY-2026-005 covers Mar 1 – Mar 15, 2026 and isn't paid yet; pay it before creating final pay.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_IgnoresAnUnpaidRegularRunOutsideTheFinalPeriod()
+    {
+        var later = new PayrollRun
+        {
+            RunNumber = "PAY-2026-006",
+            PeriodStart = new DateOnly(2026, 3, 14), PeriodEnd = new DateOnly(2026, 3, 31),
+            PayDate = new DateOnly(2026, 3, 31), Status = PayrollRunStatus.Draft,
+        };
+        _runs.Setup(r => r.GetRunsForEmployeeAsync(_employee.Id, It.IsAny<CancellationToken>()))
+             .ReturnsAsync([later, _februaryRun]);
+
+        var summary = await _sut.CreateAsync(_separation.Id, Request());
+
+        summary.WorkingDays.Should().Be(13m);
     }
 
     [Fact]
