@@ -455,6 +455,11 @@ else
         if (_savingFinalPay) return;
         _finalPayActionError = null;
         _savingFinalPay = true;
+        // Starting the save drops any load already out. If another load starts while the save is
+        // out (a clearance change), the save's answer may predate it, so it is not applied: the
+        // final pay is reloaded instead, which sees both.
+        var version = ++_finalPayVersion;
+        var reload = false;
         try
         {
             var request = BuildFinalPayRequest();
@@ -462,12 +467,17 @@ else
                 ? await Api.CreateFinalPayAsync(Id, request)
                 : await Api.UpdateFinalPayAsync(Id, request);
 
-            // What a save returns is the newest state there is: any load still out is dropped.
-            _finalPayVersion++;
-            _finalPay = summary;
-            _finalPayLoaded = true;
-            _finalPayLoadError = null;
             _editingFinalPay = false;
+            if (version == _finalPayVersion)
+            {
+                _finalPay = summary;
+                _finalPayLoaded = true;
+                _finalPayLoadError = null;
+            }
+            else
+            {
+                reload = true;
+            }
         }
         catch (Exception ex)
         {
@@ -477,6 +487,8 @@ else
         {
             _savingFinalPay = false;
         }
+
+        if (reload) await LoadFinalPay();
     }
 
     private static string Peso(decimal amount) => PayrollLabels.Peso(amount);

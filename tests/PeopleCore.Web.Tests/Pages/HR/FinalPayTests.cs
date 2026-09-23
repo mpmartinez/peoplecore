@@ -438,6 +438,46 @@ public class FinalPayTests : BunitContext
         cut.FindAll("[data-clearance-outstanding]").Should().BeEmpty("the older answer arrived last but is out of date");
     }
 
+    [Fact]
+    public void ASlowSave_DoesNotOverwriteAReloadThatBeganWhileItWasOut_ItReloadsInstead()
+    {
+        // An edit is saved; while its PUT is out, clearing an item reloads the final pay. The
+        // PUT's answer was computed before that clearance, so it must not be the last word.
+        var loads = 0;
+        _api.On(HttpMethod.Get, FinalPayPath, () => ++loads == 1
+            ? Json(Summary(clearanceComplete: false, outstanding: """["Return laptop"]"""))
+            : Json(Summary(clearanceComplete: true)));
+        var put = _api.OnGated(HttpMethod.Put, FinalPayPath);
+        _api.On(HttpMethod.Post, $"{SeparationPath}/clearance/{ItemId}/clear", HttpStatusCode.OK,
+            Separation(clearanceItems: ClearedItem()));
+        var cut = RenderPage(Separation(clearanceItems: UnclearedItem()));
+        cut.WaitForElement("[data-clearance-outstanding]");
+
+        cut.Find("[data-edit-final-pay]").Click();
+        cut.Find("[data-submit-final-pay]").Click();
+        cut.Find($"[data-clear='{ItemId}']").Click();
+        cut.WaitForAssertion(() => loads.Should().Be(2));
+
+        put.SetResult(Json(Summary(clearanceComplete: false, outstanding: """["Return laptop"]""")));
+
+        cut.WaitForAssertion(() => loads.Should().Be(3, "the save's answer is stale, so the page reloads"));
+        cut.WaitForAssertion(() => cut.FindAll("[data-clearance-outstanding]").Should().BeEmpty());
+        cut.FindAll("[data-final-pay-form]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ASaveWithNothingNewerStarted_ShowsItsOwnAnswer_WithoutReloading()
+    {
+        _api.On(HttpMethod.Put, FinalPayPath, HttpStatusCode.OK, Summary(separationPay: 25000m));
+        var cut = RenderWithRun(Summary());
+
+        cut.Find("[data-edit-final-pay]").Click();
+        cut.Find("[data-submit-final-pay]").Click();
+
+        cut.WaitForAssertion(() => Text(cut, "[data-separation-pay]").Should().Contain("25,000.00"));
+        _api.Requests.Count(r => r.Method == HttpMethod.Get && r.RequestUri!.AbsolutePath == FinalPayPath).Should().Be(1);
+    }
+
     // ---------- Editing ----------
 
     [Theory]
