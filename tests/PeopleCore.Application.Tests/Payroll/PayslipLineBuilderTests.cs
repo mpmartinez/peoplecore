@@ -93,6 +93,19 @@ public class PayslipLineBuilderTests
     }
 
     [Fact]
+    public void Leave_conversion_beyond_de_minimis_is_flagged_like_the_13th_month()
+    {
+        // 7,500 of leave, 6,000 of it de minimis: the other 1,500 is "other benefits", which,
+        // like the 13th month, is taxed only past the year's 90,000 exemption - which one
+        // payslip can't see. So the line carries the 13th month's flag.
+        var lines = PayslipLineBuilder.Earnings(FinalPay());
+
+        var leave = lines.Single(l => l.Description == "Leave Conversion");
+        var thirteenth = lines.Single(l => l.Description == "13th Month Pay");
+        leave.IsTaxable.Should().Be(thirteenth.IsTaxable).And.BeFalse();
+    }
+
+    [Fact]
     public void A_final_pay_shows_leave_conversion_and_separation_pay_as_earnings_and_omits_a_zero_retirement_pay()
     {
         var lines = PayslipLineBuilder.Earnings(FinalPay());

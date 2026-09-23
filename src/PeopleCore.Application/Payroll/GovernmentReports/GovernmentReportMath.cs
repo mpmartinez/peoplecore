@@ -21,8 +21,9 @@ public static class GovernmentReportMath
     }
 
     /// <summary>
-    /// The part of a month's 13th month pay within the 90,000 exemption, after the 13th month paid
-    /// earlier in the year has used its share, the same way payroll withheld tax on it.
+    /// The part of a month's 13th month and other benefits (the 13th month plus leave converted
+    /// beyond de minimis) within the 90,000 exemption, after what was paid earlier in the year has
+    /// used its share, the same way the 2316 splits the year.
     /// </summary>
     public static decimal NonTaxableThirteenthMonth(decimal thisMonth, decimal paidEarlierInYear)
         => Math.Min(thisMonth, Math.Max(0m, StatutoryCaps.ThirteenthMonthExemption - paidEarlierInYear));

@@ -45,6 +45,12 @@ public record FinalPayLoanLineDto(string LoanType, decimal Balance, decimal Dedu
 /// equal to the computed figure can't be told apart from the figures alone.
 /// </param>
 /// <param name="RetirementPayOverride">HR's stored retirement pay override, null when there is none.</param>
+/// <param name="LeaveConversionNonTaxable">
+/// The part of <paramref name="LeaveConversionPay"/> that isn't taxed: the de minimis days (the
+/// first 10 vacation-type days), plus as much of the rest - "other benefits" under RR 5-2011 as
+/// amended by RR 11-2018 - as the pay year's 90,000 "13th month and other benefits" exemption still
+/// covers after the year's earlier pay and this final pay's 13th month.
+/// </param>
 /// <param name="NoSalaryDays">
 /// True when regular payroll already paid past the last working day, so the final pay carries no
 /// salary (0 working days, by the default period). A page editing it sends a null start back, which

@@ -1,4 +1,5 @@
 using PeopleCore.Domain.Enums;
+using PeopleCore.Domain.Payroll;
 
 namespace PeopleCore.Application.Payroll.FinalPay;
 
@@ -50,10 +51,28 @@ public static class FinalPayMath
         => Math.Round(dailyRate * RetirementDaysPerYear * serviceYears, 2);
 
     /// <summary>
-    /// Unused convertible leave at the daily rate, split into the de minimis part (the first ten
-    /// vacation-type days) and the taxable rest.
+    /// How much of the leave paid beyond de minimis falls within the year's 90,000 exemption for
+    /// "13th month and other benefits": what the year's earlier pay didn't use of it, after this
+    /// pay's own 13th month has taken its share first. The rest of the leave is taxable.
     /// </summary>
-    public static (decimal NonTaxable, decimal Taxable) LeaveConversion(
+    /// <param name="otherBenefits">The leave beyond de minimis.</param>
+    /// <param name="thirteenthMonth">This pay's 13th month, which fills the exemption first.</param>
+    /// <param name="usedEarlierInYear">
+    /// The 13th month and other benefits the pay year's earlier Paid runs paid; only up to 90,000
+    /// of it was exempt, and anything past that leaves nothing.
+    /// </param>
+    public static decimal OtherBenefitsExempt(decimal otherBenefits, decimal thirteenthMonth, decimal usedEarlierInYear)
+    {
+        decimal left = Math.Max(0m, StatutoryCaps.ThirteenthMonthExemption - usedEarlierInYear - thirteenthMonth);
+        return Math.Min(Math.Max(0m, otherBenefits), left);
+    }
+
+    /// <summary>
+    /// Unused convertible leave at the daily rate, split into the de minimis part (the first ten
+    /// vacation-type days) and the rest. The rest is "other benefits" (RR 5-2011, as amended by
+    /// RR 11-2018): exempt together with the 13th month up to the year's 90,000, taxable past it.
+    /// </summary>
+    public static (decimal DeMinimis, decimal OtherBenefits) LeaveConversion(
         IEnumerable<(decimal Days, bool CountsAsVacation)> balances, decimal dailyRate)
     {
         var positive = balances.Where(b => b.Days > 0m).ToList();

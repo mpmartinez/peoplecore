@@ -63,6 +63,8 @@ public class PayrollRunEmployeeConfiguration : IEntityTypeConfiguration<PayrollR
         builder.Ignore(x => x.NetPay);
         builder.Ignore(x => x.TotalEmployerCost);
         builder.Ignore(x => x.FinalPayTaxable);
+        builder.Ignore(x => x.LeaveConversionOtherBenefits);
+        builder.Ignore(x => x.ThirteenthMonthAndOtherBenefits);
 
         // An employee with payroll history cannot be deleted.
         builder.HasOne(x => x.Employee)

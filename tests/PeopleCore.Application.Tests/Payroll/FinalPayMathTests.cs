@@ -52,11 +52,28 @@ public class FinalPayMathTests
     [Fact]
     public void LeaveConversion_TreatsTheFirstTenVacationDaysAsDeMinimis()
     {
-        var (nonTaxable, taxable) = FinalPayMath.LeaveConversion(
+        var (deMinimis, otherBenefits) = FinalPayMath.LeaveConversion(
             [(8m, true), (5m, true), (3m, false)], dailyRate: 1_000m);
 
-        nonTaxable.Should().Be(10_000m, "10 of the 13 vacation-type days");
-        taxable.Should().Be(6_000m, "the other 3 vacation days, plus 3 days of a type that doesn't count as vacation");
+        deMinimis.Should().Be(10_000m, "10 of the 13 vacation-type days");
+        otherBenefits.Should().Be(6_000m, "the other 3 vacation days, plus 3 days of a type that doesn't count as vacation");
+    }
+
+    [Theory]
+    // Nothing used earlier: 90,000 - 4,341.67 13th month = 85,658.33 left; all 36,000 fits.
+    [InlineData(36_000, 4_341.67, 0, 36_000)]
+    // 90,000 - 0 - 30,342.47 = 59,657.53 left of 98,630.20.
+    [InlineData(98_630.20, 30_342.47, 0, 59_657.53)]
+    // 80,000 used earlier: 90,000 - 80,000 - 5,000 = 5,000 left of 10,000.
+    [InlineData(10_000, 5_000, 80_000, 5_000)]
+    // The 13th month alone fills what's left: 90,000 - 88,000 - 5,000 < 0 -> nothing.
+    [InlineData(10_000, 5_000, 88_000, 0)]
+    // Past the cap already: nothing.
+    [InlineData(10_000, 0, 95_000, 0)]
+    public void OtherBenefitsExempt_FillsWhatTheThirteenthMonthLeavesOfTheYearsExemption(
+        decimal otherBenefits, decimal thirteenthMonth, decimal usedEarlierInYear, decimal expected)
+    {
+        FinalPayMath.OtherBenefitsExempt(otherBenefits, thirteenthMonth, usedEarlierInYear).Should().Be(expected);
     }
 
     [Fact]

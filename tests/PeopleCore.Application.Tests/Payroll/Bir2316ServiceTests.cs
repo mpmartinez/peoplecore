@@ -273,11 +273,13 @@ public class Bir2316ServiceTests
     public async Task GetPreviewAsync_CertifiesFinalPayLeaveConversionAndSeparationPay()
     {
         // A regular run plus a Paid final-pay entry: leave conversion of 6,000 (4,000 de minimis,
-        // 2,000 taxable) and separation pay of 150,000, all non-taxable (separation for causes
+        // 2,000 beyond it) and separation pay of 150,000, all non-taxable (separation for causes
         // beyond the employee's control is fully exempt). FinalPayNonTaxable therefore carries
-        // both the leave conversion's non-taxable slice and all of the separation pay: 4,000 +
-        // 150,000 = 154,000. FinalPayTaxable = 6,000 + 150,000 - 154,000 = 2,000 - exactly the
-        // taxable part of leave conversion, since none of the separation pay is taxable.
+        // both the leave conversion's de minimis slice and all of the separation pay: 4,000 +
+        // 150,000 = 154,000. The 2,000 beyond de minimis is "other benefits" (RR 5-2011 as
+        // amended by RR 11-2018): it shares the 90,000 exemption with the 13th month (none here),
+        // so it's all within it and goes to Item 34. Nothing is taxable outright, so Item 51B is
+        // blank.
         PaidRunsAre(
             Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
                 [Entry(_employeeId, regularPay: 20_000m)]),
@@ -291,11 +293,57 @@ public class Bir2316ServiceTests
         var result = await _sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None);
 
         result.Should().NotBeNull();
-        result!.Item35_DeMinimis.Should().Be(4_000m);
+        result!.Item34_ThirteenthMonthAndBenefits.Should().Be(2_000m);
+        result.Item35_DeMinimis.Should().Be(4_000m);
         result.Item37_SalariesOtherForms.Should().Be(150_000m);
-        result.Item51B_OtherAmount.Should().Be(2_000m);
-        result.Item51B_OtherLabel.Should().Be("Final pay - leave conv./separation pay");
-        result.Item19_GrossCompensation.Should().Be(result.Item38_TotalNonTaxable + result.Item52_TotalTaxableCompensation);
+        result.Item48_TaxableThirteenthMonth.Should().Be(0m);
+        result.Item51B_OtherAmount.Should().Be(0m);
+        result.Item51B_OtherLabel.Should().BeEmpty();
+        // Item 19 = everything paid: 20,000 + 6,000 + 150,000 = 176,000.
+        result.Item19_GrossCompensation.Should().Be(176_000m);
+        result.Item52_TotalTaxableCompensation.Should().Be(20_000m);
+    }
+
+    [Fact]
+    public async Task GetPreviewAsync_LeaveBeyondDeMinimis_SharesThe90000WithThe13thMonth()
+    {
+        // 85,000 of 13th month paid in a regular run, then a final pay with 1,000 more 13th month
+        // and 12,000 of leave (3,000 de minimis, 9,000 beyond it). 13th month and other benefits
+        // for the year = 85,000 + 1,000 + 9,000 = 95,000: 90,000 exempt (Item 34), 5,000 taxable
+        // (Item 48). The de minimis 3,000 stays in Item 35.
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 5, 15), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 20_000m, thirteenthMonth: 85_000m)]),
+            Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Paid, entries:
+            [
+                Entry(_employeeId, thirteenthMonth: 1_000m,
+                    leaveConversionPay: 12_000m, leaveConversionNonTaxable: 3_000m, finalPayNonTaxable: 3_000m)
+            ]));
+
+        var result = await _sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None);
+
+        result!.Item34_ThirteenthMonthAndBenefits.Should().Be(90_000m);
+        result.Item48_TaxableThirteenthMonth.Should().Be(5_000m);
+        result.Item35_DeMinimis.Should().Be(3_000m);
+        result.Item51B_OtherAmount.Should().Be(0m);
+        // Item 52 = 20,000 basic + 5,000 = 25,000; Item 19 = 20,000 + 86,000 + 12,000 = 118,000.
+        result.Item52_TotalTaxableCompensation.Should().Be(25_000m);
+        result.Item19_GrossCompensation.Should().Be(118_000m);
+    }
+
+    [Fact]
+    public async Task GetPreviewAsync_PutsTaxableSeparationPayInItem51B()
+    {
+        // A resignation with a 50,000 goodwill payment: taxable outright, so Item 51B.
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 10_000m, separationPay: 50_000m)]));
+
+        var result = await _sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None);
+
+        result!.Item51B_OtherAmount.Should().Be(50_000m);
+        result.Item51B_OtherLabel.Should().Be("Final pay - separation/retirement pay");
+        result.Item34_ThirteenthMonthAndBenefits.Should().Be(0m);
     }
 
     [Fact]
@@ -332,7 +380,8 @@ public class Bir2316ServiceTests
         result!.Item39_BasicSalary.Should().Be(20_000m);
         result.Item35_DeMinimis.Should().Be(4_000m);
         result.Item37_SalariesOtherForms.Should().Be(150_000m);
-        result.Item51B_OtherAmount.Should().Be(2_000m);
+        result.Item34_ThirteenthMonthAndBenefits.Should().Be(2_000m);   // the leave beyond de minimis
+        result.Item51B_OtherAmount.Should().Be(0m);
         result.Item25A_PresentTaxWithheld.Should().Be(1_300m);
     }
 

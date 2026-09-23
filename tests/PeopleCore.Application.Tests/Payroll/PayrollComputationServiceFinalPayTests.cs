@@ -35,7 +35,7 @@ public class PayrollComputationServiceFinalPayTests
         var extras = NewExtras(workingDays: 8m) with
         {
             LeaveConversionNonTaxable = 4_000m,
-            LeaveConversionTaxable = 1_000m,
+            LeaveConversionOtherBenefits = 1_000m,
             SeparationPay = 20_000m,
             RetirementPay = 10_000m,
             SeparationAndRetirementNonTaxable = 30_000m
@@ -43,7 +43,7 @@ public class PayrollComputationServiceFinalPayTests
 
         var result = _sut.Compute(employee, NewRun(), finalPay: extras);
 
-        result.LeaveConversionPay.Should().Be(5_000.00m, "the non-taxable and taxable leave parts combined");
+        result.LeaveConversionPay.Should().Be(5_000.00m, "the de minimis and other-benefits leave parts combined");
         result.LeaveConversionNonTaxable.Should().Be(4_000.00m);
         result.SeparationPay.Should().Be(20_000.00m);
         result.RetirementPay.Should().Be(10_000.00m);
@@ -156,19 +156,41 @@ public class PayrollComputationServiceFinalPayTests
     }
 
     [Fact]
-    public void Compute_with_final_pay_extras_taxable_leave_conversion_raises_the_withholding_base()
+    public void Compute_with_final_pay_extras_leave_beyond_de_minimis_is_other_benefits_untaxed_within_the_90000()
     {
-        // Higher salary so the withholding base clears the 250,000-a-year threshold and a
-        // change in the base actually moves the tax.
+        // Leave beyond the de minimis days is "other benefits" (RR 5-2011 as amended by RR
+        // 11-2018): it shares the 90,000 exemption with the 13th month, so 50,000 of it - with
+        // no 13th month here - is untaxed, and stays out of the withholding base.
         var employee = NewEmployee(basicSalary: 120_000m);
         var without = NewExtras(workingDays: 22m, withholdingTaxOverride: null);
-        var withTaxableLeave = without with { LeaveConversionTaxable = 50_000m };
+        var withLeave = without with { LeaveConversionOtherBenefits = 50_000m };
 
         var baseline = _sut.Compute(employee, NewRun(), finalPay: without);
-        var result = _sut.Compute(employee, NewRun(), finalPay: withTaxableLeave);
+        var result = _sut.Compute(employee, NewRun(), finalPay: withLeave);
 
-        result.WithholdingTax.Should().BeGreaterThan(baseline.WithholdingTax,
-            "the taxable leave conversion joins the withholding base like a taxable allowance");
+        result.WithholdingTax.Should().Be(baseline.WithholdingTax);
+        result.FinalPayTaxable.Should().Be(0m, "none of it is taxable outright");
+        result.ThirteenthMonthAndOtherBenefits.Should().Be(50_000m);
+    }
+
+    [Fact]
+    public void Compute_with_final_pay_extras_leave_beyond_the_90000_is_taxed_at_the_margin_like_the_13th_month()
+    {
+        // 120,000 a month: daily rate 120,000 x 12 / 365 = 3,945.205... -> 3,945.21; 22 days =
+        // 86,794.62. Contributions: SSS 1,750 (top bracket), PhilHealth 120,000 x 5% / 2 = 3,000
+        // -> the 2,500 ceiling, Pag-IBIG 200. Withholding base 86,794.62 - 4,450 = 82,344.62 a
+        // month, 988,135.44 a year - in the 800,000-2,000,000 bracket (25%).
+        // 100,000 of leave beyond de minimis: 10,000 over the 90,000 exemption, taxed at the
+        // margin: 10,000 x 25% = 2,500.00 on top of the period's own withholding.
+        var employee = NewEmployee(basicSalary: 120_000m);
+        var without = NewExtras(workingDays: 22m, withholdingTaxOverride: null);
+        var withLeave = without with { LeaveConversionOtherBenefits = 100_000m };
+
+        var baseline = _sut.Compute(employee, NewRun(), finalPay: without);
+        var result = _sut.Compute(employee, NewRun(), finalPay: withLeave);
+
+        result.RegularPay.Should().Be(86_794.62m);
+        result.WithholdingTax.Should().Be(baseline.WithholdingTax + 2_500.00m);
     }
 
     [Theory]
@@ -301,7 +323,7 @@ public class PayrollComputationServiceFinalPayTests
     private static FinalPayExtras NewExtras(decimal workingDays, decimal? withholdingTaxOverride = 0m) => new(
         WorkingDays: workingDays,
         LeaveConversionNonTaxable: 0m,
-        LeaveConversionTaxable: 0m,
+        LeaveConversionOtherBenefits: 0m,
         SeparationPay: 0m,
         RetirementPay: 0m,
         SeparationAndRetirementNonTaxable: 0m,

@@ -281,20 +281,23 @@ public class PayrollComputationService
         }
 
         // Final-pay earnings arrive already computed (see FinalPayMath). The non-taxable parts
-        // are recorded as-is; the taxable remainder joins the withholding base below exactly
-        // like a taxable allowance, but never the SSS/PhilHealth/Pag-IBIG base, which statute
-        // fixes to the basic salary regardless of what else is paid out.
+        // are recorded as-is. Separation or retirement pay that isn't exempt joins the
+        // withholding base below exactly like a taxable allowance. The leave beyond de minimis is
+        // "other benefits" instead: like the 13th month it stays out of the base and is taxed
+        // only past the 90,000 exemption the two share (see ComputeThirteenthMonthTax). Neither
+        // ever joins the SSS/PhilHealth/Pag-IBIG contributions, which statute fixes to the basic
+        // salary regardless of what else is paid out.
         decimal leaveConversionPay = 0m, leaveConversionNonTaxable = 0m, separationPay = 0m, retirementPay = 0m;
-        decimal finalPayNonTaxable = 0m, finalPayTaxable = 0m;
+        decimal finalPayNonTaxable = 0m, finalPayTaxable = 0m, leaveOtherBenefits = 0m;
         if (finalPay is not null)
         {
-            leaveConversionPay = Math.Round(finalPay.LeaveConversionNonTaxable + finalPay.LeaveConversionTaxable, 2);
+            leaveConversionPay = Math.Round(finalPay.LeaveConversionNonTaxable + finalPay.LeaveConversionOtherBenefits, 2);
             leaveConversionNonTaxable = finalPay.LeaveConversionNonTaxable;
+            leaveOtherBenefits = leaveConversionPay - leaveConversionNonTaxable;
             separationPay = finalPay.SeparationPay;
             retirementPay = finalPay.RetirementPay;
             finalPayNonTaxable = leaveConversionNonTaxable + finalPay.SeparationAndRetirementNonTaxable;
-            finalPayTaxable = finalPay.LeaveConversionTaxable
-                + separationPay + retirementPay - finalPay.SeparationAndRetirementNonTaxable;
+            finalPayTaxable = separationPay + retirementPay - finalPay.SeparationAndRetirementNonTaxable;
         }
 
         // Gross pay for contribution base = regular pay + OT + holiday + taxable allowances (non-taxable excluded from BIR base)
@@ -346,11 +349,12 @@ public class PayrollComputationService
 
         // A settled final-pay tax replaces both the per-period withholding and the 13th-month
         // excess tax below - it is the actual figure HR has already worked out, not an estimate
-        // to be layered on top of one.
+        // to be layered on top of one. The leave beyond de minimis is taxed with the 13th month:
+        // both are "13th month and other benefits", exempt together up to 90,000.
         decimal withholdingTax = finalPay?.WithholdingTaxOverride ??
             (ComputeWithholdingTax(taxableForBIR, compensation.PayFrequency)
                 + ComputeThirteenthMonthTax(taxableForBIR, compensation.PayFrequency,
-                    thirteenthMonth, thirteenthMonthPaidEarlierInYear));
+                    thirteenthMonth + leaveOtherBenefits, thirteenthMonthPaidEarlierInYear));
 
         // Loan deductions. Each active loan contributes its per-period instalment, but never
         // more than is still owed - an employee must not be charged past the payoff - and only

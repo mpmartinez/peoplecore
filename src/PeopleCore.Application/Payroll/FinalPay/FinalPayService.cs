@@ -64,6 +64,14 @@ namespace PeopleCore.Application.Payroll.FinalPay;
 /// pay is made after the year end.
 /// </para>
 /// <para>
+/// <b>Leave conversion</b> pays the last working day's year's remaining convertible days at the
+/// daily rate. The first 10 vacation-type days are de minimis (2316 Item 35). The rest is "other
+/// benefits" (RR 5-2011 as amended by RR 11-2018): it shares the 90,000 exemption with the 13th
+/// month, exempt as far as the pay year's earlier Paid runs and this final pay's 13th month leave
+/// room (Item 34) and taxable past it (Item 48). The 2316 the tax is settled through makes that
+/// split, so the settle follows it; the summary shows the same split.
+/// </para>
+/// <para>
 /// <b>Allowances</b> are paid for the final period's salary days, pro-rated like its base pay:
 /// each allowance's monthly amount x 12 / factor x salary days (see
 /// <see cref="PayrollComputationService.Compute"/>). They stay taxable or non-taxable exactly as
@@ -466,8 +474,8 @@ public sealed class FinalPayService : IFinalPayService
         decimal RetirementPay,
         decimal SeparationAndRetirementNonTaxable,
         IReadOnlyList<FinalPayLeaveLineDto> LeaveLines,
-        decimal LeaveNonTaxable,
-        decimal LeaveTaxable);
+        decimal LeaveDeMinimis,
+        decimal LeaveOtherBenefits);
 
     private async Task<Figures> FiguresAsync(Separation separation, FinalPayInputs inputs,
         decimal monthlyBasic, decimal dailyRate, CancellationToken ct)
@@ -510,11 +518,11 @@ public sealed class FinalPayService : IFinalPayService
             .Where(b => b.LeaveType is { IsConvertibleToCash: true } && b.RemainingDays > 0m)
             .Select(b => new FinalPayLeaveLineDto(b.LeaveType.Name, b.RemainingDays, b.LeaveType.CountsAsVacationForDeMinimis))
             .ToList();
-        var (leaveNonTaxable, leaveTaxable) =
+        var (leaveDeMinimis, leaveOtherBenefits) =
             FinalPayMath.LeaveConversion(leaveLines.Select(l => (l.Days, l.CountsAsVacation)), dailyRate);
 
         return new Figures(years, computedShown, separationPay, retirementPay, nonTaxable,
-                           leaveLines, leaveNonTaxable, leaveTaxable);
+                           leaveLines, leaveDeMinimis, leaveOtherBenefits);
     }
 
     /// <summary>
@@ -567,8 +575,8 @@ public sealed class FinalPayService : IFinalPayService
         var figures = await FiguresAsync(separation, inputs, compensation.BasicSalary, dailyRate, ct);
         var extras = new FinalPayExtras(
             inputs.WorkingDays,
-            figures.LeaveNonTaxable,
-            figures.LeaveTaxable,
+            figures.LeaveDeMinimis,
+            figures.LeaveOtherBenefits,
             figures.SeparationPay,
             figures.RetirementPay,
             figures.SeparationAndRetirementNonTaxable,
@@ -620,7 +628,9 @@ public sealed class FinalPayService : IFinalPayService
             inputs.WorkingDays,
             noSalary,
             startIsDefault,
-            entry.LeaveConversionPay, entry.LeaveConversionNonTaxable, figures.LeaveLines,
+            entry.LeaveConversionPay,
+            entry.LeaveConversionNonTaxable + await LeaveOtherBenefitsExemptAsync(separation.EmployeeId, run, entry, ct),
+            figures.LeaveLines,
             entry.SeparationPay, entry.RetirementPay, figures.ComputedSeparationOrRetirementPay,
             inputs.SeparationPayOverride, inputs.RetirementPayOverride,
             inputs.OverrideNote, figures.ServiceYears,
@@ -633,6 +643,26 @@ public sealed class FinalPayService : IFinalPayService
                 .OrderBy(i => i.SortOrder)
                 .Select(i => i.Name)
                 .ToList());
+    }
+
+    /// <summary>
+    /// How much of the leave beyond de minimis the 90,000 "13th month and other benefits"
+    /// exemption covers, as the pay year's 2316 will split it: what the year's other Paid runs
+    /// left of it, after this entry's own 13th month (see <see cref="FinalPayMath.OtherBenefitsExempt"/>).
+    /// </summary>
+    private async Task<decimal> LeaveOtherBenefitsExemptAsync(Guid employeeId, PayrollRun run,
+        PayrollRunEmployee entry, CancellationToken ct)
+    {
+        if (entry.LeaveConversionOtherBenefits <= 0m)
+            return 0m;
+
+        int payYear = run.PayDate.Year;
+        decimal usedEarlier = (await _runs.GetPaidRunsForEmployeeInYearAsync(employeeId, payYear, ct))
+            .Where(r => r.Id != run.Id && r.Status == PayrollRunStatus.Paid && r.PayDate.Year == payYear)
+            .SelectMany(r => r.Employees.Where(e => e.EmployeeId == employeeId))
+            .Sum(e => e.ThirteenthMonthAndOtherBenefits);
+
+        return FinalPayMath.OtherBenefitsExempt(entry.LeaveConversionOtherBenefits, entry.ThirteenthMonth, usedEarlier);
     }
 
     /// <summary>

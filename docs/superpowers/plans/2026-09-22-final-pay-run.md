@@ -32,7 +32,7 @@
 - **Base pay of the final period:** `DailyRate × WorkingDays`, where WorkingDays are the period's *salary days*, following the daily-rate factor the rate is derived with. On 365 (rest days paid) they are every calendar day from `PeriodStart` to the last working day, inclusive. On 313 and 261 they are the days the employee's shift schedules, falling back to Monday to Friday where no shift is assigned. The attendance bridge's absences still come off once, per scheduled day absent. They are stored on the run's final-pay inputs and reused on recompute. Regular runs are unchanged.
 - **Allowances:** each of the employee's allowances is paid for the salary days, pro-rated like base pay: monthly amount × 12 / factor × salary days. Taxable and non-taxable allowances are classified as on a regular run. No salary days, no allowances.
 - **13th month:** included. Its year is the **last working day's** year: one twelfth of the basic earned in that year's Paid runs (selected by pay date, as elsewhere) plus this final pay's own RegularPay, less the 13th month already paid in that year. The tax settle and the 2316 stay on the pay date's year.
-- **Leave conversion:** remaining days (`LeaveBalance.RemainingDays`, current pay year) of each leave type with `IsConvertibleToCash`, times the daily rate. Up to 10 days in total across types with `CountsAsVacationForDeMinimis` are non-taxable, and the rest is taxable.
+- **Leave conversion:** remaining days (`LeaveBalance.RemainingDays`, current pay year) of each leave type with `IsConvertibleToCash`, times the daily rate. Up to 10 days in total across types with `CountsAsVacationForDeMinimis` are de minimis and non-taxable (2316 Item 35). The rest is "other benefits" (RR 5-2011 as amended by RR 11-2018): it shares the 90,000 exemption with the 13th month - `PayrollRunEmployee.ThirteenthMonthAndOtherBenefits` = `ThirteenthMonth + LeaveConversionOtherBenefits` - so it is exempt as far as the pay year's earlier Paid runs and the final pay's own 13th month (which fills the exemption first) leave room (Item 34), and taxable past it (Item 48). `FinalPayTaxable` is the separation or retirement pay that isn't exempt; it no longer includes leave. The summary's `LeaveConversionNonTaxable` is the de minimis part plus the exempt part of the rest.
 - **Separation pay** (type AuthorizedCause), per year of service:
   - one month: Redundancy, LaborSavingDevices;
   - half a month: Retrenchment, ClosureNotDueToLosses, Disease;
@@ -85,7 +85,7 @@
 - `enum PayrollRunType { Regular, FinalPay }`. Add `PayrollRun.RunType` (default Regular, stored as string, max length 16) and `PayrollRun.FinalPayInputs` (a nullable one-to-one navigation).
 - `PayrollRunEmployee` gains `decimal LeaveConversionPay`, `decimal LeaveConversionNonTaxable`, `decimal SeparationPay`, `decimal RetirementPay` and `decimal FinalPayNonTaxable`. `LeaveConversionNonTaxable` is the de minimis part of the leave conversion; `FinalPayNonTaxable` is the non-taxable part of leave conversion, separation pay and retirement pay combined, so it includes `LeaveConversionNonTaxable`. All are `numeric(18,2)`, default 0.
   - Update `GrossPay` to add `LeaveConversionPay + SeparationPay + RetirementPay`.
-  - Add a computed `FinalPayTaxable => LeaveConversionPay + SeparationPay + RetirementPay - FinalPayNonTaxable`, ignored in EF.
+  - Add a computed `FinalPayTaxable => LeaveConversionPay + SeparationPay + RetirementPay - FinalPayNonTaxable`, ignored in EF. (Since revised: `FinalPayTaxable => SeparationPay + RetirementPay - (FinalPayNonTaxable - LeaveConversionNonTaxable)`, with computed `LeaveConversionOtherBenefits` and `ThirteenthMonthAndOtherBenefits` beside it - see Global Constraints, Leave conversion.)
 - `FinalPayInputs : AuditableEntity` has:
   - `Guid PayrollRunId` (unique) and `Guid SeparationId`;
   - `decimal WorkingDays` (`numeric(6,2)`);
@@ -300,7 +300,7 @@ public sealed record FinalPayExtras(
 - `Compute(...)` gains a last optional parameter `FinalPayExtras? finalPay = null`. With it:
   - **base period pay** = `Math.Round(dailyRate × finalPay.WorkingDays, 2)` instead of the salary share;
   - **LeaveConversionPay** = the sum of both parts; **LeaveConversionNonTaxable** is set; **SeparationPay** and **RetirementPay** are set; **FinalPayNonTaxable** = `LeaveConversionNonTaxable + SeparationAndRetirementNonTaxable`;
-  - **the taxable part** (`LeaveConversionTaxable` plus the taxable part of separation/retirement) joins the withholding base, the same way taxable allowances do;
+  - **the taxable part** of separation/retirement joins the withholding base, the same way taxable allowances do; the leave beyond de minimis (`LeaveConversionOtherBenefits`) doesn't - like the 13th month, it is taxed at the margin only past the 90,000 exemption the two share;
   - **loans:** each active loan's `RemainingBalance` is deducted instead of its instalment, with the existing cap and pro-rating;
   - **HR deductions** go into `OtherDeductions`, capped by what's left after the loans. The existing `customDeductions` path already caps; feed their sum into it;
   - **tax:** when `WithholdingTaxOverride` has a value, `WithholdingTax` is that value, which may be negative. It replaces the per-period calculation and the 13th-month excess tax. Without the argument, nothing changes.
@@ -312,7 +312,7 @@ public sealed record FinalPayExtras(
   - a small final pay caps the loans, pro-rated;
   - HR deductions of 1,500 appear in OtherDeductions after the loans;
   - `WithholdingTaxOverride = -2_000` gives WithholdingTax -2,000, and NetPay rises by 2,000 relative to a zero override;
-  - the taxable leave conversion raises the withholding base when there is no override. Compare against the same compute without it.
+  - leave beyond de minimis leaves the withholding unchanged within the 90,000, and past it is taxed at the margin like the 13th month (100,000 on a 120,000 salary: 10,000 x 25% = 2,500 more). Compare against the same compute without it.
   - Existing tests must pass untouched.
 - [ ] **Step 2:** Run them and confirm they fail.
 - [ ] **Step 3:** Implement with the smallest change to `Compute`. Each branch on `finalPay is not null` gets a one-line comment on why.
@@ -330,20 +330,23 @@ public sealed record FinalPayExtras(
 **Interfaces:**
 - In `BuildDto`:
   - **Non-taxable:** `Item35_DeMinimis` = the manual de minimis + the sum of `LeaveConversionNonTaxable`. `Item37_SalariesOtherForms` also adds the sum of `FinalPayNonTaxable − LeaveConversionNonTaxable` (the non-taxable separation or retirement pay).
-  - **Taxable:** `Item51B_OtherAmount` = the sum of `FinalPayTaxable`, with `Item51B_OtherLabel` "Final pay (leave conversion, separation/retirement pay)", only when non-zero.
+  - **13th month and other benefits:** `Item34` = min(sum of `ThirteenthMonthAndOtherBenefits`, 90,000) and `Item48` = the rest - the leave beyond de minimis counts with the 13th month. Item 48 rather than 51B because it is the form's own box for 13th month and other benefits past the cap, and the 1604-C alphalist reads it as that column.
+  - **Taxable:** `Item51B_OtherAmount` = the sum of `FinalPayTaxable` (separation or retirement pay that isn't exempt), with `Item51B_OtherLabel` "Final pay - separation/retirement pay", only when non-zero.
 - `Task<Bir2316Dto?> BuildWithDraftEntryAsync(Guid employeeId, int year, PayrollRun draftRun, PayrollRunEmployee draftEntry, CancellationToken ct = default)`: the same as BuildAsync with the saved inputs, but the draft run and entry are added to the Paid runs it sums. It is used by Task 5 to settle tax.
 - In the 1601-C:
   - the "Other non-taxable compensation" line and the per-employee "Other non-taxable" column add `FinalPayNonTaxable − LeaveConversionNonTaxable`;
   - "De minimis benefits" becomes the sum of `LeaveConversionNonTaxable` (today it's 0);
+  - "13th month pay and other benefits" and its column take `ThirteenthMonthAndOtherBenefits`, within what the year's earlier Paid runs left of the 90,000;
   - taxable compensation therefore excludes them.
   - A test pins that the lines still add up.
 
 - [ ] **Step 1:** Write failing tests.
-  - A 2316 over a Paid regular run plus a Paid final-pay entry with leave conversion (4,000 non-taxable, 2,000 taxable) and separation pay 150,000 (non-taxable):
+  - A 2316 over a Paid regular run (20,000) plus a Paid final-pay entry with leave conversion (4,000 de minimis, 2,000 beyond it) and separation pay 150,000 (non-taxable):
     - Item35 includes 4,000;
+    - Item34 is 2,000 - the leave beyond de minimis, inside the 90,000 with no 13th month paid;
     - Item37 includes 150,000;
-    - Item51B is 2,000 with the label;
-    - Item19 = Item38 + Item52.
+    - Item51B is 0 with no label (nothing taxable outright);
+    - Item19 = Item38 + Item52 = 176,000.
   - A balancing test: with the final-pay entry's WithholdingTax set to Item24 − Item25A(other runs) − Item25B − Item27 (computed through `BuildWithDraftEntryAsync`), the resulting 2316 has `Item24_TaxDue == Item26_TotalTaxWithheld + Item27_PeraTaxCredit`.
   - A 1601-C for the month the final pay was paid shows the de minimis and other non-taxable lines, and taxable excludes them.
 - [ ] **Step 2:** Run them and confirm they fail.

@@ -116,17 +116,36 @@ public class FinalPayStorageTests : DatabaseTestBase
     }
 
     [Fact]
-    public void FinalPayTaxable_IsTheThreeEarningsLessTheNonTaxablePortion()
+    public void FinalPayTaxable_IsTheSeparationAndRetirementPayNotExempt()
     {
+        // 5,000 of leave, 3,000 of it de minimis; 40,000 + 15,000 separation and retirement pay,
+        // 45,000 of it exempt: FinalPayNonTaxable = 3,000 + 45,000 = 48,000.
         var entry = new PayrollRunEmployee
         {
             LeaveConversionPay = 5_000m,
+            LeaveConversionNonTaxable = 3_000m,
             SeparationPay = 40_000m,
             RetirementPay = 15_000m,
-            FinalPayNonTaxable = 55_000m,
+            FinalPayNonTaxable = 48_000m,
         };
 
-        entry.FinalPayTaxable.Should().Be(5_000m + 40_000m + 15_000m - 55_000m);
+        // 40,000 + 15,000 - (48,000 - 3,000) = 10,000. The 2,000 of leave beyond de minimis isn't
+        // taxable outright: it's other benefits, taxed only past the 90,000 exemption.
+        entry.FinalPayTaxable.Should().Be(10_000m);
+        entry.LeaveConversionOtherBenefits.Should().Be(2_000m);
+    }
+
+    [Fact]
+    public void ThirteenthMonthAndOtherBenefits_IsThe13thMonthPlusTheLeaveBeyondDeMinimis()
+    {
+        var entry = new PayrollRunEmployee
+        {
+            ThirteenthMonth = 4_000m,
+            LeaveConversionPay = 5_000m,
+            LeaveConversionNonTaxable = 3_000m,
+        };
+
+        entry.ThirteenthMonthAndOtherBenefits.Should().Be(6_000m);   // 4,000 + (5,000 - 3,000)
     }
 
     [Fact]

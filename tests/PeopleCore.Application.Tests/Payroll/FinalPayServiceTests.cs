@@ -1354,6 +1354,81 @@ public class FinalPayServiceTests
             new FinalPayLeaveLineDto("Service Incentive Leave", 5m, false));
     }
 
+    [Fact]
+    public async Task CreateAsync_LeaveBeyondDeMinimis_SharesThe90000WithThe13thMonth_AndOnlyTheRestIsTaxed()
+    {
+        // The settle case above (150,000 a month, 300,000 paid in February with 1,000 withheld),
+        // with 30 days of vacation leave instead of 5.
+        _compensation.BasicSalary = 150_000m;
+        _februaryRun.Employees.Single().RegularPay = 300_000m;
+        _februaryRun.Employees.Single().WithholdingTax = 1_000m;
+        _balances.Clear();
+        _balances.Add(Balance("Vacation Leave", totalDays: 30m, convertible: true, countsAsVacation: true));
+
+        var summary = await _sut.CreateAsync(_separation.Id, Request());
+        var entry = SavedEntry;
+
+        // Daily rate 4,931.51. 13th month = (300,000 + 13 x 4,931.51) / 12
+        //   = (300,000 + 64,109.63) / 12 = 30,342.469... -> 30,342.47.
+        entry.ThirteenthMonth.Should().Be(30_342.47m);
+        // Leave: 10 de minimis days = 49,315.10; the other 20 = 98,630.20 of other benefits;
+        // 147,945.30 in all.
+        entry.LeaveConversionPay.Should().Be(147_945.30m);
+        entry.LeaveConversionNonTaxable.Should().Be(49_315.10m);
+        // The 90,000 exemption, none of it used earlier in 2026: the 13th month takes 30,342.47,
+        // leaving 59,657.53 for the leave. The other 98,630.20 - 59,657.53 = 38,972.67 is taxable.
+        summary.LeaveConversionNonTaxable.Should().Be(108_972.63m);   // 49,315.10 + 59,657.53
+
+        var bir2316 = new Bir2316Service(_runs.Object, _employees.Object, _companies.Object, _bir2316Inputs.Object);
+        var cert = (await bir2316.BuildWithDraftEntryAsync(_employee.Id, 2026, _savedRun!, entry))!;
+        cert.Item34_ThirteenthMonthAndBenefits.Should().Be(90_000m);
+        cert.Item48_TaxableThirteenthMonth.Should().Be(38_972.67m);   // 30,342.47 + 98,630.20 - 90,000
+        cert.Item35_DeMinimis.Should().Be(49_315.10m);
+        cert.Item51B_OtherAmount.Should().Be(0m);
+        // Taxable: 359,659.63 (the settle case's basic, net of contributions) + 38,972.67 =
+        // 398,632.30. Tax due = (398,632.30 - 250,000) x 15% = 22,294.845 -> 22,294.84 (half to
+        // even). Settled = 22,294.84 - 1,000 withheld in February = 21,294.84. Before the leave
+        // beyond de minimis shared the exemption, all 98,630.20 of it was taxed: 458,289.83 ->
+        // 22,500 + 20% x 58,289.83 = 34,157.97 due.
+        cert.Item23_GrossTaxable.Should().Be(398_632.30m);
+        cert.Item24_TaxDue.Should().Be(22_294.84m);
+        entry.WithholdingTax.Should().Be(21_294.84m);
+        cert.Item24_TaxDue.Should().Be(cert.Item26_TotalTaxWithheld);
+
+        // March's 1601-C taxes what the 2316 adds for this run: 398,632.30 - 300,000 = 98,632.30
+        //   = gross 992,397.40 (64,109.63 + 30,342.47 + 147,945.30 + 750,000 separation pay)
+        //     - 90,000 13th month and other benefits - 4,450 shares - 49,315.10 de minimis
+        //     - 750,000 other non-taxable.
+        entry.Employee = _employee;
+        _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(2026, 3, It.IsAny<CancellationToken>())).ReturnsAsync([_savedRun!]);
+        _runs.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([_februaryRun]);
+        var reports = new GovernmentReportService(_runs.Object, _companies.Object, _settings.Object, new AprilClock(),
+                                                  Mock.Of<IBir2316Service>(), _employees.Object);
+        var march = await reports.BuildAsync("1601c", 2026, 3);
+        march.Summary.Single(l => l.Label == "Total amount of compensation").Amount.Should().Be(992_397.40m);
+        march.Summary.Single(l => l.Label == "13th month pay and other benefits").Amount.Should().Be(90_000m);
+        march.Summary.Single(l => l.Label == "Total taxable compensation").Amount.Should().Be(98_632.30m);
+    }
+
+    [Fact]
+    public async Task TheSummary_CountsLeaveBeyondDeMinimisAsNonTaxable_WithinWhatTheYearLeftOfThe90000()
+    {
+        // 88,000 of 13th month already paid in 2026 (a mid-year advance in February): the final
+        // pay's 13th month = (36,500 + 15,600) / 12 = 4,341.67 due for the year, less 88,000
+        // paid -> 0. Of the exemption, 90,000 - 88,000 = 2,000 is left for the leave.
+        // 15 vacation days: 10 de minimis = 12,000; 5 beyond = 6,000, of which 2,000 is exempt.
+        _februaryRun.Employees.Single().ThirteenthMonth = 88_000m;
+        _balances.Clear();
+        _balances.Add(Balance("Vacation Leave", totalDays: 15m, convertible: true, countsAsVacation: true));
+
+        var summary = await _sut.CreateAsync(_separation.Id, Request());
+
+        SavedEntry.ThirteenthMonth.Should().Be(0m);
+        summary.LeaveConversionPay.Should().Be(18_000m);
+        summary.LeaveConversionNonTaxable.Should().Be(14_000m);   // 12,000 + 2,000
+        (await _sut.GetAsync(_separation.Id))!.LeaveConversionNonTaxable.Should().Be(14_000m);
+    }
+
     // ------------------------------------------------------------------
     // Summary
     // ------------------------------------------------------------------

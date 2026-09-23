@@ -278,18 +278,19 @@ public sealed class GovernmentReportService : IGovernmentReportService
     private async Task<(IReadOnlyList<string>, List<GovernmentReportRowDto>, IReadOnlyList<string>, IReadOnlyList<GovernmentReportLineDto>)>
         Bir1601CAsync(List<(Employee Employee, List<PayrollRunEmployee> Entries)> people, int year, int month, CancellationToken ct)
     {
-        // 13th month paid earlier in the year has used its share of the exemption first, as it did
-        // when payroll withheld tax on this month's. Skip the year-wide query entirely when
-        // nothing this month even has a 13th month to offset - most months don't.
+        // "13th month and other benefits" - the 13th month plus leave converted beyond de minimis
+        // (PayrollRunEmployee.ThirteenthMonthAndOtherBenefits) - paid earlier in the year has used
+        // its share of the 90,000 exemption first, as the 2316 counts it. Skip the year-wide query
+        // entirely when nothing this month even has any to offset - most months don't.
         Dictionary<Guid, decimal> earlierThirteenth = [];
-        if (people.Any(p => p.Entries.Any(e => e.ThirteenthMonth > 0)))
+        if (people.Any(p => p.Entries.Any(e => e.ThirteenthMonthAndOtherBenefits > 0)))
         {
             var monthStart = new DateOnly(year, month, 1);
             earlierThirteenth = (await _runs.GetPaidRunsInYearAsync(year, ct))
                 .Where(r => r.PayDate < monthStart)
                 .SelectMany(r => r.Employees)
                 .GroupBy(e => e.EmployeeId)
-                .ToDictionary(g => g.Key, g => g.Sum(e => e.ThirteenthMonth));
+                .ToDictionary(g => g.Key, g => g.Sum(e => e.ThirteenthMonthAndOtherBenefits));
         }
 
         var rows = new List<GovernmentReportRowDto>();
@@ -297,7 +298,7 @@ public sealed class GovernmentReportService : IGovernmentReportService
         foreach (var (employee, entries) in people)
         {
             decimal g = entries.Sum(e => e.GrossPay);
-            decimal t13 = NonTaxableThirteenthMonth(entries.Sum(e => e.ThirteenthMonth),
+            decimal t13 = NonTaxableThirteenthMonth(entries.Sum(e => e.ThirteenthMonthAndOtherBenefits),
                                                     earlierThirteenth.GetValueOrDefault(employee.Id));
             decimal s = entries.Sum(e => e.SSSEmployee + e.PhilHealthEmployee + e.PagIbigEmployee);
             // LeaveConversionNonTaxable is final pay's de minimis slice - the form's own "De
@@ -324,7 +325,7 @@ public sealed class GovernmentReportService : IGovernmentReportService
         }
 
         decimal nonTaxable = thirteenth + shares + deMinimis + otherNonTaxable;
-        return (["Employee", "TIN", "Compensation", "13th month (non-taxable)", "De minimis", "Employee shares",
+        return (["Employee", "TIN", "Compensation", "13th month and other benefits (non-taxable)", "De minimis", "Employee shares",
                  "Other non-taxable", "Taxable", "Tax withheld"],
                 rows,
                 ["Total", "", Money(gross), Money(thirteenth), Money(deMinimis), Money(shares), Money(otherNonTaxable), Money(taxable), Money(tax)],

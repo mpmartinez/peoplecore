@@ -76,7 +76,7 @@ Clearance is complete when every item is cleared. A final-pay run can be compute
 3. **Leave conversion.**
    - `LeaveType` gains **Convertible to cash** (default off). Service Incentive Leave must be convertible by law; turning it on for vacation leave is company policy.
    - For each convertible type, the employee's remaining days in the current year (`LeaveBalance.RemainingDays`) are paid at the daily rate.
-   - **Tax:** up to 10 days of converted *vacation-type* leave in the year is de minimis and non-taxable (RR 11-2018, as amended). The rest is taxable. This uses a per-leave-type setting, **Counts as vacation leave for de minimis** (default on for convertible types), so SIL and VL can be treated as the company's accountant advises.
+   - **Tax:** up to 10 days of converted *vacation-type* leave in the year is de minimis and non-taxable (RR 11-2018, as amended). The rest is "other benefits" (RR 5-2011 as amended by RR 11-2018): it shares the 90,000 exemption with the 13th month, so it is non-taxable as far as the pay year's earlier pay and this final pay's 13th month leave room, and taxable past it. (Confirm this treatment with the company's accountant.) This uses a per-leave-type setting, **Counts as vacation leave for de minimis** (default on for convertible types), so SIL and VL can be treated as the company's accountant advises.
    - The page shows the days and rate used.
 4. **Separation pay** for an authorized cause (Labor Code Art. 298-299), from the sub-type:
    - one month's pay per year of service: redundancy and labor-saving devices;
@@ -163,7 +163,7 @@ The position is the current one, or the last one for a former employee; PeopleCo
   - `RetirementPay`;
   - `TaxAdjustment`.
 
-`GrossPay` includes the new earnings. The 2316's items take them in: non-taxable separation or retirement pay and the de minimis part of leave conversion go to the non-taxable other-compensation items, and the taxable part of leave conversion goes to taxable other compensation. `TaxAdjustment` counts as tax withheld. A test pins that the 2316 balances for a separated employee.
+`GrossPay` includes the new earnings. The 2316's items take them in: non-taxable separation or retirement pay and the de minimis part of leave conversion go to the non-taxable other-compensation items, and the leave beyond de minimis goes with the 13th month - exempt up to the year's 90,000 (Item 34), taxable past it (Item 48). Taxable separation or retirement pay goes to taxable other compensation (Item 51B). `TaxAdjustment` counts as tax withheld. A test pins that the 2316 balances for a separated employee.
 
 ## Testing
 

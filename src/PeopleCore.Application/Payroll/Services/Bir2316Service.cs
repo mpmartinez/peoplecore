@@ -283,11 +283,20 @@ public class Bir2316Service : IBir2316Service
         int year,
         Bir2316ManualInputs manual)
     {
-        decimal thirteenthMonthTotal = entries.Sum(e => e.ThirteenthMonth);
-        decimal thirteenthMonthNonTaxable = Math.Min(thirteenthMonthTotal, StatutoryCaps.ThirteenthMonthExemption);
-        decimal thirteenthMonthTaxable = Math.Max(0m, thirteenthMonthTotal - StatutoryCaps.ThirteenthMonthExemption);
+        // "13th month and other benefits" (NIRC Sec. 32(B)(7)(e)): the 13th month plus the leave
+        // converted beyond de minimis, which RR 5-2011 (as amended by RR 11-2018) treats as other
+        // benefits. Together they are exempt up to 90,000 a year (Item 34) and taxable past it
+        // (Item 48). The excess leave goes to Item 48 rather than staying in 51B because Item 48
+        // is the form's own box for exactly this - "13th month pay and other benefits" in excess
+        // of the cap - and it is what the 1604-C alphalist reads as that column; 51B would file
+        // the same money under "others" and misstate the alphalist.
+        decimal thirteenthMonthAndOtherBenefits = entries.Sum(e => e.ThirteenthMonthAndOtherBenefits);
+        decimal thirteenthMonthNonTaxable = Math.Min(thirteenthMonthAndOtherBenefits, StatutoryCaps.ThirteenthMonthExemption);
+        decimal thirteenthMonthTaxable = Math.Max(0m, thirteenthMonthAndOtherBenefits - StatutoryCaps.ThirteenthMonthExemption);
 
         // Final-pay earnings - zero on every entry for an employee who has never had a final run.
+        // FinalPayTaxable is the separation or retirement pay that isn't exempt; the leave beyond
+        // de minimis is already in the 13th-month split above.
         decimal leaveConversionNonTaxable = entries.Sum(e => e.LeaveConversionNonTaxable);
         decimal finalPayNonTaxable = entries.Sum(e => e.FinalPayNonTaxable);
         decimal finalPayTaxable = entries.Sum(e => e.FinalPayTaxable);
@@ -338,7 +347,8 @@ public class Bir2316Service : IBir2316Service
             // LeaveConversionNonTaxable is the de minimis slice of final pay - the cash value of
             // convertible leave, up to the statutory de minimis ceiling, that PayrollComputationService
             // already excluded from the final run's withholding base. Item 35 is the form's de
-            // minimis box, so it belongs there alongside whatever a human enters manually.
+            // minimis box, so it belongs there alongside whatever a human enters manually. The
+            // leave beyond the ceiling is other benefits, in Item 34 (or 48) with the 13th month.
             Item35_DeMinimis = manual.Item35_DeMinimis + leaveConversionNonTaxable,
             Item36_SssPhicPagibigContributions =
                 entries.Sum(e => e.SSSEmployee + e.PhilHealthEmployee + e.PagIbigEmployee),
@@ -360,12 +370,12 @@ public class Bir2316Service : IBir2316Service
             // regularPay + overtimePay + holidayPay + nightDiffPay + taxableAllowances +
             // finalPayTaxable (the last only nonzero on a final-pay run - see
             // PayrollRunEmployee.FinalPayTaxable), less the employee's SSS, PhilHealth and
-            // Pag-IBIG contributions. Every one of those six components has to land in a taxable
-            // box here or Item 21/23 (the certificate's taxable compensation) understates what
-            // tax was actually withheld against - silently manufacturing a false "tax due < tax
-            // withheld" result for any employee who worked a holiday, drew night differential,
-            // received a taxable allowance, or was paid out a taxable slice of leave conversion,
-            // separation or retirement pay.
+            // Pag-IBIG contributions; the 13th month and other benefits past the 90,000 are taxed
+            // on top of it (Item 48). Every one of those components has to land in a taxable box
+            // here or Item 21/23 (the certificate's taxable compensation) understates what tax was
+            // actually withheld against - silently manufacturing a false "tax due < tax withheld"
+            // result for any employee who worked a holiday, drew night differential, received a
+            // taxable allowance, or was paid taxable separation or retirement pay.
             //
             // The contributions come off Item 39. They are withheld from the basic salary, and
             // Section A already reports them as non-taxable in Item 36; left inside Item 39 as
@@ -382,13 +392,13 @@ public class Bir2316Service : IBir2316Service
             // (specify)" boxes Section B provides for exactly this: compensation that is real and
             // taxable but has no line of its own. Holiday pay and night differential are placed in
             // 44A/44B (alongside the regular per-period allowances 40-43); taxable allowances go
-            // in 51A and final pay's taxable slice goes in 51B (alongside the other supplemental,
-            // ad hoc pay in 45-49) since a fixed "allowance" bucket does not fit Section B's first
-            // group of named, per-period pay items as cleanly as it does the supplemental group.
-            // All boxes are summed identically into Item 52, so this is a labeling choice, not a
-            // computation one. Item51B is left at its default (0, no label) when there is no final
-            // pay to report, so the "Others (specify)" box does not appear on an ordinary
-            // certificate.
+            // in 51A and final pay's taxable separation or retirement pay goes in 51B (alongside
+            // the other supplemental, ad hoc pay in 45-49) since a fixed "allowance" bucket does
+            // not fit Section B's first group of named, per-period pay items as cleanly as it does
+            // the supplemental group. All boxes are summed identically into Item 52, so this is a
+            // labeling choice, not a computation one. Item51B is left at its default (0, no label)
+            // when there is no taxable separation or retirement pay to report, so the "Others
+            // (specify)" box does not appear on an ordinary certificate.
             Item39_BasicSalary = entries.Sum(e => e.RegularPay - e.SSSEmployee - e.PhilHealthEmployee - e.PagIbigEmployee),
             Item44A_OtherAmount = entries.Sum(e => e.HolidayPay),
             Item44A_OtherLabel = "Holiday Pay",
@@ -402,7 +412,8 @@ public class Bir2316Service : IBir2316Service
             // Kept short deliberately: the printed form's "Others (specify)" box is 130.5pt wide,
             // and a longer label (the original "Final pay (leave conversion,
             // separation/retirement pay)") overflowed it and printed truncated with an ellipsis.
-            Item51B_OtherLabel = finalPayTaxable != 0m ? "Final pay - leave conv./separation pay" : "",
+            // Leave conversion no longer lands here (Items 34/48 and 35 take it).
+            Item51B_OtherLabel = finalPayTaxable != 0m ? "Final pay - separation/retirement pay" : "",
 
             // Part IVA. Item 25A is this employer's withholding, summed from the runs; 22, 25B and
             // 27 concern another employer or another account and can only come from a human.

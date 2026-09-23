@@ -53,16 +53,20 @@ public class PayrollRunEmployee : AuditableEntity
     public decimal ThirteenthMonth { get; set; }
 
     // Final-pay earnings - zero on a Regular run.
-    /// <summary>Cash value of convertible leave balances. See <see cref="LeaveConversionNonTaxable"/> for the de minimis part.</summary>
+    /// <summary>
+    /// Cash value of convertible leave balances: its de minimis part
+    /// (<see cref="LeaveConversionNonTaxable"/>) plus the rest (<see cref="LeaveConversionOtherBenefits"/>).
+    /// </summary>
     public decimal LeaveConversionPay { get; set; }
-    /// <summary>The de minimis (non-taxable) part of <see cref="LeaveConversionPay"/>.</summary>
+    /// <summary>The de minimis (non-taxable) part of <see cref="LeaveConversionPay"/>: the first 10 vacation-type days.</summary>
     public decimal LeaveConversionNonTaxable { get; set; }
     public decimal SeparationPay { get; set; }
     public decimal RetirementPay { get; set; }
     /// <summary>
-    /// The non-taxable part of leave conversion, separation pay and retirement pay combined -
-    /// includes <see cref="LeaveConversionNonTaxable"/> plus whatever of separation/retirement pay
-    /// is non-taxable.
+    /// The part of leave conversion, separation pay and retirement pay that is non-taxable
+    /// outright - <see cref="LeaveConversionNonTaxable"/> plus whatever of separation/retirement
+    /// pay is exempt. The leave beyond de minimis isn't in it: that is other benefits
+    /// (<see cref="LeaveConversionOtherBenefits"/>), exempt or taxable only by the year's total.
     /// </summary>
     public decimal FinalPayNonTaxable { get; set; }
 
@@ -70,8 +74,28 @@ public class PayrollRunEmployee : AuditableEntity
         RegularPay + OvertimePay + HolidayPay + NightDiffPay + TaxableAllowances + NonTaxableAllowances
         + ThirteenthMonth + LeaveConversionPay + SeparationPay + RetirementPay;
 
-    /// <summary>The taxable slice of the final-pay earnings above.</summary>
-    public decimal FinalPayTaxable => LeaveConversionPay + SeparationPay + RetirementPay - FinalPayNonTaxable;
+    /// <summary>
+    /// The final-pay earnings taxable outright: separation or retirement pay that isn't exempt.
+    /// The leave beyond de minimis isn't here - it is other benefits, taxed only past the 90,000
+    /// exemption it shares with the 13th month (see <see cref="ThirteenthMonthAndOtherBenefits"/>).
+    /// </summary>
+    public decimal FinalPayTaxable => SeparationPay + RetirementPay - (FinalPayNonTaxable - LeaveConversionNonTaxable);
+
+    /// <summary>
+    /// The leave paid out beyond its de minimis part. De minimis in excess of its ceiling is
+    /// "other benefits" (RR 5-2011, as amended by RR 11-2018), so it counts toward the 90,000
+    /// exemption together with the 13th month.
+    /// </summary>
+    public decimal LeaveConversionOtherBenefits => LeaveConversionPay - LeaveConversionNonTaxable;
+
+    /// <summary>
+    /// What this entry pays toward the year's "13th month and other benefits", exempt up to
+    /// <c>StatutoryCaps.ThirteenthMonthExemption</c> a year and taxable past it: the 13th month
+    /// plus <see cref="LeaveConversionOtherBenefits"/>. Which part is exempt depends on the year's
+    /// other entries, so it's split where the year is summed - the 2316 (Items 34 and 48) and the
+    /// 1601-C - never stored here.
+    /// </summary>
+    public decimal ThirteenthMonthAndOtherBenefits => ThirteenthMonth + LeaveConversionOtherBenefits;
 
     // Rate basis and attendance adjustments, stored so a payslip cannot drift from a later
     // settings change. Both deductions below are ALREADY netted out of RegularPay - they are
