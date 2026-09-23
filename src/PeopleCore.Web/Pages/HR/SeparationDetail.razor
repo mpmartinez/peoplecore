@@ -126,14 +126,15 @@ else
                                 }
                             </div>
                             <div class="flex items-center gap-2">
-                                @if (item.ClearedAt is null)
+                                @* The API refuses every clearance change once final pay is Paid. *@
+                                @if (!ClearanceLocked && item.ClearedAt is null)
                                 {
                                     <Input TValue="string" Value="@NoteFor(item.Id)" ValueChanged="@(v => _clearNotes[item.Id] = v)"
                                            Placeholder="Note (optional)" Type="text" Class="w-40" data-clear-note="@item.Id" />
                                     <Button Variant="outline" Size="sm" OnClick="@(() => ClearItem(item.Id))" data-clear="@item.Id">Clear</Button>
                                     <Button Variant="ghost" Size="sm" OnClick="@(() => RemoveItem(item.Id))" data-remove="@item.Id">Remove</Button>
                                 }
-                                else
+                                else if (!ClearanceLocked)
                                 {
                                     <Button Variant="ghost" Size="sm" OnClick="@(() => UndoItem(item.Id))" data-undo="@item.Id">Undo</Button>
                                 }
@@ -143,11 +144,18 @@ else
                 </ul>
             }
 
-            <div class="flex gap-2">
-                <Input TValue="string" Value="@_newItemName" ValueChanged="@(v => _newItemName = v)"
-                       Placeholder="New clearance item" Type="text" Class="max-w-xs" data-add-item />
-                <Button Variant="outline" Size="sm" OnClick="AddItem" Disabled="@string.IsNullOrWhiteSpace(_newItemName)" data-add-item-button>Add item</Button>
-            </div>
+            @if (ClearanceLocked)
+            {
+                <p class="text-sm text-muted-foreground" data-clearance-locked>Final pay has been paid; clearance can't change now.</p>
+            }
+            else
+            {
+                <div class="flex gap-2">
+                    <Input TValue="string" Value="@_newItemName" ValueChanged="@(v => _newItemName = v)"
+                           Placeholder="New clearance item" Type="text" Class="max-w-xs" data-add-item />
+                    <Button Variant="outline" Size="sm" OnClick="AddItem" Disabled="@string.IsNullOrWhiteSpace(_newItemName)" data-add-item-button>Add item</Button>
+                </div>
+            }
         </CardContent>
     </Card>
 
@@ -262,6 +270,11 @@ else
     }
 
     private string NoteFor(Guid itemId) => _clearNotes.TryGetValue(itemId, out var note) ? note : "";
+
+    // The API refuses every clearance change once the final pay is Paid ("Final pay has been
+    // paid; clearance can't change now."), so the buttons go. The separation says so for anyone;
+    // the final-pay summary, loaded only for payroll managers, may be fresher.
+    private bool ClearanceLocked => _separation?.FinalPayStatus == "Paid" || _finalPay?.Status == "Paid";
 
     private string MarkSeparatedConfirmation() =>
         _separation is null ? "" :

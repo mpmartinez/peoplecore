@@ -542,6 +542,38 @@ public class SeparationsTests : BunitContext
     }
 
     [Fact]
+    public void OnceFinalPayIsPaid_TheClearanceCanNoLongerBeChanged()
+    {
+        // The API refuses every clearance change: "Final pay has been paid; clearance can't change now."
+        var items = Items(
+            ClearanceItem(ItemId, "Return laptop"),
+            ClearanceItem(ItemId2, "Turn in ID", clearedBy: "hr@company.test", clearedAt: "2026-04-10T08:00:00Z"));
+        var cut = RenderDetail(Separation(clearedCount: 1, clearanceCount: 2, clearanceItems: items,
+                                          finalPayRunNumber: "FP-2026-001", finalPayStatus: "Paid"));
+
+        cut.Find("[data-clearance]").TextContent.Should().Contain("Return laptop").And.Contain("Turn in ID");
+        cut.FindAll("[data-clear]").Should().BeEmpty();
+        cut.FindAll("[data-clear-note]").Should().BeEmpty();
+        cut.FindAll("[data-remove]").Should().BeEmpty();
+        cut.FindAll("[data-undo]").Should().BeEmpty();
+        cut.FindAll("[data-add-item]").Should().BeEmpty();
+        cut.FindAll("[data-add-item-button]").Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("Draft")]
+    [InlineData("Approved")]
+    public void BeforeFinalPayIsPaid_TheClearanceCanStillChange(string finalPayStatus)
+    {
+        var items = Items(ClearanceItem(ItemId, "Return laptop"));
+        var cut = RenderDetail(Separation(clearedCount: 0, clearanceCount: 1, clearanceItems: items,
+                                          finalPayRunNumber: "FP-2026-001", finalPayStatus: finalPayStatus));
+
+        cut.FindAll($"[data-clear='{ItemId}']").Should().ContainSingle();
+        cut.FindAll("[data-add-item-button]").Should().ContainSingle();
+    }
+
+    [Fact]
     public void AnItemThatWasUndone_SaysWhoUndidItAndWhen()
     {
         var items = Items(ClearanceItem(ItemId, "Return laptop", lastUndoneBy: "payroll@company.test", lastUndoneAt: "2026-04-12T08:00:00Z"));
