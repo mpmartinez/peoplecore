@@ -39,9 +39,10 @@ namespace PeopleCore.Application.Payroll.FinalPay;
 /// </para>
 /// <para>
 /// <b>Unpaid regular runs.</b> A final pay isn't created, nor its period changed, while a regular
-/// run that includes the employee and isn't Paid yet overlaps the final period: the same days
-/// would be paid twice. The run has to be paid first - after which the default period starts
-/// after it.
+/// run that includes the employee and isn't Paid yet ends on or after the earlier of the final
+/// period's start and the first of the separation month: it would pay the same days twice, pay
+/// salary after the separation, or take the month's contributions again. The run has to be paid
+/// (or the employee taken off it) first.
 /// </para>
 /// <para>
 /// <b>Contributions</b> top the separation month - the last working day's month - up to exactly
@@ -299,9 +300,14 @@ public sealed class FinalPayService : IFinalPayService
                 : new FinalPeriod(defaultStart, NoSalary: false);
         }
 
-        // GetRunsForEmployeeAsync returns only runs the employee is in.
+        // Refused while any unpaid regular run the employee is in (GetRunsForEmployeeAsync returns
+        // only those) ends on or after the earlier of the final period's start and the first of
+        // the separation month. That catches a run overlapping the final period, one after the
+        // last working day (salary after separation), and one earlier in the separation month -
+        // any of which, paid later, would take the month's contributions again.
+        var from = Min(period.Start, new DateOnly(lastDay.Year, lastDay.Month, 1));
         var unpaid = regular
-            .Where(r => r.Status != PayrollRunStatus.Paid && r.PeriodStart <= lastDay && r.PeriodEnd >= period.Start)
+            .Where(r => r.Status != PayrollRunStatus.Paid && r.PeriodEnd >= from)
             .OrderBy(r => r.PeriodStart)
             .FirstOrDefault();
         if (unpaid is not null)
@@ -310,6 +316,8 @@ public sealed class FinalPayService : IFinalPayService
 
         return period;
     }
+
+    private static DateOnly Min(DateOnly a, DateOnly b) => a < b ? a : b;
 
     private async Task<string> NextRunNumberAsync(int payYear, CancellationToken ct)
     {

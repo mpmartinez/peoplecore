@@ -440,12 +440,12 @@ public class FinalPayServiceTests
     [Fact]
     public async Task CreateAsync_DefaultPeriod_StartsTheDayAfterTheLastPaidRegularRun_IgnoringUnpaidAndFinalPayRuns()
     {
-        // A later draft regular run and a paid run of another type must not move the start. (The
-        // draft lies after the final period: one overlapping it would refuse the final pay.)
+        // An old draft regular run and a paid run of another type must not move the start. (The
+        // draft ends before March: one ending in March or later would refuse the final pay.)
         var draft = new PayrollRun
         {
-            PeriodStart = new DateOnly(2026, 3, 14), PeriodEnd = new DateOnly(2026, 3, 31),
-            PayDate = new DateOnly(2026, 3, 31), Status = PayrollRunStatus.Draft,
+            PeriodStart = new DateOnly(2026, 1, 16), PeriodEnd = new DateOnly(2026, 1, 31),
+            PayDate = new DateOnly(2026, 1, 31), Status = PayrollRunStatus.Draft,
         };
         var otherFinalPay = new PayrollRun
         {
@@ -670,6 +670,7 @@ public class FinalPayServiceTests
 
     [Theory]
     [InlineData(PayrollRunStatus.Draft)]
+    [InlineData(PayrollRunStatus.Processing)]
     [InlineData(PayrollRunStatus.ForApproval)]
     [InlineData(PayrollRunStatus.Approved)]
     public async Task CreateAsync_Refuses_WhileAnUnpaidRegularRunCoversTheFinalPeriod(PayrollRunStatus status)
@@ -713,8 +714,10 @@ public class FinalPayServiceTests
     }
 
     [Fact]
-    public async Task CreateAsync_IgnoresAnUnpaidRegularRunOutsideTheFinalPeriod()
+    public async Task CreateAsync_Refuses_WhileAnUnpaidRegularRunAfterTheLastWorkingDayIncludesTheEmployee()
     {
+        // Mar 14-31 lies after the last working day, but paying it would pay salary after the
+        // separation and take March's contributions a second time.
         var later = new PayrollRun
         {
             RunNumber = "PAY-2026-006",
@@ -724,9 +727,31 @@ public class FinalPayServiceTests
         _runs.Setup(r => r.GetRunsForEmployeeAsync(_employee.Id, It.IsAny<CancellationToken>()))
              .ReturnsAsync([later, _februaryRun]);
 
-        var summary = await _sut.CreateAsync(_separation.Id, Request());
+        var act = () => _sut.CreateAsync(_separation.Id, Request());
 
-        summary.WorkingDays.Should().Be(13m);
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Payroll PAY-2026-006 covers Mar 14 – Mar 31, 2026 and isn't paid yet; pay it before creating final pay.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_Refuses_AStartHrPutsAfterAnUnpaidRunInTheMonth()
+    {
+        // Leaves Mar 27. HR starts the final pay on Mar 16, after a Draft Mar 1-15 cutoff: paying
+        // both would take March's contributions one and a half times.
+        _separation.LastWorkingDay = new DateOnly(2026, 3, 27);
+        var cutoff = new PayrollRun
+        {
+            RunNumber = "PAY-2026-005",
+            PeriodStart = new DateOnly(2026, 3, 1), PeriodEnd = new DateOnly(2026, 3, 15),
+            PayDate = new DateOnly(2026, 3, 20), Status = PayrollRunStatus.Draft,
+        };
+        _runs.Setup(r => r.GetRunsForEmployeeAsync(_employee.Id, It.IsAny<CancellationToken>()))
+             .ReturnsAsync([cutoff, _februaryRun]);
+
+        var act = () => _sut.CreateAsync(_separation.Id, Request(periodStart: new DateOnly(2026, 3, 16)));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Payroll PAY-2026-005 covers Mar 1 – Mar 15, 2026 and isn't paid yet; pay it before creating final pay.");
     }
 
     [Fact]

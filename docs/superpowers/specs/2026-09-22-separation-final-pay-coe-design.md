@@ -63,7 +63,7 @@ Clearance is complete when every item is cleared. A final-pay run can be compute
 - has exactly one employee, who must have a separation record in either status;
 - by default runs from the day after the employee's last Paid regular run's period end to the last working day. HR can change the start, but not to after the last working day;
 - when regular payroll has already paid past the last working day (that default start is after it), carries no salary: its period is the last working day alone, with no salary days and no attendance, and it pays only the 13th month, leave conversion, separation or retirement pay, loans, HR deductions and the tax settle;
-- can't be created, nor its period changed, while a regular run that includes the employee and isn't Paid overlaps the final period ("Payroll {RunNumber} covers {period} and isn't paid yet; pay it before creating final pay.");
+- can't be created, nor its period changed, while a regular run that includes the employee and isn't Paid ends on or after the earlier of the final period's start and the first of the last working day's month - it would overlap the final period, pay salary after the separation, or take the month's contributions again ("Payroll {RunNumber} covers {period} and isn't paid yet; pay it before creating final pay.");
 - pays on a date HR picks. The pay date decides the tax year, as for every run;
 - has its own run number sequence prefix, `FP-<year>-<nnn>`;
 - goes through Draft, Approve and Mark Paid like any run, with a payslip. It appears in the payroll run list, marked "Final pay".
