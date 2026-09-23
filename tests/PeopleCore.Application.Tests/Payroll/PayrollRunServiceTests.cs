@@ -39,6 +39,11 @@ public class PayrollRunServiceTests
                 new AttendanceBridgeResult(
                     ids.ToDictionary(id => id, _ => new PayrollAttendanceInput()), []));
 
+        // Default: nobody in any run has left. The separated-employee tests set up their own.
+        _separations
+            .Setup(s => s.GetForEmployeesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
         _sut = new PayrollRunService(
             _runRepo.Object,
             _compensationRepo.Object,
@@ -1062,5 +1067,236 @@ public class PayrollRunServiceTests
         (await act.Should().ThrowAsync<DomainException>()).Which.Message
             .Should().Be("Add the separation's clearance items and clear them before paying final pay.");
         run.Status.Should().Be(PayrollRunStatus.Approved);
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_OnAFinalPayRun_IsNotHeldToTheRegularRunRule()
+    {
+        // The final pay's own employee has left, and its period may well start after the last
+        // working day (no salary left); only clearance gates paying it.
+        var (run, separation) = ApprovedFinalPay(Item("Finance", 1, cleared: true));
+        run.PeriodStart = run.PeriodEnd = separation.LastWorkingDay;
+        separation.LastWorkingDay = separation.LastWorkingDay.AddDays(-1);
+        _separations
+            .Setup(s => s.GetForEmployeesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([separation]);
+
+        await _sut.MarkPaidAsync(run.Id);
+
+        run.Status.Should().Be(PayrollRunStatus.Paid);
+    }
+
+    // ------------------------------------------------------------------
+    // Regular runs keep separated employees off them
+    // ------------------------------------------------------------------
+
+    private static readonly DateOnly SecondHalfStart = new(2026, 3, 16);
+    private static readonly DateOnly SecondHalfEnd = new(2026, 3, 31);
+
+    /// <summary>A regular Mar 16-31 run holding Maria Santos and one other employee.</summary>
+    private (PayrollRun Run, Employee Maria) RegularRunWithMaria(PayrollRunStatus status)
+    {
+        var maria = new Employee { FirstName = "Maria", LastName = "Santos" };
+        var run = new PayrollRun
+        {
+            RunNumber = "PAY-2026-006",
+            PeriodStart = SecondHalfStart,
+            PeriodEnd = SecondHalfEnd,
+            PayDate = new DateOnly(2026, 3, 31),
+            Frequency = PayFrequency.SemiMonthly,
+            Status = status,
+        };
+        run.Employees.Add(new PayrollRunEmployee { PayrollRunId = run.Id, EmployeeId = Guid.NewGuid(), RegularPay = 10_000m });
+        run.Employees.Add(new PayrollRunEmployee { PayrollRunId = run.Id, EmployeeId = maria.Id, RegularPay = 10_000m });
+        _runRepo.Setup(r => r.GetWithEntriesAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        return (run, maria);
+    }
+
+    private void Separated(Employee employee, DateOnly lastWorkingDay, PayrollRun? finalPay = null) =>
+        _separations
+            .Setup(s => s.GetForEmployeesAsync(
+                It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(employee.Id)), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new Separation
+            {
+                EmployeeId = employee.Id,
+                Employee = employee,
+                LastWorkingDay = lastWorkingDay,
+                Status = SeparationStatus.Separated,
+                FinalPayRunId = finalPay?.Id,
+                FinalPayRun = finalPay,
+            }]);
+
+    private static PayrollRun FinalPayRun(DateOnly start, DateOnly end) => new()
+    {
+        RunNumber = "FP-2026-001",
+        RunType = PayrollRunType.FinalPay,
+        PeriodStart = start,
+        PeriodEnd = end,
+        PayDate = new DateOnly(2026, 4, 10),
+        Status = PayrollRunStatus.Draft,
+    };
+
+    /// <summary>
+    /// Creates, computes, approves or marks paid a regular Mar 16-31 run holding Maria - each step
+    /// the separated-employee rule is checked at.
+    /// </summary>
+    private (Func<Task> Act, PayrollRun Run, Employee Maria) StepOnMariasRun(string step)
+    {
+        var status = step == "MarkPaid" ? PayrollRunStatus.Approved : PayrollRunStatus.Draft;
+        var (run, maria) = RegularRunWithMaria(status);
+        Func<Task> act = step switch
+        {
+            "Create" => () => _sut.CreateAsync(new CreatePayrollRunRequest(
+                SecondHalfStart, SecondHalfEnd, new DateOnly(2026, 3, 31), PayFrequency.SemiMonthly,
+                run.Employees.Select(e => new PayrollRunEmployeeInput(e.EmployeeId)).ToList())),
+            "Compute" => () => _sut.ComputeAsync(run.Id),
+            "Approve" => () => _sut.ApproveAsync(run.Id),
+            "MarkPaid" => () => _sut.MarkPaidAsync(run.Id),
+            _ => throw new ArgumentOutOfRangeException(nameof(step)),
+        };
+        return (act, run, maria);
+    }
+
+    [Theory]
+    [InlineData("Create")]
+    [InlineData("Compute")]
+    [InlineData("Approve")]
+    [InlineData("MarkPaid")]
+    public async Task ARegularRun_HoldingSomeoneWhoLeftBeforeItsPeriod_IsRefused(string step)
+    {
+        var (act, run, maria) = StepOnMariasRun(step);
+        Separated(maria, lastWorkingDay: new DateOnly(2026, 3, 13));
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos left on Mar 13, 2026; take them off this payroll - their pay goes in final pay.");
+        run.Status.Should().Be(step == "MarkPaid" ? PayrollRunStatus.Approved : PayrollRunStatus.Draft);
+        _runRepo.Verify(r => r.AddWithEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+        _runRepo.Verify(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyList<PayrollRunEmployee>>(),
+                                                   It.IsAny<CancellationToken>()), Times.Never);
+        _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("Create")]
+    [InlineData("Compute")]
+    [InlineData("Approve")]
+    [InlineData("MarkPaid")]
+    public async Task ARegularRun_OverlappingSomeonesFinalPay_IsRefused(string step)
+    {
+        // Leaves Mar 20, inside the run; their final pay already pays Mar 16-20.
+        var (act, _, maria) = StepOnMariasRun(step);
+        Separated(maria, lastWorkingDay: new DateOnly(2026, 3, 20),
+                  finalPay: FinalPayRun(new DateOnly(2026, 3, 16), new DateOnly(2026, 3, 20)));
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos's final pay already covers Mar 16 – Mar 20, 2026; take them off this payroll.");
+        _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ARegularRun_HoldingSomeoneLeavingDuringItsPeriod_WithoutFinalPayYet_CanBeApproved()
+    {
+        // Their last working day is inside the run, so the run still pays them for Mar 16-20.
+        var (act, run, maria) = StepOnMariasRun("Approve");
+        Separated(maria, lastWorkingDay: new DateOnly(2026, 3, 20));
+
+        await act();
+
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+    }
+
+    [Fact]
+    public async Task ARegularRun_HoldingSomeoneWhoLeftTheDayBeforeIt_IsRefused()
+    {
+        var (act, _, maria) = StepOnMariasRun("Approve");
+        Separated(maria, lastWorkingDay: new DateOnly(2026, 3, 15),
+                  finalPay: FinalPayRun(new DateOnly(2026, 3, 1), new DateOnly(2026, 3, 15)));
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos left on Mar 15, 2026; take them off this payroll - their pay goes in final pay.");
+    }
+
+    [Fact]
+    public async Task ARegularRun_BeforeSomeonesFinalPay_CanBeApproved()
+    {
+        // Leaves Apr 10, after the run; a final pay for Apr 1-10 doesn't touch Mar 16-31.
+        var (act, run, maria) = StepOnMariasRun("Approve");
+        Separated(maria, lastWorkingDay: new DateOnly(2026, 4, 10),
+                  finalPay: FinalPayRun(new DateOnly(2026, 4, 1), new DateOnly(2026, 4, 10)));
+
+        await act();
+
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+    }
+
+    // ------------------------------------------------------------------
+    // RemoveEmployeeAsync - taking someone off a run
+    // ------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(PayrollRunStatus.Draft)]
+    [InlineData(PayrollRunStatus.Processing)]
+    [InlineData(PayrollRunStatus.ForApproval)]
+    public async Task RemoveEmployeeAsync_TakesThemOffTheRun_AndSendsItBackToDraft(PayrollRunStatus status)
+    {
+        var (run, maria) = RegularRunWithMaria(status);
+        var entry = run.Employees.Single(e => e.EmployeeId == maria.Id);
+        _runRepo.Setup(r => r.RemoveEntryAsync(run, entry, It.IsAny<CancellationToken>()))
+                .Callback(() => run.Employees.Remove(entry))
+                .Returns(Task.CompletedTask);
+
+        var dto = await _sut.RemoveEmployeeAsync(run.Id, maria.Id);
+
+        _runRepo.Verify(r => r.RemoveEntryAsync(run, entry, It.IsAny<CancellationToken>()), Times.Once);
+        run.Status.Should().Be(PayrollRunStatus.Draft);
+        dto.Status.Should().Be(PayrollRunStatus.Draft);
+        dto.Employees.Should().ContainSingle().Which.EmployeeId.Should().NotBe(maria.Id);
+    }
+
+    [Theory]
+    [InlineData(PayrollRunStatus.Approved)]
+    [InlineData(PayrollRunStatus.Paid)]
+    public async Task RemoveEmployeeAsync_OnAnApprovedOrPaidRun_IsRefused(PayrollRunStatus status)
+    {
+        var (run, maria) = RegularRunWithMaria(status);
+
+        var act = () => _sut.RemoveEmployeeAsync(run.Id, maria.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message
+            .Should().Be("An approved or paid payroll run can't be changed.");
+        _runRepo.Verify(r => r.RemoveEntryAsync(It.IsAny<PayrollRun>(), It.IsAny<PayrollRunEmployee>(),
+                                                It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RemoveEmployeeAsync_TheLastEmployee_IsRefused()
+    {
+        var (run, maria) = RegularRunWithMaria(PayrollRunStatus.Draft);
+        run.Employees.RemoveAll(e => e.EmployeeId != maria.Id);
+
+        var act = () => _sut.RemoveEmployeeAsync(run.Id, maria.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message
+            .Should().Be("A payroll run needs at least one employee.");
+        _runRepo.Verify(r => r.RemoveEntryAsync(It.IsAny<PayrollRun>(), It.IsAny<PayrollRunEmployee>(),
+                                                It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RemoveEmployeeAsync_SomeoneNotOnTheRun_ThrowsKeyNotFound()
+    {
+        var (run, _) = RegularRunWithMaria(PayrollRunStatus.Draft);
+
+        var act = () => _sut.RemoveEmployeeAsync(run.Id, Guid.NewGuid());
+
+        await act.Should().ThrowAsync<KeyNotFoundException>();
+    }
+
+    [Fact]
+    public async Task RemoveEmployeeAsync_WhenTheRunDoesNotExist_ThrowsKeyNotFound()
+    {
+        var act = () => _sut.RemoveEmployeeAsync(Guid.NewGuid(), Guid.NewGuid());
+
+        await act.Should().ThrowAsync<KeyNotFoundException>();
     }
 }

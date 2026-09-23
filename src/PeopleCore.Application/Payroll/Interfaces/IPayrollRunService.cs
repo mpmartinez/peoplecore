@@ -32,6 +32,13 @@ public interface IPayrollRunService
     /// </summary>
     Task MarkPaidAsync(Guid runId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Takes an employee off a run that isn't Approved or Paid yet - someone who left and whose
+    /// pay belongs in their final pay. The run goes back to Draft, as its totals have changed. A
+    /// run keeps at least one employee.
+    /// </summary>
+    Task<PayrollRunDto> RemoveEmployeeAsync(Guid runId, Guid employeeId, CancellationToken ct = default);
+
     Task<PayrollRunDto?> GetAsync(Guid runId, CancellationToken ct = default);
 
     /// <summary>A page of runs, summarised without their per-employee entries.</summary>

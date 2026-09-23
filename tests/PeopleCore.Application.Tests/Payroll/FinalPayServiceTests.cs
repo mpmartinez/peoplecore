@@ -761,7 +761,8 @@ public class FinalPayServiceTests
     public async Task CreateAsync_Refuses_WhileAnUnpaidRegularRunAfterTheLastWorkingDayIncludesTheEmployee()
     {
         // Mar 14-31 lies after the last working day, but paying it would pay salary after the
-        // separation and take March's contributions a second time.
+        // separation and take March's contributions a second time. The employee belongs off it,
+        // not paid through it.
         var later = new PayrollRun
         {
             RunNumber = "PAY-2026-006",
@@ -774,7 +775,7 @@ public class FinalPayServiceTests
         var act = () => _sut.CreateAsync(_separation.Id, Request());
 
         await act.Should().ThrowAsync<DomainException>().WithMessage(
-            "Payroll PAY-2026-006 covers Mar 14 – Mar 31, 2026 and isn't paid yet; pay it before creating final pay.");
+            "Payroll PAY-2026-006 covers Mar 14 – Mar 31, 2026 after Maria Santos's last working day; take them off it before creating final pay.");
     }
 
     [Fact]
@@ -796,6 +797,51 @@ public class FinalPayServiceTests
 
         await act.Should().ThrowAsync<DomainException>().WithMessage(
             "Payroll PAY-2026-005 covers Mar 1 – Mar 15, 2026 and isn't paid yet; pay it before creating final pay.");
+    }
+
+    [Fact]
+    public async Task UpdateAsync_Refuses_WhileAnUnpaidRegularRunAfterTheLastWorkingDayIncludesTheEmployee()
+    {
+        await _sut.CreateAsync(_separation.Id, Request());
+        _separation.FinalPayRun = _savedRun;
+        var later = new PayrollRun
+        {
+            RunNumber = "PAY-2026-006",
+            PeriodStart = new DateOnly(2026, 3, 14), PeriodEnd = new DateOnly(2026, 3, 31),
+            PayDate = new DateOnly(2026, 3, 31), Status = PayrollRunStatus.ForApproval,
+        };
+        _runs.Setup(r => r.GetRunsForEmployeeAsync(_employee.Id, It.IsAny<CancellationToken>()))
+             .ReturnsAsync([later, _februaryRun, _savedRun!]);
+
+        var act = () => _sut.UpdateAsync(_separation.Id, Request());
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Payroll PAY-2026-006 covers Mar 14 – Mar 31, 2026 after Maria Santos's last working day; take them off it before creating final pay.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_Refuses_AStartHrPutsBeforeTheHireDate()
+    {
+        // Hired Thursday 2026-03-05 and never paid: a start of Mar 2 would pay days before they
+        // were employed.
+        _employee.HireDate = new DateOnly(2026, 3, 5);
+        _paidRuns.Clear();
+
+        var act = () => _sut.CreateAsync(_separation.Id, Request(periodStart: new DateOnly(2026, 3, 2)));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Maria Santos was hired on Mar 5, 2026; start final pay on or after that.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_TakesAStartHrPutsOnTheHireDate()
+    {
+        _employee.HireDate = new DateOnly(2026, 3, 5);
+        _paidRuns.Clear();
+
+        var summary = await _sut.CreateAsync(_separation.Id, Request(periodStart: new DateOnly(2026, 3, 5)));
+
+        summary.PeriodStart.Should().Be(new DateOnly(2026, 3, 5));
     }
 
     [Fact]

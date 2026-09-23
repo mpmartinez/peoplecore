@@ -73,6 +73,12 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     Task ReplaceEntriesAsync(PayrollRun run, IReadOnlyList<PayrollRunEmployee> newEntries, CancellationToken ct = default);
 
     /// <summary>
+    /// Deletes one entry from a loaded run (cascading its loan deduction lines and premium days),
+    /// saving the run's own changed fields (Status, UpdatedAt) with it.
+    /// </summary>
+    Task RemoveEntryAsync(PayrollRun run, PayrollRunEmployee entry, CancellationToken ct = default);
+
+    /// <summary>
     /// Every run the given employee appears in, newest pay date first, each loaded with its full
     /// <see cref="PayrollRun.Employees"/> list rather than a pre-filtered single entry. The
     /// caller is expected to pick out just its own entry from each run - the same thing

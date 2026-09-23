@@ -37,14 +37,15 @@ namespace PeopleCore.Application.Payroll.FinalPay;
 /// attendance is taken, since there's no salary for absences to come off. It still carries the
 /// 13th month, leave conversion, separation or retirement pay, loans, HR's deductions and the tax
 /// settle. A start HR gives that's after the last working day is still refused, as is one on or
-/// before the end of a Paid regular run the employee was in - those days were paid already.
+/// before the end of a Paid regular run the employee was in - those days were paid already - and
+/// one before the hire date.
 /// </para>
 /// <para>
 /// <b>Unpaid regular runs.</b> A final pay isn't created, nor its period changed, while a regular
 /// run that includes the employee and isn't Paid yet ends on or after the earlier of the final
 /// period's start and the first of the separation month: it would pay the same days twice, pay
 /// salary after the separation, or take the month's contributions again. The run has to be paid
-/// (or the employee taken off it) first.
+/// first - or, when it starts after the last working day, the employee taken off it.
 /// </para>
 /// <para>
 /// <b>Contributions</b> top the separation month - the last working day's month - up to exactly
@@ -289,6 +290,11 @@ public sealed class FinalPayService : IFinalPayService
             if (start > lastDay)
                 throw new DomainException("The final pay period can't start after the last working day.");
 
+            var hired = separation.Employee.HireDate;
+            if (start < hired)
+                throw new DomainException(string.Create(CultureInfo.InvariantCulture,
+                    $"{separation.Employee.FullName} was hired on {hired:MMM d, yyyy}; start final pay on or after that."));
+
             var paidThrough = regular
                 .Where(r => r.Status == PayrollRunStatus.Paid && r.PeriodEnd >= start)
                 .MaxBy(r => r.PeriodEnd);
@@ -310,15 +316,18 @@ public sealed class FinalPayService : IFinalPayService
         // only those) ends on or after the earlier of the final period's start and the first of
         // the separation month. That catches a run overlapping the final period, one after the
         // last working day (salary after separation), and one earlier in the separation month -
-        // any of which, paid later, would take the month's contributions again.
+        // any of which, paid later, would take the month's contributions again. A run that starts
+        // after the last working day has nothing to pay them, so they come off it rather than
+        // wait for it to be paid.
         var from = Min(period.Start, new DateOnly(lastDay.Year, lastDay.Month, 1));
         var unpaid = regular
             .Where(r => r.Status != PayrollRunStatus.Paid && r.PeriodEnd >= from)
             .OrderBy(r => r.PeriodStart)
             .FirstOrDefault();
         if (unpaid is not null)
-            throw new DomainException(
-                $"Payroll {unpaid.RunNumber} covers {unpaid.PeriodLabel} and isn't paid yet; pay it before creating final pay.");
+            throw new DomainException(unpaid.PeriodStart > lastDay
+                ? $"Payroll {unpaid.RunNumber} covers {unpaid.PeriodLabel} after {separation.Employee.FullName}'s last working day; take them off it before creating final pay."
+                : $"Payroll {unpaid.RunNumber} covers {unpaid.PeriodLabel} and isn't paid yet; pay it before creating final pay.");
 
         return period;
     }

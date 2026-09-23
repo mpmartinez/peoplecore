@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
@@ -60,6 +61,8 @@ public class PayrollRunService : IPayrollRunService
     public async Task<PayrollRunDto> CreateAsync(CreatePayrollRunRequest request, CancellationToken ct = default)
     {
         PayrollRunRequestValidator.Validate(request);
+        await EnsureNoOneHasLeftAsync(request.Employees.Select(e => e.EmployeeId).ToList(),
+            request.PeriodStart, request.PeriodEnd, ct);
 
         var year = request.PeriodStart.Year;
         var sequence = await _runRepo.CountForYearAsync(year, ct) + 1;
@@ -121,6 +124,8 @@ public class PayrollRunService : IPayrollRunService
             return;
         }
 
+        await EnsureNoOneHasLeftAsync(run, ct);
+
         // Recompute against current rates/settings, but from the attendance SNAPSHOT taken when
         // the run was created - never from the bridge. Re-deriving here would let a punch edited
         // after the fact change what someone was already told they would be paid.
@@ -162,6 +167,9 @@ public class PayrollRunService : IPayrollRunService
         if (run.Status is not (PayrollRunStatus.Draft or PayrollRunStatus.Processing or PayrollRunStatus.ForApproval))
             throw new DomainException("Only draft, processing or for-approval payroll runs can be approved.");
 
+        if (run.RunType == PayrollRunType.Regular)
+            await EnsureNoOneHasLeftAsync(run, ct);
+
         run.Status = PayrollRunStatus.Approved;
         run.UpdatedAt = DateTime.UtcNow;
 
@@ -178,6 +186,8 @@ public class PayrollRunService : IPayrollRunService
 
         if (run.RunType == PayrollRunType.FinalPay)
             await EnsureClearanceCompleteAsync(run, ct);
+        else
+            await EnsureNoOneHasLeftAsync(run, ct);
 
         var loanIds = run.Employees
             .SelectMany(e => e.LoanDeductionLines)
@@ -209,6 +219,29 @@ public class PayrollRunService : IPayrollRunService
         if (loans.Count > 0)
             await _loanRepo.UpdateRangeAsync(loans, ct);
         await _runRepo.UpdateAsync(run, ct);
+    }
+
+    public async Task<PayrollRunDto> RemoveEmployeeAsync(Guid runId, Guid employeeId, CancellationToken ct = default)
+    {
+        var run = await _runRepo.GetWithEntriesAsync(runId, ct)
+            ?? throw new KeyNotFoundException($"Payroll run {runId} not found.");
+
+        // The same line ComputeAsync draws: approved figures are signed off, and paid ones have
+        // already retired loan balances.
+        if (run.Status is PayrollRunStatus.Approved or PayrollRunStatus.Paid)
+            throw new DomainException("An approved or paid payroll run can't be changed.");
+
+        var entry = run.Employees.FirstOrDefault(e => e.EmployeeId == employeeId)
+            ?? throw new KeyNotFoundException($"Employee {employeeId} is not on payroll run {run.RunNumber}.");
+        if (run.Employees.Count == 1)
+            throw new DomainException("A payroll run needs at least one employee.");
+
+        // The run's totals change, so any submission no longer stands - as on a recompute.
+        run.Status = PayrollRunStatus.Draft;
+        run.UpdatedAt = DateTime.UtcNow;
+        await _runRepo.RemoveEntryAsync(run, entry, ct);
+
+        return ToDto(run);
     }
 
     public async Task<PayrollRunDto?> GetAsync(Guid runId, CancellationToken ct = default)
@@ -246,6 +279,38 @@ public class PayrollRunService : IPayrollRunService
             .OrderBy(i => i.SortOrder)
             .Select(i => i.Name);
         throw new DomainException($"Clear {string.Join(", ", outstanding)} before paying final pay.");
+    }
+
+    private Task EnsureNoOneHasLeftAsync(PayrollRun run, CancellationToken ct)
+        => EnsureNoOneHasLeftAsync(run.Employees.Select(e => e.EmployeeId).ToList(), run.PeriodStart, run.PeriodEnd, ct);
+
+    /// <summary>
+    /// Keeps people who have left off a regular run: anyone whose last working day is before the
+    /// period (their pay for it, if any, goes in their final pay), and anyone whose final pay
+    /// already covers some of the period (paying both would pay those days twice). Someone leaving
+    /// during the period, with no final pay yet, stays - the run still pays them up to that day.
+    /// </summary>
+    private async Task EnsureNoOneHasLeftAsync(IReadOnlyList<Guid> employeeIds, DateOnly periodStart,
+        DateOnly periodEnd, CancellationToken ct)
+    {
+        var separations = (await _separations.GetForEmployeesAsync(employeeIds, ct) ?? [])
+            .ToDictionary(s => s.EmployeeId);
+
+        foreach (var employeeId in employeeIds)
+        {
+            if (!separations.TryGetValue(employeeId, out var separation))
+                continue;
+
+            var name = separation.Employee.FullName;
+            if (separation.LastWorkingDay < periodStart)
+                throw new DomainException(string.Create(CultureInfo.InvariantCulture,
+                    $"{name} left on {separation.LastWorkingDay:MMM d, yyyy}; take them off this payroll - their pay goes in final pay."));
+
+            if (separation.FinalPayRun is { } finalPay
+                && finalPay.PeriodStart <= periodEnd && finalPay.PeriodEnd >= periodStart)
+                throw new DomainException(
+                    $"{name}'s final pay already covers {finalPay.PeriodLabel}; take them off this payroll.");
+        }
     }
 
     /// <summary>

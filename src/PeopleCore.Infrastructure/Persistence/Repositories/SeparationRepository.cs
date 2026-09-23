@@ -28,6 +28,13 @@ public class SeparationRepository : ISeparationRepository
     public async Task<IReadOnlyList<Separation>> ListAsync(CancellationToken ct = default)
         => await WithDetails().OrderByDescending(s => s.LastWorkingDay).AsSplitQuery().ToListAsync(ct);
 
+    public async Task<IReadOnlyList<Separation>> GetForEmployeesAsync(IReadOnlyCollection<Guid> employeeIds, CancellationToken ct = default)
+        => employeeIds.Count == 0
+            ? []
+            : await _context.Separations.Include(s => s.Employee).Include(s => s.FinalPayRun)
+                .Where(s => employeeIds.Contains(s.EmployeeId))
+                .ToListAsync(ct);
+
     /// <summary>
     /// Two HR users recording the same employee's separation at once both pass
     /// SeparationService's "does this employee already have one" check before either commits, so

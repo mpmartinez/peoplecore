@@ -239,6 +239,16 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
         await tx.CommitAsync(ct);
     }
 
+    public async Task RemoveEntryAsync(PayrollRun run, PayrollRunEmployee entry, CancellationToken ct = default)
+    {
+        // Removed through its own DbSet: the database cascades the entry's loan deduction lines and
+        // premium days, and EF deletes the tracked ones with it. The run's own changes are saved
+        // alongside, as it is tracked.
+        run.Employees.Remove(entry);
+        Context.PayrollRunEmployees.Remove(entry);
+        await Context.SaveChangesAsync(ct);
+    }
+
     /// <summary>
     /// Brings the tracked deductions of a final-pay run's inputs in line with its Deductions
     /// collection: rows loaded earlier and since dropped from the collection are deleted, and new
