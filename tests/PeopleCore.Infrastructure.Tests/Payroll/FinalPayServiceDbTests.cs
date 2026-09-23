@@ -1,6 +1,8 @@
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using PeopleCore.Application.Leave.Services;
 using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.FinalPay;
 using PeopleCore.Application.Payroll.Interfaces;
@@ -66,7 +68,10 @@ public class FinalPayServiceDbTests : DatabaseTestBase
             EmployeeId = employee.Id, LoanType = LoanType.SSSLoan, TotalAmount = 12_000m,
             MonthlyDeduction = 1_000m, RemainingBalance = 3_000m, StartDate = new DateOnly(2025, 6, 1),
         });
-        var vacation = new LeaveType { Name = "Vacation Leave", Code = "VL", MaxDaysPerYear = 15m, IsConvertibleToCash = true };
+        var vacation = new LeaveType
+        {
+            Name = "Vacation Leave", Code = "VL", MaxDaysPerYear = 15m, IsConvertibleToCash = true, IsCarryOver = true,
+        };
         Context.LeaveTypes.Add(vacation);
         Context.LeaveBalances.Add(new LeaveBalance
         {
@@ -199,6 +204,51 @@ public class FinalPayServiceDbTests : DatabaseTestBase
         entry.WithholdingTax.Should().Be(-2_000m);
         entry.NetPay.Should().Be(203_079.17m);   // 204,579.17 less the 1,500 cash advance
     }
+
+    [Fact]
+    public async Task MarkPaid_DrawsTheConvertedLeaveDown_SoYearEndCarriesNoneOfItOver()
+    {
+        var seeded = await SeedAsync();
+        Guid runId;
+        await using (var context = NewContext())
+            runId = (await Service(context).CreateAsync(seeded.Id, Request())).RunId;
+
+        await using (var context = NewContext())
+        {
+            var item = await context.Set<SeparationClearanceItem>().SingleAsync(i => i.SeparationId == seeded.Id);
+            item.ClearedAt = DateTime.UtcNow;
+            item.ClearedBy = "hr@company.test";
+            await context.SaveChangesAsync();
+        }
+
+        await using (var context = NewContext())
+            await PayrollRuns(context).ApproveAsync(runId);
+        await using (var context = NewContext())
+            await PayrollRuns(context).MarkPaidAsync(runId);
+
+        // The 5 vacation days the final pay converted (6,000) are used, so nothing remains...
+        await using (var reader = NewContext())
+        {
+            var balance = (await new LeaveBalanceRepository(reader).GetByEmployeeAsync(seeded.EmployeeId, 2026)).Single();
+            balance.UsedDays.Should().Be(5m);
+            balance.RemainingDays.Should().Be(0m);
+            (await new PayrollRunRepository(reader).GetWithEntriesAsync(runId))!.Status.Should().Be(PayrollRunStatus.Paid);
+        }
+
+        // ...and the year-end carry-over, though vacation leave carries over, carries none of them.
+        await using (var context = NewContext())
+            await new LeaveBalanceService(new LeaveBalanceRepository(context)).CarryOverAsync(2026, 2027);
+
+        await using var check = NewContext();
+        (await new LeaveBalanceRepository(check).GetByEmployeeAsync(seeded.EmployeeId, 2027)).Should().BeEmpty();
+    }
+
+    private static PayrollRunService PayrollRuns(AppDbContext context) => new(
+        new PayrollRunRepository(context), new EmployeeCompensationRepository(context), new EmployeeAllowanceRepository(context),
+        new EmployeeLoanRepository(context), new PayrollSettingsRepository(context),
+        new PayrollComputationService(), Mock.Of<IPayrollAttendanceBridge>(),
+        new EmployeeRepository(context), new SeparationRepository(context),
+        NullLogger<PayrollRunService>.Instance, Service(context));
 
     [Fact]
     public async Task AddFinalPayRun_RefusesASecondRunForASeparationAnotherRequestAlreadyLinked()

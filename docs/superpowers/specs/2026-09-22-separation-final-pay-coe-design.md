@@ -78,6 +78,7 @@ Clearance is complete when every item is cleared. A final-pay run can be compute
    - For each convertible type, the employee's remaining days in the current year (`LeaveBalance.RemainingDays`) are paid at the daily rate.
    - **Tax:** up to 10 days of converted *vacation-type* leave in the year is de minimis and non-taxable (RR 11-2018, as amended). The rest is "other benefits" (RR 5-2011 as amended by RR 11-2018): it shares the 90,000 exemption with the 13th month, so it is non-taxable as far as the pay year's earlier pay and this final pay's 13th month leave room, and taxable past it. (Confirm this treatment with the company's accountant.) This uses a per-leave-type setting, **Counts as vacation leave for de minimis** (default on for convertible types), so SIL and VL can be treated as the company's accountant advises.
    - The page shows the days and rate used.
+   - Marking the final pay Paid records the converted days as used on their balances, so the year-end carry-over doesn't carry them forward. It's refused if the balances changed since the run was computed; recompute it first.
 4. **Separation pay** for an authorized cause (Labor Code Art. 298-299), from the sub-type:
    - one month's pay per year of service: redundancy and labor-saving devices;
    - half a month's pay per year of service: retrenchment, closure not due to serious losses, and disease;

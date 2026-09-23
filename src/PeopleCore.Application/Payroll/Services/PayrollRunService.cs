@@ -190,10 +190,20 @@ public class PayrollRunService : IPayrollRunService
         if (run.Status != PayrollRunStatus.Approved)
             throw new DomainException("Only approved payroll runs can be marked as paid.");
 
+        // A final pay also pays out the employee's convertible leave: what it converted is
+        // checked against the balances now, before anything changes, and recorded as used below.
+        IReadOnlyList<LeavePaidOut> leavePaidOut = [];
         if (run.RunType == PayrollRunType.FinalPay)
+        {
             await EnsureClearanceCompleteAsync(run, ct);
+            var finalPay = _finalPay ?? throw new InvalidOperationException(
+                "PayrollRunService was built without an IFinalPayService, so it can't pay a final-pay run.");
+            leavePaidOut = await finalPay.LeavePaidOutAsync(run, ct);
+        }
         else
+        {
             await EnsureNoOneHasLeftAsync(run, ct);
+        }
 
         var loanIds = run.Employees
             .SelectMany(e => e.LoanDeductionLines)
@@ -222,6 +232,10 @@ public class PayrollRunService : IPayrollRunService
         run.Status = PayrollRunStatus.Paid;
         run.UpdatedAt = DateTime.UtcNow;
 
+        // The request's one DbContext saves the leave, the loans and the run's status together, on
+        // whichever of these saves comes first.
+        if (leavePaidOut.Count > 0)
+            await _finalPay!.RecordLeavePaidOutAsync(leavePaidOut, ct);
         if (loans.Count > 0)
             await _loanRepo.UpdateRangeAsync(loans, ct);
         await _runRepo.UpdateAsync(run, ct);

@@ -1501,6 +1501,51 @@ public class FinalPayServiceTests
     }
 
     // ------------------------------------------------------------------
+    // Paying the leave out
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task LeavePaidOutAsync_GivesEachConvertedBalanceAndTheDaysItPaidOut()
+    {
+        await _sut.CreateAsync(_separation.Id, Request());
+
+        var paidOut = await _sut.LeavePaidOutAsync(_savedRun!);
+
+        // Vacation leave's 5 days; sick leave doesn't convert.
+        paidOut.Should().ContainSingle();
+        paidOut[0].Balance.Should().BeSameAs(_balances[0]);
+        paidOut[0].Days.Should().Be(5m);
+    }
+
+    [Fact]
+    public async Task LeavePaidOutAsync_Refuses_WhenTheBalancesNoLongerPriceToWhatTheFinalPayPaid()
+    {
+        // The final pay converted 5 days (6,000); two of them were then taken as leave.
+        await _sut.CreateAsync(_separation.Id, Request());
+        _balances[0].UsedDays = 2m;
+
+        var act = () => _sut.LeavePaidOutAsync(_savedRun!);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Maria Santos's convertible leave has changed since the final pay was computed; recompute it before paying.");
+    }
+
+    [Fact]
+    public async Task RecordLeavePaidOutAsync_MarksTheDaysUsed_AndSavesEachBalance()
+    {
+        await _sut.CreateAsync(_separation.Id, Request());
+        var paidOut = await _sut.LeavePaidOutAsync(_savedRun!);
+
+        await _sut.RecordLeavePaidOutAsync(paidOut);
+
+        _balances[0].UsedDays.Should().Be(5m);
+        _balances[0].RemainingDays.Should().Be(0m);
+        _balances[1].UsedDays.Should().Be(0m, "sick leave wasn't paid out");
+        _leaveBalances.Verify(r => r.UpdateAsync(_balances[0], It.IsAny<CancellationToken>()), Times.Once);
+        _leaveBalances.Verify(r => r.UpdateAsync(_balances[1], It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ------------------------------------------------------------------
     // Summary
     // ------------------------------------------------------------------
 

@@ -26,6 +26,8 @@ public class PayrollRunServiceTests
     private readonly Mock<IPayrollAttendanceBridge> _attendanceBridge = new();
     private readonly Mock<IEmployeeRepository> _employeeRepo = new();
     private readonly Mock<ISeparationRepository> _separations = new();
+    // Pays no leave out unless a test says otherwise.
+    private readonly Mock<PeopleCore.Application.Payroll.FinalPay.IFinalPayService> _finalPay = new();
     private readonly PayrollRunService _sut;
 
     public PayrollRunServiceTests()
@@ -54,7 +56,10 @@ public class PayrollRunServiceTests
             _attendanceBridge.Object,
             _employeeRepo.Object,
             _separations.Object,
-            NullLogger<PayrollRunService>.Instance);
+            NullLogger<PayrollRunService>.Instance,
+            _finalPay.Object);
+        _finalPay.Setup(f => f.LeavePaidOutAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()))
+                 .ReturnsAsync([]);
     }
 
     // ------------------------------------------------------------------
@@ -985,8 +990,12 @@ public class PayrollRunServiceTests
         };
         run.Employees.Add(new PayrollRunEmployee { PayrollRunId = run.Id, EmployeeId = Guid.NewGuid(), RegularPay = 12_000m });
         _runRepo.Setup(r => r.GetWithEntriesAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        var sut = new PayrollRunService(
+            _runRepo.Object, _compensationRepo.Object, _allowanceRepo.Object, _loanRepo.Object,
+            _settingsRepo.Object, new PayrollComputationService(), _attendanceBridge.Object,
+            _employeeRepo.Object, _separations.Object, NullLogger<PayrollRunService>.Instance);
 
-        var act = () => _sut.ComputeAsync(run.Id);
+        var act = () => sut.ComputeAsync(run.Id);
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("*without an IFinalPayService*");
@@ -1087,6 +1096,47 @@ public class PayrollRunServiceTests
         ClearedBy = cleared ? "hr@company.test" : null,
         ClearedAt = cleared ? new DateTime(2026, 3, 20, 0, 0, 0, DateTimeKind.Utc) : null,
     };
+
+    [Fact]
+    public async Task MarkPaidAsync_OnAFinalPayRun_RecordsTheConvertedLeaveAsUsed()
+    {
+        // So a year-end carry-over doesn't carry the paid-out days forward.
+        var (run, separation) = ApprovedFinalPay(Item("Finance", 1, cleared: true));
+        var balance = new PeopleCore.Domain.Entities.Leave.LeaveBalance { EmployeeId = separation.EmployeeId, Year = 2026, TotalDays = 5m };
+        IReadOnlyList<PeopleCore.Application.Payroll.FinalPay.LeavePaidOut> paidOut = [new(balance, 5m)];
+        _finalPay.Setup(f => f.LeavePaidOutAsync(run, It.IsAny<CancellationToken>())).ReturnsAsync(paidOut);
+
+        await _sut.MarkPaidAsync(run.Id);
+
+        run.Status.Should().Be(PayrollRunStatus.Paid);
+        _finalPay.Verify(f => f.RecordLeavePaidOutAsync(paidOut, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_OnAFinalPayRun_WhoseLeaveChanged_IsRefused_AndChangesNothing()
+    {
+        var (run, _) = ApprovedFinalPay(Item("Finance", 1, cleared: true));
+        _finalPay.Setup(f => f.LeavePaidOutAsync(run, It.IsAny<CancellationToken>()))
+                 .ThrowsAsync(new DomainException("Maria Santos's convertible leave has changed since the final pay was computed; recompute it before paying."));
+
+        var act = () => _sut.MarkPaidAsync(run.Id);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("*convertible leave has changed*");
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+        _finalPay.Verify(f => f.RecordLeavePaidOutAsync(It.IsAny<IReadOnlyList<PeopleCore.Application.Payroll.FinalPay.LeavePaidOut>>(),
+                                                        It.IsAny<CancellationToken>()), Times.Never);
+        _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_OnARegularRun_PaysNoLeaveOut()
+    {
+        var (run, _) = RegularRunWithMaria(PayrollRunStatus.Approved);
+
+        await _sut.MarkPaidAsync(run.Id);
+
+        _finalPay.Verify(f => f.LeavePaidOutAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 
     [Fact]
     public async Task MarkPaidAsync_OnAFinalPayRun_WhileClearanceIsOutstanding_NamesTheItemsInOrder()
