@@ -31,16 +31,17 @@ public class SeparatedEmployeeRunDbTests : DatabaseTestBase
         new SeparationRepository(context), NullLogger<PayrollRunService>.Instance);
 
     /// <summary>
-    /// A Draft Mar 16-31 run holding Juan and Maria; Maria's entry has a loan deduction line and a
+    /// A Mar 16-31 run holding Juan and Maria; Maria's entry has a loan deduction line and a
     /// premium day. Maria's separation has the given last working day.
     /// </summary>
-    private async Task<(PayrollRun Run, Employee Maria, Separation Separation)> SeedAsync(DateOnly lastWorkingDay)
+    private async Task<(PayrollRun Run, Employee Maria, Separation Separation)> SeedAsync(
+        DateOnly lastWorkingDay, PayrollRunStatus status = PayrollRunStatus.Draft)
     {
         var juan = AnEmployee("Dela Cruz", "Juan");
         var maria = AnEmployee("Santos", "Maria");
         Context.Employees.AddRange(juan, maria);
 
-        var run = ARun("PAY-2026-006", new(2026, 3, 16), new(2026, 3, 31), new(2026, 3, 31), PayrollRunStatus.Draft);
+        var run = ARun("PAY-2026-006", new(2026, 3, 16), new(2026, 3, 31), new(2026, 3, 31), status);
         Context.PayrollRuns.Add(run);
         Context.PayrollRunEmployees.Add(AnEntry(run.Id, juan.Id));
         var mariasEntry = AnEntry(run.Id, maria.Id);
@@ -65,14 +66,15 @@ public class SeparatedEmployeeRunDbTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task SomeoneWhoLeftBeforeTheRun_BlocksApproval_UntilTheyAreTakenOff()
+    public async Task SomeoneSeparatedAfterTheRunWasApproved_BlocksPaying_UntilTheyAreTakenOff()
     {
-        var (run, maria, _) = await SeedAsync(lastWorkingDay: new DateOnly(2026, 3, 13));
+        // The run was approved before Maria's separation (last working day Mar 13) was recorded.
+        var (run, maria, _) = await SeedAsync(lastWorkingDay: new DateOnly(2026, 3, 13), PayrollRunStatus.Approved);
 
         await using (var context = NewContext())
         {
-            var approve = () => Service(context).ApproveAsync(run.Id);
-            (await approve.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            var pay = () => Service(context).MarkPaidAsync(run.Id);
+            (await pay.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
                 "Maria Santos left on Mar 13, 2026; take them off this payroll - their pay goes in final pay.");
         }
 
@@ -84,10 +86,12 @@ public class SeparatedEmployeeRunDbTests : DatabaseTestBase
 
         await using (var context = NewContext())
             await Service(context).ApproveAsync(run.Id);
+        await using (var context = NewContext())
+            await Service(context).MarkPaidAsync(run.Id);
 
         await using var reader = NewContext();
         var saved = await new PayrollRunRepository(reader).GetWithEntriesAsync(run.Id);
-        saved!.Status.Should().Be(PayrollRunStatus.Approved);
+        saved!.Status.Should().Be(PayrollRunStatus.Paid);
         saved.Employees.Should().ContainSingle().Which.EmployeeId.Should().NotBe(maria.Id);
         (await reader.Set<PayrollLoanDeduction>().CountAsync()).Should().Be(0);
         (await reader.PayrollRunPremiumDays.CountAsync()).Should().Be(0);

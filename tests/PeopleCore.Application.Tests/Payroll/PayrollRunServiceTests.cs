@@ -1112,7 +1112,8 @@ public class PayrollRunServiceTests
         return (run, maria);
     }
 
-    private void Separated(Employee employee, DateOnly lastWorkingDay, PayrollRun? finalPay = null) =>
+    private void Separated(Employee employee, DateOnly lastWorkingDay, PayrollRun? finalPay = null,
+                           SeparationStatus status = SeparationStatus.Separated) =>
         _separations
             .Setup(s => s.GetForEmployeesAsync(
                 It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(employee.Id)), It.IsAny<CancellationToken>()))
@@ -1121,7 +1122,7 @@ public class PayrollRunServiceTests
                 EmployeeId = employee.Id,
                 Employee = employee,
                 LastWorkingDay = lastWorkingDay,
-                Status = SeparationStatus.Separated,
+                Status = status,
                 FinalPayRunId = finalPay?.Id,
                 FinalPayRun = finalPay,
             }]);
@@ -1194,6 +1195,58 @@ public class PayrollRunServiceTests
     }
 
     [Fact]
+    public async Task ARegularRun_HoldingSomeoneWhoseNoticeGivesALastDayBeforeIt_IsRefused()
+    {
+        // Not marked separated yet, but their last working day is already before the period.
+        var (act, _, maria) = StepOnMariasRun("Approve");
+        Separated(maria, lastWorkingDay: new DateOnly(2026, 3, 13), status: SeparationStatus.NoticeGiven);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos left on Mar 13, 2026; take them off this payroll - their pay goes in final pay.");
+    }
+
+    /// <summary>
+    /// A final pay whose own separation comes back from the lookup: its final-pay run is the run
+    /// itself, which overlaps its own period - so only the exemption lets it through.
+    /// </summary>
+    private (PayrollRun Run, Separation Separation) DraftFinalPayItsOwnSeparationOverlaps()
+    {
+        var (run, separation) = ApprovedFinalPay(Item("Finance", 1, cleared: true));
+        run.Status = PayrollRunStatus.Draft;
+        _separations
+            .Setup(s => s.GetForEmployeesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([separation]);
+        return (run, separation);
+    }
+
+    [Fact]
+    public async Task ApproveAsync_OnAFinalPayRun_IsNotHeldToTheRegularRunRule()
+    {
+        var (run, _) = DraftFinalPayItsOwnSeparationOverlaps();
+
+        await _sut.ApproveAsync(run.Id);
+
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+    }
+
+    [Fact]
+    public async Task ComputeAsync_OnAFinalPayRun_IsNotHeldToTheRegularRunRule()
+    {
+        var (run, _) = DraftFinalPayItsOwnSeparationOverlaps();
+        var recomputed = new List<PayrollRunEmployee> { new() { PayrollRunId = run.Id, EmployeeId = run.Employees[0].EmployeeId } };
+        var finalPay = new Mock<PeopleCore.Application.Payroll.FinalPay.IFinalPayService>();
+        finalPay.Setup(f => f.RecomputeAsync(run, It.IsAny<CancellationToken>())).ReturnsAsync(recomputed);
+        var sut = new PayrollRunService(
+            _runRepo.Object, _compensationRepo.Object, _allowanceRepo.Object, _loanRepo.Object,
+            _settingsRepo.Object, new PayrollComputationService(), _attendanceBridge.Object,
+            _employeeRepo.Object, _separations.Object, NullLogger<PayrollRunService>.Instance, finalPay.Object);
+
+        await sut.ComputeAsync(run.Id);
+
+        _runRepo.Verify(r => r.ReplaceEntriesAsync(run, recomputed, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task ARegularRun_HoldingSomeoneLeavingDuringItsPeriod_WithoutFinalPayYet_CanBeApproved()
     {
         // Their last working day is inside the run, so the run still pays them for Mar 16-20.
@@ -1237,13 +1290,11 @@ public class PayrollRunServiceTests
     [InlineData(PayrollRunStatus.Draft)]
     [InlineData(PayrollRunStatus.Processing)]
     [InlineData(PayrollRunStatus.ForApproval)]
+    [InlineData(PayrollRunStatus.Approved)]
     public async Task RemoveEmployeeAsync_TakesThemOffTheRun_AndSendsItBackToDraft(PayrollRunStatus status)
     {
         var (run, maria) = RegularRunWithMaria(status);
-        var entry = run.Employees.Single(e => e.EmployeeId == maria.Id);
-        _runRepo.Setup(r => r.RemoveEntryAsync(run, entry, It.IsAny<CancellationToken>()))
-                .Callback(() => run.Employees.Remove(entry))
-                .Returns(Task.CompletedTask);
+        var entry = RemovingActuallyRemoves(run, maria);
 
         var dto = await _sut.RemoveEmployeeAsync(run.Id, maria.Id);
 
@@ -1253,17 +1304,49 @@ public class PayrollRunServiceTests
         dto.Employees.Should().ContainSingle().Which.EmployeeId.Should().NotBe(maria.Id);
     }
 
-    [Theory]
-    [InlineData(PayrollRunStatus.Approved)]
-    [InlineData(PayrollRunStatus.Paid)]
-    public async Task RemoveEmployeeAsync_OnAnApprovedOrPaidRun_IsRefused(PayrollRunStatus status)
+    /// <summary>Makes the mocked repository drop the entry from the run, as the real one does.</summary>
+    private PayrollRunEmployee RemovingActuallyRemoves(PayrollRun run, Employee employee)
     {
-        var (run, maria) = RegularRunWithMaria(status);
+        var entry = run.Employees.Single(e => e.EmployeeId == employee.Id);
+        _runRepo.Setup(r => r.RemoveEntryAsync(run, entry, It.IsAny<CancellationToken>()))
+                .Callback(() => run.Employees.Remove(entry))
+                .Returns(Task.CompletedTask);
+        return entry;
+    }
+
+    [Fact]
+    public async Task AnApprovedRun_HoldingSomeoneSeparatedAfterApproval_IsFreedByTakingThemOff()
+    {
+        // PAY-2026-006 (Mar 16-31) is approved; HR then records Maria's separation with a last
+        // working day of Mar 13. Paying the run is refused, and taking her off must still be
+        // possible, or the run could never be paid.
+        var (run, maria) = RegularRunWithMaria(PayrollRunStatus.Approved);
+        RemovingActuallyRemoves(run, maria);
+        Separated(maria, lastWorkingDay: new DateOnly(2026, 3, 13));
+
+        var pay = () => _sut.MarkPaidAsync(run.Id);
+        (await pay.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos left on Mar 13, 2026; take them off this payroll - their pay goes in final pay.");
+
+        await _sut.RemoveEmployeeAsync(run.Id, maria.Id);
+        run.Status.Should().Be(PayrollRunStatus.Draft);
+
+        await _sut.ApproveAsync(run.Id);
+        await _sut.MarkPaidAsync(run.Id);
+
+        run.Status.Should().Be(PayrollRunStatus.Paid);
+        run.Employees.Should().ContainSingle().Which.EmployeeId.Should().NotBe(maria.Id);
+    }
+
+    [Fact]
+    public async Task RemoveEmployeeAsync_OnAPaidRun_IsRefused()
+    {
+        var (run, maria) = RegularRunWithMaria(PayrollRunStatus.Paid);
 
         var act = () => _sut.RemoveEmployeeAsync(run.Id, maria.Id);
 
         (await act.Should().ThrowAsync<DomainException>()).Which.Message
-            .Should().Be("An approved or paid payroll run can't be changed.");
+            .Should().Be("A paid payroll run can't be changed.");
         _runRepo.Verify(r => r.RemoveEntryAsync(It.IsAny<PayrollRun>(), It.IsAny<PayrollRunEmployee>(),
                                                 It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -1280,6 +1363,63 @@ public class PayrollRunServiceTests
             .Should().Be("A payroll run needs at least one employee.");
         _runRepo.Verify(r => r.RemoveEntryAsync(It.IsAny<PayrollRun>(), It.IsAny<PayrollRunEmployee>(),
                                                 It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RemoveEmployeeAsync_OnAFinalPayRun_IsRefused()
+    {
+        var (run, separation) = ApprovedFinalPay(Item("Finance", 1, cleared: false));
+        run.Status = PayrollRunStatus.Draft;
+
+        var act = () => _sut.RemoveEmployeeAsync(run.Id, separation.EmployeeId);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message
+            .Should().Be("A final-pay run's employee can't be removed.");
+        _runRepo.Verify(r => r.RemoveEntryAsync(It.IsAny<PayrollRun>(), It.IsAny<PayrollRunEmployee>(),
+                                                It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RemoveEmployeeAsync_SomeoneWithNoShiftSchedule_NoLongerCountsAsMissingAttendance()
+    {
+        var (run, maria) = RegularRunWithMaria(PayrollRunStatus.Draft);
+        run.EmployeesMissingAttendance = 2;
+        RemovingActuallyRemoves(run, maria);
+        SetupBridge(maria.Id, new PayrollAttendanceInput(), withoutSchedule: [maria.Id]);
+
+        var dto = await _sut.RemoveEmployeeAsync(run.Id, maria.Id);
+
+        run.EmployeesMissingAttendance.Should().Be(1);
+        dto.EmployeesMissingAttendance.Should().Be(1);
+        _attendanceBridge.Verify(b => b.BuildAsync(
+            It.Is<IReadOnlyList<Guid>>(ids => ids.SequenceEqual(new[] { maria.Id })),
+            SecondHalfStart, SecondHalfEnd, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RemoveEmployeeAsync_SomeoneWithAShiftSchedule_LeavesTheMissingAttendanceCount()
+    {
+        var (run, maria) = RegularRunWithMaria(PayrollRunStatus.Draft);
+        run.EmployeesMissingAttendance = 1;
+        RemovingActuallyRemoves(run, maria);
+        SetupBridge(maria.Id, new PayrollAttendanceInput());
+
+        await _sut.RemoveEmployeeAsync(run.Id, maria.Id);
+
+        run.EmployeesMissingAttendance.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task RemoveEmployeeAsync_WhenNobodyWasMissingAttendance_DoesNotAskTheBridge()
+    {
+        var (run, maria) = RegularRunWithMaria(PayrollRunStatus.Draft);
+        RemovingActuallyRemoves(run, maria);
+
+        await _sut.RemoveEmployeeAsync(run.Id, maria.Id);
+
+        run.EmployeesMissingAttendance.Should().Be(0);
+        _attendanceBridge.Verify(b => b.BuildAsync(It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(),
+                                                   It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

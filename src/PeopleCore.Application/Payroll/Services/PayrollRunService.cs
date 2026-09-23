@@ -226,17 +226,32 @@ public class PayrollRunService : IPayrollRunService
         var run = await _runRepo.GetWithEntriesAsync(runId, ct)
             ?? throw new KeyNotFoundException($"Payroll run {runId} not found.");
 
-        // The same line ComputeAsync draws: approved figures are signed off, and paid ones have
-        // already retired loan balances.
-        if (run.Status is PayrollRunStatus.Approved or PayrollRunStatus.Paid)
-            throw new DomainException("An approved or paid payroll run can't be changed.");
+        // A final pay is built for its one employee from their separation.
+        if (run.RunType == PayrollRunType.FinalPay)
+            throw new DomainException("A final-pay run's employee can't be removed.");
+
+        // A paid run has already retired loan balances. An approved one can still lose someone -
+        // it has to, when they are separated after approval and the run can't otherwise be paid -
+        // and goes back to Draft below to be approved again.
+        if (run.Status == PayrollRunStatus.Paid)
+            throw new DomainException("A paid payroll run can't be changed.");
 
         var entry = run.Employees.FirstOrDefault(e => e.EmployeeId == employeeId)
             ?? throw new KeyNotFoundException($"Employee {employeeId} is not on payroll run {run.RunNumber}.");
         if (run.Employees.Count == 1)
             throw new DomainException("A payroll run needs at least one employee.");
 
-        // The run's totals change, so any submission no longer stands - as on a recompute.
+        // The stored count of employees without a shift schedule keeps no names, so the bridge is
+        // asked whether this one was among them - the same question that produced the count.
+        if (run.EmployeesMissingAttendance > 0)
+        {
+            var bridged = await _attendanceBridge.BuildAsync([employeeId], run.PeriodStart, run.PeriodEnd, ct);
+            if (bridged.EmployeesWithoutSchedule.Contains(employeeId))
+                run.EmployeesMissingAttendance--;
+        }
+
+        // The run's totals change, so any submission or approval no longer stands - as on a
+        // recompute.
         run.Status = PayrollRunStatus.Draft;
         run.UpdatedAt = DateTime.UtcNow;
         await _runRepo.RemoveEntryAsync(run, entry, ct);

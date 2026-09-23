@@ -215,6 +215,11 @@ public class SeparationService : ISeparationService
         {
             separation = existing;
 
+            // The final pay was computed from this separation's last working day and type; moving
+            // either under it would leave it paying for a different separation.
+            if (separation.FinalPayRunId is not null)
+                throw new DomainException("Final pay has already been started for this separation.");
+
             if (type is { } explicitType)
             {
                 if (explicitType == SeparationType.AuthorizedCause && authorizedCause is null)

@@ -699,6 +699,28 @@ public class SeparationServiceTests
         dto.FinalPayStatus.Should().Be(PayrollRunStatus.Approved);
     }
 
+    [Theory]
+    [InlineData(PayrollRunStatus.Draft)]
+    [InlineData(PayrollRunStatus.Paid)]
+    public async Task SeparateNow_OnASeparationWhoseFinalPayHasStarted_IsRefused(PayrollRunStatus status)
+    {
+        // The final pay was computed for Sep 30; moving the last working day (or the type) under it
+        // would leave its period, separation pay and contributions describing another separation.
+        var s = await Recorded(noticeDate: new DateOnly(2026, 9, 1), lastDay: new DateOnly(2026, 9, 30));
+        GiveFinalPay(status);
+
+        var act = () => _sut.SeparateNowAsync(EmployeeId, new DateOnly(2026, 9, 15), SeparationType.TerminationJustCause);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message
+            .Should().Be("Final pay has already been started for this separation.");
+        _saved!.LastWorkingDay.Should().Be(new DateOnly(2026, 9, 30));
+        _saved.Type.Should().Be(SeparationType.Resignation);
+        _saved.Status.Should().Be(SeparationStatus.NoticeGiven);
+        _employee.IsActive.Should().BeTrue();
+        NothingSaved();
+        s.Id.Should().Be(_saved.Id);
+    }
+
     [Fact]
     public async Task Dto_WithoutAFinalPayRun_LeavesItsFieldsEmpty()
     {
