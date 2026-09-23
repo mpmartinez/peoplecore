@@ -4,11 +4,9 @@ namespace PeopleCore.Application.Payroll.Services;
 
 /// <summary>
 /// Builds the earning and deduction breakdowns a rendered payslip PDF displays, from the
-/// DTO-shaped <see cref="PayrollRunEmployeeDto"/>. This is <see cref="PayrollLineBuilder"/>'s
-/// logic mirrored exactly, not shared with it: PayrollLineBuilder takes the
-/// <see cref="Domain.Entities.Payroll.PayrollRunEmployee"/> entity and is byte-verified, so it
-/// cannot be changed to also accept the DTO that PayslipDocument (in PeopleCore.Reports, which
-/// does not reference the Domain project) actually has in hand.
+/// DTO-shaped <see cref="PayrollRunEmployeeDto"/> - the shape PayslipDocument (in
+/// PeopleCore.Reports, which does not reference the Domain project) has in hand. It is the one
+/// place a payslip's breakdown is built.
 /// <para>
 /// The payslip prints GrossPay and TotalDeductions as the column totals rather than summing
 /// these lines, so the lines have to add up to those figures or the document visibly fails to

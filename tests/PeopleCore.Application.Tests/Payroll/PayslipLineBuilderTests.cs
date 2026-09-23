@@ -6,8 +6,7 @@ using Xunit;
 namespace PeopleCore.Application.Tests.Payroll;
 
 /// <summary>
-/// Mirrors <see cref="PayrollLineBuilderTests"/> for the DTO-shaped builder the rendered PDF
-/// actually uses. The payslip prints GrossPay and TotalDeductions as the column totals rather
+/// The DTO-shaped builder the rendered payslip PDF uses. The payslip prints GrossPay and TotalDeductions as the column totals rather
 /// than summing these lines, so the lines have to add up to those figures or the document
 /// silently fails to foot.
 /// </summary>

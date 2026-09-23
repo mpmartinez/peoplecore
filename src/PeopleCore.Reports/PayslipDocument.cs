@@ -106,10 +106,9 @@ public class PayslipDocument : IDocument
 
     private void ComposeEarningsDeductions(IContainer c)
     {
-        // Driven by PayslipLineBuilder - the DTO-shaped counterpart of PayrollLineBuilder,
-        // which the payroll register uses - so the two can never drift onto two different
-        // breakdowns of the same run, and so the reductions RegularPay already nets out
-        // (absences, tardiness) are visible on the document rather than silently folded away.
+        // Driven by PayslipLineBuilder, the one place a payslip's breakdown is built, so the
+        // reductions RegularPay already nets out (absences, tardiness) are visible on the
+        // document rather than silently folded away.
         // Zero-value lines are suppressed by the builder itself.
         var earningLines = PayslipLineBuilder.Earnings(_emp);
         var deductionLines = PayslipLineBuilder.Deductions(_emp).Where(l => !l.IsEmployer).ToList();
