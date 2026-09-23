@@ -207,6 +207,145 @@ public class Bir2316ServiceTests
     }
 
     [Fact]
+    public async Task GetPreviewAsync_CertifiesFinalPayLeaveConversionAndSeparationPay()
+    {
+        // A regular run plus a Paid final-pay entry: leave conversion of 6,000 (4,000 de minimis,
+        // 2,000 taxable) and separation pay of 150,000, all non-taxable (separation for causes
+        // beyond the employee's control is fully exempt). FinalPayNonTaxable therefore carries
+        // both the leave conversion's non-taxable slice and all of the separation pay: 4,000 +
+        // 150,000 = 154,000. FinalPayTaxable = 6,000 + 150,000 - 154,000 = 2,000 - exactly the
+        // taxable part of leave conversion, since none of the separation pay is taxable.
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 20_000m)]),
+            Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Paid, entries:
+            [
+                Entry(_employeeId,
+                    leaveConversionPay: 6_000m, leaveConversionNonTaxable: 4_000m,
+                    separationPay: 150_000m, finalPayNonTaxable: 154_000m)
+            ]));
+
+        var result = await _sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Item35_DeMinimis.Should().Be(4_000m);
+        result.Item37_SalariesOtherForms.Should().Be(150_000m);
+        result.Item51B_OtherAmount.Should().Be(2_000m);
+        result.Item51B_OtherLabel.Should().Be("Final pay (leave conversion, separation/retirement pay)");
+        result.Item19_GrossCompensation.Should().Be(result.Item38_TotalNonTaxable + result.Item52_TotalTaxableCompensation);
+    }
+
+    [Fact]
+    public async Task GetPreviewAsync_LeavesItem51BBlank_WhenThereIsNoFinalPay()
+    {
+        // No final-pay entry at all - the "Others (specify)" box for final pay must not appear
+        // with a zero amount and a label on an ordinary certificate.
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 20_000m)]));
+
+        var result = await _sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Item51B_OtherAmount.Should().Be(0m);
+        result.Item51B_OtherLabel.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task BuildWithDraftEntryAsync_AddsTheDraftRunAndEntryToThePaidRunsItSums()
+    {
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 20_000m, withholdingTax: 1_000m)]));
+
+        var draftRun = Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Draft, entries: []);
+        var draftEntry = Entry(_employeeId,
+            leaveConversionPay: 6_000m, leaveConversionNonTaxable: 4_000m,
+            separationPay: 150_000m, finalPayNonTaxable: 154_000m, withholdingTax: 300m);
+
+        var result = await _sut.BuildWithDraftEntryAsync(_employeeId, 2026, draftRun, draftEntry, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Item39_BasicSalary.Should().Be(20_000m);
+        result.Item35_DeMinimis.Should().Be(4_000m);
+        result.Item37_SalariesOtherForms.Should().Be(150_000m);
+        result.Item51B_OtherAmount.Should().Be(2_000m);
+        result.Item25A_PresentTaxWithheld.Should().Be(1_300m);
+    }
+
+    [Fact]
+    public async Task BuildWithDraftEntryAsync_UsesTheSavedManualInputs_LikeAPreview()
+    {
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 20_000m)]));
+        _inputsRepo.Setup(r => r.GetAsync(_employeeId, 2026, It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(new Bir2316Inputs { EmployeeId = _employeeId, Year = 2026, Item22_PrevTaxableCompensation = 50_000m });
+
+        var draftRun = Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Draft, entries: []);
+        var draftEntry = Entry(_employeeId, separationPay: 10_000m, finalPayNonTaxable: 10_000m);
+
+        var result = await _sut.BuildWithDraftEntryAsync(_employeeId, 2026, draftRun, draftEntry, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Item22_PrevTaxableCompensation.Should().Be(50_000m);
+    }
+
+    [Fact]
+    public async Task BuildWithDraftEntryAsync_SettlingTheDraftEntrysWithholdingTax_MakesTaxDueEqualTaxWithheld()
+    {
+        // The scenario BuildWithDraftEntryAsync exists for: solve the draft (final-pay) entry's
+        // WithholdingTax for Item24 (TaxDue) - Item25A(other runs) - Item25B - Item27, then rebuild
+        // with that figure, and the certificate is left with Item24 == Item26 + Item27 - the
+        // condition that qualifies the employee for substituted filing. Item24 depends only on
+        // taxable compensation (Item23), never on withheld tax, so it does not move between the
+        // two builds below - only Item25A/26 do.
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+            [
+                Entry(_employeeId, regularPay: 40_000m, withholdingTax: 3_000m)
+            ]));
+
+        var manual = new Bir2316ManualInputs { Item25B_PrevTaxWithheld = 1_000m, Item27_PeraTaxCredit = 500m };
+        var draftRun = Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Draft, entries: []);
+
+        // First pass: find Item24 and the other-runs Item25A with the draft entry's withholding at
+        // zero, exactly as Task 5 would before it has solved for the figure.
+        var unsettledDraft = Entry(_employeeId,
+            leaveConversionPay: 6_000m, leaveConversionNonTaxable: 4_000m,
+            separationPay: 150_000m, finalPayNonTaxable: 154_000m, withholdingTax: 0m);
+        var withZeroWithholding = await BuildWithDraft(draftRun, unsettledDraft, manual);
+
+        decimal settledWithholding = withZeroWithholding!.Item24_TaxDue
+            - withZeroWithholding.Item25A_PresentTaxWithheld
+            - manual.Item25B_PrevTaxWithheld
+            - manual.Item27_PeraTaxCredit;
+
+        var settledDraft = Entry(_employeeId,
+            leaveConversionPay: 6_000m, leaveConversionNonTaxable: 4_000m,
+            separationPay: 150_000m, finalPayNonTaxable: 154_000m, withholdingTax: settledWithholding);
+
+        var settled = await BuildWithDraft(draftRun, settledDraft, manual);
+
+        settled.Should().NotBeNull();
+        settled!.Item24_TaxDue.Should().Be(withZeroWithholding.Item24_TaxDue, "Item24 is derived from taxable compensation, not withheld tax");
+        settled.Item24_TaxDue.Should().Be(settled.Item26_TotalTaxWithheld + settled.Item27_PeraTaxCredit);
+    }
+
+    private async Task<Bir2316Dto?> BuildWithDraft(PayrollRun draftRun, PayrollRunEmployee draftEntry, Bir2316ManualInputs manual)
+    {
+        _inputsRepo.Setup(r => r.GetAsync(_employeeId, 2026, It.IsAny<CancellationToken>())).ReturnsAsync(
+            new Bir2316Inputs
+            {
+                EmployeeId = _employeeId,
+                Year = 2026,
+                Item25B_PrevTaxWithheld = manual.Item25B_PrevTaxWithheld,
+                Item27_PeraTaxCredit = manual.Item27_PeraTaxCredit
+            });
+        return await _sut.BuildWithDraftEntryAsync(_employeeId, 2026, draftRun, draftEntry, CancellationToken.None);
+    }
+
+    [Fact]
     public async Task GetPreviewAsync_WhenThereAreNoPaidRunsForTheYear_ReturnsNull()
     {
         PaidRunsAre();
@@ -598,7 +737,12 @@ public class Bir2316ServiceTests
         decimal holidayPay = 0m,
         decimal nightDiffPay = 0m,
         decimal taxableAllowances = 0m,
-        decimal nonTaxableAllowances = 0m)
+        decimal nonTaxableAllowances = 0m,
+        decimal leaveConversionPay = 0m,
+        decimal leaveConversionNonTaxable = 0m,
+        decimal separationPay = 0m,
+        decimal retirementPay = 0m,
+        decimal finalPayNonTaxable = 0m)
         => new()
         {
             EmployeeId = employeeId,
@@ -612,7 +756,12 @@ public class Bir2316ServiceTests
             HolidayPay = holidayPay,
             NightDiffPay = nightDiffPay,
             TaxableAllowances = taxableAllowances,
-            NonTaxableAllowances = nonTaxableAllowances
+            NonTaxableAllowances = nonTaxableAllowances,
+            LeaveConversionPay = leaveConversionPay,
+            LeaveConversionNonTaxable = leaveConversionNonTaxable,
+            SeparationPay = separationPay,
+            RetirementPay = retirementPay,
+            FinalPayNonTaxable = finalPayNonTaxable
         };
 
     private Employee TheEmployee()

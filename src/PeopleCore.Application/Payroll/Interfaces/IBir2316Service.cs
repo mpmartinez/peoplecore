@@ -1,4 +1,5 @@
 using PeopleCore.Application.Payroll.DTOs;
+using PeopleCore.Domain.Entities.Payroll;
 
 namespace PeopleCore.Application.Payroll.Interfaces;
 
@@ -48,4 +49,15 @@ public interface IBir2316Service
     /// re-materialise every OTHER employee's entries on every call.
     /// </summary>
     Task<IReadOnlyList<Bir2316Dto>> BuildAllAsync(int year, CancellationToken ct = default);
+
+    /// <summary>
+    /// The certificate exactly as <see cref="GetPreviewAsync"/> builds it (derived figures from
+    /// the employee's Paid runs, manual fields from whatever was last saved for the employee and
+    /// year), except <paramref name="draftRun"/> and <paramref name="draftEntry"/> are added to
+    /// the runs and entries it sums even though the run is not Paid. Used by the final-pay flow to
+    /// preview the certificate - and settle the final run's withholding tax against it - before
+    /// the run is marked Paid, without one more unpaid run silently reaching an ordinary 2316.
+    /// </summary>
+    Task<Bir2316Dto?> BuildWithDraftEntryAsync(
+        Guid employeeId, int year, PayrollRun draftRun, PayrollRunEmployee draftEntry, CancellationToken ct = default);
 }

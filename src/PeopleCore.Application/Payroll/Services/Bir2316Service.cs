@@ -192,6 +192,52 @@ public class Bir2316Service : IBir2316Service
     }
 
     /// <summary>
+    /// Builds the certificate exactly as <see cref="GetPreviewAsync"/> does - the employee's Paid
+    /// runs plus whatever manual inputs were last saved for the year - except
+    /// <paramref name="draftRun"/> and <paramref name="draftEntry"/> are added to the runs and
+    /// entries the certificate sums, even though the run itself is not Paid. This is how the
+    /// final-pay flow previews (and settles the withholding tax of) a certificate that includes
+    /// the final run before that run is marked Paid; <see cref="BuildAsync"/> and
+    /// <see cref="GetPreviewAsync"/> deliberately cannot do this - their Paid-only filter is what
+    /// keeps a certificate from changing after it was issued - so this is a separate, narrow entry
+    /// point rather than a parameter on those.
+    /// </summary>
+    public async Task<Bir2316Dto?> BuildWithDraftEntryAsync(
+        Guid employeeId, int year, PayrollRun draftRun, PayrollRunEmployee draftEntry, CancellationToken ct = default)
+    {
+        var employee = await _employeeRepo.GetByIdAsync(employeeId, ct);
+        if (employee is null)
+            return null;
+
+        // Same Paid/PayDate.Year predicate as BuildAsync, re-applied for the same reason: it is
+        // what makes the certificate right for the runs that ARE paid. draftRun is added
+        // afterwards, deliberately bypassing that filter - it is the one run this method exists to
+        // admit despite not being Paid yet.
+        var runs = (await _runRepo.GetPaidRunsForEmployeeInYearAsync(employeeId, year, ct))
+            .Where(r => r.Status == PayrollRunStatus.Paid
+                        && r.PayDate.Year == year
+                        && r.Employees.Any(e => e.EmployeeId == employeeId))
+            .ToList();
+
+        var entries = runs
+            .SelectMany(r => r.Employees.Where(e => e.EmployeeId == employeeId))
+            .ToList();
+
+        runs.Add(draftRun);
+        entries.Add(draftEntry);
+
+        var company = await _companyRepo.GetDefaultAsync(ct)
+            ?? throw new DomainException(
+                "No Company record is configured. The database seeder always creates one, so " +
+                "its absence means the database is misconfigured.");
+
+        var saved = await _inputsRepo.GetAsync(employeeId, year, ct);
+        var manual = saved?.ToManualInputs() ?? new Bir2316ManualInputs();
+
+        return BuildDto(employee, company, runs, entries, year, manual);
+    }
+
+    /// <summary>
     /// Builds the DTO from an employee's already-fetched runs and entries for the year - the
     /// aggregation shared by <see cref="BuildAsync"/> (one employee, its own queries) and
     /// <see cref="BuildAllAsync"/> (every employee, one shared query). Neither queries nor the
@@ -209,6 +255,11 @@ public class Bir2316Service : IBir2316Service
         decimal thirteenthMonthTotal = entries.Sum(e => e.ThirteenthMonth);
         decimal thirteenthMonthNonTaxable = Math.Min(thirteenthMonthTotal, StatutoryCaps.ThirteenthMonthExemption);
         decimal thirteenthMonthTaxable = Math.Max(0m, thirteenthMonthTotal - StatutoryCaps.ThirteenthMonthExemption);
+
+        // Final-pay earnings - zero on every entry for an employee who has never had a final run.
+        decimal leaveConversionNonTaxable = entries.Sum(e => e.LeaveConversionNonTaxable);
+        decimal finalPayNonTaxable = entries.Sum(e => e.FinalPayNonTaxable);
+        decimal finalPayTaxable = entries.Sum(e => e.FinalPayTaxable);
 
         return new Bir2316Dto
         {
@@ -253,7 +304,11 @@ public class Bir2316Service : IBir2316Service
             // Part IV-B Section A — non-taxable.
             Item33_HazardPayMwe = manual.Item33_HazardPayMwe,
             Item34_ThirteenthMonthAndBenefits = thirteenthMonthNonTaxable,
-            Item35_DeMinimis = manual.Item35_DeMinimis,
+            // LeaveConversionNonTaxable is the de minimis slice of final pay - the cash value of
+            // convertible leave, up to the statutory de minimis ceiling, that PayrollComputationService
+            // already excluded from the final run's withholding base. Item 35 is the form's de
+            // minimis box, so it belongs there alongside whatever a human enters manually.
+            Item35_DeMinimis = manual.Item35_DeMinimis + leaveConversionNonTaxable,
             Item36_SssPhicPagibigContributions =
                 entries.Sum(e => e.SSSEmployee + e.PhilHealthEmployee + e.PagIbigEmployee),
             // NonTaxableAllowances is non-taxable compensation that is not de minimis, not a
@@ -261,28 +316,37 @@ public class Bir2316Service : IBir2316Service
             // Compensation") is Section A's catch-all for exactly that: everything non-taxable
             // that lacks its own numbered box. Putting it here, rather than skipping it, is what
             // keeps Item 19 (gross compensation) from understating what the employee was actually
-            // paid.
-            Item37_SalariesOtherForms = entries.Sum(e => e.NonTaxableAllowances),
+            // paid. The non-de-minimis part of final pay's non-taxable amount - separation or
+            // retirement pay that qualifies for exemption - is the same kind of catch-all
+            // non-taxable compensation, so it lands here too (FinalPayNonTaxable minus the de
+            // minimis slice already claimed by Item 35, so nothing is counted twice).
+            Item37_SalariesOtherForms = entries.Sum(e => e.NonTaxableAllowances) +
+                                         (finalPayNonTaxable - leaveConversionNonTaxable),
 
             // Part IV-B Section B and the supplementary block — taxable.
             //
             // PayrollComputationService's withholding base is
-            // regularPay + overtimePay + holidayPay + nightDiffPay + taxableAllowances, so every
-            // one of those five components has to land in a taxable box here or Item 21/23 (the
-            // certificate's taxable compensation) understates what tax was actually withheld
-            // against - silently manufacturing a false "tax due < tax withheld" result for any
-            // employee who worked a holiday, drew night differential, or received a taxable
-            // allowance. Item39/50 already carry RegularPay/OvertimePay; HolidayPay,
-            // NightDiffPay and TaxableAllowances have no dedicated taxable box on the form (their
-            // only numbered boxes - Items 30-32 - are the Section A exemption for minimum-wage
-            // earners), so they go into the "Others (specify)" boxes Section B provides for
-            // exactly this: compensation that is real and taxable but has no line of its own.
-            // Holiday pay and night differential are placed in 44A/44B (alongside the regular
-            // per-period allowances 40-43); taxable allowances go in 51A (alongside the other
-            // supplemental, ad hoc pay in 45-49) since a fixed "allowance" bucket does not fit
-            // Section B's first group of named, per-period pay items as cleanly as it does the
-            // supplemental group. All four boxes are summed identically into Item 52, so this is
-            // a labeling choice, not a computation one.
+            // regularPay + overtimePay + holidayPay + nightDiffPay + taxableAllowances +
+            // finalPayTaxable (the last only nonzero on a final-pay run - see
+            // PayrollRunEmployee.FinalPayTaxable), so every one of those six components has to
+            // land in a taxable box here or Item 21/23 (the certificate's taxable compensation)
+            // understates what tax was actually withheld against - silently manufacturing a false
+            // "tax due < tax withheld" result for any employee who worked a holiday, drew night
+            // differential, received a taxable allowance, or was paid out a taxable slice of leave
+            // conversion, separation or retirement pay. Item39/50 already carry
+            // RegularPay/OvertimePay; HolidayPay, NightDiffPay and TaxableAllowances have no
+            // dedicated taxable box on the form (their only numbered boxes - Items 30-32 - are the
+            // Section A exemption for minimum-wage earners), so they go into the "Others
+            // (specify)" boxes Section B provides for exactly this: compensation that is real and
+            // taxable but has no line of its own. Holiday pay and night differential are placed in
+            // 44A/44B (alongside the regular per-period allowances 40-43); taxable allowances go
+            // in 51A and final pay's taxable slice goes in 51B (alongside the other supplemental,
+            // ad hoc pay in 45-49) since a fixed "allowance" bucket does not fit Section B's first
+            // group of named, per-period pay items as cleanly as it does the supplemental group.
+            // All boxes are summed identically into Item 52, so this is a labeling choice, not a
+            // computation one. Item51B is left at its default (0, no label) when there is no final
+            // pay to report, so the "Others (specify)" box does not appear on an ordinary
+            // certificate.
             Item39_BasicSalary = entries.Sum(e => e.RegularPay),
             Item44A_OtherAmount = entries.Sum(e => e.HolidayPay),
             Item44A_OtherLabel = "Holiday Pay",
@@ -292,6 +356,8 @@ public class Bir2316Service : IBir2316Service
             Item50_OvertimePay = entries.Sum(e => e.OvertimePay),
             Item51A_OtherAmount = entries.Sum(e => e.TaxableAllowances),
             Item51A_OtherLabel = "Taxable Allowances",
+            Item51B_OtherAmount = finalPayTaxable,
+            Item51B_OtherLabel = finalPayTaxable != 0m ? "Final pay (leave conversion, separation/retirement pay)" : "",
 
             // Part IVA. Item 25A is this employer's withholding, summed from the runs; 22, 25B and
             // 27 concern another employer or another account and can only come from a human.

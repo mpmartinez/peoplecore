@@ -68,10 +68,14 @@ public class GovernmentReportServiceTests
     }
 
     private static PayrollRunEmployee Entry(Employee e, decimal sssEe = 0, decimal sssEr = 0, decimal regularPay = 0,
-        decimal thirteenth = 0, decimal tax = 0, decimal phEe = 0, decimal piEe = 0, decimal nonTaxAllow = 0)
+        decimal thirteenth = 0, decimal tax = 0, decimal phEe = 0, decimal piEe = 0, decimal nonTaxAllow = 0,
+        decimal leaveConversionPay = 0, decimal leaveConversionNonTaxable = 0, decimal separationPay = 0,
+        decimal retirementPay = 0, decimal finalPayNonTaxable = 0)
         => new() { EmployeeId = e.Id, Employee = e, SSSEmployee = sssEe, SSSEmployer = sssEr, RegularPay = regularPay,
                    ThirteenthMonth = thirteenth, WithholdingTax = tax, PhilHealthEmployee = phEe, PagIbigEmployee = piEe,
-                   NonTaxableAllowances = nonTaxAllow };
+                   NonTaxableAllowances = nonTaxAllow, LeaveConversionPay = leaveConversionPay,
+                   LeaveConversionNonTaxable = leaveConversionNonTaxable, SeparationPay = separationPay,
+                   RetirementPay = retirementPay, FinalPayNonTaxable = finalPayNonTaxable };
 
     [Fact]
     public async Task Sss_CombinesAMonthsCutoffsIntoOneRow_AndWorksBackTheMscAndEc()
@@ -239,6 +243,36 @@ public class GovernmentReportServiceTests
             new GovernmentReportLineDto("Total taxes withheld", 9_000m));
         report.Rows.Single().Cells.Should().Equal(
             "Cruz, Juan", "111-222-333-000", "151000.00", "90000.00", "1600.00", "1000.00", "58400.00", "9000.00");
+    }
+
+    [Fact]
+    public async Task Bir1601C_ShowsFinalPayDeMinimisAndOtherNonTaxable_AndExcludesThemFromTaxable()
+    {
+        // A final-pay run paid in April: leave conversion of 6,000 (4,000 de minimis, 2,000
+        // taxable) and separation pay of 150,000, fully non-taxable, alongside 10,000 of regular
+        // pay and 500 of SSS. GrossPay (10,000 + 6,000 + 150,000 = 166,000) already carries the
+        // final-pay earnings; de minimis (4,000) and the rest of FinalPayNonTaxable
+        // (154,000 - 4,000 = 150,000) must come back out so taxable compensation isn't overstated.
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.TIN, "111-222-333-000"));
+        _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(2026, 4, It.IsAny<CancellationToken>())).ReturnsAsync([
+            Run(new(2026, 3, 31), new(2026, 4, 5),
+                Entry(juan, regularPay: 10_000m, tax: 1_000m, sssEe: 500m,
+                      leaveConversionPay: 6_000m, leaveConversionNonTaxable: 4_000m,
+                      separationPay: 150_000m, finalPayNonTaxable: 154_000m))
+        ]);
+
+        var report = await _sut.BuildAsync("1601c", 2026, 4);
+
+        report.Summary.Should().ContainInOrder(
+            new GovernmentReportLineDto("Total amount of compensation", 166_000m),
+            new GovernmentReportLineDto("De minimis benefits", 4_000m),
+            new GovernmentReportLineDto("SSS, PhilHealth and Pag-IBIG employee shares", 500m),
+            new GovernmentReportLineDto("Other non-taxable compensation", 150_000m),
+            new GovernmentReportLineDto("Total non-taxable compensation", 154_500m),
+            new GovernmentReportLineDto("Total taxable compensation", 11_500m),
+            new GovernmentReportLineDto("Total taxes withheld", 1_000m));
+        report.Rows.Single().Cells.Should().Equal(
+            "Cruz, Juan", "111-222-333-000", "166000.00", "0.00", "500.00", "150000.00", "11500.00", "1000.00");
     }
 
     [Fact]
