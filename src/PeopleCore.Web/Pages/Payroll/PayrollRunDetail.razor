@@ -210,9 +210,10 @@ else
 
     private bool IsFinalPay => _run?.RunType == PayrollLabels.FinalPayRunType;
 
-    // A final pay is built for its one employee from their separation, and a paid run has already
-    // retired loan balances - the API refuses both, so neither offers Remove.
-    private bool CanRemoveEmployees => _run is not null && !IsFinalPay && _run.Status != "Paid";
+    // A final pay is built for its one employee from their separation, a paid run has already
+    // retired loan balances, and a run needs at least one employee - the API refuses all three,
+    // so none offers Remove.
+    private bool CanRemoveEmployees => _run is not null && !IsFinalPay && _run.Status != "Paid" && _run.Employees.Count > 1;
 
     protected override async Task OnParametersSetAsync() => await LoadRun();
 

@@ -28,7 +28,11 @@
     <Actions>
         @if (_separation is { Status: SeparationStatus.NoticeGiven })
         {
-            <Button Variant="destructive" Size="sm" OnClick="@(() => _confirmingCancel = true)" data-cancel>Cancel separation</Button>
+            @* Once a final-pay run exists the API refuses to cancel ("Final pay has already been started"). *@
+            @if (_separation.FinalPayRunId is null && _finalPay is null)
+            {
+                <Button Variant="destructive" Size="sm" OnClick="@(() => _confirmingCancel = true)" data-cancel>Cancel separation</Button>
+            }
             <Button Variant="primary" Size="sm" OnClick="@(() => _confirmingMark = true)" Loading="@_marking" Disabled="@_marking" data-mark-separated>Mark separated</Button>
         }
     </Actions>

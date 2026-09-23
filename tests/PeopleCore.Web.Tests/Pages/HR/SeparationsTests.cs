@@ -392,6 +392,16 @@ public class SeparationsTests : BunitContext
     }
 
     [Fact]
+    public void OnceFinalPayHasStarted_CancelIsNoLongerOffered()
+    {
+        // The API refuses: "Final pay has already been started for this separation."
+        var cut = RenderDetail(Separation(status: "NoticeGiven", finalPayRunNumber: "FP-2026-001", finalPayStatus: "Draft"));
+
+        cut.FindAll("[data-cancel]").Should().BeEmpty();
+        cut.FindAll("[data-mark-separated]").Should().ContainSingle();
+    }
+
+    [Fact]
     public void Separated_OffersNeitherMarkSeparatedNorCancel()
     {
         var cut = RenderDetail(Separation(status: "Separated", separatedBy: "hr@company.test", separatedAt: "2026-04-15T09:00:00Z"));

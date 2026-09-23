@@ -37,11 +37,11 @@ public class FinalPayTests : BunitContext
     private static string SeparationPath => $"/api/separations/{SeparationId}";
     private static string FinalPayPath => $"/api/separations/{SeparationId}/final-pay";
 
-    private static string Separation(string type = "Resignation", string clearanceItems = "[]") =>
+    private static string Separation(string type = "Resignation", string clearanceItems = "[]", string status = "Separated") =>
         $$"""
         {"id":"{{SeparationId}}","employeeId":"{{MariaId}}","employeeName":"Maria Santos","employeeNumber":"EMP-001","position":"Accountant",
          "type":"{{type}}","authorizedCause":null,"noticeDate":"2026-03-15","lastWorkingDay":"2026-04-15",
-         "reason":null,"status":"Separated","recordedBy":"hr@company.test","separatedBy":"hr@company.test",
+         "reason":null,"status":"{{status}}","recordedBy":"hr@company.test","separatedBy":"hr@company.test",
          "separatedAt":"2026-04-15T09:00:00Z","finalPayDueBy":"2026-05-15","finalPayOverdue":false,
          "clearedCount":0,"clearanceCount":0,"clearanceItems":{{clearanceItems}},
          "finalPayRunId":null,"finalPayRunNumber":null,"finalPayStatus":null}
@@ -160,6 +160,19 @@ public class FinalPayTests : BunitContext
         var deduction = body.GetProperty("deductions").EnumerateArray().Should().ContainSingle().Subject;
         deduction.GetProperty("label").GetString().Should().Be("Unreturned phone");
         deduction.GetProperty("amount").GetDecimal().Should().Be(3500m);
+    }
+
+    [Fact]
+    public void CreatingIt_TakesAwayCancelSeparation_WhichTheApiWouldNowRefuse()
+    {
+        _api.On(HttpMethod.Post, FinalPayPath, HttpStatusCode.Created, Summary());
+        var cut = RenderWithoutRun(Separation(status: "NoticeGiven"));
+        cut.FindAll("[data-cancel]").Should().ContainSingle();
+
+        cut.Find("[data-submit-final-pay]").Click();
+
+        cut.WaitForElement("[data-final-pay-summary]");
+        cut.FindAll("[data-cancel]").Should().BeEmpty();
     }
 
     [Fact]

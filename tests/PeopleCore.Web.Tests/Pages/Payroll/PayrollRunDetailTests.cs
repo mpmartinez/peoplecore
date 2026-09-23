@@ -332,11 +332,22 @@ public class PayrollRunDetailTests : BunitContext
     [InlineData("FinalPay", "Draft", false)]
     public void RemoveIsOfferedOnRegularRunsThatArentPaid(string runType, string status, bool offered)
     {
-        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson(status, runType: runType));
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson(status, runType: runType, employees: $"{EmployeeLine},{JoseLine}"));
 
         var cut = RenderPage();
 
         cut.FindAll($"[data-remove-employee='{MariaId}']").Should().HaveCount(offered ? 1 : 0);
+    }
+
+    [Fact]
+    public void RemoveIsNotOffered_WhenTheRunHasOnlyOneEmployee()
+    {
+        // The API refuses: a payroll run needs at least one employee.
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft"));
+
+        var cut = RenderPage();
+
+        cut.FindAll("[data-remove-employee]").Should().BeEmpty();
     }
 
     [Fact]
@@ -390,18 +401,18 @@ public class PayrollRunDetailTests : BunitContext
     [Fact]
     public void ARefusedRemoval_ShowsTheApisReason()
     {
-        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft"))
-            .On(HttpMethod.Delete, $"{RunPath}/employees/{MariaId}", HttpStatusCode.BadRequest,
-                """{"title":"Bad request","detail":"A payroll run needs at least one employee.","status":400}""");
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", employees: $"{EmployeeLine},{JoseLine}"))
+            .On(HttpMethod.Delete, $"{RunPath}/employees/{JoseId}", HttpStatusCode.BadRequest,
+                """{"title":"Bad request","detail":"A paid payroll run can't be changed.","status":400}""");
         var cut = RenderPage();
 
-        cut.Find($"[data-remove-employee='{MariaId}']").Click();
+        cut.Find($"[data-remove-employee='{JoseId}']").Click();
         cut.WaitForElement("[data-confirm-remove]").QuerySelectorAll("button").Last().Click();
 
         cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should()
-            .Contain("A payroll run needs at least one employee."));
+            .Contain("A paid payroll run can't be changed."));
         cut.FindAll("[data-confirm-remove]").Should().BeEmpty();
-        cut.FindAll("tbody tr").Should().ContainSingle();
+        cut.FindAll("tbody tr").Should().HaveCount(2);
     }
 
     private static HttpResponseMessage Json(string json) =>
