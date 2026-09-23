@@ -330,10 +330,13 @@ public class FinalPayServiceTests
     public async Task CreateAsync_SettledTax_CollectsWhatTheYearStillOwes()
     {
         // A 150,000 monthly salary, and 300,000 paid earlier in the year with only 1,000 withheld.
-        // Taxable for the year = 300,000 + 10 x 4,931.51 = 349,315.10 (separation pay and the 5
-        // leave days are non-taxable), so tax due = (349,315.10 - 250,000) x 15% = 14,897.265,
-        // which BirWithholdingTax rounds half-to-even (Math.Round's default) to 14,897.26, and the
-        // settlement collects 14,897.26 - 1,000 = 13,897.26.
+        // The final period pays 10 x 4,931.51 = 49,315.10 of basic, less the employee's
+        // contributions on a 150,000 salary: SSS 1,750 (the top bracket), PhilHealth 2,500 (the
+        // ceiling) and Pag-IBIG 200 = 4,450, which aren't taxable. Separation pay and the 5 leave
+        // days are non-taxable too, so taxable for the year = 300,000 + 49,315.10 - 4,450 =
+        // 344,865.10 and tax due = (344,865.10 - 250,000) x 15% = 14,229.765, which
+        // BirWithholdingTax rounds half-to-even (Math.Round's default) to 14,229.76. The
+        // settlement collects 14,229.76 - 1,000 = 13,229.76.
         _compensation.BasicSalary = 150_000m;
         _februaryRun.Employees.Single().RegularPay = 300_000m;
         _februaryRun.Employees.Single().WithholdingTax = 1_000m;
@@ -343,8 +346,10 @@ public class FinalPayServiceTests
         var bir2316 = new Bir2316Service(_runs.Object, _employees.Object, _companies.Object, _bir2316Inputs.Object);
         var cert = await bir2316.BuildWithDraftEntryAsync(_employee.Id, 2026, _savedRun!, SavedEntry);
 
-        SavedEntry.WithholdingTax.Should().Be(13_897.26m);
-        cert!.Item24_TaxDue.Should().Be(14_897.26m);
+        (SavedEntry.SSSEmployee + SavedEntry.PhilHealthEmployee + SavedEntry.PagIbigEmployee).Should().Be(4_450m);
+        cert!.Item23_GrossTaxable.Should().Be(344_865.10m);
+        SavedEntry.WithholdingTax.Should().Be(13_229.76m);
+        cert.Item24_TaxDue.Should().Be(14_229.76m);
         cert.Item24_TaxDue.Should().Be(cert.Item26_TotalTaxWithheld);
     }
 

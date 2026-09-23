@@ -495,4 +495,54 @@ public class GovernmentReportServiceTests
 
         await act.Should().ThrowAsync<DomainException>();
     }
+
+    [Fact]
+    public async Task BuildAnnualAsync_1604C_FromTheReal2316_AgreesWithTheYearsMonthly1601C()
+    {
+        // Two months of pay, each 50,000 basic + 1,000 non-taxable allowance, with 1,600 of
+        // employee contributions (875 + 625 + 100). Each month's 1601-C: compensation 51,000,
+        // non-taxable 2,600, taxable 48,400. The 1604-C, built from the real 2316s, has to certify
+        // the same year - contributions non-taxable once, not also inside the taxable basic.
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.TIN, "111-222-333-000"));
+        juan.HireDate = new DateOnly(2020, 1, 6);
+        var march = Run(new(2026, 3, 31), new(2026, 3, 31),
+            Entry(juan, regularPay: 50_000m, sssEe: 875m, phEe: 625m, piEe: 100m, nonTaxAllow: 1_000m, tax: 5_000m));
+        var april = Run(new(2026, 4, 5), new(2026, 4, 5),
+            Entry(juan, regularPay: 50_000m, sssEe: 875m, phEe: 625m, piEe: 100m, nonTaxAllow: 1_000m, tax: 5_000m));
+        _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(2026, 3, It.IsAny<CancellationToken>())).ReturnsAsync([march]);
+        _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(2026, 4, It.IsAny<CancellationToken>())).ReturnsAsync([april]);
+        _runs.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([march, april]);
+        _runs.Setup(r => r.GetEmployeeIdsWithPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([juan.Id]);
+        _employees.Setup(e => e.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>())).ReturnsAsync([juan]);
+        var inputs = new Mock<IBir2316InputsRepository>();
+        inputs.Setup(i => i.GetForYearAsync(2026, It.IsAny<CancellationToken>()))
+              .ReturnsAsync(new Dictionary<Guid, Bir2316Inputs>());
+        var bir2316 = new PeopleCore.Application.Payroll.Services.Bir2316Service(
+            _runs.Object, _employees.Object, _companies.Object, inputs.Object);
+        var sut = new GovernmentReportService(_runs.Object, _companies.Object, _settings.Object,
+            new FixedClock(new DateTimeOffset(2026, 4, 10, 0, 0, 0, TimeSpan.Zero)), bir2316, _employees.Object);
+
+        decimal monthlyTaxable = 0m, monthlyCompensation = 0m;
+        foreach (var month in new[] { 3, 4 })
+        {
+            var summary = (await sut.BuildAsync("1601c", 2026, month)).Summary;
+            monthlyTaxable += summary.Single(l => l.Label == "Total taxable compensation").Amount;
+            monthlyCompensation += summary.Single(l => l.Label == "Total amount of compensation").Amount;
+        }
+        monthlyTaxable.Should().Be(96_800m);          // 2 x 48,400
+        monthlyCompensation.Should().Be(102_000m);    // 2 x 51,000
+
+        var section = (await sut.BuildAnnualAsync("1604c", 2026)).Sections
+            .Single(s => s.Title == "Employed as of December 31, no previous employer");
+        var row = section.Rows.Should().ContainSingle().Subject;
+        var columns = section.Columns.ToList();
+        string Cell(string column) => row.Cells[columns.IndexOf(column)];
+
+        Cell("Gross compensation").Should().Be(GovernmentReportMath.Money(monthlyCompensation));
+        Cell("SSS, PhilHealth and Pag-IBIG employee shares").Should().Be("3200.00");
+        Cell("Total non-taxable").Should().Be("5200.00");                 // 3,200 shares + 2,000 allowances
+        Cell("Basic salary").Should().Be("96800.00");                     // 2 x (50,000 - 1,600)
+        Cell("Total taxable (present employer)").Should().Be(GovernmentReportMath.Money(monthlyTaxable));
+        // Gross = non-taxable + taxable: 5,200 + 96,800 = 102,000.
+    }
 }

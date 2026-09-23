@@ -74,13 +74,76 @@ public class Bir2316ServiceTests
 
         result.Should().NotBeNull();
         result!.Year.Should().Be(2026);
-        result.Item39_BasicSalary.Should().Be(41_000m);            // 20,000 + 21,000
+        // Basic is certified net of the employee's contributions, which Item 36 reports instead:
+        // (20,000 - 1,500) + (21,000 - 1,500).
+        result.Item39_BasicSalary.Should().Be(38_000m);
         result.Item50_OvertimePay.Should().Be(2_000m);             // 1,500 + 500
         result.Item25A_PresentTaxWithheld.Should().Be(4_200m);     // 2,000 + 2,200
         result.Item36_SssPhicPagibigContributions.Should().Be(3_000m); // (900+500+100) x 2
+        result.Item19_GrossCompensation.Should().Be(43_000m);      // 41,000 basic + 2,000 overtime
 
         // Not one centavo of the other employee's line leaked in.
         result.Item39_BasicSalary.Should().NotBe(140_000m);
+    }
+
+    [Fact]
+    public async Task GetPreviewAsync_OverAYearOfEngineComputedPay_CountsContributionsOnce_AndTaxesWhatTheEngineTaxed()
+    {
+        // Twelve monthly runs computed by the real payroll engine: basic 50,000, a taxable
+        // allowance of 2,000 and a non-taxable one of 1,500. SSS is pinned at 5% (the table
+        // moves), PhilHealth and Pag-IBIG are the statutory defaults:
+        //   SSS 50,000 x 5% = 2,500; PhilHealth 50,000 x 5% / 2 = 1,250; Pag-IBIG 10,000 x 2% = 200
+        //   => 3,950 of employee contributions a month.
+        var engine = new PayrollComputationService();
+        var rates = new ContributionRates { SSSEmployeeRate = 0.05m, SSSEmployerRate = 0.10m };
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = _employeeId, BasicSalary = 50_000m, PayFrequency = PayFrequency.Monthly,
+            Allowances =
+            [
+                new EmployeeAllowance { EmployeeId = _employeeId, Amount = 2_000m, IsTaxable = true },
+                new EmployeeAllowance { EmployeeId = _employeeId, Amount = 1_500m, IsTaxable = false },
+            ],
+        };
+        var runs = Enumerable.Range(1, 12).Select(month =>
+        {
+            var start = new DateOnly(2026, month, 1);
+            var run = new PayrollRun
+            {
+                RunNumber = $"PAY-2026-{month:D3}", PeriodStart = start, PeriodEnd = start.AddMonths(1).AddDays(-1),
+                PayDate = start.AddMonths(1).AddDays(-1), Frequency = PayFrequency.Monthly, Status = PayrollRunStatus.Paid,
+            };
+            run.Employees.Add(engine.Compute(compensation, run, rates: rates));
+            return run;
+        }).ToArray();
+        PaidRunsAre(runs);
+
+        // The engine withheld against 50,000 + 2,000 - 3,950 = 48,050 a month: annualised,
+        // 576,600 -> 22,500 + 20% x 176,600 = 57,820 a year -> 4,818.33 a month.
+        var entries = runs.Select(r => r.Employees.Single()).ToList();
+        entries.Should().AllSatisfy(e =>
+        {
+            (e.SSSEmployee + e.PhilHealthEmployee + e.PagIbigEmployee).Should().Be(3_950m);
+            e.WithholdingTax.Should().Be(engine.ComputeWithholdingTax(48_050m, PayFrequency.Monthly)).And.Be(4_818.33m);
+        });
+
+        var result = (await _sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None))!;
+
+        // Item 19 is what was actually paid - 12 x (50,000 + 2,000 + 1,500) - with the
+        // contributions inside the basic counted once, in Item 36, and not again in Item 39.
+        result.Item19_GrossCompensation.Should().Be(642_000m).And.Be(entries.Sum(e => e.GrossPay));
+        result.Item36_SssPhicPagibigContributions.Should().Be(47_400m);   // 12 x 3,950
+        result.Item38_TotalNonTaxable.Should().Be(65_400m);               // 12 x (1,500 + 3,950)
+        result.Item39_BasicSalary.Should().Be(552_600m);                  // 12 x (50,000 - 3,950)
+
+        // Item 23 is the engine's withholding base over the year: 12 x 48,050.
+        result.Item52_TotalTaxableCompensation.Should().Be(576_600m);
+        result.Item23_GrossTaxable.Should().Be(576_600m);
+
+        // So the year's tax due is the tax the engine was withholding towards; the 4 centavos
+        // are twelve roundings of 4,818.333... (12 x 4,818.33 = 57,819.96).
+        result.Item24_TaxDue.Should().Be(57_820m);
+        result.Item25A_PresentTaxWithheld.Should().Be(57_819.96m);
     }
 
     [Fact]
@@ -476,7 +539,7 @@ public class Bir2316ServiceTests
 
         // Every derived figure comes off the payroll records, whatever the request said.
         result!.Item25A_PresentTaxWithheld.Should().Be(4_321m);
-        result.Item39_BasicSalary.Should().Be(30_000m);
+        result.Item39_BasicSalary.Should().Be(28_500m);   // 30,000 less the 1,500 of contributions
         result.Item50_OvertimePay.Should().Be(1_000m);
         result.Item36_SssPhicPagibigContributions.Should().Be(1_500m);
         result.Item34_ThirteenthMonthAndBenefits.Should().Be(90_000m);
@@ -497,8 +560,9 @@ public class Bir2316ServiceTests
         result.IsMinimumWageEarner.Should().BeFalse();
 
         // Item 24 is the liability computed on Item 23, never the withheld total. Item 23 here is
-        // 30,000 + 1,000 + 10,000 taxable 13th month + 500,000 previous = 541,000, so tax due is
-        // 22,500 + 20% of the 141,000 over 400,000 = 50,700 - nothing like the 79,321 withheld.
+        // (30,000 - 1,500 contributions) + 1,000 + 10,000 taxable 13th month + 500,000 previous
+        // = 539,500, so tax due is 22,500 + 20% of the 139,500 over 400,000 = 50,400 - nothing
+        // like the 79,321 withheld.
         //
         // Item 25B was 999,999 when this test was written, to dramatise a caller stating an
         // outlandish figure. That pair is impossible rather than merely large - no tax withheld
@@ -506,8 +570,8 @@ public class Bir2316ServiceTests
         // it - so the figure is a realistic 15% of Item 22. Nothing this test proves depended on
         // the old value: Item 25B is a legitimately caller-supplied field and is overlaid as
         // given, while the derived figure under test is Item 25A, which still comes off payroll.
-        result.Item23_GrossTaxable.Should().Be(541_000m);
-        result.Item24_TaxDue.Should().Be(50_700m);
+        result.Item23_GrossTaxable.Should().Be(539_500m);
+        result.Item24_TaxDue.Should().Be(50_400m);
         result.Item24_TaxDue.Should().Be(BirWithholdingTax.ComputeAnnualTaxDue(result.Item23_GrossTaxable));
         result.Item26_TotalTaxWithheld.Should().Be(79_321m);
         result.Item24_TaxDue.Should().NotBe(result.Item26_TotalTaxWithheld);

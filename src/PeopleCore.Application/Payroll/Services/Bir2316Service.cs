@@ -359,13 +359,24 @@ public class Bir2316Service : IBir2316Service
             // PayrollComputationService's withholding base is
             // regularPay + overtimePay + holidayPay + nightDiffPay + taxableAllowances +
             // finalPayTaxable (the last only nonzero on a final-pay run - see
-            // PayrollRunEmployee.FinalPayTaxable), so every one of those six components has to
-            // land in a taxable box here or Item 21/23 (the certificate's taxable compensation)
-            // understates what tax was actually withheld against - silently manufacturing a false
-            // "tax due < tax withheld" result for any employee who worked a holiday, drew night
-            // differential, received a taxable allowance, or was paid out a taxable slice of leave
-            // conversion, separation or retirement pay. Item39/50 already carry
-            // RegularPay/OvertimePay; HolidayPay, NightDiffPay and TaxableAllowances have no
+            // PayrollRunEmployee.FinalPayTaxable), less the employee's SSS, PhilHealth and
+            // Pag-IBIG contributions. Every one of those six components has to land in a taxable
+            // box here or Item 21/23 (the certificate's taxable compensation) understates what
+            // tax was actually withheld against - silently manufacturing a false "tax due < tax
+            // withheld" result for any employee who worked a holiday, drew night differential,
+            // received a taxable allowance, or was paid out a taxable slice of leave conversion,
+            // separation or retirement pay.
+            //
+            // The contributions come off Item 39. They are withheld from the basic salary, and
+            // Section A already reports them as non-taxable in Item 36; left inside Item 39 as
+            // well, Item 19 (non-taxable + taxable) would count them twice and Item 21/23 - and
+            // with it Item 24's tax due - would tax income the engine never withheld on. Taxable
+            // basic salary on the form is therefore net of the employee's mandatory contributions,
+            // exactly as the engine's base is. (They come off the basic even in a period whose
+            // contributions exceed it; the engine nets them against the whole taxable gross, so
+            // Item 52 still sums to the engine's base either way.)
+            //
+            // Item 50 carries OvertimePay; HolidayPay, NightDiffPay and TaxableAllowances have no
             // dedicated taxable box on the form (their only numbered boxes - Items 30-32 - are the
             // Section A exemption for minimum-wage earners), so they go into the "Others
             // (specify)" boxes Section B provides for exactly this: compensation that is real and
@@ -378,7 +389,7 @@ public class Bir2316Service : IBir2316Service
             // computation one. Item51B is left at its default (0, no label) when there is no final
             // pay to report, so the "Others (specify)" box does not appear on an ordinary
             // certificate.
-            Item39_BasicSalary = entries.Sum(e => e.RegularPay),
+            Item39_BasicSalary = entries.Sum(e => e.RegularPay - e.SSSEmployee - e.PhilHealthEmployee - e.PagIbigEmployee),
             Item44A_OtherAmount = entries.Sum(e => e.HolidayPay),
             Item44A_OtherLabel = "Holiday Pay",
             Item44B_OtherAmount = entries.Sum(e => e.NightDiffPay),
