@@ -182,6 +182,57 @@ public class SeparationsTests : BunitContext
     }
 
     [Fact]
+    public void WhenTheSeparationsListFails_NoOneWhoLeftIsOffered_SinceTheyMightAlreadyHaveOne()
+    {
+        var anaId = Guid.Parse("77777777-7777-7777-7777-777777777777");
+        StubEmployees(Inactive(anaId, "EMP-003", "Ana Reyes", "2026-03-03"));
+        _api.On(HttpMethod.Get, "/api/separations", HttpStatusCode.InternalServerError);
+        var cut = Render<Separations>();
+        cut.WaitForAssertion(() => cut.FindAll(".animate-spin").Should().BeEmpty());
+
+        cut.Find("[data-record-separation]").Click();
+        cut.WaitForElement("[data-record-form]");
+
+        var options = cut.FindAll("#separation-employee option").Select(o => o.TextContent).ToList();
+        options.Should().NotContain(o => o.Contains("Ana Reyes"));
+        options.Should().Contain("Maria Santos (EMP-001)");
+    }
+
+    [Fact]
+    public void SwitchingFromSomeoneWhoLeft_ToAnActiveEmployee_ResetsTheLastWorkingDayToToday()
+    {
+        var anaId = Guid.Parse("77777777-7777-7777-7777-777777777777");
+        StubEmployees(Inactive(anaId, "EMP-003", "Ana Reyes", "2026-03-03"));
+        _api.On(HttpMethod.Get, "/api/separations", HttpStatusCode.OK, "[]");
+        var cut = Render<Separations>();
+        cut.WaitForAssertion(() => cut.FindAll(".animate-spin").Should().BeEmpty());
+        cut.Find("[data-record-separation]").Click();
+        cut.WaitForElement("[data-record-form]");
+
+        cut.Find("#separation-employee").Change(anaId.ToString());
+        cut.Find("#separation-employee").Change(MariaId.ToString());
+
+        cut.Find("#separation-last-day").GetAttribute("value").Should().Be(DateTime.Today.ToString("yyyy-MM-dd"));
+    }
+
+    [Fact]
+    public void SwitchingBetweenActiveEmployees_KeepsALastWorkingDayTheUserTyped()
+    {
+        StubEmployees();
+        _api.On(HttpMethod.Get, "/api/separations", HttpStatusCode.OK, "[]");
+        var cut = Render<Separations>();
+        cut.WaitForAssertion(() => cut.FindAll(".animate-spin").Should().BeEmpty());
+        cut.Find("[data-record-separation]").Click();
+        cut.WaitForElement("[data-record-form]");
+
+        cut.Find("#separation-employee").Change(MariaId.ToString());
+        cut.Find("#separation-last-day").Input("2026-05-31");
+        cut.Find("#separation-employee").Change(JuanId.ToString());
+
+        cut.Find("#separation-last-day").GetAttribute("value").Should().Be("2026-05-31");
+    }
+
+    [Fact]
     public void ACauseIsShownOnlyForAuthorizedCauseSeparations()
     {
         var cut = RenderList(Separation(type: "Resignation"));

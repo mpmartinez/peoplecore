@@ -195,7 +195,10 @@
             var active = await LoadAllEmployees(isActive: true);
             // Kept even if the second list fails: the active employees can still be recorded.
             _employees = active;
-            var separated = (_separations ?? []).Select(s => s.EmployeeId).ToHashSet();
+            // Without the separations list there's no telling who already has one, so no one who
+            // left is offered rather than someone who'd only be refused.
+            if (_separations is null) return;
+            var separated = _separations.Select(s => s.EmployeeId).ToHashSet();
             var left = (await LoadAllEmployees(isActive: false))
                 .Where(e => e.SeparationDate is not null && !separated.Contains(e.Id))
                 .OrderBy(e => e.FullName);
@@ -228,13 +231,18 @@
             : $"{employee.FullName} ({employee.EmployeeNumber})";
 
     // Someone who already left can only be recorded with the day they left as the last working
-    // day (the API refuses any other), so choosing them fills it in.
+    // day (the API refuses any other), so choosing them fills it in. Moving on from them to an
+    // active employee puts back the form's default (today) rather than leaving their date behind;
+    // a date typed for an active employee is left alone.
     private void OnEmployeeChanged(Guid? employeeId)
     {
+        var previous = _employees.FirstOrDefault(e => e.Id == _form.EmployeeId);
         _form.EmployeeId = employeeId;
         var employee = _employees.FirstOrDefault(e => e.Id == employeeId);
         if (employee is { IsActive: false, SeparationDate: { } left })
             _form.LastWorkingDay = left;
+        else if (previous is { IsActive: false, SeparationDate: not null })
+            _form.LastWorkingDay = DateOnly.FromDateTime(DateTime.Today);
     }
 
     private void GoToDetail(Guid id) => Nav.NavigateTo($"/separations/{id}");
