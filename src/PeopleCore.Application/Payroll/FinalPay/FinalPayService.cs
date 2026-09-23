@@ -44,6 +44,12 @@ namespace PeopleCore.Application.Payroll.FinalPay;
 /// after it.
 /// </para>
 /// <para>
+/// <b>Years.</b> The 13th month belongs to the last working day's year: its basis is that year's
+/// Paid runs plus this final pay's regular pay, less the 13th month already paid in it. The tax
+/// settle and the 2316 it builds are the pay date's year's. The two differ only when the final
+/// pay is made after the year end.
+/// </para>
+/// <para>
 /// <b>Allowances</b> are paid for the final period's salary days, pro-rated like its base pay:
 /// each allowance's monthly amount x 12 / factor x salary days (see
 /// <see cref="PayrollComputationService.Compute"/>). They stay taxable or non-taxable exactly as
@@ -462,9 +468,14 @@ public sealed class FinalPayService : IFinalPayService
             .Where(a => a.EmployeeId == employeeId)
             .ToList();
 
-        // The 13th month's basis: the pay year's Paid runs, as for any run - this one excluded.
-        var earlier = (await _runs.GetPaidRunsForEmployeeInYearAsync(employeeId, payYear, ct))
-            .Where(r => r.Id != run.Id && r.Status == PayrollRunStatus.Paid)
+        // The 13th month is the last working day's year's: one twelfth of the basic earned that
+        // year - its Paid runs, selected by pay date as for any run, plus this final pay's own
+        // regular pay - less the 13th month already paid in it. A final pay made after the year
+        // end still owes the year the employee worked. The tax settle below stays on the pay
+        // year: that's the certificate the payment lands on.
+        int thirteenthMonthYear = separation.LastWorkingDay.Year;
+        var earlier = (await _runs.GetPaidRunsForEmployeeInYearAsync(employeeId, thirteenthMonthYear, ct))
+            .Where(r => r.Id != run.Id && r.Status == PayrollRunStatus.Paid && r.PayDate.Year == thirteenthMonthYear)
             .SelectMany(r => r.Employees.Where(e => e.EmployeeId == employeeId))
             .ToList();
         decimal basicEarlier = earlier.Sum(e => e.RegularPay);

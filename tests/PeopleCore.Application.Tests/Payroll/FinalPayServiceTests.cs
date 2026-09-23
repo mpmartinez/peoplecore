@@ -960,6 +960,55 @@ public class FinalPayServiceTests
     }
 
     // ------------------------------------------------------------------
+    // Across a year end
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task CreateAsync_PaidInTheNextYear_TakesThe13thMonthFromTheLastWorkingDaysYear_AndSettlesThePayYear()
+    {
+        // Last working day Friday 2026-12-11, paid 2027-01-15. 2026's Paid runs: Jan-Oct (basic
+        // 365,000, with a 10,000 13th-month advance and 5,000 withheld) and November (36,500).
+        _separation.LastWorkingDay = new DateOnly(2026, 12, 11);
+        _paidRuns.Clear();
+        var janToOct = new PayrollRun
+        {
+            RunNumber = "PAY-2026-010", PeriodStart = new DateOnly(2026, 1, 1), PeriodEnd = new DateOnly(2026, 10, 31),
+            PayDate = new DateOnly(2026, 10, 31), Frequency = PayFrequency.Monthly, Status = PayrollRunStatus.Paid,
+        };
+        janToOct.Employees.Add(new PayrollRunEmployee
+        {
+            PayrollRunId = janToOct.Id, EmployeeId = _employee.Id, RegularPay = 365_000m, ThirteenthMonth = 10_000m,
+            WithholdingTax = 5_000m,
+        });
+        var november = new PayrollRun
+        {
+            RunNumber = "PAY-2026-011", PeriodStart = new DateOnly(2026, 11, 1), PeriodEnd = new DateOnly(2026, 11, 30),
+            PayDate = new DateOnly(2026, 11, 30), Frequency = PayFrequency.Monthly, Status = PayrollRunStatus.Paid,
+        };
+        november.Employees.Add(new PayrollRunEmployee { PayrollRunId = november.Id, EmployeeId = _employee.Id, RegularPay = 36_500m });
+        _paidRuns.AddRange([janToOct, november]);
+
+        await _sut.CreateAsync(_separation.Id, Request(payDate: new DateOnly(2027, 1, 15)));
+        var entry = SavedEntry;
+
+        // Period Dec 1-11: 11 calendar days x 1,200 = 13,200.
+        entry.RegularPay.Should().Be(13_200m);
+
+        // 13th month on 2026's basic: (365,000 + 36,500 + 13,200) / 12 = 414,700 / 12 = 34,558.33,
+        // less the 10,000 already paid in 2026 = 24,558.33. (Taken from 2027's runs - none - it
+        // would have been 13,200 / 12 = 1,100.)
+        entry.ThirteenthMonth.Should().Be(24_558.33m);
+
+        // The settle builds 2027's certificate: this entry alone, taxable 13,200 - 2,862.50 =
+        // 10,337.50 (the 13th month is inside 2027's 90,000 exemption) -> 0 due, nothing withheld
+        // in 2027 -> 0. 2026's 5,000 stays on 2026's certificate; settling 2026 instead would have
+        // collected (22,500 + 20% x 11,837.50) - 5,000 = 19,867.50.
+        entry.WithholdingTax.Should().Be(0m);
+        _runs.Verify(r => r.GetPaidRunsForEmployeeInYearAsync(_employee.Id, 2027, It.IsAny<CancellationToken>()));
+        _savedRun!.RunNumber.Should().Be("FP-2027-001");
+    }
+
+    // ------------------------------------------------------------------
     // Leave
     // ------------------------------------------------------------------
 
