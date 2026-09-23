@@ -95,23 +95,7 @@ public class Bir2316Service : IBir2316Service
         if (employee is null)
             return null;
 
-        // The repository query already restricts to Paid runs in this pay-date year. Both rules
-        // are re-applied here rather than trusted: they are what makes the certificate right, so
-        // they belong somewhere unit-testable, and a future widening of the query - to feed a
-        // register, say - must not be able to admit a Draft run or another year's pay into a tax
-        // certificate as a side effect.
-        var runs = (await _runRepo.GetPaidRunsForEmployeeInYearAsync(employeeId, year, ct))
-            .Where(r => r.Status == PayrollRunStatus.Paid
-                        && r.PayDate.Year == year
-                        && r.Employees.Any(e => e.EmployeeId == employeeId))
-            .ToList();
-
-        // Whole runs come back, carrying every employee's entry - pick out only this employee's
-        // line, exactly as PayslipService already does for a single run.
-        var entries = runs
-            .SelectMany(r => r.Employees.Where(e => e.EmployeeId == employeeId))
-            .ToList();
-
+        var (runs, entries) = await LoadRunsAndEntriesAsync(employeeId, year, draftRun: null, draftEntry: null, ct);
         if (entries.Count == 0)
             return null;
 
@@ -201,30 +185,33 @@ public class Bir2316Service : IBir2316Service
     /// <see cref="GetPreviewAsync"/> deliberately cannot do this - their Paid-only filter is what
     /// keeps a certificate from changing after it was issued - so this is a separate, narrow entry
     /// point rather than a parameter on those.
+    /// <para>
+    /// <b>Must never be reachable from an API endpoint.</b> <paramref name="draftRun"/> and
+    /// <paramref name="draftEntry"/> are caller-constructed entities, not rows this method loads
+    /// and verifies itself - exactly the trust boundary the class doc comment's "derived figures
+    /// are never read from caller input" rule exists to keep a request body from crossing. This
+    /// method is for a trusted server-side caller (the final-pay flow) that built
+    /// <paramref name="draftEntry"/> from payroll's own computation, never for one that forwards a
+    /// request payload into it.
+    /// </para>
     /// </summary>
     public async Task<Bir2316Dto?> BuildWithDraftEntryAsync(
         Guid employeeId, int year, PayrollRun draftRun, PayrollRunEmployee draftEntry, CancellationToken ct = default)
     {
+        // Before any database round trip, for the same reason BuildAsync validates its manual
+        // overlay first: a caller bug is a caller bug regardless of what payroll has on file, and
+        // admitting another employee's pay onto this one's certificate is exactly the kind of
+        // mistake that must never silently succeed.
+        if (draftEntry.EmployeeId != employeeId)
+            throw new DomainException(
+                $"The draft entry belongs to employee {draftEntry.EmployeeId}, not {employeeId} - " +
+                "refusing to put someone else's pay on this certificate.");
+
         var employee = await _employeeRepo.GetByIdAsync(employeeId, ct);
         if (employee is null)
             return null;
 
-        // Same Paid/PayDate.Year predicate as BuildAsync, re-applied for the same reason: it is
-        // what makes the certificate right for the runs that ARE paid. draftRun is added
-        // afterwards, deliberately bypassing that filter - it is the one run this method exists to
-        // admit despite not being Paid yet.
-        var runs = (await _runRepo.GetPaidRunsForEmployeeInYearAsync(employeeId, year, ct))
-            .Where(r => r.Status == PayrollRunStatus.Paid
-                        && r.PayDate.Year == year
-                        && r.Employees.Any(e => e.EmployeeId == employeeId))
-            .ToList();
-
-        var entries = runs
-            .SelectMany(r => r.Employees.Where(e => e.EmployeeId == employeeId))
-            .ToList();
-
-        runs.Add(draftRun);
-        entries.Add(draftEntry);
+        var (runs, entries) = await LoadRunsAndEntriesAsync(employeeId, year, draftRun, draftEntry, ct);
 
         var company = await _companyRepo.GetDefaultAsync(ct)
             ?? throw new DomainException(
@@ -233,8 +220,52 @@ public class Bir2316Service : IBir2316Service
 
         var saved = await _inputsRepo.GetAsync(employeeId, year, ct);
         var manual = saved?.ToManualInputs() ?? new Bir2316ManualInputs();
+        // Mirrors GetPreviewAsync, whose saved-inputs overlay reaches this same validation inside
+        // BuildAsync - the saved row is trusted storage, not a request body, but it was still
+        // written by GenerateAsync's own Validate call, and this path must not skip the check
+        // just because it does not route through BuildAsync.
+        Bir2316ManualInputsValidator.Validate(manual);
 
         return BuildDto(employee, company, runs, entries, year, manual);
+    }
+
+    /// <summary>
+    /// Fetches this employee's Paid runs and entries for the year - the Paid/PayDate.Year/employee
+    /// filter shared by <see cref="BuildAsync"/> and <see cref="BuildWithDraftEntryAsync"/>, kept
+    /// in one place so it cannot silently drift between them. When
+    /// <paramref name="draftRun"/>/<paramref name="draftEntry"/> are supplied
+    /// (<see cref="BuildWithDraftEntryAsync"/>'s case), they are appended to what comes back -
+    /// unless a run with the same <see cref="PayrollRun.Id"/> is already among the Paid runs, in
+    /// which case nothing is added: that run's entry is already counted once, and adding it again
+    /// would double every figure on the certificate.
+    /// </summary>
+    private async Task<(List<PayrollRun> Runs, List<PayrollRunEmployee> Entries)> LoadRunsAndEntriesAsync(
+        Guid employeeId, int year, PayrollRun? draftRun, PayrollRunEmployee? draftEntry, CancellationToken ct)
+    {
+        // The repository query already restricts to Paid runs in this pay-date year. Both rules
+        // are re-applied here rather than trusted: they are what makes the certificate right, so
+        // they belong somewhere unit-testable, and a future widening of the query - to feed a
+        // register, say - must not be able to admit a Draft run or another year's pay into a tax
+        // certificate as a side effect.
+        var runs = (await _runRepo.GetPaidRunsForEmployeeInYearAsync(employeeId, year, ct))
+            .Where(r => r.Status == PayrollRunStatus.Paid
+                        && r.PayDate.Year == year
+                        && r.Employees.Any(e => e.EmployeeId == employeeId))
+            .ToList();
+
+        // Whole runs come back, carrying every employee's entry - pick out only this employee's
+        // line, exactly as PayslipService already does for a single run.
+        var entries = runs
+            .SelectMany(r => r.Employees.Where(e => e.EmployeeId == employeeId))
+            .ToList();
+
+        if (draftRun is not null && draftEntry is not null && runs.All(r => r.Id != draftRun.Id))
+        {
+            runs.Add(draftRun);
+            entries.Add(draftEntry);
+        }
+
+        return (runs, entries);
     }
 
     /// <summary>
@@ -357,7 +388,10 @@ public class Bir2316Service : IBir2316Service
             Item51A_OtherAmount = entries.Sum(e => e.TaxableAllowances),
             Item51A_OtherLabel = "Taxable Allowances",
             Item51B_OtherAmount = finalPayTaxable,
-            Item51B_OtherLabel = finalPayTaxable != 0m ? "Final pay (leave conversion, separation/retirement pay)" : "",
+            // Kept short deliberately: the printed form's "Others (specify)" box is 130.5pt wide,
+            // and a longer label (the original "Final pay (leave conversion,
+            // separation/retirement pay)") overflowed it and printed truncated with an ellipsis.
+            Item51B_OtherLabel = finalPayTaxable != 0m ? "Final pay - leave conv./separation pay" : "",
 
             // Part IVA. Item 25A is this employer's withholding, summed from the runs; 22, 25B and
             // 27 concern another employer or another account and can only come from a human.

@@ -231,7 +231,7 @@ public class Bir2316ServiceTests
         result!.Item35_DeMinimis.Should().Be(4_000m);
         result.Item37_SalariesOtherForms.Should().Be(150_000m);
         result.Item51B_OtherAmount.Should().Be(2_000m);
-        result.Item51B_OtherLabel.Should().Be("Final pay (leave conversion, separation/retirement pay)");
+        result.Item51B_OtherLabel.Should().Be("Final pay - leave conv./separation pay");
         result.Item19_GrossCompensation.Should().Be(result.Item38_TotalNonTaxable + result.Item52_TotalTaxableCompensation);
     }
 
@@ -306,7 +306,10 @@ public class Bir2316ServiceTests
                 Entry(_employeeId, regularPay: 40_000m, withholdingTax: 3_000m)
             ]));
 
-        var manual = new Bir2316ManualInputs { Item25B_PrevTaxWithheld = 1_000m, Item27_PeraTaxCredit = 500m };
+        var manual = new Bir2316ManualInputs
+        {
+            Item22_PrevTaxableCompensation = 10_000m, Item25B_PrevTaxWithheld = 1_000m, Item27_PeraTaxCredit = 500m
+        };
         var draftRun = Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Draft, entries: []);
 
         // First pass: find Item24 and the other-runs Item25A with the draft entry's withholding at
@@ -339,10 +342,89 @@ public class Bir2316ServiceTests
             {
                 EmployeeId = _employeeId,
                 Year = 2026,
+                Item22_PrevTaxableCompensation = manual.Item22_PrevTaxableCompensation,
                 Item25B_PrevTaxWithheld = manual.Item25B_PrevTaxWithheld,
                 Item27_PeraTaxCredit = manual.Item27_PeraTaxCredit
             });
         return await _sut.BuildWithDraftEntryAsync(_employeeId, 2026, draftRun, draftEntry, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task BuildWithDraftEntryAsync_DoesNotDoubleCount_WhenTheDraftRunIsAlreadyAmongThePaidRuns()
+    {
+        // A caller who passes back a run that GetPaidRunsForEmployeeInYearAsync already returned
+        // (same Id) must not have its entry summed twice - that would double every figure on the
+        // certificate.
+        var alreadyPaidRun = Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Paid, entries:
+            [Entry(_employeeId, regularPay: 20_000m, withholdingTax: 1_000m)]);
+        PaidRunsAre(alreadyPaidRun);
+
+        // Same Id as the run already in the Paid set, but a distinct object with its own entry -
+        // the shape a caller could plausibly (if mistakenly) construct.
+        var duplicateRun = new PayrollRun
+        {
+            Id = alreadyPaidRun.Id,
+            RunNumber = alreadyPaidRun.RunNumber,
+            PayDate = alreadyPaidRun.PayDate,
+            PeriodStart = alreadyPaidRun.PeriodStart,
+            PeriodEnd = alreadyPaidRun.PeriodEnd,
+            Frequency = alreadyPaidRun.Frequency,
+            Status = alreadyPaidRun.Status
+        };
+        var duplicateEntry = Entry(_employeeId, regularPay: 20_000m, withholdingTax: 1_000m);
+
+        var result = await _sut.BuildWithDraftEntryAsync(_employeeId, 2026, duplicateRun, duplicateEntry, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Item39_BasicSalary.Should().Be(20_000m, "the duplicate run's entry must not be summed a second time");
+        result.Item25A_PresentTaxWithheld.Should().Be(1_000m);
+    }
+
+    [Fact]
+    public async Task BuildWithDraftEntryAsync_RefusesADraftEntryForADifferentEmployee()
+    {
+        PaidRunsAre(
+            Run(payDate: new DateOnly(2026, 1, 15), status: PayrollRunStatus.Paid, entries:
+                [Entry(_employeeId, regularPay: 20_000m)]));
+
+        var draftRun = Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Draft, entries: []);
+        // Wrong employee id on the entry - putting someone else's pay on this certificate.
+        var mismatchedEntry = Entry(_otherEmployeeId, separationPay: 10_000m, finalPayNonTaxable: 10_000m);
+
+        var act = () => _sut.BuildWithDraftEntryAsync(_employeeId, 2026, draftRun, mismatchedEntry, CancellationToken.None);
+
+        await act.Should().ThrowAsync<DomainException>();
+    }
+
+    [Fact]
+    public async Task BuildWithDraftEntryAsync_BuildsFromTheDraftAlone_WhenTheEmployeeHasNoPaidRuns()
+    {
+        // A first-year employee whose only pay this year IS the final run - there is nothing Paid
+        // yet for BuildAsync/GetPreviewAsync to find, but the draft entry alone is enough here.
+        PaidRunsAre();
+
+        var draftRun = Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Draft, entries: []);
+        var draftEntry = Entry(_employeeId, separationPay: 50_000m, finalPayNonTaxable: 50_000m, withholdingTax: 0m);
+
+        var result = await _sut.BuildWithDraftEntryAsync(_employeeId, 2026, draftRun, draftEntry, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Item37_SalariesOtherForms.Should().Be(50_000m);
+        result.Item25A_PresentTaxWithheld.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task BuildWithDraftEntryAsync_WhenTheEmployeeIsUnknown_ReturnsNull()
+    {
+        _employeeRepo.Setup(r => r.GetByIdAsync(_employeeId, It.IsAny<CancellationToken>()))
+                     .ReturnsAsync((Employee?)null);
+
+        var draftRun = Run(payDate: new DateOnly(2026, 6, 30), status: PayrollRunStatus.Draft, entries: []);
+        var draftEntry = Entry(_employeeId, separationPay: 50_000m, finalPayNonTaxable: 50_000m);
+
+        var result = await _sut.BuildWithDraftEntryAsync(_employeeId, 2026, draftRun, draftEntry, CancellationToken.None);
+
+        result.Should().BeNull();
     }
 
     [Fact]

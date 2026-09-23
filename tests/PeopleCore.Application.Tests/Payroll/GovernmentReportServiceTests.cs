@@ -233,6 +233,8 @@ public class GovernmentReportServiceTests
 
         // Compensation 151,000 = 50,000 + 100,000 13th month + 1,000 allowances. Non-taxable:
         // 90,000 of the 13th month + 1,600 employee shares + 1,000 allowances = 92,600.
+        report.Columns.Should().Equal("Employee", "TIN", "Compensation", "13th month (non-taxable)",
+            "De minimis", "Employee shares", "Other non-taxable", "Taxable", "Tax withheld");
         report.Summary.Should().ContainInOrder(
             new GovernmentReportLineDto("Total amount of compensation", 151_000m),
             new GovernmentReportLineDto("13th month pay and other benefits", 90_000m),
@@ -241,8 +243,13 @@ public class GovernmentReportServiceTests
             new GovernmentReportLineDto("Total non-taxable compensation", 92_600m),
             new GovernmentReportLineDto("Total taxable compensation", 58_400m),
             new GovernmentReportLineDto("Total taxes withheld", 9_000m));
+        // No de minimis (leave conversion) here, so the row's own arithmetic ties out with a zero
+        // in that column: 151,000 - 90,000 (13th) - 0 (de minimis) - 1,600 (shares) -
+        // 1,000 (other non-taxable) = 58,400.
         report.Rows.Single().Cells.Should().Equal(
-            "Cruz, Juan", "111-222-333-000", "151000.00", "90000.00", "1600.00", "1000.00", "58400.00", "9000.00");
+            "Cruz, Juan", "111-222-333-000", "151000.00", "90000.00", "0.00", "1600.00", "1000.00", "58400.00", "9000.00");
+        report.Totals.Should().Equal(
+            "Total", "", "151000.00", "90000.00", "0.00", "1600.00", "1000.00", "58400.00", "9000.00");
     }
 
     [Fact]
@@ -271,8 +278,12 @@ public class GovernmentReportServiceTests
             new GovernmentReportLineDto("Total non-taxable compensation", 154_500m),
             new GovernmentReportLineDto("Total taxable compensation", 11_500m),
             new GovernmentReportLineDto("Total taxes withheld", 1_000m));
+        // The row's own arithmetic now ties out too: 166,000 - 0 (13th) - 4,000 (de minimis) -
+        // 500 (shares) - 150,000 (other non-taxable) = 11,500.
         report.Rows.Single().Cells.Should().Equal(
-            "Cruz, Juan", "111-222-333-000", "166000.00", "0.00", "500.00", "150000.00", "11500.00", "1000.00");
+            "Cruz, Juan", "111-222-333-000", "166000.00", "0.00", "4000.00", "500.00", "150000.00", "11500.00", "1000.00");
+        report.Totals.Should().Equal(
+            "Total", "", "166000.00", "0.00", "4000.00", "500.00", "150000.00", "11500.00", "1000.00");
     }
 
     [Fact]

@@ -291,7 +291,7 @@ public sealed class GovernmentReportService : IGovernmentReportService
         }
 
         var rows = new List<GovernmentReportRowDto>();
-        decimal gross = 0, thirteenth = 0, shares = 0, deMinimis = 0, allowances = 0, taxable = 0, tax = 0;
+        decimal gross = 0, thirteenth = 0, shares = 0, deMinimis = 0, otherNonTaxable = 0, taxable = 0, tax = 0;
         foreach (var (employee, entries) in people)
         {
             decimal g = entries.Sum(e => e.GrossPay);
@@ -299,28 +299,33 @@ public sealed class GovernmentReportService : IGovernmentReportService
                                                     earlierThirteenth.GetValueOrDefault(employee.Id));
             decimal s = entries.Sum(e => e.SSSEmployee + e.PhilHealthEmployee + e.PagIbigEmployee);
             // LeaveConversionNonTaxable is final pay's de minimis slice - the form's own "De
-            // minimis benefits" line, kept apart from the "Other non-taxable" column/line below so
-            // the two lines don't double-count it.
+            // minimis" column/line, kept apart from the "Other non-taxable" column/line below so
+            // the two don't double-count it. It has its own column (between "13th month
+            // (non-taxable)" and "Employee shares") because, unlike allowances, it is subtracted
+            // from Compensation to reach Taxable - without the column the row's own numbers would
+            // no longer add up to what's printed.
             decimal dm = entries.Sum(e => e.LeaveConversionNonTaxable);
             // NonTaxableAllowances plus whatever of final pay's non-taxable amount is NOT the de
             // minimis slice above (separation or retirement pay that qualifies for exemption) -
             // both are non-taxable compensation with no line of their own, the same catch-all
             // "Other non-taxable" bucket Bir2316Service.Item37 uses for the same reason.
-            decimal a = entries.Sum(e => e.NonTaxableAllowances) +
-                        entries.Sum(e => e.FinalPayNonTaxable - e.LeaveConversionNonTaxable);
-            decimal tx = g - t13 - s - dm - a;
+            decimal otherNt = entries.Sum(e => e.NonTaxableAllowances) +
+                               entries.Sum(e => e.FinalPayNonTaxable - e.LeaveConversionNonTaxable);
+            decimal tx = g - t13 - s - dm - otherNt;
             decimal w = entries.Sum(e => e.WithholdingTax);
 
-            gross += g; thirteenth += t13; shares += s; deMinimis += dm; allowances += a; taxable += tx; tax += w;
+            gross += g; thirteenth += t13; shares += s; deMinimis += dm; otherNonTaxable += otherNt; taxable += tx; tax += w;
             var tin = Id(employee, GovernmentIdType.TIN);
-            rows.Add(new(employee.Id, [FullName(employee), tin ?? "", Money(g), Money(t13), Money(s), Money(a), Money(tx), Money(w)],
-                         tin is null));
+            rows.Add(new(employee.Id,
+                [FullName(employee), tin ?? "", Money(g), Money(t13), Money(dm), Money(s), Money(otherNt), Money(tx), Money(w)],
+                tin is null));
         }
 
-        decimal nonTaxable = thirteenth + shares + deMinimis + allowances;
-        return (["Employee", "TIN", "Compensation", "13th month (non-taxable)", "Employee shares", "Other non-taxable", "Taxable", "Tax withheld"],
+        decimal nonTaxable = thirteenth + shares + deMinimis + otherNonTaxable;
+        return (["Employee", "TIN", "Compensation", "13th month (non-taxable)", "De minimis", "Employee shares",
+                 "Other non-taxable", "Taxable", "Tax withheld"],
                 rows,
-                ["Total", "", Money(gross), Money(thirteenth), Money(shares), Money(allowances), Money(taxable), Money(tax)],
+                ["Total", "", Money(gross), Money(thirteenth), Money(deMinimis), Money(shares), Money(otherNonTaxable), Money(taxable), Money(tax)],
                 [
                     new("Total amount of compensation", gross),
                     new("Statutory minimum wage (MWEs)", 0m),
@@ -328,7 +333,7 @@ public sealed class GovernmentReportService : IGovernmentReportService
                     new("13th month pay and other benefits", thirteenth),
                     new("De minimis benefits", deMinimis),
                     new("SSS, PhilHealth and Pag-IBIG employee shares", shares),
-                    new("Other non-taxable compensation", allowances),
+                    new("Other non-taxable compensation", otherNonTaxable),
                     new("Total non-taxable compensation", nonTaxable),
                     new("Total taxable compensation", gross - nonTaxable),
                     new("Total taxes withheld", tax)
