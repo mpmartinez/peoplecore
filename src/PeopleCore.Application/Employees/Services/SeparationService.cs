@@ -215,11 +215,8 @@ public class SeparationService : ISeparationService
         {
             separation = existing;
 
-            // The final pay was computed from this separation's last working day and type; moving
-            // either under it would leave it paying for a different separation.
-            if (separation.FinalPayRunId is not null)
-                throw new DomainException("Final pay has already been started for this separation.");
-
+            var newType = separation.Type;
+            var newCause = separation.AuthorizedCause;
             if (type is { } explicitType)
             {
                 if (explicitType == SeparationType.AuthorizedCause && authorizedCause is null)
@@ -227,8 +224,8 @@ public class SeparationService : ISeparationService
                 if (explicitType != SeparationType.AuthorizedCause && authorizedCause is not null)
                     throw new DomainException("Only an authorized-cause separation has a cause.");
 
-                separation.Type = explicitType;
-                separation.AuthorizedCause = authorizedCause;
+                newType = explicitType;
+                newCause = authorizedCause;
             }
             else if (authorizedCause is not null)
             {
@@ -238,10 +235,21 @@ public class SeparationService : ISeparationService
                 if (separation.Type != SeparationType.AuthorizedCause)
                     throw new DomainException("Only an authorized-cause separation has a cause.");
 
-                separation.AuthorizedCause = authorizedCause;
+                newCause = authorizedCause;
             }
             // Neither given: keep whatever this separation was already recorded with - Deactivate
             // is just asserting the date here, not re-classifying why the employee left.
+
+            // The final pay was computed from this separation's last working day, type and cause;
+            // changing any of them under it would leave it paying for a different separation.
+            // Deactivating on the recorded day, as recorded, just completes the separation.
+            if (separation.FinalPayRunId is not null
+                && (lastWorkingDay != separation.LastWorkingDay || newType != separation.Type
+                    || newCause != separation.AuthorizedCause))
+                throw new DomainException("Final pay has already been started for this separation.");
+
+            separation.Type = newType;
+            separation.AuthorizedCause = newCause;
 
             // HR is asserting the actual last working day directly (it can be earlier than the
             // notice originally given, e.g. an immediate termination that supersedes a resignation

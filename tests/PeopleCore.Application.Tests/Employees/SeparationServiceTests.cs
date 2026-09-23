@@ -721,6 +721,57 @@ public class SeparationServiceTests
         s.Id.Should().Be(_saved.Id);
     }
 
+    /// <summary>A redundancy notice for Sep 30 whose final pay has been created.</summary>
+    private async Task<SeparationDto> RedundancyWithFinalPay()
+    {
+        var s = await Recorded(noticeDate: new DateOnly(2026, 9, 1), lastDay: new DateOnly(2026, 9, 30),
+                               type: SeparationType.AuthorizedCause, cause: AuthorizedCause.Redundancy);
+        GiveFinalPay(PayrollRunStatus.Draft);
+        return s;
+    }
+
+    [Theory]
+    [InlineData(null, null)]                                                      // nothing given: keep both
+    [InlineData(SeparationType.AuthorizedCause, AuthorizedCause.Redundancy)]      // both given, the same
+    [InlineData(null, AuthorizedCause.Redundancy)]                                // the same cause alone
+    public async Task SeparateNow_OnASeparationWhoseFinalPayHasStarted_ChangingNothing_CompletesIt(
+        SeparationType? type, AuthorizedCause? cause)
+    {
+        // Notice given, final pay created, then HR deactivates the employee on the last working day.
+        await RedundancyWithFinalPay();
+
+        var dto = await _sut.SeparateNowAsync(EmployeeId, new DateOnly(2026, 9, 30), type, cause);
+
+        dto.Status.Should().Be(SeparationStatus.Separated);
+        dto.LastWorkingDay.Should().Be(new DateOnly(2026, 9, 30));
+        dto.Type.Should().Be(SeparationType.AuthorizedCause);
+        dto.AuthorizedCause.Should().Be(AuthorizedCause.Redundancy);
+        _employee.IsActive.Should().BeFalse();
+        _employee.SeparationDate.Should().Be(new DateOnly(2026, 9, 30));
+    }
+
+    [Theory]
+    [InlineData(2026, 9, 29, null, null)]                                                         // another day
+    [InlineData(2026, 9, 30, SeparationType.Retirement, null)]                                    // another type
+    [InlineData(2026, 9, 30, null, AuthorizedCause.Retrenchment)]                                 // another cause
+    [InlineData(2026, 9, 30, SeparationType.AuthorizedCause, AuthorizedCause.Retrenchment)]       // same type, another cause
+    public async Task SeparateNow_OnASeparationWhoseFinalPayHasStarted_ChangingAnyOfDayTypeOrCause_IsRefused(
+        int year, int month, int day, SeparationType? type, AuthorizedCause? cause)
+    {
+        await RedundancyWithFinalPay();
+
+        var act = () => _sut.SeparateNowAsync(EmployeeId, new DateOnly(year, month, day), type, cause);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message
+            .Should().Be("Final pay has already been started for this separation.");
+        _saved!.LastWorkingDay.Should().Be(new DateOnly(2026, 9, 30));
+        _saved.Type.Should().Be(SeparationType.AuthorizedCause);
+        _saved.AuthorizedCause.Should().Be(AuthorizedCause.Redundancy);
+        _saved.Status.Should().Be(SeparationStatus.NoticeGiven);
+        _employee.IsActive.Should().BeTrue();
+        NothingSaved();
+    }
+
     [Fact]
     public async Task Dto_WithoutAFinalPayRun_LeavesItsFieldsEmpty()
     {
