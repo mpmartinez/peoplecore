@@ -1,3 +1,4 @@
+using System.Globalization;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Application.Payroll.DTOs;
@@ -35,7 +36,8 @@ namespace PeopleCore.Application.Payroll.FinalPay;
 /// salary: its period is stored as the last working day alone with no salary days, and no
 /// attendance is taken, since there's no salary for absences to come off. It still carries the
 /// 13th month, leave conversion, separation or retirement pay, loans, HR's deductions and the tax
-/// settle. A start HR gives that's after the last working day is still refused.
+/// settle. A start HR gives that's after the last working day is still refused, as is one on or
+/// before the end of a Paid regular run the employee was in - those days were paid already.
 /// </para>
 /// <para>
 /// <b>Unpaid regular runs.</b> A final pay isn't created, nor its period changed, while a regular
@@ -286,15 +288,19 @@ public sealed class FinalPayService : IFinalPayService
         {
             if (start > lastDay)
                 throw new DomainException("The final pay period can't start after the last working day.");
+
+            var paidThrough = regular
+                .Where(r => r.Status == PayrollRunStatus.Paid && r.PeriodEnd >= start)
+                .MaxBy(r => r.PeriodEnd);
+            if (paidThrough is not null)
+                throw new DomainException(string.Create(CultureInfo.InvariantCulture,
+                    $"Payroll {paidThrough.RunNumber} already paid up to {paidThrough.PeriodEnd:MMM d, yyyy}; start final pay after that."));
+
             period = new FinalPeriod(start, NoSalary: false);
         }
         else
         {
-            var lastPaidEnd = regular
-                .Where(r => r.Status == PayrollRunStatus.Paid)
-                .Select(r => (DateOnly?)r.PeriodEnd)
-                .Max();
-            var defaultStart = lastPaidEnd?.AddDays(1) ?? new DateOnly(lastDay.Year, lastDay.Month, 1);
+            var defaultStart = DefaultStart(separation, regular);
             period = defaultStart > lastDay
                 ? new FinalPeriod(lastDay, NoSalary: true)
                 : new FinalPeriod(defaultStart, NoSalary: false);
@@ -318,6 +324,32 @@ public sealed class FinalPayService : IFinalPayService
     }
 
     private static DateOnly Min(DateOnly a, DateOnly b) => a < b ? a : b;
+
+    /// <summary>
+    /// The first day nobody has paid the employee for: the day after their last Paid regular run
+    /// ended or, when they were never paid, the first of the last working day's month.
+    /// </summary>
+    private static DateOnly DefaultStart(Separation separation, IEnumerable<PayrollRun> regularRuns)
+    {
+        var lastDay = separation.LastWorkingDay;
+        var lastPaidEnd = regularRuns
+            .Where(r => r.Status == PayrollRunStatus.Paid)
+            .Select(r => (DateOnly?)r.PeriodEnd)
+            .Max();
+        return lastPaidEnd?.AddDays(1) ?? new DateOnly(lastDay.Year, lastDay.Month, 1);
+    }
+
+    /// <summary>
+    /// Whether the final pay is on the no-salary path: no salary days, and a default start past
+    /// the last working day - as opposed to a start HR chose whose period happens to hold none.
+    /// </summary>
+    private async Task<bool> IsNoSalaryAsync(Separation separation, FinalPayInputs inputs, CancellationToken ct)
+    {
+        if (inputs.WorkingDays != 0m)
+            return false;
+        var runs = await _runs.GetRunsForEmployeeAsync(separation.EmployeeId, ct);
+        return DefaultStart(separation, runs.Where(r => r.RunType == PayrollRunType.Regular)) > separation.LastWorkingDay;
+    }
 
     private async Task<string> NextRunNumberAsync(int payYear, CancellationToken ct)
     {
@@ -557,6 +589,7 @@ public sealed class FinalPayService : IFinalPayService
             run.Id, run.RunNumber, run.Status,
             run.PeriodStart, run.PeriodEnd, run.PayDate,
             inputs.WorkingDays,
+            await IsNoSalaryAsync(separation, inputs, ct),
             entry.LeaveConversionPay, entry.LeaveConversionNonTaxable, figures.LeaveLines,
             entry.SeparationPay, entry.RetirementPay, figures.ComputedSeparationOrRetirementPay,
             inputs.OverrideNote, figures.ServiceYears,

@@ -241,6 +241,7 @@ public class FinalPayServiceTests
         summary.PeriodStart.Should().Be(new DateOnly(2026, 3, 1));
         summary.PeriodEnd.Should().Be(LastDay);
         summary.WorkingDays.Should().Be(13m);
+        summary.NoSalaryDays.Should().BeFalse();
         _savedRun!.FinalPayInputs!.WorkingDays.Should().Be(13m);
 
         // RegularPay = daily rate x salary days = 1,200 x 13 = 15,600.00 (no attendance, so no
@@ -427,6 +428,28 @@ public class FinalPayServiceTests
             .WithMessage("The final pay period can't start after the last working day.");
     }
 
+    [Theory]
+    [InlineData(2026, 2, 20)]
+    [InlineData(2026, 2, 28)]   // the paid run's last day
+    [InlineData(2025, 12, 1)]   // long before it
+    public async Task CreateAsync_Refuses_AStartHrPutsInsideAPaidRegularRun(int year, int month, int day)
+    {
+        // February (PAY-2026-002, Feb 1-28) is Paid: those days were paid already.
+        var act = () => _sut.CreateAsync(_separation.Id, Request(periodStart: new DateOnly(year, month, day)));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Payroll PAY-2026-002 already paid up to Feb 28, 2026; start final pay after that.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_TakesAStartTheDayAfterAPaidRegularRun()
+    {
+        var summary = await _sut.CreateAsync(_separation.Id, Request(periodStart: new DateOnly(2026, 3, 1)));
+
+        summary.PeriodStart.Should().Be(new DateOnly(2026, 3, 1));
+        summary.NoSalaryDays.Should().BeFalse();
+    }
+
     [Fact]
     public async Task CreateAsync_UsesTheStartHrGives()
     {
@@ -520,6 +543,7 @@ public class FinalPayServiceTests
         summary.PeriodStart.Should().Be(LastDay);
         summary.PeriodEnd.Should().Be(LastDay);
         summary.WorkingDays.Should().Be(0m);
+        summary.NoSalaryDays.Should().BeTrue();
         _attendance.Verify(b => b.BuildAsync(It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(),
                                              It.IsAny<CancellationToken>()), Times.Never);
         entry.RegularPay.Should().Be(0m);
@@ -566,6 +590,26 @@ public class FinalPayServiceTests
 
         summary.PeriodStart.Should().Be(LastDay);
         summary.WorkingDays.Should().Be(0m);
+        summary.NoSalaryDays.Should().BeTrue();
+        _savedRun!.FinalPayInputs!.WorkingDays.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_TheOverridesOfANoSalaryFinalPay_WithANullStart_StaysAtNoSalaryDays()
+    {
+        // The page sends a null start back for a final pay whose summary says NoSalaryDays.
+        PaidThroughMarch();
+        var created = await _sut.CreateAsync(_separation.Id, Request());
+        created.NoSalaryDays.Should().BeTrue();
+        _separation.FinalPayRun = _savedRun;
+
+        var summary = await _sut.UpdateAsync(_separation.Id,
+            Request(periodStart: null, separationPayOverride: 200_000m, overrideNote: "Per CBA"));
+
+        summary.WorkingDays.Should().Be(0m);
+        summary.NoSalaryDays.Should().BeTrue();
+        summary.PeriodStart.Should().Be(LastDay);
+        summary.SeparationPay.Should().Be(200_000m);
         _savedRun!.FinalPayInputs!.WorkingDays.Should().Be(0m);
     }
 
