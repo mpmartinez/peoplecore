@@ -253,6 +253,36 @@ public class PayrollComputationServiceFinalPayTests
         (result.SSSEmployer, result.PhilHealthEmployer, result.PagIbigEmployer).Should().Be((1_765m, 0m, 100m));
     }
 
+    private static PayrollRun StraddlingNewYear() => new()
+    {
+        RunNumber = "FP-2025-001",
+        PeriodStart = new DateOnly(2024, 12, 16),
+        PeriodEnd = new DateOnly(2025, 1, 10),
+        PayDate = new DateOnly(2025, 1, 31),
+        Frequency = PayFrequency.Monthly
+    };
+
+    [Fact]
+    public void Compute_with_final_pay_extras_takes_the_sss_schedule_of_the_contribution_month()
+    {
+        // The final period runs Dec 16, 2024 to a Jan 10, 2025 last working day; its contributions
+        // are January 2025's, so the schedule is the one in force on Jan 1, 2025 (Circular
+        // 2024-006): 36,500 is in the top bracket, MSC 35,000 - employee 1,750, employer 3,530.
+        // Looked up at the period start (Dec 16, 2024) no schedule is registered at all.
+        var result = _sut.Compute(NewEmployee(), StraddlingNewYear(), finalPay: NewExtras(workingDays: 26m));
+
+        result.SSSEmployee.Should().Be(1_750m);
+        result.SSSEmployer.Should().Be(3_530m);
+    }
+
+    [Fact]
+    public void Compute_on_a_regular_run_still_takes_the_sss_schedule_at_the_period_start()
+    {
+        var act = () => _sut.Compute(NewEmployee(), StraddlingNewYear());
+
+        act.Should().Throw<NotSupportedException>();
+    }
+
     private static EmployeeCompensation NewEmployee(decimal basicSalary = 36_500m) => new()
     {
         BasicSalary = basicSalary,

@@ -302,7 +302,13 @@ public class PayrollComputationService
             + finalPayTaxable;
 
         // Mandatory contributions based on monthly salary
-        var (sssEmp, sssEmr) = ComputeSSS(compensation.BasicSalary, rates, run.PeriodStart);
+        // The SSS schedule in force for the run: a regular run's as of its period start; a final
+        // pay's as of its contribution month - the first of the last working day's month (its
+        // PeriodEnd), the month it tops up below - since its period can start in an earlier month.
+        var sssAsOf = finalPay is not null
+            ? new DateOnly(run.PeriodEnd.Year, run.PeriodEnd.Month, 1)
+            : run.PeriodStart;
+        var (sssEmp, sssEmr) = ComputeSSS(compensation.BasicSalary, rates, sssAsOf);
         var (phEmp, phEmr) = ComputePhilHealth(compensation.BasicSalary, rates);
         var (piEmp, piEmr) = ComputePagIbig(compensation.BasicSalary, rates);
 
