@@ -1111,6 +1111,28 @@ public class FinalPayServiceTests
     }
 
     [Fact]
+    public async Task TheSummary_CarriesTheStoredOverrides_EvenOneEqualToTheComputedFigure()
+    {
+        // An edit form starts from these, so an override that happens to match the computed
+        // figure must still read as an override - the figures alone can't tell.
+        var summary = await _sut.CreateAsync(_separation.Id,
+            Request(separationPayOverride: 182_500m, overrideNote: "Agreed in the exit interview"));
+
+        summary.SeparationPayOverride.Should().Be(182_500m);
+        summary.ComputedSeparationOrRetirementPay.Should().Be(182_500m);
+        summary.RetirementPayOverride.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task TheSummary_HasNoOverrides_WhenHrSetNone()
+    {
+        var summary = await _sut.CreateAsync(_separation.Id, Request());
+
+        summary.SeparationPayOverride.Should().BeNull();
+        summary.RetirementPayOverride.Should().BeNull();
+    }
+
+    [Fact]
     public async Task CreateAsync_RetirementPay_ForAnEligibleRetiree_IsNonTaxable()
     {
         // 61 on the last day, hired 2006-01-02: 20 years of service.

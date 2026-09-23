@@ -607,6 +607,7 @@ public sealed class FinalPayService : IFinalPayService
             await IsNoSalaryAsync(separation, inputs, ct),
             entry.LeaveConversionPay, entry.LeaveConversionNonTaxable, figures.LeaveLines,
             entry.SeparationPay, entry.RetirementPay, figures.ComputedSeparationOrRetirementPay,
+            inputs.SeparationPayOverride, inputs.RetirementPayOverride,
             inputs.OverrideNote, figures.ServiceYears,
             inputs.Deductions.Select(d => new FinalPayDeductionDto(d.Label, d.Amount)).ToList(),
             await LoanLinesAsync(separation.EmployeeId, run, entry, ct),

@@ -58,12 +58,14 @@ public class FinalPayTests : BunitContext
         string leaveLines = """[{"leaveType":"Vacation Leave","days":5,"countsAsVacation":true}]""",
         decimal separationPay = 0m, decimal retirementPay = 0m, string computed = "null", string? overrideNote = null,
         string deductions = "[]", string loans = "[]", decimal tax = 1250.50m,
-        bool clearanceComplete = true, string outstanding = "[]", string periodStart = "2026-04-01") =>
+        bool clearanceComplete = true, string outstanding = "[]", string periodStart = "2026-04-01",
+        string separationPayOverride = "null", string retirementPayOverride = "null") =>
         $$"""
         {"runId":"{{RunId}}","runNumber":"FP-2026-001","status":"{{status}}","periodStart":"{{periodStart}}","periodEnd":"2026-04-15",
          "payDate":"2026-04-30","workingDays":{{workingDays}},"noSalaryDays":{{(noSalaryDays ? "true" : "false")}},
          "leaveConversionPay":7500,"leaveConversionNonTaxable":7500,"leaveLines":{{leaveLines}},
          "separationPay":{{separationPay}},"retirementPay":{{retirementPay}},"computedSeparationOrRetirementPay":{{computed}},
+         "separationPayOverride":{{separationPayOverride}},"retirementPayOverride":{{retirementPayOverride}},
          "overrideNote":{{(overrideNote is null ? "null" : $"\"{overrideNote}\"")}},"serviceYears":6,
          "deductions":{{deductions}},"loans":{{loans}},"withholdingTax":{{tax}},"grossPay":32500,"netPay":28000,
          "clearanceComplete":{{(clearanceComplete ? "true" : "false")}},"outstandingClearance":{{outstanding}}}
@@ -297,7 +299,7 @@ public class FinalPayTests : BunitContext
     [Fact]
     public void AnOverriddenSeparationPay_ShowsTheComputedFigure_AndTheNote()
     {
-        var cut = RenderWithRun(Summary(separationPay: 50000m, computed: "42000", overrideNote: "Per CBA"),
+        var cut = RenderWithRun(Summary(separationPay: 50000m, computed: "42000", overrideNote: "Per CBA", separationPayOverride: "50000"),
             Separation(type: "AuthorizedCause"));
 
         Text(cut, "[data-separation-pay]").Should().Contain("50,000.00");
@@ -455,7 +457,7 @@ public class FinalPayTests : BunitContext
     {
         _api.On(HttpMethod.Put, FinalPayPath, HttpStatusCode.OK, Summary(status: "Draft", separationPay: 25000m, overrideNote: "Goodwill"));
         var cut = RenderWithRun(Summary(status: "ForApproval", separationPay: 20000m, overrideNote: "Goodwill",
-            deductions: """[{"label":"Unreturned phone","amount":3500}]"""));
+            deductions: """[{"label":"Unreturned phone","amount":3500}]""", separationPayOverride: "20000"));
 
         cut.Find("[data-edit-final-pay]").Click();
 
@@ -476,6 +478,45 @@ public class FinalPayTests : BunitContext
         body.GetProperty("deductions").EnumerateArray().Should().ContainSingle()
             .Which.GetProperty("label").GetString().Should().Be("Unreturned phone");
         _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Post && r.RequestUri!.AbsolutePath == FinalPayPath);
+    }
+
+    [Fact]
+    public void AnOverrideEqualToTheComputedFigure_StillOpensAsAnOverride()
+    {
+        _api.On(HttpMethod.Put, FinalPayPath, HttpStatusCode.OK, Summary());
+        var cut = RenderWithRun(Summary(separationPay: 42000m, computed: "42000", overrideNote: "Agreed",
+            separationPayOverride: "42000"), Separation(type: "AuthorizedCause"));
+
+        cut.Find("[data-computed-pay]").TextContent.Should().Contain("42,000.00");
+        cut.Find("[data-edit-final-pay]").Click();
+
+        cut.Find("#final-pay-override").GetAttribute("value").Should().Be("42000");
+        cut.Find("[data-submit-final-pay]").Click();
+        cut.WaitForAssertion(() => cut.FindAll("[data-final-pay-form]").Should().BeEmpty());
+        BodyOf(HttpMethod.Put, FinalPayPath).GetProperty("separationPayOverride").GetDecimal().Should().Be(42000m);
+    }
+
+    [Fact]
+    public void WithoutAStoredOverride_TheEditFormLeavesTheOverrideEmpty_WhateverThePayIs()
+    {
+        var cut = RenderWithRun(Summary(retirementPay: 90000m, computed: "0", overrideNote: "Early retirement"),
+            Separation(type: "Retirement"));
+
+        cut.Find("[data-edit-final-pay]").Click();
+
+        cut.Find("#final-pay-override").GetAttribute("value").Should().BeEmpty();
+        cut.Find("#final-pay-override-note").GetAttribute("value").Should().Be("Early retirement");
+    }
+
+    [Fact]
+    public void ARetirementOverride_OpensInTheOverrideBox()
+    {
+        var cut = RenderWithRun(Summary(retirementPay: 90000m, computed: "0", overrideNote: "Company plan",
+            retirementPayOverride: "90000"), Separation(type: "Retirement"));
+
+        cut.Find("[data-edit-final-pay]").Click();
+
+        cut.Find("#final-pay-override").GetAttribute("value").Should().Be("90000");
     }
 
     [Fact]

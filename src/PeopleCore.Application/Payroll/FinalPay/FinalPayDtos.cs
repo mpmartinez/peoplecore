@@ -34,6 +34,11 @@ public record FinalPayLoanLineDto(string LoanType, decimal Balance, decimal Dedu
 /// The statutory figure whether or not HR overrode it: separation pay for an authorized cause,
 /// retirement pay for a retirement (0 when not eligible), null for any other separation type.
 /// </param>
+/// <param name="SeparationPayOverride">
+/// HR's stored override, null when there is none - an edit form starts from it, since an override
+/// equal to the computed figure can't be told apart from the figures alone.
+/// </param>
+/// <param name="RetirementPayOverride">HR's stored retirement pay override, null when there is none.</param>
 /// <param name="NoSalaryDays">
 /// True when regular payroll already paid past the last working day, so the final pay carries no
 /// salary (0 working days, by the default period). A page editing it sends a null start back, which
@@ -54,6 +59,8 @@ public record FinalPaySummaryDto(
     decimal SeparationPay,
     decimal RetirementPay,
     decimal? ComputedSeparationOrRetirementPay,
+    decimal? SeparationPayOverride,
+    decimal? RetirementPayOverride,
     string? OverrideNote,
     int ServiceYears,
     IReadOnlyList<FinalPayDeductionDto> Deductions,

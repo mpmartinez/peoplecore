@@ -397,17 +397,13 @@ else
     // Same line the API draws: approved figures are signed off, and paid ones have retired loans.
     private static bool CanEditFinalPay(string status) => status is "Draft" or "ForApproval";
 
-    /// <summary>The separation or retirement pay this separation's type pays.</summary>
-    private decimal PaidAmount(FinalPaySummaryDto summary) => IsRetirement ? summary.RetirementPay : summary.SeparationPay;
-
     /// <summary>
-    /// Whether HR's override set the figure. The summary carries the statutory figure (null for a
-    /// type that has none) beside what is paid, so a difference between them is the override.
+    /// HR's stored override of the pay this separation's type pays, null when there is none. Read
+    /// from what was stored rather than inferred from the figures: an override equal to the
+    /// computed figure is still an override.
     /// </summary>
-    private bool IsOverridden(FinalPaySummaryDto summary) =>
-        summary.ComputedSeparationOrRetirementPay is decimal computed
-            ? PaidAmount(summary) != computed
-            : PaidAmount(summary) != 0m;
+    private decimal? StoredOverride(FinalPaySummaryDto summary) =>
+        IsRetirement ? summary.RetirementPayOverride : summary.SeparationPayOverride;
 
     private void StartEditFinalPay()
     {
@@ -418,7 +414,7 @@ else
             // With no salary days the stored start is only the last working day; sending it back
             // would ask for a one-day salary period, so the default is kept instead.
             PeriodStart = summary.NoSalaryDays ? null : summary.PeriodStart,
-            OverrideAmount = IsOverridden(summary) ? PaidAmount(summary) : null,
+            OverrideAmount = StoredOverride(summary),
             OverrideNote = summary.OverrideNote,
             Deductions = summary.Deductions.Select(d => new DeductionRow { Label = d.Label, Amount = d.Amount }).ToList(),
         };
@@ -714,7 +710,7 @@ else
 
     private RenderFragment OverrideDetails(FinalPaySummaryDto summary) => __builder =>
     {
-        if (IsOverridden(summary) && summary.ComputedSeparationOrRetirementPay is decimal computed)
+        if (StoredOverride(summary) is not null && summary.ComputedSeparationOrRetirementPay is decimal computed)
         {
             <p class="text-xs text-muted-foreground mt-1" data-computed-pay>Overridden; computed @Peso(computed).</p>
         }

@@ -23,7 +23,7 @@ public class FinalPayControllerTests
         Guid.NewGuid(), "PR-2026-0042", PayrollRunStatus.Draft,
         new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 9), new DateOnly(2026, 10, 15),
         7m, false, 8_000m, 8_000m, [new FinalPayLeaveLineDto("Vacation Leave", 5m, true)],
-        0m, 0m, null, null, 3,
+        0m, 0m, null, null, null, null, 3,
         Request.Deductions, [], 1_200m, 20_000m, 13_800m, false, ["Return laptop"]);
 
     private FinalPayController Controller() => new(_service.Object);

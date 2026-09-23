@@ -828,6 +828,8 @@ public record FinalPaySummaryDto(
     decimal SeparationPay,
     decimal RetirementPay,
     decimal? ComputedSeparationOrRetirementPay,
+    decimal? SeparationPayOverride,
+    decimal? RetirementPayOverride,
     string? OverrideNote,
     int ServiceYears,
     IReadOnlyList<FinalPayDeductionDto> Deductions,
