@@ -186,10 +186,11 @@ public sealed class GovernmentReportService : IGovernmentReportService
         // monthly run, so the MSC only works back once the month's cutoffs are all in; a single
         // cutoff's half share would understate the MSC and the EC that goes with it. Cutoffs are
         // counted rather than calendar days checked, because many companies' cutoffs (26th-10th,
-        // 21st-20th) never cover the end of the month they close in.
+        // 21st-20th) never cover the end of the month they close in. A final pay completes the
+        // month whatever its frequency: it tops the month's SSS up to the whole month.
         var sssCutoffsByEmployee = runs
-            .SelectMany(r => r.Employees.Where(e => e.SSSEmployee > 0).Select(e => (e.EmployeeId, r.Frequency)))
-            .ToLookup(x => x.EmployeeId, x => x.Frequency);
+            .SelectMany(r => r.Employees.Where(e => e.SSSEmployee > 0).Select(e => (e.EmployeeId, r.Frequency, r.RunType)))
+            .ToLookup(x => x.EmployeeId, x => (x.Frequency, x.RunType));
 
         var rows = new List<GovernmentReportRowDto>();
         decimal ee = 0, erSs = 0, ec = 0, er = 0;
@@ -199,8 +200,9 @@ public sealed class GovernmentReportService : IGovernmentReportService
             decimal employeeShare = entries.Sum(e => e.SSSEmployee);
             decimal employerTotal = entries.Sum(e => e.SSSEmployer);
             var cutoffs = sssCutoffsByEmployee[employee.Id].ToList();
-            bool fullMonth = cutoffs.Contains(PayFrequency.Monthly)
-                             || cutoffs.Count(f => f == PayFrequency.SemiMonthly) >= 2;
+            bool fullMonth = cutoffs.Any(c => c.RunType == PayrollRunType.FinalPay)
+                             || cutoffs.Any(c => c.Frequency == PayFrequency.Monthly)
+                             || cutoffs.Count(c => c.Frequency == PayFrequency.SemiMonthly) >= 2;
 
             (decimal? msc, decimal? credit) = (null, null);
             if (!overridden && fullMonth)

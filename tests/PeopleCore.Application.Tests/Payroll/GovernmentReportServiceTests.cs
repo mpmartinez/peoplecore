@@ -115,6 +115,26 @@ public class GovernmentReportServiceTests
     }
 
     [Fact]
+    public async Task Sss_ShowsValues_WhenASemiMonthlyEmployeesFinalPayIsTheMonthsOnlyRun()
+    {
+        // A semi-monthly employee leaves on Mar 13 with February paid and no March cutoff: the
+        // final pay tops March up to the whole month (employee 1,750, employer 3,530 on a 36,500
+        // basic), so the month is complete - MSC 1,750 / 5% = 35,000, EC 30, employer SS 3,500.
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.SSS, "34-1234567-8"));
+        var finalPay = RunForPeriod(PayFrequency.SemiMonthly, new(2026, 3, 1), new(2026, 3, 13), new(2026, 3, 31),
+                                    Entry(juan, sssEe: 1_750m, sssEr: 3_530m));
+        finalPay.RunType = PayrollRunType.FinalPay;
+        _runs.Setup(r => r.GetPaidRunsByPeriodEndMonthAsync(2026, 3, It.IsAny<CancellationToken>())).ReturnsAsync([finalPay]);
+
+        var report = await _sut.BuildAsync("sss", 2026, 3);
+
+        report.Rows.Should().ContainSingle().Which.Cells.Should().Equal(
+            "Cruz, Juan", "34-1234567-8", "35000.00", "1750.00", "3500.00", "30.00", "3530.00", "5280.00");
+        report.Totals.Should().Equal("Total", "", "", "1750.00", "3500.00", "30.00", "3530.00", "5280.00");
+        report.Warnings.Should().NotContain(w => w.Contains("whole month"));
+    }
+
+    [Fact]
     public async Task Sss_ShowsValues_WhenASingleMonthlyRunCoversTheWholeMonth()
     {
         var juan = Person("Cruz", "Juan", (GovernmentIdType.SSS, "34-1234567-8"));
