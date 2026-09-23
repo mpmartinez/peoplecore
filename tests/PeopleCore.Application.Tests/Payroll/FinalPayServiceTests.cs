@@ -5,6 +5,7 @@ using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Application.Organization.Interfaces;
 using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.FinalPay;
+using PeopleCore.Application.Payroll.GovernmentReports;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Application.Payroll.Services;
 using PeopleCore.Application.Scheduling.DTOs;
@@ -41,6 +42,8 @@ public class FinalPayServiceTests
     private readonly Mock<IPayrollRunRepository> _runs = new();
     private readonly Mock<IEmployeeCompensationRepository> _compensations = new();
     private readonly Mock<IEmployeeLoanRepository> _loans = new();
+    private readonly Mock<IEmployeeAllowanceRepository> _allowances = new();
+    private readonly List<EmployeeAllowance> _allowanceList = [];
     private readonly Mock<ILeaveBalanceRepository> _leaveBalances = new();
     private readonly Mock<IShiftService> _shifts = new();
     private readonly Mock<IPayrollAttendanceBridge> _attendance = new();
@@ -144,6 +147,8 @@ public class FinalPayServiceTests
         _loans.Setup(r => r.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
               .ReturnsAsync((IEnumerable<Guid> ids, CancellationToken _) =>
                   _activeLoans.Where(l => ids.Contains(l.Id)).ToList());
+        _allowances.Setup(r => r.GetByEmployeeIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(() => _allowanceList);
         _leaveBalances.Setup(r => r.GetByEmployeeAsync(_employee.Id, It.IsAny<int?>(), It.IsAny<CancellationToken>()))
                       .ReturnsAsync(() => _balances);
 
@@ -176,7 +181,8 @@ public class FinalPayServiceTests
         var bir2316 = new Bir2316Service(_runs.Object, _employees.Object, _companies.Object, _bir2316Inputs.Object);
 
         _sut = new FinalPayService(
-            _separations.Object, _runs.Object, _compensations.Object, _loans.Object, _leaveBalances.Object,
+            _separations.Object, _runs.Object, _compensations.Object, _loans.Object, _allowances.Object,
+            _leaveBalances.Object,
             _shifts.Object, _attendance.Object, _settings.Object, bir2316, new PayrollComputationService(),
             TimeProvider.System);
     }
@@ -806,6 +812,76 @@ public class FinalPayServiceTests
         SavedEntry.AbsenceDeduction.Should().Be(2_400m);
         SavedEntry.AbsenceDays.Should().Be(2m);   // snapshotted for a recompute
         SavedEntry.RegularPay.Should().Be(13_200m);
+    }
+
+    // ------------------------------------------------------------------
+    // Allowances
+    // ------------------------------------------------------------------
+
+    private sealed class AprilClock : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => new(2026, 4, 10, 0, 0, 0, TimeSpan.Zero);
+    }
+
+    private void AllowancesOf(decimal taxable, decimal nonTaxable)
+    {
+        _allowanceList.Add(new EmployeeAllowance
+            { EmployeeId = _employee.Id, Type = AllowanceType.Transportation, Amount = taxable, IsTaxable = true });
+        _allowanceList.Add(new EmployeeAllowance
+            { EmployeeId = _employee.Id, Type = AllowanceType.Meal, Amount = nonTaxable, IsTaxable = false });
+    }
+
+    [Fact]
+    public async Task CreateAsync_PaysEachAllowanceForTheSalaryDays_AndThe2316And1601CStillReconcile()
+    {
+        // 3,650 a month taxable, 1,825 non-taxable, over the worked example's 13 salary days:
+        //   3,650 x 12 / 365 x 13 = 1,560.00 taxable; 1,825 x 12 / 365 x 13 = 780.00 non-taxable.
+        AllowancesOf(taxable: 3_650m, nonTaxable: 1_825m);
+
+        var summary = await _sut.CreateAsync(_separation.Id, Request());
+        var entry = SavedEntry;
+
+        entry.TaxableAllowances.Should().Be(1_560m);
+        entry.NonTaxableAllowances.Should().Be(780m);
+        entry.ThirteenthMonth.Should().Be(4_341.67m);   // basic only, as before
+        // Tax: Item 23 = 36,500 + (15,600 - 2,862.50) + 1,560 = 50,797.50 -> 0 due; settled -2,000.
+        entry.WithholdingTax.Should().Be(-2_000m);
+        // Gross = 208,441.67 (the worked example) + 1,560 + 780 = 210,781.67; net = gross - 3,862.50.
+        entry.GrossPay.Should().Be(210_781.67m);
+        summary.NetPay.Should().Be(206_919.17m);
+
+        // The 2316 over February and this entry: the taxable allowance in 51A, the other in 37,
+        // and Item 19 what was paid - 36,500 + 210,781.67 = 247,281.67.
+        var bir2316 = new Bir2316Service(_runs.Object, _employees.Object, _companies.Object, _bir2316Inputs.Object);
+        var cert = (await bir2316.BuildWithDraftEntryAsync(_employee.Id, 2026, _savedRun!, entry))!;
+        cert.Item51A_OtherAmount.Should().Be(1_560m);
+        cert.Item37_SalariesOtherForms.Should().Be(780m + 182_500m);   // + the non-taxable separation pay
+        cert.Item19_GrossCompensation.Should().Be(247_281.67m);
+        cert.Item52_TotalTaxableCompensation.Should().Be(50_797.50m);
+
+        // March's 1601-C (this run alone) taxes what the 2316 adds for it: 50,797.50 - 36,500 =
+        // 14,297.50 = 210,781.67 - 4,341.67 13th month - 2,862.50 shares - 6,000 de minimis
+        // - (780 + 182,500) other non-taxable.
+        entry.Employee = _employee;
+        _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(2026, 3, It.IsAny<CancellationToken>())).ReturnsAsync([_savedRun!]);
+        _runs.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([_februaryRun]);
+        var reports = new GovernmentReportService(_runs.Object, _companies.Object, _settings.Object, new AprilClock(),
+                                                  Mock.Of<IBir2316Service>(), _employees.Object);
+        var march = await reports.BuildAsync("1601c", 2026, 3);
+        march.Summary.Single(l => l.Label == "Total amount of compensation").Amount.Should().Be(210_781.67m);
+        march.Summary.Single(l => l.Label == "Total taxable compensation").Amount.Should().Be(14_297.50m);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithNoSalaryDays_PaysNoAllowances()
+    {
+        AllowancesOf(taxable: 3_650m, nonTaxable: 1_825m);
+        PaidThroughMarch();
+
+        await _sut.CreateAsync(_separation.Id, Request());
+
+        SavedEntry.TaxableAllowances.Should().Be(0m);
+        SavedEntry.NonTaxableAllowances.Should().Be(0m);
     }
 
     // ------------------------------------------------------------------

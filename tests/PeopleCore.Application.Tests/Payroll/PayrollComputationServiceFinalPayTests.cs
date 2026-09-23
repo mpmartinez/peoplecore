@@ -171,6 +171,53 @@ public class PayrollComputationServiceFinalPayTests
             "the taxable leave conversion joins the withholding base like a taxable allowance");
     }
 
+    [Theory]
+    [InlineData(PayFrequency.Monthly)]
+    [InlineData(PayFrequency.SemiMonthly)]
+    public void Compute_with_final_pay_extras_prorates_allowances_over_the_salary_days(PayFrequency frequency)
+    {
+        // Monthly x 12 / 365 x 13 salary days, whatever the frequency - not a period's share:
+        //   taxable 3,650 x 12 / 365 = 120 a day x 13 = 1,560.00
+        //   non-taxable 1,825 x 12 / 365 = 60 a day x 13 = 780.00
+        var employee = NewEmployee();
+        employee.PayFrequency = frequency;
+        employee.Allowances.Add(new EmployeeAllowance { Type = AllowanceType.Transportation, Amount = 3_650m, IsTaxable = true });
+        employee.Allowances.Add(new EmployeeAllowance { Type = AllowanceType.Meal, Amount = 1_825m, IsTaxable = false });
+
+        var result = _sut.Compute(employee, NewRun(), finalPay: NewExtras(workingDays: 13m));
+
+        result.TaxableAllowances.Should().Be(1_560m);
+        result.NonTaxableAllowances.Should().Be(780m);
+    }
+
+    [Fact]
+    public void Compute_with_final_pay_extras_prorates_allowances_at_the_factors_daily_rate()
+    {
+        // Under 313: 3,650 x 12 x 11 / 313 = 481,800 / 313 = 1,539.297... -> 1,539.30;
+        //            1,825 x 12 x 11 / 313 = 240,900 / 313 = 769.648... -> 769.65.
+        var employee = NewEmployee();
+        employee.Allowances.Add(new EmployeeAllowance { Type = AllowanceType.Transportation, Amount = 3_650m, IsTaxable = true });
+        employee.Allowances.Add(new EmployeeAllowance { Type = AllowanceType.Meal, Amount = 1_825m, IsTaxable = false });
+
+        var result = _sut.Compute(employee, NewRun(), dailyRateFactor: 313m, finalPay: NewExtras(workingDays: 11m));
+
+        result.TaxableAllowances.Should().Be(1_539.30m);
+        result.NonTaxableAllowances.Should().Be(769.65m);
+    }
+
+    [Fact]
+    public void Compute_with_final_pay_extras_pays_no_allowances_for_no_salary_days()
+    {
+        var employee = NewEmployee();
+        employee.Allowances.Add(new EmployeeAllowance { Type = AllowanceType.Transportation, Amount = 3_650m, IsTaxable = true });
+        employee.Allowances.Add(new EmployeeAllowance { Type = AllowanceType.Meal, Amount = 1_825m, IsTaxable = false });
+
+        var result = _sut.Compute(employee, NewRun(), finalPay: NewExtras(workingDays: 0m));
+
+        result.TaxableAllowances.Should().Be(0m);
+        result.NonTaxableAllowances.Should().Be(0m);
+    }
+
     private static EmployeeCompensation NewEmployee(decimal basicSalary = 36_500m) => new()
     {
         BasicSalary = basicSalary,

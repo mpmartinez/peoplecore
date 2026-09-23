@@ -42,7 +42,8 @@ public class FinalPayServiceDbTests : DatabaseTestBase
         var runs = new PayrollRunRepository(context);
         return new FinalPayService(
             new SeparationRepository(context), runs, new EmployeeCompensationRepository(context),
-            new EmployeeLoanRepository(context), new LeaveBalanceRepository(context), shifts.Object,
+            new EmployeeLoanRepository(context), new EmployeeAllowanceRepository(context),
+            new LeaveBalanceRepository(context), shifts.Object,
             attendance.Object, new PayrollSettingsRepository(context),
             new Bir2316Service(runs, new EmployeeRepository(context), new CompanyRepository(context),
                                new Bir2316InputsRepository(context)),

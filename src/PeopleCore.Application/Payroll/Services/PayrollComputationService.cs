@@ -235,13 +235,18 @@ public class PayrollComputationService
         holidayPay = Math.Round(holidayPay, 2);
         nightDiffPay = Math.Round(nightDiffPay, 2);
 
-        // Allowances
+        // Allowances: a regular period pays each monthly allowance's share of the month. A final
+        // period is short, so each is pro-rated like its base pay instead - the monthly amount at
+        // the factor's daily rate (x 12 / factor) for each salary day, none for none.
+        decimal AllowanceFor(EmployeeAllowance allowance) => finalPay is not null
+            ? allowance.Amount * 12m / factor * finalPay.WorkingDays
+            : allowance.Amount / periodsPerMonth;
         decimal taxableAllowances = compensation.Allowances
             .Where(a => a.IsTaxable)
-            .Sum(a => a.Amount / periodsPerMonth);
+            .Sum(AllowanceFor);
         decimal nonTaxableAllowances = compensation.Allowances
             .Where(a => !a.IsTaxable)
-            .Sum(a => a.Amount / periodsPerMonth);
+            .Sum(AllowanceFor);
 
         taxableAllowances = Math.Round(taxableAllowances, 2);
         nonTaxableAllowances = Math.Round(nonTaxableAllowances, 2);

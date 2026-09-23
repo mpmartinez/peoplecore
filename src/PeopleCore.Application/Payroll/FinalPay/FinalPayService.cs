@@ -44,9 +44,10 @@ namespace PeopleCore.Application.Payroll.FinalPay;
 /// after it.
 /// </para>
 /// <para>
-/// <b>Allowances</b> are not paid on a final pay. The engine pays a recurring allowance as a whole
-/// period's share with no pro-rating, which a short final period would overpay, and the spec's
-/// list of final-pay earnings doesn't include them.
+/// <b>Allowances</b> are paid for the final period's salary days, pro-rated like its base pay:
+/// each allowance's monthly amount x 12 / factor x salary days (see
+/// <see cref="PayrollComputationService.Compute"/>). They stay taxable or non-taxable exactly as
+/// on a regular run. No salary days, no allowances.
 /// </para>
 /// </summary>
 public sealed class FinalPayService : IFinalPayService
@@ -58,6 +59,7 @@ public sealed class FinalPayService : IFinalPayService
     private readonly IPayrollRunRepository _runs;
     private readonly IEmployeeCompensationRepository _compensations;
     private readonly IEmployeeLoanRepository _loans;
+    private readonly IEmployeeAllowanceRepository _allowances;
     private readonly ILeaveBalanceRepository _leaveBalances;
     private readonly IShiftService _shifts;
     private readonly IPayrollAttendanceBridge _attendance;
@@ -71,6 +73,7 @@ public sealed class FinalPayService : IFinalPayService
         IPayrollRunRepository runs,
         IEmployeeCompensationRepository compensations,
         IEmployeeLoanRepository loans,
+        IEmployeeAllowanceRepository allowances,
         ILeaveBalanceRepository leaveBalances,
         IShiftService shifts,
         IPayrollAttendanceBridge attendance,
@@ -83,6 +86,7 @@ public sealed class FinalPayService : IFinalPayService
         _runs = runs;
         _compensations = compensations;
         _loans = loans;
+        _allowances = allowances;
         _leaveBalances = leaveBalances;
         _shifts = shifts;
         _attendance = attendance;
@@ -451,10 +455,12 @@ public sealed class FinalPayService : IFinalPayService
         decimal? factor = settings?.DailyRateFactor;
         decimal dailyRate = PayrollComputationService.DailyRateFor(compensation.BasicSalary, factor);
 
-        // Loans are not mapped on EmployeeCompensation (see its remarks); allowances are left off
-        // on purpose (see the class remarks).
+        // Neither loans nor allowances are mapped on EmployeeCompensation (see its remarks). The
+        // engine pro-rates the allowances over the salary days (see the class remarks).
         compensation.Loans = (await _loans.GetByEmployeeIdsAsync([employeeId], ct)).Where(l => l.IsActive).ToList();
-        compensation.Allowances = [];
+        compensation.Allowances = (await _allowances.GetByEmployeeIdsAsync([employeeId], ct))
+            .Where(a => a.EmployeeId == employeeId)
+            .ToList();
 
         // The 13th month's basis: the pay year's Paid runs, as for any run - this one excluded.
         var earlier = (await _runs.GetPaidRunsForEmployeeInYearAsync(employeeId, payYear, ct))
