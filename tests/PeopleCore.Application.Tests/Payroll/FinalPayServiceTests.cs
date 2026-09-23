@@ -450,6 +450,49 @@ public class FinalPayServiceTests
         summary.NoSalaryDays.Should().BeFalse();
     }
 
+    // PeriodStartIsDefault is inferred, not stored: the stored start against today's default
+    // (the day after the last Paid regular run - Mar 1 here).
+
+    [Fact]
+    public async Task TheSummary_SaysTheStartIsTheDefault_WhenHrGaveNone()
+    {
+        var summary = await _sut.CreateAsync(_separation.Id, Request());
+
+        summary.PeriodStartIsDefault.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task TheSummary_SaysTheStartIsNotTheDefault_WhenHrChoseAnother()
+    {
+        await _sut.CreateAsync(_separation.Id, Request(periodStart: new DateOnly(2026, 3, 9)));
+
+        var summary = await _sut.GetAsync(_separation.Id);
+
+        summary!.PeriodStartIsDefault.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task TheSummary_TakesAStartHrTypedThatEqualsTheDefault_AsTheDefault()
+    {
+        // Indistinguishable once stored, and harmless: sending no start gives the same period.
+        var summary = await _sut.CreateAsync(_separation.Id, Request(periodStart: new DateOnly(2026, 3, 1)));
+
+        summary.PeriodStartIsDefault.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task TheSummary_TakesANoSalaryStart_AsTheDefault()
+    {
+        // Stored as the last working day, which is not the default start (Apr 1) - but it is
+        // what the default produces on the no-salary path.
+        PaidThroughMarch();
+
+        var summary = await _sut.CreateAsync(_separation.Id, Request());
+
+        summary.NoSalaryDays.Should().BeTrue();
+        summary.PeriodStartIsDefault.Should().BeTrue();
+    }
+
     [Fact]
     public async Task CreateAsync_UsesTheStartHrGives()
     {

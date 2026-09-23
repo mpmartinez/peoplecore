@@ -411,9 +411,10 @@ else
         _finalPayForm = new FinalPayFormModel
         {
             PayDate = summary.PayDate,
-            // With no salary days the stored start is only the last working day; sending it back
-            // would ask for a one-day salary period, so the default is kept instead.
-            PeriodStart = summary.NoSalaryDays ? null : summary.PeriodStart,
+            // A start HR didn't choose is left empty, so the default keeps applying rather than
+            // being pinned - including the no-salary path, whose stored start is only the last
+            // working day and would otherwise ask for a one-day salary period.
+            PeriodStart = summary.PeriodStartIsDefault ? null : summary.PeriodStart,
             OverrideAmount = StoredOverride(summary),
             OverrideNote = summary.OverrideNote,
             Deductions = summary.Deductions.Select(d => new DeductionRow { Label = d.Label, Amount = d.Amount }).ToList(),

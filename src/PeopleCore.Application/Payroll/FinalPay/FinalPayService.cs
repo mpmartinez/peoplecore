@@ -355,15 +355,19 @@ public sealed class FinalPayService : IFinalPayService
     }
 
     /// <summary>
-    /// Whether the final pay is on the no-salary path: no salary days, and a default start past
-    /// the last working day - as opposed to a start HR chose whose period happens to hold none.
+    /// Where the stored period stands against today's default start. <c>NoSalary</c>: the
+    /// no-salary path - no salary days, and a default start past the last working day - as opposed
+    /// to a start HR chose whose period happens to hold none. <c>StartIsDefault</c>: the stored
+    /// start is what a null start gives, either the default start itself or, on the no-salary
+    /// path, the last working day. Inferred, since the inputs don't record whether HR gave one.
     /// </summary>
-    private async Task<bool> IsNoSalaryAsync(Separation separation, FinalPayInputs inputs, CancellationToken ct)
+    private async Task<(bool NoSalary, bool StartIsDefault)> PeriodAgainstDefaultAsync(
+        Separation separation, PayrollRun run, FinalPayInputs inputs, CancellationToken ct)
     {
-        if (inputs.WorkingDays != 0m)
-            return false;
         var runs = await _runs.GetRunsForEmployeeAsync(separation.EmployeeId, ct);
-        return DefaultStart(separation, runs.Where(r => r.RunType == PayrollRunType.Regular)) > separation.LastWorkingDay;
+        var defaultStart = DefaultStart(separation, runs.Where(r => r.RunType == PayrollRunType.Regular));
+        bool noSalary = inputs.WorkingDays == 0m && defaultStart > separation.LastWorkingDay;
+        return (noSalary, noSalary || run.PeriodStart == defaultStart);
     }
 
     private async Task<string> NextRunNumberAsync(int payYear, CancellationToken ct)
@@ -599,12 +603,14 @@ public sealed class FinalPayService : IFinalPayService
         PayrollRunEmployee entry, Figures figures, CancellationToken ct)
     {
         var inputs = run.FinalPayInputs!;
+        var (noSalary, startIsDefault) = await PeriodAgainstDefaultAsync(separation, run, inputs, ct);
 
         return new FinalPaySummaryDto(
             run.Id, run.RunNumber, run.Status,
             run.PeriodStart, run.PeriodEnd, run.PayDate,
             inputs.WorkingDays,
-            await IsNoSalaryAsync(separation, inputs, ct),
+            noSalary,
+            startIsDefault,
             entry.LeaveConversionPay, entry.LeaveConversionNonTaxable, figures.LeaveLines,
             entry.SeparationPay, entry.RetirementPay, figures.ComputedSeparationOrRetirementPay,
             inputs.SeparationPayOverride, inputs.RetirementPayOverride,

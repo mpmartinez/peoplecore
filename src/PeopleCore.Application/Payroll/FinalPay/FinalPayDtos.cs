@@ -34,6 +34,12 @@ public record FinalPayLoanLineDto(string LoanType, decimal Balance, decimal Dedu
 /// The statutory figure whether or not HR overrode it: separation pay for an authorized cause,
 /// retirement pay for a retirement (0 when not eligible), null for any other separation type.
 /// </param>
+/// <param name="PeriodStartIsDefault">
+/// True when the stored start is the one a null start gives - today's default start, or the
+/// no-salary path's last working day - so an edit form can leave the start empty rather than pin
+/// it. Inferred, not stored: a start HR typed that equals the default reads as the default, which
+/// is harmless, as sending no start gives the same period.
+/// </param>
 /// <param name="SeparationPayOverride">
 /// HR's stored override, null when there is none - an edit form starts from it, since an override
 /// equal to the computed figure can't be told apart from the figures alone.
@@ -53,6 +59,7 @@ public record FinalPaySummaryDto(
     DateOnly PayDate,
     decimal WorkingDays,
     bool NoSalaryDays,
+    bool PeriodStartIsDefault,
     decimal LeaveConversionPay,
     decimal LeaveConversionNonTaxable,
     IReadOnlyList<FinalPayLeaveLineDto> LeaveLines,

@@ -59,10 +59,11 @@ public class FinalPayTests : BunitContext
         decimal separationPay = 0m, decimal retirementPay = 0m, string computed = "null", string? overrideNote = null,
         string deductions = "[]", string loans = "[]", decimal tax = 1250.50m,
         bool clearanceComplete = true, string outstanding = "[]", string periodStart = "2026-04-01",
-        string separationPayOverride = "null", string retirementPayOverride = "null") =>
+        string separationPayOverride = "null", string retirementPayOverride = "null", bool periodStartIsDefault = false) =>
         $$"""
         {"runId":"{{RunId}}","runNumber":"FP-2026-001","status":"{{status}}","periodStart":"{{periodStart}}","periodEnd":"2026-04-15",
          "payDate":"2026-04-30","workingDays":{{workingDays}},"noSalaryDays":{{(noSalaryDays ? "true" : "false")}},
+         "periodStartIsDefault":{{(periodStartIsDefault ? "true" : "false")}},
          "leaveConversionPay":7500,"leaveConversionNonTaxable":7500,"leaveLines":{{leaveLines}},
          "separationPay":{{separationPay}},"retirementPay":{{retirementPay}},"computedSeparationOrRetirementPay":{{computed}},
          "separationPayOverride":{{separationPayOverride}},"retirementPayOverride":{{retirementPayOverride}},
@@ -398,7 +399,7 @@ public class FinalPayTests : BunitContext
     [Fact]
     public void NoSalaryDays_SaysTheLastPayrollAlreadyPaidUpToTheLastDay_InsteadOfTheDays()
     {
-        var cut = RenderWithRun(Summary(workingDays: 0m, noSalaryDays: true, periodStart: "2026-04-15"));
+        var cut = RenderWithRun(Summary(workingDays: 0m, noSalaryDays: true, periodStart: "2026-04-15", periodStartIsDefault: true));
 
         Text(cut, "[data-no-salary-days]").Should()
             .Contain("No salary days - the last payroll already paid up to the last working day.");
@@ -595,10 +596,39 @@ public class FinalPayTests : BunitContext
     }
 
     [Fact]
+    public void EditingAFinalPayOnTheDefaultStart_LeavesTheStartEmpty_AndSendsNone()
+    {
+        // Pinning the stored default would stop it following a later change to what's been paid.
+        _api.On(HttpMethod.Put, FinalPayPath, HttpStatusCode.OK, Summary(periodStartIsDefault: true));
+        var cut = RenderWithRun(Summary(periodStartIsDefault: true));
+
+        cut.Find("[data-edit-final-pay]").Click();
+        cut.Find("#final-pay-period-start").GetAttribute("value").Should().BeEmpty();
+        cut.Find("[data-submit-final-pay]").Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[data-final-pay-form]").Should().BeEmpty());
+        BodyOf(HttpMethod.Put, FinalPayPath).GetProperty("periodStart").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public void EditingAFinalPayOnTheDefaultStart_SendsADateHrTypes()
+    {
+        _api.On(HttpMethod.Put, FinalPayPath, HttpStatusCode.OK, Summary(periodStart: "2026-04-06"));
+        var cut = RenderWithRun(Summary(periodStartIsDefault: true));
+
+        cut.Find("[data-edit-final-pay]").Click();
+        cut.Find("#final-pay-period-start").Input("2026-04-06");
+        cut.Find("[data-submit-final-pay]").Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[data-final-pay-form]").Should().BeEmpty());
+        BodyOf(HttpMethod.Put, FinalPayPath).GetProperty("periodStart").GetString().Should().Be("2026-04-06");
+    }
+
+    [Fact]
     public void EditingANoSalaryFinalPay_SendsNoPeriodStart()
     {
-        _api.On(HttpMethod.Put, FinalPayPath, HttpStatusCode.OK, Summary(workingDays: 0m, noSalaryDays: true, periodStart: "2026-04-15"));
-        var cut = RenderWithRun(Summary(workingDays: 0m, noSalaryDays: true, periodStart: "2026-04-15"));
+        _api.On(HttpMethod.Put, FinalPayPath, HttpStatusCode.OK, Summary(workingDays: 0m, noSalaryDays: true, periodStart: "2026-04-15", periodStartIsDefault: true));
+        var cut = RenderWithRun(Summary(workingDays: 0m, noSalaryDays: true, periodStart: "2026-04-15", periodStartIsDefault: true));
 
         cut.Find("[data-edit-final-pay]").Click();
         cut.Find("#final-pay-period-start").GetAttribute("value").Should().BeEmpty();
