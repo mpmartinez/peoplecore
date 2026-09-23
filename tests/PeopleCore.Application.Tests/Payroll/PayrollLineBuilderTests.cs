@@ -74,6 +74,50 @@ public class PayrollLineBuilderTests
         lines[0].Amount.Should().Be(10_000m);
     }
 
+    // ---------- Final pay ----------
+
+    [Fact]
+    public void A_final_pay_foots_earnings_to_gross_and_gross_less_deductions_to_net()
+    {
+        var e = FinalPay();
+
+        var earnings = PayrollLineBuilder.Earnings(e);
+        var deductions = PayrollLineBuilder.Deductions(e).Where(l => !l.IsEmployer).ToList();
+
+        earnings.Sum(l => l.Amount).Should().Be(e.GrossPay).And.Be(62_500m);
+        deductions.Sum(l => l.Amount).Should().Be(e.TotalDeductions).And.Be(5_550m);
+        (earnings.Sum(l => l.Amount) - deductions.Sum(l => l.Amount)).Should().Be(e.NetPay).And.Be(56_950m);
+    }
+
+    [Fact]
+    public void A_final_pay_shows_its_earnings_and_a_tax_refund_as_the_payslip_builder_does()
+    {
+        var e = FinalPay();
+
+        PayrollLineBuilder.Earnings(e).Should().Contain(l => l.Description == "Leave Conversion" && l.Amount == 7_500m)
+            .And.Contain(l => l.Description == "Separation Pay" && l.Amount == 40_000m)
+            .And.NotContain(l => l.Description == "Retirement Pay");
+        PayrollLineBuilder.Deductions(e).Should().Contain(l => l.Description == "Less: Tax refund" && l.Amount == -1_800m)
+            .And.NotContain(l => l.Description == "Withholding Tax");
+    }
+
+    /// <summary>The same worked final pay as PayslipLineBuilderTests.FinalPay, on the entity.</summary>
+    private static PayrollRunEmployee FinalPay() => new()
+    {
+        RegularPay = 5_000m,
+        ThirteenthMonth = 10_000m,
+        LeaveConversionPay = 7_500m,
+        LeaveConversionNonTaxable = 6_000m,
+        SeparationPay = 40_000m,
+        FinalPayNonTaxable = 46_000m,
+        SSSEmployee = 500m,
+        PhilHealthEmployee = 250m,
+        PagIbigEmployee = 100m,
+        WithholdingTax = -1_800m,
+        LoanDeductions = 3_000m,
+        OtherDeductions = 3_500m
+    };
+
     /// <summary>An entry exercising every pay component the builders know about.</summary>
     private static PayrollRunEmployee FullyLoaded() => new()
     {

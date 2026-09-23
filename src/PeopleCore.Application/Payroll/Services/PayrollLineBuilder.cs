@@ -32,6 +32,16 @@ public static class PayrollLineBuilder
         if (e.NonTaxableAllowances > 0) lines.Add(new("Non-Taxable Allowances", e.NonTaxableAllowances, IsTaxable: false));
         if (e.ThirteenthMonth > 0) lines.Add(new("13th Month Pay", e.ThirteenthMonth, IsTaxable: false));
 
+        // Final-pay earnings, zero on a regular run. A line is flagged non-taxable only when all
+        // of it is: FinalPayNonTaxable covers leave conversion's de minimis part plus whatever of
+        // separation and retirement pay is exempt.
+        if (e.LeaveConversionPay > 0)
+            lines.Add(new("Leave Conversion", e.LeaveConversionPay, IsTaxable: e.LeaveConversionNonTaxable < e.LeaveConversionPay));
+        decimal separationAndRetirementNonTaxable = e.FinalPayNonTaxable - e.LeaveConversionNonTaxable;
+        bool separationAndRetirementTaxable = separationAndRetirementNonTaxable < e.SeparationPay + e.RetirementPay;
+        if (e.SeparationPay > 0) lines.Add(new("Separation Pay", e.SeparationPay, IsTaxable: separationAndRetirementTaxable));
+        if (e.RetirementPay > 0) lines.Add(new("Retirement Pay", e.RetirementPay, IsTaxable: separationAndRetirementTaxable));
+
         return lines;
     }
 
@@ -42,7 +52,12 @@ public static class PayrollLineBuilder
             new("SSS (Employee)", e.SSSEmployee),
             new("PhilHealth (Employee)", e.PhilHealthEmployee),
             new("Pag-IBIG (Employee)", e.PagIbigEmployee),
-            new("Withholding Tax", e.WithholdingTax)
+            // A final pay settles the year's tax, which can come out as a refund. It stays in this
+            // column, so the lines still add up to TotalDeductions and gross less that to net pay,
+            // but as a credit named for what it is rather than a negative "Withholding Tax".
+            e.WithholdingTax < 0
+                ? new("Less: Tax refund", e.WithholdingTax)
+                : new("Withholding Tax", e.WithholdingTax)
         };
 
         if (e.LoanDeductions > 0) lines.Add(new("Loan Deduction", e.LoanDeductions));

@@ -75,6 +75,89 @@ public class PayslipLineBuilderTests
         lines[0].Amount.Should().Be(10_000m);
     }
 
+    // ---------- Final pay ----------
+
+    [Fact]
+    public void A_final_pay_foots_earnings_to_gross_and_gross_less_deductions_to_net()
+    {
+        var e = FinalPay();
+
+        var earnings = PayslipLineBuilder.Earnings(e);
+        var deductions = PayslipLineBuilder.Deductions(e).Where(l => !l.IsEmployer).ToList();
+
+        earnings.Sum(l => l.Amount).Should().Be(e.GrossPay).And.Be(62_500m);
+        deductions.Sum(l => l.Amount).Should().Be(e.TotalDeductions).And.Be(5_550m);
+        (earnings.Sum(l => l.Amount) - deductions.Sum(l => l.Amount)).Should().Be(e.NetPay).And.Be(56_950m);
+    }
+
+    [Fact]
+    public void A_final_pay_shows_leave_conversion_and_separation_pay_as_earnings_and_omits_a_zero_retirement_pay()
+    {
+        var lines = PayslipLineBuilder.Earnings(FinalPay());
+
+        lines.Should().Contain(l => l.Description == "Leave Conversion" && l.Amount == 7_500m);
+        lines.Should().Contain(l => l.Description == "Separation Pay" && l.Amount == 40_000m && !l.IsTaxable,
+            "separation pay for an authorized cause is wholly non-taxable here");
+        lines.Should().NotContain(l => l.Description == "Retirement Pay");
+    }
+
+    [Fact]
+    public void Retirement_pay_is_shown_when_there_is_some()
+    {
+        var e = FinalPay() with { SeparationPay = 0m, RetirementPay = 40_000m };
+
+        var lines = PayslipLineBuilder.Earnings(e);
+
+        lines.Should().Contain(l => l.Description == "Retirement Pay" && l.Amount == 40_000m);
+        lines.Should().NotContain(l => l.Description == "Separation Pay");
+    }
+
+    [Fact]
+    public void A_negative_withholding_tax_is_a_tax_refund_not_a_negative_withholding_line()
+    {
+        // The year's tax settled on final pay can hand some back. It stays in the deductions
+        // column - where it keeps TOTAL DEDUCTIONS and NET PAY footing - but as a credit that says
+        // what it is, the way "Less: Absences" reads against the basic pay.
+        var lines = PayslipLineBuilder.Deductions(FinalPay());
+
+        lines.Should().Contain(l => l.Description == "Less: Tax refund" && l.Amount == -1_800m);
+        lines.Should().NotContain(l => l.Description == "Withholding Tax");
+    }
+
+    [Fact]
+    public void A_regular_run_has_no_final_pay_lines()
+    {
+        var e = FullyLoaded();
+
+        PayslipLineBuilder.Earnings(e).Should().NotContain(l =>
+            l.Description == "Leave Conversion" || l.Description == "Separation Pay" || l.Description == "Retirement Pay");
+        PayslipLineBuilder.Deductions(e).Should().Contain(l => l.Description == "Withholding Tax" && l.Amount == 1_234.56m);
+    }
+
+    /// <summary>
+    /// A worked final pay: 5,000 salary, 10,000 13th month, 7,500 leave (6,000 of it de minimis)
+    /// and 40,000 authorized-cause separation pay; 3,000 of loans, 3,500 of HR deductions, and the
+    /// year's tax settling to a 1,800 refund.
+    /// </summary>
+    private static PayrollRunEmployeeDto FinalPay() => Clean() with
+    {
+        RegularPay = 5_000m,
+        ThirteenthMonth = 10_000m,
+        LeaveConversionPay = 7_500m,
+        LeaveConversionNonTaxable = 6_000m,
+        SeparationPay = 40_000m,
+        FinalPayNonTaxable = 46_000m,
+        GrossPay = 62_500m,
+        SSSEmployee = 500m,
+        PhilHealthEmployee = 250m,
+        PagIbigEmployee = 100m,
+        WithholdingTax = -1_800m,
+        LoanDeductions = 3_000m,
+        OtherDeductions = 3_500m,
+        TotalDeductions = 5_550m,
+        NetPay = 56_950m
+    };
+
     /// <summary>An entry exercising every pay component the builders know about.</summary>
     private static PayrollRunEmployeeDto FullyLoaded() => Clean() with
     {
