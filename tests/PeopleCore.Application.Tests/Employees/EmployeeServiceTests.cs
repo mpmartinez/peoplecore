@@ -35,6 +35,23 @@ public class EmployeeServiceTests
     }
 
     [Fact]
+    public async Task GetByIdAsync_CarriesTheSeparationDate()
+    {
+        // The record-separation form lists employees who already left without a separation, and
+        // pre-fills their last working day with this date.
+        var employee = new Employee
+        {
+            Id = Guid.NewGuid(), EmployeeNumber = "EMP-001", FirstName = "Juan", LastName = "dela Cruz",
+            WorkEmail = "juan@company.com", IsActive = false, SeparationDate = new DateOnly(2026, 3, 3)
+        };
+        _repo.Setup(r => r.GetByIdAsync(employee.Id, It.IsAny<CancellationToken>())).ReturnsAsync(employee);
+
+        var dto = await _sut.GetByIdAsync(employee.Id);
+
+        dto.SeparationDate.Should().Be(new DateOnly(2026, 3, 3));
+    }
+
+    [Fact]
     public async Task CreateAsync_WhenEmployeeNumberAlreadyExists_ThrowsDomainException()
     {
         _repo.Setup(r => r.EmployeeNumberExistsAsync("EMP-001", It.IsAny<CancellationToken>())).ReturnsAsync(true);

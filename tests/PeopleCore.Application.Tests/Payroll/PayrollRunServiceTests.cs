@@ -975,6 +975,33 @@ public class PayrollRunServiceTests
     }
 
     [Fact]
+    public async Task GetAsync_CarriesEachEntrysFinalPayEarnings()
+    {
+        // The run page shows a final pay's leave conversion, separation and retirement pay and
+        // their non-taxable part per employee; without them it shows a gross that doesn't foot.
+        var entry = new PayrollRunEmployee
+        {
+            EmployeeId = Guid.NewGuid(),
+            LeaveConversionPay = 5_000m,
+            LeaveConversionNonTaxable = 3_000m,
+            SeparationPay = 40_000m,
+            RetirementPay = 1_000m,
+            FinalPayNonTaxable = 43_000m,
+        };
+        var run = new PayrollRun { RunNumber = "FP-2026-001", RunType = PayrollRunType.FinalPay, Employees = [entry] };
+        _runRepo.Setup(r => r.GetWithEntriesAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+
+        var dto = await _sut.GetAsync(run.Id);
+
+        var line = dto!.Employees.Single();
+        line.LeaveConversionPay.Should().Be(5_000m);
+        line.LeaveConversionNonTaxable.Should().Be(3_000m);
+        line.SeparationPay.Should().Be(40_000m);
+        line.RetirementPay.Should().Be(1_000m);
+        line.FinalPayNonTaxable.Should().Be(43_000m);
+    }
+
+    [Fact]
     public async Task GetPagedAsync_CarriesTheRunType()
     {
         var run = new PayrollRun { RunNumber = "FP-2026-001", RunType = PayrollRunType.FinalPay };

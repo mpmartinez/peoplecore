@@ -73,7 +73,14 @@ public record PayrollRunEmployeeDto(
     decimal PagIbigEmployer,
     decimal WithholdingTax,
     decimal LoanDeductions,
-    decimal OtherDeductions);
+    decimal OtherDeductions,
+    // Final-pay earnings, zero on a regular run. FinalPayNonTaxable is the non-taxable part of
+    // the three combined (it includes LeaveConversionNonTaxable).
+    decimal LeaveConversionPay = 0m,
+    decimal LeaveConversionNonTaxable = 0m,
+    decimal SeparationPay = 0m,
+    decimal RetirementPay = 0m,
+    decimal FinalPayNonTaxable = 0m);
 
 public record PayrollRunDto(
     Guid Id,

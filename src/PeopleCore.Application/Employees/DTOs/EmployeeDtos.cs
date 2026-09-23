@@ -27,7 +27,10 @@ public record EmployeeDto(
     DateOnly HireDate,
     DateOnly? RegularizationDate,
     bool IsActive,
-    bool Is13thMonthEligible);
+    bool Is13thMonthEligible,
+    // The day they left, for an employee who has; the record-separation form uses it for those
+    // who left without a separation being recorded.
+    DateOnly? SeparationDate = null);
 
 /// <summary>
 /// One row of the company directory, which every signed-in user may list. Deliberately a subset of
