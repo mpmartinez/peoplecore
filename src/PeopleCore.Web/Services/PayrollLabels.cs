@@ -22,6 +22,14 @@ public static class PayrollLabels
         _ => status
     };
 
+    /// <summary>The badge variant a run status gets, the same on every page.</summary>
+    public static string RunStatusVariant(string? status) => status switch
+    {
+        "Approved" or "Paid" => "success",
+        "Processing" or "ForApproval" => "warning",
+        _ => "secondary"
+    };
+
     public static string LoanTypeOf(string loanType) => loanType switch
     {
         "SSSLoan" => "SSS loan",

@@ -11,7 +11,7 @@
     <ChildContent>
         @if (_run is not null)
         {
-            <Badge Variant="@RunStatusVariant(_run.Status)" Class="mt-1">@PayrollLabels.RunStatusOf(_run.Status)</Badge>
+            <Badge Variant="@PayrollLabels.RunStatusVariant(_run.Status)" Class="mt-1">@PayrollLabels.RunStatusOf(_run.Status)</Badge>
             @if (IsFinalPay)
             {
                 <Badge Variant="outline" Class="mt-1 ml-2" data-final-pay-badge>Final pay</Badge>
@@ -421,10 +421,4 @@ else
     // paid."), so Draft/Processing/ForApproval/Paid must not offer it either.
     private static bool CanMarkPaid(string status) => status == "Approved";
 
-    private static string RunStatusVariant(string status) => status switch
-    {
-        "Approved" or "Paid" => "success",
-        "Processing" or "ForApproval" => "warning",
-        _ => "secondary"
-    };
 }

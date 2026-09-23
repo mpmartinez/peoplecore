@@ -574,7 +574,7 @@ else
                         <span class="text-muted-foreground text-sm">Run</span>
                         <span class="text-sm font-medium text-right">
                             <a href="@($"/payroll-runs/{summary.RunId}")" class="text-primary hover:underline" data-final-pay-run-link>@summary.RunNumber</a>
-                            <Badge Variant="@RunStatusVariant(summary.Status)" Class="ml-2">@PayrollLabels.RunStatusOf(summary.Status)</Badge>
+                            <Badge Variant="@PayrollLabels.RunStatusVariant(summary.Status)" Class="ml-2">@PayrollLabels.RunStatusOf(summary.Status)</Badge>
                         </span>
                     </div>
                     <InfoRow Label="Period" Value="@($"{summary.PeriodStart:MMM d, yyyy} - {summary.PeriodEnd:MMM d, yyyy}")" />
@@ -720,12 +720,6 @@ else
         }
     };
 
-    private static string RunStatusVariant(string status) => status switch
-    {
-        "Approved" or "Paid" => "success",
-        "Processing" or "ForApproval" => "warning",
-        _ => "secondary"
-    };
 
     private sealed class FinalPayFormModel
     {
