@@ -799,6 +799,21 @@ public class FinalPayServiceTests
     }
 
     [Fact]
+    public async Task CreateAsync_DefaultPeriod_StartsOnTheHireDate_ForSomeoneHiredThatMonthAndNeverPaid()
+    {
+        // Hired Thursday 2026-03-05, never paid, last working day Mar 13: the period can't start
+        // on Mar 1, before they were employed. Mar 5-13 = 9 calendar days x 1,200 = 10,800.
+        _employee.HireDate = new DateOnly(2026, 3, 5);
+        _paidRuns.Clear();
+
+        var summary = await _sut.CreateAsync(_separation.Id, Request());
+
+        summary.PeriodStart.Should().Be(new DateOnly(2026, 3, 5));
+        summary.WorkingDays.Should().Be(9m);
+        SavedEntry.RegularPay.Should().Be(10_800m);
+    }
+
+    [Fact]
     public async Task CreateAsync_Refuses_AnOverrideWithoutANote()
     {
         var act = () => _sut.CreateAsync(_separation.Id, Request(separationPayOverride: 200_000m, overrideNote: "  "));

@@ -327,7 +327,8 @@ public sealed class FinalPayService : IFinalPayService
 
     /// <summary>
     /// The first day nobody has paid the employee for: the day after their last Paid regular run
-    /// ended or, when they were never paid, the first of the last working day's month.
+    /// ended or, when they were never paid, the first of the last working day's month - or their
+    /// hire date, when they were hired later in that month.
     /// </summary>
     private static DateOnly DefaultStart(Separation separation, IEnumerable<PayrollRun> regularRuns)
     {
@@ -336,7 +337,12 @@ public sealed class FinalPayService : IFinalPayService
             .Where(r => r.Status == PayrollRunStatus.Paid)
             .Select(r => (DateOnly?)r.PeriodEnd)
             .Max();
-        return lastPaidEnd?.AddDays(1) ?? new DateOnly(lastDay.Year, lastDay.Month, 1);
+        if (lastPaidEnd is DateOnly end)
+            return end.AddDays(1);
+
+        var firstOfMonth = new DateOnly(lastDay.Year, lastDay.Month, 1);
+        var hired = separation.Employee.HireDate;
+        return hired > firstOfMonth ? hired : firstOfMonth;
     }
 
     /// <summary>
