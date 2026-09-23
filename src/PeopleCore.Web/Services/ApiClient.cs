@@ -211,6 +211,24 @@ public class ApiClient
     public Task<SeparationDto?> DeleteClearanceItemAsync(Guid id, Guid itemId)
         => SendJsonAsync<SeparationDto>(HttpMethod.Delete, $"api/separations/{id}/clearance/{itemId}");
 
+    // Final pay
+    //
+    // A 404 from the GET means the separation has no final-pay run yet - the page offers to create
+    // one. Any other failure is thrown like every other read, so it is never mistaken for "no run".
+    public async Task<FinalPaySummaryDto?> GetFinalPayAsync(Guid separationId)
+    {
+        var response = await _http.GetAsync($"api/separations/{separationId}/final-pay");
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadFromJsonAsync<FinalPaySummaryDto>(JsonOptions);
+    }
+
+    public Task<FinalPaySummaryDto?> CreateFinalPayAsync(Guid separationId, FinalPayRequest request)
+        => SendJsonAsync<FinalPaySummaryDto>(HttpMethod.Post, $"api/separations/{separationId}/final-pay", request);
+
+    public Task<FinalPaySummaryDto?> UpdateFinalPayAsync(Guid separationId, FinalPayRequest request)
+        => SendJsonAsync<FinalPaySummaryDto>(HttpMethod.Put, $"api/separations/{separationId}/final-pay", request);
+
     // Leave
     public async Task<IReadOnlyList<LeaveBalanceDto>?> GetLeaveBalancesAsync(Guid employeeId)
         => await GetJsonAsync<IReadOnlyList<LeaveBalanceDto>>($"api/leave-balances/{employeeId}");
@@ -543,6 +561,10 @@ public class ApiClient
         return (false, await ReadProblemDetailAsync(response));
     }
 
+    /// <summary>Takes an employee off a regular run that isn't paid; the run comes back in Draft.</summary>
+    public Task<PayrollRunDto?> RemovePayrollRunEmployeeAsync(Guid runId, Guid employeeId)
+        => SendJsonAsync<PayrollRunDto>(HttpMethod.Delete, $"api/payroll-runs/{runId}/employees/{employeeId}");
+
     // Employee Compensation
     //
     // A 404 here means the employee simply has no compensation row yet - PUT creates one, so the
@@ -729,7 +751,8 @@ public record SaveEmailSettingsRequest(string Host, int Port, bool UseStartTls, 
 internal record ResetAvailability(bool Available);
 internal record TestEmailResult(bool Sent, string? To);
 public record PagedResult<T>(IReadOnlyList<T> Items, int TotalCount, int Page, int PageSize, int TotalPages);
-public record EmployeeListDto(Guid Id, string EmployeeNumber, string FirstName, string LastName, string FullName, string WorkEmail, string? DepartmentName, string? PositionTitle, string EmploymentStatus, bool IsActive);
+public record EmployeeListDto(Guid Id, string EmployeeNumber, string FirstName, string LastName, string FullName, string WorkEmail, string? DepartmentName, string? PositionTitle, string EmploymentStatus, bool IsActive,
+    DateOnly? SeparationDate = null);
 
 // Certificate of Employment - mirrors PeopleCore.Application.Employees.Coe.CoeRequest.
 public record CoeRequest(string? Purpose, string? SignatoryName, string? SignatoryTitle, bool IncludeSalary);
@@ -767,9 +790,53 @@ public record SeparationDto(
     bool FinalPayOverdue,
     int ClearedCount,
     int ClearanceCount,
-    IReadOnlyList<ClearanceItemDto> ClearanceItems);
+    IReadOnlyList<ClearanceItemDto> ClearanceItems,
+    Guid? FinalPayRunId = null,
+    string? FinalPayRunNumber = null,
+    // A PayrollRunStatus name, as the run DTOs below carry theirs.
+    string? FinalPayStatus = null);
 
-public record ClearanceItemDto(Guid Id, string Name, string? ClearedBy, DateTime? ClearedAt, string? Note);
+public record ClearanceItemDto(Guid Id, string Name, string? ClearedBy, DateTime? ClearedAt, string? Note,
+    string? LastUndoneBy = null, DateTime? LastUndoneAt = null);
+
+// Final pay - mirrors PeopleCore.Application.Payroll.FinalPay.FinalPayDtos. Status and LoanType
+// travel as enum names; PayrollLabels turns them into words.
+public record FinalPayRequest(
+    DateOnly PayDate,
+    DateOnly? PeriodStart,
+    decimal? SeparationPayOverride,
+    decimal? RetirementPayOverride,
+    string? OverrideNote,
+    IReadOnlyList<FinalPayDeductionDto> Deductions);
+
+public record FinalPayDeductionDto(string Label, decimal Amount);
+public record FinalPayLeaveLineDto(string LeaveType, decimal Days, bool CountsAsVacation);
+public record FinalPayLoanLineDto(string LoanType, decimal Balance, decimal Deducted, decimal Uncovered);
+
+public record FinalPaySummaryDto(
+    Guid RunId,
+    string RunNumber,
+    string Status,
+    DateOnly PeriodStart,
+    DateOnly PeriodEnd,
+    DateOnly PayDate,
+    decimal WorkingDays,
+    bool NoSalaryDays,
+    decimal LeaveConversionPay,
+    decimal LeaveConversionNonTaxable,
+    IReadOnlyList<FinalPayLeaveLineDto> LeaveLines,
+    decimal SeparationPay,
+    decimal RetirementPay,
+    decimal? ComputedSeparationOrRetirementPay,
+    string? OverrideNote,
+    int ServiceYears,
+    IReadOnlyList<FinalPayDeductionDto> Deductions,
+    IReadOnlyList<FinalPayLoanLineDto> Loans,
+    decimal WithholdingTax,
+    decimal GrossPay,
+    decimal NetPay,
+    bool ClearanceComplete,
+    IReadOnlyList<string> OutstandingClearance);
 public record ClearItemRequest(string? Note);
 public record AddClearanceItemRequest(string Name);
 public record LeaveBalanceDto(Guid Id, Guid EmployeeId, string EmployeeName, Guid LeaveTypeId, string LeaveTypeName, int Year, decimal TotalDays, decimal UsedDays, decimal CarriedOverDays, decimal RemainingDays);
@@ -842,7 +909,14 @@ public record PayrollRunEmployeeDto(
     decimal PagIbigEmployer,
     decimal WithholdingTax,
     decimal LoanDeductions,
-    decimal OtherDeductions);
+    decimal OtherDeductions,
+    // Final-pay earnings, zero on a regular run; FinalPayNonTaxable is the non-taxable part of
+    // all three (it includes LeaveConversionNonTaxable).
+    decimal LeaveConversionPay = 0m,
+    decimal LeaveConversionNonTaxable = 0m,
+    decimal SeparationPay = 0m,
+    decimal RetirementPay = 0m,
+    decimal FinalPayNonTaxable = 0m);
 
 public record PayrollRunDto(
     Guid Id,
@@ -860,7 +934,9 @@ public record PayrollRunDto(
     DateTime CreatedAt,
     Guid? AttendancePeriodId,
     int EmployeesMissingAttendance,
-    IReadOnlyList<PayrollRunEmployeeDto> Employees);
+    IReadOnlyList<PayrollRunEmployeeDto> Employees,
+    // "Regular" or "FinalPay".
+    string RunType = "Regular");
 
 public record PayrollRunSummaryDto(
     Guid Id,
@@ -875,7 +951,8 @@ public record PayrollRunSummaryDto(
     decimal TotalGrossPay,
     decimal TotalNetPay,
     int EmployeesMissingAttendance,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    string RunType = "Regular");
 
 public record EmployeeCompensationDto(
     Guid Id,

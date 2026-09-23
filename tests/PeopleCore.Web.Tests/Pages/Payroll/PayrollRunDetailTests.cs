@@ -29,17 +29,31 @@ public class PayrollRunDetailTests : BunitContext
 
     private string CurrentUri => Services.GetRequiredService<NavigationManager>().Uri;
 
-    private static string RunJson(string status, bool withEmployee = true, int missingAttendance = 0) =>
+    private static readonly Guid JoseId = Guid.Parse("0c6f9a3e-8b2d-4f71-a5c4-3e9d1b7f2a60");
+
+    private static string RunJson(string status, bool withEmployee = true, int missingAttendance = 0,
+        string runType = "Regular", string? employees = null) =>
         $$"""
         {"id":"{{RunId}}","runNumber":"PR-2026-0017","periodLabel":"Sep 1-15, 2026","periodStart":"2026-09-01",
          "periodEnd":"2026-09-15","payDate":"2026-09-20","frequency":"SemiMonthly","status":"{{status}}",
          "employeeCount":1,"totalGrossPay":0,"totalDeductions":0,"totalNetPay":0,"createdAt":"2026-09-01T00:00:00Z",
-         "employeesMissingAttendance":{{missingAttendance}},
-         "employees":[{{(withEmployee ? EmployeeLine : "")}}]}
+         "employeesMissingAttendance":{{missingAttendance}},"runType":"{{runType}}",
+         "employees":[{{employees ?? (withEmployee ? EmployeeLine : "")}}]}
         """;
 
     private static string EmployeeLine =>
         $$"""{"id":"{{Guid.NewGuid()}}","employeeId":"{{MariaId}}","employeeName":"Maria Santos","employeeNumber":"EMP-0042"}""";
+
+    private static string JoseLine =>
+        $$"""{"id":"{{Guid.NewGuid()}}","employeeId":"{{JoseId}}","employeeName":"Jose Reyes","employeeNumber":"EMP-0043"}""";
+
+    private static string FinalPayLine(decimal tax) =>
+        $$"""
+        {"id":"{{Guid.NewGuid()}}","employeeId":"{{MariaId}}","employeeName":"Maria Santos","employeeNumber":"EMP-0042",
+         "grossPay":132500,"netPay":130000,"withholdingTax":{{tax}},
+         "leaveConversionPay":7500,"leaveConversionNonTaxable":6000,"separationPay":100000,"retirementPay":25000,
+         "finalPayNonTaxable":131000}
+        """;
 
     private IRenderedComponent<PayrollRunDetail> RenderPage()
     {
@@ -242,6 +256,142 @@ public class PayrollRunDetailTests : BunitContext
 
         cut.Markup.Should().Contain("No employees on this run.");
         cut.FindAll("button").Should().NotContain(b => b.TextContent.Contains("Download all"));
+    }
+
+    // ---------- Final-pay runs ----------
+
+    [Fact]
+    public void AFinalPayRun_ShowsEachEmployeesLeaveConversionSeparationAndRetirementPay_AndTheNonTaxablePart()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", runType: "FinalPay", employees: FinalPayLine(1200m)));
+
+        var cut = RenderPage();
+
+        var headers = cut.FindAll("thead th").Select(h => h.TextContent.Trim()).ToList();
+        headers.Should().Contain(["Leave Conversion", "Separation Pay", "Retirement Pay", "Final-Pay Non-Taxable"]);
+        cut.Find("[data-leave-conversion]").TextContent.Should().Contain("7,500.00");
+        cut.Find("[data-separation-pay]").TextContent.Should().Contain("100,000.00");
+        cut.Find("[data-retirement-pay]").TextContent.Should().Contain("25,000.00");
+        cut.Find("[data-final-pay-non-taxable]").TextContent.Should().Contain("131,000.00");
+        cut.Find("[data-final-pay-badge]").TextContent.Should().Be("Final pay");
+    }
+
+    [Fact]
+    public void ARegularRun_HasNoFinalPayColumns()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft"));
+
+        var cut = RenderPage();
+
+        cut.FindAll("thead th").Select(h => h.TextContent.Trim()).Should().NotContain("Leave Conversion");
+        cut.FindAll("[data-final-pay-badge]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ANegativeTax_IsShownAsARefund()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", runType: "FinalPay", employees: FinalPayLine(-1800m)));
+
+        var cut = RenderPage();
+
+        var tax = cut.Find("[data-withholding-tax]").TextContent;
+        tax.Should().Contain("Refund").And.Contain("1,800.00").And.NotContain("-");
+    }
+
+    [Fact]
+    public void MarkPaidRefusedForOutstandingClearance_ShowsTheReason()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Approved", runType: "FinalPay", employees: FinalPayLine(0m)))
+            .On(HttpMethod.Put, $"{RunPath}/mark-paid", HttpStatusCode.BadRequest,
+                """{"title":"Bad request","detail":"Clear Return laptop, Turn in ID before paying final pay.","status":400}""");
+        var cut = RenderPage();
+
+        Button(cut, "Mark Paid").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should()
+            .Contain("Clear Return laptop, Turn in ID before paying final pay."));
+    }
+
+    // ---------- Removing an employee ----------
+
+    [Theory]
+    [InlineData("Regular", "Draft", true)]
+    [InlineData("Regular", "ForApproval", true)]
+    [InlineData("Regular", "Approved", true)]
+    [InlineData("Regular", "Paid", false)]
+    [InlineData("FinalPay", "Draft", false)]
+    public void RemoveIsOfferedOnRegularRunsThatArentPaid(string runType, string status, bool offered)
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson(status, runType: runType));
+
+        var cut = RenderPage();
+
+        cut.FindAll($"[data-remove-employee='{MariaId}']").Should().HaveCount(offered ? 1 : 0);
+    }
+
+    [Fact]
+    public void RemovingAnEmployee_AsksFirst_ThenDeletesAndShowsTheRunTheApiReturns()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", employees: $"{EmployeeLine},{JoseLine}"))
+            .On(HttpMethod.Delete, $"{RunPath}/employees/{JoseId}", HttpStatusCode.OK, RunJson("Draft"));
+        var cut = RenderPage();
+
+        cut.Find($"[data-remove-employee='{JoseId}']").Click();
+
+        var dialog = cut.WaitForElement("[data-confirm-remove]");
+        dialog.TextContent.Should().Contain("Jose Reyes");
+        dialog.TextContent.Should().NotContain("approval again");
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Delete);
+
+        dialog.QuerySelectorAll("button").Last().Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("tbody tr").Should().ContainSingle()
+            .Which.TextContent.Should().Contain("Maria Santos"));
+        _api.Requests.Should().ContainSingle(r => r.Method == HttpMethod.Delete);
+        cut.FindAll("[data-confirm-remove]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void RemovingFromAnApprovedRun_WarnsItGoesBackToDraftForApprovalAgain()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Approved", employees: $"{EmployeeLine},{JoseLine}"));
+        var cut = RenderPage();
+
+        cut.Find($"[data-remove-employee='{JoseId}']").Click();
+
+        cut.WaitForElement("[data-confirm-remove]").TextContent.Should()
+            .Contain("goes back to Draft").And.Contain("approval again");
+    }
+
+    [Fact]
+    public void CancellingTheRemoval_LeavesTheRunAlone()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", employees: $"{EmployeeLine},{JoseLine}"));
+        var cut = RenderPage();
+
+        cut.Find($"[data-remove-employee='{JoseId}']").Click();
+        cut.WaitForElement("[data-confirm-remove]").QuerySelectorAll("button").First().Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[data-confirm-remove]").Should().BeEmpty());
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Delete);
+        cut.FindAll("tbody tr").Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void ARefusedRemoval_ShowsTheApisReason()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft"))
+            .On(HttpMethod.Delete, $"{RunPath}/employees/{MariaId}", HttpStatusCode.BadRequest,
+                """{"title":"Bad request","detail":"A payroll run needs at least one employee.","status":400}""");
+        var cut = RenderPage();
+
+        cut.Find($"[data-remove-employee='{MariaId}']").Click();
+        cut.WaitForElement("[data-confirm-remove]").QuerySelectorAll("button").Last().Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should()
+            .Contain("A payroll run needs at least one employee."));
+        cut.FindAll("[data-confirm-remove]").Should().BeEmpty();
+        cut.FindAll("tbody tr").Should().ContainSingle();
     }
 
     private static HttpResponseMessage Json(string json) =>

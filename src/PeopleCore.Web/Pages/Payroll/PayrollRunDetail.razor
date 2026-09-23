@@ -12,6 +12,10 @@
         @if (_run is not null)
         {
             <Badge Variant="@RunStatusVariant(_run.Status)" Class="mt-1">@_run.Status</Badge>
+            @if (IsFinalPay)
+            {
+                <Badge Variant="outline" Class="mt-1 ml-2" data-final-pay-badge>Final pay</Badge>
+            }
         }
     </ChildContent>
     <Actions>
@@ -107,6 +111,13 @@ else
                             <TableHead Class="px-4">Overtime</TableHead>
                             <TableHead Class="px-4">Holiday / Rest Day</TableHead>
                             <TableHead Class="px-4">Night Diff</TableHead>
+                            @if (IsFinalPay)
+                            {
+                                <TableHead Class="px-4">Leave Conversion</TableHead>
+                                <TableHead Class="px-4">Separation Pay</TableHead>
+                                <TableHead Class="px-4">Retirement Pay</TableHead>
+                                <TableHead Class="px-4">Final-Pay Non-Taxable</TableHead>
+                            }
                             <TableHead Class="px-4">Gross</TableHead>
                             <TableHead Class="px-4">SSS</TableHead>
                             <TableHead Class="px-4">PhilHealth</TableHead>
@@ -115,6 +126,10 @@ else
                             <TableHead Class="px-4">Total Deductions</TableHead>
                             <TableHead Class="px-4">Net</TableHead>
                             <TableHead Class="px-4">Payslip</TableHead>
+                            @if (CanRemoveEmployees)
+                            {
+                                <TableHead Class="px-4"><span class="sr-only">Remove</span></TableHead>
+                            }
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -126,11 +141,28 @@ else
                                 <TableCell Class="px-4 py-3">&#8369;@e.OvertimePay.ToString("N2")</TableCell>
                                 <TableCell Class="px-4 py-3">&#8369;@e.HolidayPay.ToString("N2")</TableCell>
                                 <TableCell Class="px-4 py-3">&#8369;@e.NightDiffPay.ToString("N2")</TableCell>
+                                @if (IsFinalPay)
+                                {
+                                    <TableCell Class="px-4 py-3" data-leave-conversion>&#8369;@e.LeaveConversionPay.ToString("N2")</TableCell>
+                                    <TableCell Class="px-4 py-3" data-separation-pay>&#8369;@e.SeparationPay.ToString("N2")</TableCell>
+                                    <TableCell Class="px-4 py-3" data-retirement-pay>&#8369;@e.RetirementPay.ToString("N2")</TableCell>
+                                    <TableCell Class="px-4 py-3" data-final-pay-non-taxable>&#8369;@e.FinalPayNonTaxable.ToString("N2")</TableCell>
+                                }
                                 <TableCell Class="px-4 py-3 font-medium">&#8369;@e.GrossPay.ToString("N2")</TableCell>
                                 <TableCell Class="px-4 py-3">&#8369;@e.SSSEmployee.ToString("N2")</TableCell>
                                 <TableCell Class="px-4 py-3">&#8369;@e.PhilHealthEmployee.ToString("N2")</TableCell>
                                 <TableCell Class="px-4 py-3">&#8369;@e.PagIbigEmployee.ToString("N2")</TableCell>
-                                <TableCell Class="px-4 py-3">&#8369;@e.WithholdingTax.ToString("N2")</TableCell>
+                                <TableCell Class="px-4 py-3" data-withholding-tax>
+                                    @if (e.WithholdingTax < 0m)
+                                    {
+                                        @* A final pay settles the year's tax, which can mean handing some back. *@
+                                        <span>Refund &#8369;@Math.Abs(e.WithholdingTax).ToString("N2")</span>
+                                    }
+                                    else
+                                    {
+                                        <span>&#8369;@e.WithholdingTax.ToString("N2")</span>
+                                    }
+                                </TableCell>
                                 <TableCell Class="px-4 py-3">&#8369;@e.TotalDeductions.ToString("N2")</TableCell>
                                 <TableCell Class="px-4 py-3 font-medium">&#8369;@e.NetPay.ToString("N2")</TableCell>
                                 <TableCell Class="px-4 py-3">
@@ -139,6 +171,13 @@ else
                                         <span class="sr-only">Download payslip for @e.EmployeeName</span>
                                     </Button>
                                 </TableCell>
+                                @if (CanRemoveEmployees)
+                                {
+                                    <TableCell Class="px-4 py-3">
+                                        <Button Variant="ghost" Size="sm" OnClick="@(() => AskToRemove(e))"
+                                                Disabled="@(_removing || _computing || _approving || _markingPaid)" data-remove-employee="@e.EmployeeId">Remove</Button>
+                                    </TableCell>
+                                }
                             </TableRow>
                         }
                     </TableBody>
@@ -148,6 +187,11 @@ else
         </CardContent>
     </Card>
 }
+
+<AlertDialog IsOpen="@(_removingEmployee is not null)" Title="Remove from this run?"
+             Description="@RemoveConfirmation()"
+             ConfirmText="Remove" ConfirmVariant="destructive" CancelText="Keep them"
+             Loading="@_removing" OnConfirm="RemoveEmployee" OnCancel="@(() => _removingEmployee = null)" data-confirm-remove />
 
 @code {
     [Parameter] public Guid Id { get; set; }
@@ -161,6 +205,14 @@ else
     private bool _markingPaid;
     private bool _downloadingAll;
     private readonly HashSet<Guid> _downloadingEmployeeIds = new();
+    private PayrollRunEmployeeDto? _removingEmployee;
+    private bool _removing;
+
+    private bool IsFinalPay => _run?.RunType == PayrollLabels.FinalPayRunType;
+
+    // A final pay is built for its one employee from their separation, and a paid run has already
+    // retired loan balances - the API refuses both, so neither offers Remove.
+    private bool CanRemoveEmployees => _run is not null && !IsFinalPay && _run.Status != "Paid";
 
     protected override async Task OnParametersSetAsync() => await LoadRun();
 
@@ -262,6 +314,42 @@ else
         finally
         {
             _markingPaid = false;
+        }
+    }
+
+    private void AskToRemove(PayrollRunEmployeeDto employee)
+    {
+        _actionError = null;
+        _removingEmployee = employee;
+    }
+
+    private string RemoveConfirmation()
+    {
+        if (_removingEmployee is null || _run is null) return "";
+        var text = $"{_removingEmployee.EmployeeName} will be taken off {_run.RunNumber}.";
+        return _run.Status == "Approved"
+            ? text + " The run goes back to Draft and needs approval again."
+            : text;
+    }
+
+    private async Task RemoveEmployee()
+    {
+        if (_removingEmployee is not { } employee || _removing) return;
+        _actionError = null;
+        _removing = true;
+        try
+        {
+            var run = await Api.RemovePayrollRunEmployeeAsync(Id, employee.EmployeeId);
+            if (run is not null) _run = run;
+        }
+        catch (Exception ex)
+        {
+            _actionError = ex.Message;
+        }
+        finally
+        {
+            _removing = false;
+            _removingEmployee = null;
         }
     }
 

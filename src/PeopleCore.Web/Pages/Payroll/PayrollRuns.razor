@@ -50,7 +50,13 @@
                     @foreach (var r in _runs.Items)
                     {
                         <TableRow @onclick="() => GoToRun(r.Id)">
-                            <TableCell Class="px-4 py-3 font-medium cursor-pointer">@r.RunNumber</TableCell>
+                            <TableCell Class="px-4 py-3 font-medium cursor-pointer">
+                                @r.RunNumber
+                                @if (r.RunType == PayrollLabels.FinalPayRunType)
+                                {
+                                    <Badge Variant="outline" Class="ml-2" data-final-pay-badge>Final pay</Badge>
+                                }
+                            </TableCell>
                             <TableCell Class="px-4 py-3 cursor-pointer">@r.PeriodLabel</TableCell>
                             <TableCell Class="px-4 py-3 cursor-pointer">@r.PayDate</TableCell>
                             <TableCell Class="px-4 py-3 cursor-pointer">

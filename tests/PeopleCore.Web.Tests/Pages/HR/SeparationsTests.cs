@@ -48,19 +48,26 @@ public class SeparationsTests : BunitContext
         Guid? id = null, string type = "Resignation", string? cause = null, string status = "NoticeGiven",
         string lastWorkingDay = "2026-04-15", string finalPayDueBy = "2026-04-20", bool finalPayOverdue = false,
         int clearedCount = 0, int clearanceCount = 0, string clearanceItems = "[]",
-        string? separatedBy = null, string? separatedAt = null) =>
+        string? separatedBy = null, string? separatedAt = null,
+        string? finalPayRunNumber = null, string? finalPayStatus = null, Guid? employeeId = null) =>
         $$"""
-        {"id":"{{id ?? SeparationId}}","employeeId":"{{MariaId}}","employeeName":"Maria Santos","employeeNumber":"EMP-001","position":"Accountant",
+        {"id":"{{id ?? SeparationId}}","employeeId":"{{employeeId ?? MariaId}}","employeeName":"Maria Santos","employeeNumber":"EMP-001","position":"Accountant",
          "type":"{{type}}","authorizedCause":{{(cause is null ? "null" : $"\"{cause}\"")}},"noticeDate":"2026-03-15","lastWorkingDay":"{{lastWorkingDay}}",
          "reason":"Moving abroad","status":"{{status}}","recordedBy":"hr@company.test","separatedBy":{{(separatedBy is null ? "null" : $"\"{separatedBy}\"")}},
          "separatedAt":{{(separatedAt is null ? "null" : $"\"{separatedAt}\"")}},"finalPayDueBy":"{{finalPayDueBy}}","finalPayOverdue":{{(finalPayOverdue ? "true" : "false")}},
-         "clearedCount":{{clearedCount}},"clearanceCount":{{clearanceCount}},"clearanceItems":{{clearanceItems}}}
+         "clearedCount":{{clearedCount}},"clearanceCount":{{clearanceCount}},"clearanceItems":{{clearanceItems}},
+         "finalPayRunId":{{(finalPayRunNumber is null ? "null" : $"\"{Guid.NewGuid()}\"")}},
+         "finalPayRunNumber":{{(finalPayRunNumber is null ? "null" : $"\"{finalPayRunNumber}\"")}},
+         "finalPayStatus":{{(finalPayStatus is null ? "null" : $"\"{finalPayStatus}\"")}}}
         """;
 
-    private static string ClearanceItem(Guid id, string name, string? clearedBy = null, string? clearedAt = null, string? note = null) =>
+    private static string ClearanceItem(Guid id, string name, string? clearedBy = null, string? clearedAt = null, string? note = null,
+        string? lastUndoneBy = null, string? lastUndoneAt = null) =>
         $$"""
         {"id":"{{id}}","name":"{{name}}","clearedBy":{{(clearedBy is null ? "null" : $"\"{clearedBy}\"")}},
-         "clearedAt":{{(clearedAt is null ? "null" : $"\"{clearedAt}\"")}},"note":{{(note is null ? "null" : $"\"{note}\"")}}}
+         "clearedAt":{{(clearedAt is null ? "null" : $"\"{clearedAt}\"")}},"note":{{(note is null ? "null" : $"\"{note}\"")}},
+         "lastUndoneBy":{{(lastUndoneBy is null ? "null" : $"\"{lastUndoneBy}\"")}},
+         "lastUndoneAt":{{(lastUndoneAt is null ? "null" : $"\"{lastUndoneAt}\"")}}}
         """;
 
     /// <summary>Wraps one or more <see cref="ClearanceItem"/> objects as the JSON array Separation's clearanceItems expects.</summary>
@@ -77,9 +84,20 @@ public class SeparationsTests : BunitContext
 
     // ---------- List page ----------
 
-    private void StubEmployees() =>
+    private void StubEmployees(params string[] inactive)
+    {
         _api.On(HttpMethod.Get, "/api/employees?page=1&pageSize=100&isActive=true", HttpStatusCode.OK,
             EmployeesPage(Employee(MariaId, "EMP-001", "Maria Santos"), Employee(JuanId, "EMP-002", "Juan Cruz")));
+        _api.On(HttpMethod.Get, "/api/employees?page=1&pageSize=100&isActive=false", HttpStatusCode.OK, EmployeesPage(inactive));
+    }
+
+    private static string Inactive(Guid id, string number, string name, string? separationDate) =>
+        $$"""
+        {"id":"{{id}}","employeeNumber":"{{number}}","firstName":"{{name.Split(' ')[0]}}","lastName":"{{name.Split(' ')[1]}}",
+         "fullName":"{{name}}","workEmail":"{{name.Split(' ')[0].ToLowerInvariant()}}@company.test",
+         "departmentName":null,"positionTitle":null,"employmentStatus":"Regular","isActive":false,
+         "separationDate":{{(separationDate is null ? "null" : $"\"{separationDate}\"")}}}
+        """;
 
     private IRenderedComponent<Separations> RenderList(params string[] separations)
     {
@@ -103,6 +121,64 @@ public class SeparationsTests : BunitContext
         row.TextContent.Should().Contain("Notice given");
         row.TextContent.Should().Contain("2 of 5");
         row.TextContent.Should().Contain("Apr 20, 2026");
+    }
+
+    [Fact]
+    public void TheFinalPayColumn_ShowsTheRunNumberAndAReadableStatus()
+    {
+        var cut = RenderList(Separation(finalPayRunNumber: "FP-2026-001", finalPayStatus: "ForApproval"));
+
+        var cell = cut.Find("[data-final-pay-run]");
+        cell.TextContent.Should().Contain("FP-2026-001").And.Contain("For approval").And.NotContain("ForApproval");
+    }
+
+    [Fact]
+    public void TheFinalPayColumn_SaysNotStarted_WithoutARun()
+    {
+        var cut = RenderList(Separation());
+
+        cut.Find("[data-final-pay-run]").TextContent.Should().Contain("Not started");
+    }
+
+    [Fact]
+    public void TheRecordForm_AlsoListsEmployeesWhoLeftWithoutASeparation_ButNotThoseWhoHaveOne()
+    {
+        var anaId = Guid.Parse("77777777-7777-7777-7777-777777777777");
+        var pedroId = Guid.Parse("88888888-8888-8888-8888-888888888888");
+        var joseId = Guid.Parse("99999999-9999-9999-9999-999999999999");
+        StubEmployees(
+            Inactive(anaId, "EMP-003", "Ana Reyes", "2026-03-03"),
+            Inactive(pedroId, "EMP-004", "Pedro Lim", "2026-02-01"),
+            Inactive(joseId, "EMP-005", "Jose Rizal", null));
+        _api.On(HttpMethod.Get, "/api/separations", HttpStatusCode.OK,
+            $"[{Separation(employeeId: pedroId, status: "Separated")}]");
+        var cut = Render<Separations>();
+        cut.WaitForAssertion(() => cut.FindAll(".animate-spin").Should().BeEmpty());
+
+        cut.Find("[data-record-separation]").Click();
+        cut.WaitForElement("[data-record-form]");
+
+        var options = cut.FindAll("#separation-employee option").Select(o => o.TextContent).ToList();
+        options.Should().Contain("Ana Reyes (EMP-003) (left Mar 3, 2026)");
+        options.Should().NotContain(o => o.Contains("Pedro Lim"), "Pedro's separation is already recorded");
+        options.Should().NotContain(o => o.Contains("Jose Rizal"), "an inactive employee with no separation date can't be recorded");
+        options.Should().Contain("Maria Santos (EMP-001)");
+    }
+
+    [Fact]
+    public void ChoosingSomeoneWhoLeft_PrefillsTheLastWorkingDayWithTheirSeparationDate()
+    {
+        var anaId = Guid.Parse("77777777-7777-7777-7777-777777777777");
+        StubEmployees(Inactive(anaId, "EMP-003", "Ana Reyes", "2026-03-03"));
+        _api.On(HttpMethod.Get, "/api/separations", HttpStatusCode.OK, "[]");
+        var cut = Render<Separations>();
+        cut.WaitForAssertion(() => cut.FindAll(".animate-spin").Should().BeEmpty());
+        cut.Find("[data-record-separation]").Click();
+        cut.WaitForElement("[data-record-form]");
+
+        cut.Find("#separation-employee").Change(anaId.ToString());
+
+        cut.Find("#separation-last-day").GetAttribute("value").Should().Be("2026-03-03");
     }
 
     [Fact]
@@ -402,6 +478,24 @@ public class SeparationsTests : BunitContext
         cut.Find($"[data-undo='{ItemId2}']").Should().NotBeNull();
         cut.FindAll($"[data-clear='{ItemId2}']").Should().BeEmpty();
         cut.FindAll($"[data-remove='{ItemId2}']").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AnItemThatWasUndone_SaysWhoUndidItAndWhen()
+    {
+        var items = Items(ClearanceItem(ItemId, "Return laptop", lastUndoneBy: "payroll@company.test", lastUndoneAt: "2026-04-12T08:00:00Z"));
+        var cut = RenderDetail(Separation(clearedCount: 0, clearanceCount: 1, clearanceItems: items));
+
+        cut.Find($"[data-undone='{ItemId}']").TextContent.Should().Contain("Undone by payroll@company.test on Apr 12, 2026");
+    }
+
+    [Fact]
+    public void AnItemNeverUndone_SaysNothingAboutUndoing()
+    {
+        var items = Items(ClearanceItem(ItemId, "Return laptop"));
+        var cut = RenderDetail(Separation(clearedCount: 0, clearanceCount: 1, clearanceItems: items));
+
+        cut.FindAll("[data-undone]").Should().BeEmpty();
     }
 
     [Fact]
