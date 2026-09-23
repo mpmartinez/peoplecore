@@ -1217,7 +1217,7 @@ public class PayrollRunServiceTests
                   finalPay: FinalPayRun(new DateOnly(2026, 3, 16), new DateOnly(2026, 3, 20)));
 
         (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
-            "Maria Santos's final pay already covers Mar 16 – Mar 20, 2026; take them off this payroll.");
+            "Maria Santos's final pay has been started; the rest of their pay goes there. Take them off this payroll.");
         _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -1296,17 +1296,46 @@ public class PayrollRunServiceTests
             "Maria Santos left on Mar 15, 2026; take them off this payroll - their pay goes in final pay.");
     }
 
-    [Fact]
-    public async Task ARegularRun_BeforeSomeonesFinalPay_CanBeApproved()
+    [Theory]
+    [InlineData("Create", PayrollRunStatus.Draft)]
+    [InlineData("Compute", PayrollRunStatus.ForApproval)]
+    [InlineData("Approve", PayrollRunStatus.Approved)]
+    [InlineData("MarkPaid", PayrollRunStatus.Paid)]
+    public async Task ARegularRun_BeforeSomeonesFinalPay_IsRefused(string step, PayrollRunStatus finalPayStatus)
     {
-        // Leaves Apr 10, after the run; a final pay for Apr 1-10 doesn't touch Mar 16-31.
-        var (act, run, maria) = StepOnMariasRun("Approve");
-        Separated(maria, lastWorkingDay: new DateOnly(2026, 4, 10),
-                  finalPay: FinalPayRun(new DateOnly(2026, 4, 1), new DateOnly(2026, 4, 10)));
+        // Leaves Apr 10, after the run, and their final pay for Apr 1-10 has been started. The
+        // final pay's 13th month, tax settle and contributions all take it as their last pay, so
+        // a Mar 16-31 run paid after it would fall outside all three: the rest of their pay goes
+        // in the final pay, whatever the dates and whatever the final pay's status.
+        var (act, run, maria) = StepOnMariasRun(step);
+        var finalPay = FinalPayRun(new DateOnly(2026, 4, 1), new DateOnly(2026, 4, 10));
+        finalPay.Status = finalPayStatus;
+        Separated(maria, lastWorkingDay: new DateOnly(2026, 4, 10), finalPay: finalPay);
 
-        await act();
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos's final pay has been started; the rest of their pay goes there. Take them off this payroll.");
+        run.Status.Should().Be(step == "MarkPaid" ? PayrollRunStatus.Approved : PayrollRunStatus.Draft);
+        _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 
-        run.Status.Should().Be(PayrollRunStatus.Approved);
+    [Fact]
+    public async Task ARegularRun_CreatedAfterSomeonesFinalPayStarted_IsRefused_EvenBeforeTheFinalPeriod()
+    {
+        // Scenario B: the last working day is Dec 31 and the final pay (Dec 16-31, with the 13th
+        // month) has been started. A Dec 1-15 run with the 13th month, created afterwards, lies
+        // wholly before the final period - but the final pay's 13th month already counts every
+        // Paid run of the year, so paying this one too would pay the 13th month twice.
+        var maria = new Employee { FirstName = "Maria", LastName = "Santos" };
+        Separated(maria, lastWorkingDay: new DateOnly(2026, 12, 31),
+                  finalPay: FinalPayRun(new DateOnly(2026, 12, 16), new DateOnly(2026, 12, 31)));
+
+        var act = () => _sut.CreateAsync(new CreatePayrollRunRequest(
+            new DateOnly(2026, 12, 1), new DateOnly(2026, 12, 15), new DateOnly(2026, 12, 15), PayFrequency.SemiMonthly,
+            [new PayrollRunEmployeeInput(maria.Id, IncludeThirteenthMonth: true)]));
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos's final pay has been started; the rest of their pay goes there. Take them off this payroll.");
+        _runRepo.Verify(r => r.AddWithEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ------------------------------------------------------------------

@@ -301,9 +301,12 @@ public class PayrollRunService : IPayrollRunService
 
     /// <summary>
     /// Keeps people who have left off a regular run: anyone whose last working day is before the
-    /// period (their pay for it, if any, goes in their final pay), and anyone whose final pay
-    /// already covers some of the period (paying both would pay those days twice). Someone leaving
-    /// during the period, with no final pay yet, stays - the run still pays them up to that day.
+    /// period (their pay for it, if any, goes in their final pay), and anyone whose final pay has
+    /// been started, in any status and whatever the two periods. The final pay's 13th month, tax
+    /// settle and contributions all take it as the employee's last pay, so a regular run paid
+    /// after it would fall outside all three - a Dec 1-15 run carrying the 13th month, say,
+    /// would pay it a second time. Someone leaving during the period, with no final pay yet,
+    /// stays - the run still pays them up to that day.
     /// </summary>
     private async Task EnsureNoOneHasLeftAsync(IReadOnlyList<Guid> employeeIds, DateOnly periodStart,
         DateOnly periodEnd, CancellationToken ct)
@@ -321,10 +324,9 @@ public class PayrollRunService : IPayrollRunService
                 throw new DomainException(string.Create(CultureInfo.InvariantCulture,
                     $"{name} left on {separation.LastWorkingDay:MMM d, yyyy}; take them off this payroll - their pay goes in final pay."));
 
-            if (separation.FinalPayRun is { } finalPay
-                && finalPay.PeriodStart <= periodEnd && finalPay.PeriodEnd >= periodStart)
+            if (separation.FinalPayRunId is not null || separation.FinalPayRun is not null)
                 throw new DomainException(
-                    $"{name}'s final pay already covers {finalPay.PeriodLabel}; take them off this payroll.");
+                    $"{name}'s final pay has been started; the rest of their pay goes there. Take them off this payroll.");
         }
     }
 

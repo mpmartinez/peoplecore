@@ -98,7 +98,7 @@ public class SeparatedEmployeeRunDbTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task SomeoneWhoseFinalPayOverlapsTheRun_BlocksApproval()
+    public async Task SomeoneWhoseFinalPayHasStarted_BlocksApproval()
     {
         var (run, _, separation) = await SeedAsync(lastWorkingDay: new DateOnly(2026, 3, 20));
         var finalPay = ARun("FP-2026-001", new(2026, 3, 16), new(2026, 3, 20), new(2026, 4, 10), PayrollRunStatus.Draft);
@@ -111,6 +111,6 @@ public class SeparatedEmployeeRunDbTests : DatabaseTestBase
         var approve = () => Service(context).ApproveAsync(run.Id);
 
         (await approve.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
-            "Maria Santos's final pay already covers Mar 16 – Mar 20, 2026; take them off this payroll.");
+            "Maria Santos's final pay has been started; the rest of their pay goes there. Take them off this payroll.");
     }
 }

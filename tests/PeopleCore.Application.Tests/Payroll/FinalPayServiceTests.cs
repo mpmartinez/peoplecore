@@ -504,15 +504,10 @@ public class FinalPayServiceTests
     }
 
     [Fact]
-    public async Task CreateAsync_DefaultPeriod_StartsTheDayAfterTheLastPaidRegularRun_IgnoringUnpaidAndFinalPayRuns()
+    public async Task CreateAsync_DefaultPeriod_StartsTheDayAfterTheLastPaidRegularRun_IgnoringFinalPayRuns()
     {
-        // An old draft regular run and a paid run of another type must not move the start. (The
-        // draft ends before March: one ending in March or later would refuse the final pay.)
-        var draft = new PayrollRun
-        {
-            PeriodStart = new DateOnly(2026, 1, 16), PeriodEnd = new DateOnly(2026, 1, 31),
-            PayDate = new DateOnly(2026, 1, 31), Status = PayrollRunStatus.Draft,
-        };
+        // A paid run of another type must not move the start. (An unpaid regular run can't be
+        // there at all: any one the employee is in refuses the final pay.)
         var otherFinalPay = new PayrollRun
         {
             RunType = PayrollRunType.FinalPay,
@@ -525,7 +520,7 @@ public class FinalPayServiceTests
             PayDate = new DateOnly(2026, 1, 31), Status = PayrollRunStatus.Paid,
         };
         _runs.Setup(r => r.GetRunsForEmployeeAsync(_employee.Id, It.IsAny<CancellationToken>()))
-             .ReturnsAsync([draft, otherFinalPay, _februaryRun, january]);
+             .ReturnsAsync([otherFinalPay, _februaryRun, january]);
 
         var summary = await _sut.CreateAsync(_separation.Id, Request());
 
@@ -840,6 +835,59 @@ public class FinalPayServiceTests
 
         await act.Should().ThrowAsync<DomainException>().WithMessage(
             "Payroll PAY-2026-005 covers Mar 1 – Mar 15, 2026 and isn't paid yet; pay it before creating final pay.");
+    }
+
+    /// <summary>
+    /// Scenario A: the last working day is Apr 10. Mar 1-15 is Paid and Mar 16-31 Approved but not
+    /// paid; HR starts the final pay on Apr 1. The unpaid run ends before both the start and the
+    /// separation month, but paid after the final pay it would fall outside the final pay's 13th
+    /// month and tax settle, which take the final pay as the employee's last pay.
+    /// </summary>
+    private void AnApprovedMarchCutoffBeforeAnAprilSeparation()
+    {
+        _separation.LastWorkingDay = new DateOnly(2026, 4, 10);
+        var firstHalf = new PayrollRun
+        {
+            RunNumber = "PAY-2026-005",
+            PeriodStart = new DateOnly(2026, 3, 1), PeriodEnd = new DateOnly(2026, 3, 15),
+            PayDate = new DateOnly(2026, 3, 15), Status = PayrollRunStatus.Paid,
+        };
+        var secondHalf = new PayrollRun
+        {
+            RunNumber = "PAY-2026-006",
+            PeriodStart = new DateOnly(2026, 3, 16), PeriodEnd = new DateOnly(2026, 3, 31),
+            PayDate = new DateOnly(2026, 3, 31), Status = PayrollRunStatus.Approved,
+        };
+        _paidRuns.AddRange([firstHalf, secondHalf]);
+    }
+
+    [Fact]
+    public async Task CreateAsync_Refuses_WhileAnUnpaidRegularRunBeforeTheStartAndTheSeparationMonthIncludesTheEmployee()
+    {
+        AnApprovedMarchCutoffBeforeAnAprilSeparation();
+
+        var act = () => _sut.CreateAsync(_separation.Id, Request(payDate: new DateOnly(2026, 4, 15),
+                                                                 periodStart: new DateOnly(2026, 4, 1)));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Payroll PAY-2026-006 covers Mar 16 – Mar 31, 2026 and isn't paid yet; pay it before creating final pay.");
+        _runs.Verify(r => r.AddFinalPayRunAsync(It.IsAny<PayrollRun>(), It.IsAny<Separation>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_Refuses_WhileAnUnpaidRegularRunBeforeTheStartAndTheSeparationMonthIncludesTheEmployee()
+    {
+        _separation.LastWorkingDay = new DateOnly(2026, 4, 10);
+        await _sut.CreateAsync(_separation.Id, Request(payDate: new DateOnly(2026, 4, 15)));
+        _separation.FinalPayRun = _savedRun;
+        _paidRuns.Add(_savedRun!);
+        AnApprovedMarchCutoffBeforeAnAprilSeparation();
+
+        var act = () => _sut.UpdateAsync(_separation.Id, Request(payDate: new DateOnly(2026, 4, 15),
+                                                                 periodStart: new DateOnly(2026, 4, 1)));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Payroll PAY-2026-006 covers Mar 16 – Mar 31, 2026 and isn't paid yet; pay it before creating final pay.");
     }
 
     [Fact]

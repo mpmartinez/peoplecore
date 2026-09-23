@@ -43,9 +43,12 @@ namespace PeopleCore.Application.Payroll.FinalPay;
 /// <para>
 /// <b>Unpaid regular runs.</b> A final pay isn't created, nor its period changed, while a regular
 /// run that includes the employee and isn't Paid yet ends on or after the earlier of the final
-/// period's start and the first of the separation month: it would pay the same days twice, pay
-/// salary after the separation, or take the month's contributions again. The run has to be paid
-/// first - or, when it starts after the last working day, the employee taken off it.
+/// period's start and the first of the separation month - it would pay the same days twice, pay
+/// salary after the separation, or take the month's contributions again - or starts on or
+/// before the last working day, since the final pay's 13th month and tax settle take it as the
+/// employee's last pay. The run has to be paid first - or, when it starts after the last working
+/// day, the employee taken off it. Once the final pay exists, regular runs refuse the employee
+/// altogether (see PayrollRunService), so nothing is paid outside it.
 /// </para>
 /// <para>
 /// <b>Contributions</b> top the separation month - the last working day's month - up to exactly
@@ -312,16 +315,20 @@ public sealed class FinalPayService : IFinalPayService
                 : new FinalPeriod(defaultStart, NoSalary: false);
         }
 
-        // Refused while any unpaid regular run the employee is in (GetRunsForEmployeeAsync returns
-        // only those) ends on or after the earlier of the final period's start and the first of
-        // the separation month. That catches a run overlapping the final period, one after the
-        // last working day (salary after separation), and one earlier in the separation month -
-        // any of which, paid later, would take the month's contributions again. A run that starts
-        // after the last working day has nothing to pay them, so they come off it rather than
-        // wait for it to be paid.
+        // Refused while an unpaid regular run the employee is in (GetRunsForEmployeeAsync returns
+        // only those) either ends on or after the earlier of the final period's start and the
+        // first of the separation month, or starts on or before the last working day. The first
+        // catches a run overlapping the final period, one after the last working day (salary
+        // after separation), and one earlier in the separation month - any of which, paid later,
+        // would take the month's contributions again. The second catches any earlier run still
+        // unpaid: the final pay's 13th month and tax settle take it as the employee's last pay,
+        // so a run paid after it would fall outside both. Between them they catch every unpaid
+        // run - one starting after the last working day always ends after the start. A run that
+        // starts after the last working day has nothing to pay them, so they come off it rather
+        // than wait for it to be paid.
         var from = Min(period.Start, new DateOnly(lastDay.Year, lastDay.Month, 1));
         var unpaid = regular
-            .Where(r => r.Status != PayrollRunStatus.Paid && r.PeriodEnd >= from)
+            .Where(r => r.Status != PayrollRunStatus.Paid && (r.PeriodEnd >= from || r.PeriodStart <= lastDay))
             .OrderBy(r => r.PeriodStart)
             .FirstOrDefault();
         if (unpaid is not null)
