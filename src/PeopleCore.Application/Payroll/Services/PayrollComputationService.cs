@@ -300,8 +300,13 @@ public class PayrollComputationService
             finalPayTaxable = separationPay + retirementPay - finalPay.SeparationAndRetirementNonTaxable;
         }
 
-        // Gross pay for contribution base = regular pay + OT + holiday + taxable allowances (non-taxable excluded from BIR base)
-        decimal grossForContribs = regularPay + overtimePay + holidayPay + nightDiffPay + taxableAllowances
+        // Gross taxable pay, the withholding base before contributions come off: regular pay,
+        // overtime, holiday and night premiums, taxable allowances and, on a final pay, the
+        // separation or retirement pay that isn't exempt. Non-taxable allowances, the 13th month
+        // and the leave beyond de minimis stay out (the last two are taxed only past their 90,000
+        // exemption, below). It is not the contribution base: SSS, PhilHealth and Pag-IBIG are
+        // computed on the monthly basic alone.
+        decimal grossTaxable = regularPay + overtimePay + holidayPay + nightDiffPay + taxableAllowances
             + finalPayTaxable;
 
         // Mandatory contributions based on monthly salary
@@ -345,7 +350,7 @@ public class PayrollComputationService
         }
 
         // Taxable income for BIR = gross taxable - mandatory deductions
-        decimal taxableForBIR = grossForContribs - sssEmp - phEmp - piEmp;
+        decimal taxableForBIR = grossTaxable - sssEmp - phEmp - piEmp;
 
         // A settled final-pay tax replaces both the per-period withholding and the 13th-month
         // excess tax below - it is the actual figure HR has already worked out, not an estimate
@@ -397,7 +402,9 @@ public class PayrollComputationService
         if (loanDeductions > discretionaryBudget)
         {
             // Pro-rate the shortfall across the loans so no single one absorbs all of it; the
-            // remainder simply stays on the balance and is collected next period.
+            // remainder simply stays on the balance - collected next period on a regular run; on
+            // a final pay there is no next period, so it is left for HR to recover another way
+            // (the final-pay summary shows it as uncovered).
             decimal affordable = discretionaryBudget;
             decimal running = 0m;
             for (int i = 0; i < loanLines.Count; i++)
