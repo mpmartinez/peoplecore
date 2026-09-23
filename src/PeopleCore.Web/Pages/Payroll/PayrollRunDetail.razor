@@ -24,7 +24,7 @@
         {
             @if (CanCompute(_run.Status))
             {
-                <Button Variant="secondary" OnClick="Compute" Loading="@_computing" Disabled="@(_computing || _approving || _markingPaid)">Compute</Button>
+                <Button Variant="secondary" OnClick="StartCompute" Loading="@_computing" Disabled="@(_computing || _approving || _markingPaid)">Compute</Button>
             }
             @if (CanApprove(_run.Status))
             {
@@ -120,7 +120,9 @@ else
                                 <TableHead Class="px-4">Leave Conversion</TableHead>
                                 <TableHead Class="px-4">Separation Pay</TableHead>
                                 <TableHead Class="px-4">Retirement Pay</TableHead>
-                                <TableHead Class="px-4">Final-Pay Non-Taxable</TableHead>
+                                @* FinalPayNonTaxable: the de minimis leave plus exempt separation/retirement pay. The
+                                   leave beyond de minimis isn't in it - its exempt share depends on the year's 90,000. *@
+                                <TableHead Class="px-4">Non-taxable (de minimis + separation/retirement)</TableHead>
                             }
                             <TableHead Class="px-4">Gross</TableHead>
                             <TableHead Class="px-4">SSS</TableHead>
@@ -192,6 +194,11 @@ else
     </Card>
 }
 
+<AlertDialog IsOpen="@_confirmingCompute" Title="Recompute this final pay?"
+             Description="This final pay has been approved. Recomputing it means it goes back to Draft and needs approval again."
+             ConfirmText="Recompute" ConfirmVariant="primary" CancelText="Keep it approved"
+             Loading="@_computing" OnConfirm="ConfirmCompute" OnCancel="@(() => _confirmingCompute = false)" data-confirm-compute />
+
 <AlertDialog IsOpen="@(_removingEmployee is not null)" Title="Remove from this run?"
              Description="@RemoveConfirmation()"
              ConfirmText="Remove" ConfirmVariant="destructive" CancelText="Keep them"
@@ -205,6 +212,7 @@ else
     private bool _notFound;
     private string? _actionError;
     private bool _computing;
+    private bool _confirmingCompute;
     private bool _approving;
     private bool _markingPaid;
     private bool _downloadingAll;
@@ -258,6 +266,24 @@ else
     }
 
     private void GoBack() => Nav.NavigateTo("/payroll-runs");
+
+    // Recomputing an Approved final pay undoes its approval, so that asks first; anything else
+    // computes straight away.
+    private async Task StartCompute()
+    {
+        if (_run?.Status == "Approved")
+        {
+            _confirmingCompute = true;
+            return;
+        }
+        await Compute();
+    }
+
+    private async Task ConfirmCompute()
+    {
+        await Compute();
+        _confirmingCompute = false;
+    }
 
     private async Task Compute()
     {
@@ -407,10 +433,14 @@ else
         }
     }
 
-    // Compute is withheld once a run is Approved or Paid: PayrollRunService.ComputeAsync throws a
-    // DomainException in both cases (an approver has signed off, or - for Paid - the figures have
-    // already retired loan balances), so offering the button there would guarantee a failed call.
-    private static bool CanCompute(string status) => status is "Draft" or "Processing" or "ForApproval";
+    // Compute is withheld once a regular run is Approved or Paid: PayrollRunService.ComputeAsync
+    // throws a DomainException in both cases (an approver has signed off, or - for Paid - the
+    // figures have already retired loan balances), so offering the button there would guarantee a
+    // failed call. A final pay is the exception: an Approved one can still be recomputed (clearance
+    // can turn up deductions, and Mark Paid asks for a recompute when its leave has changed), and
+    // goes back to Draft - StartCompute confirms that first.
+    private bool CanCompute(string status) =>
+        status is "Draft" or "Processing" or "ForApproval" || (IsFinalPay && status == "Approved");
 
     // Approve is offered for the same statuses as Compute: PayrollRunService.ApproveAsync accepts
     // exactly Draft, Processing or ForApproval and throws a DomainException for Approved or Paid.

@@ -278,12 +278,82 @@ public class PayrollRunDetailTests : BunitContext
         var cut = RenderPage();
 
         var headers = cut.FindAll("thead th").Select(h => h.TextContent.Trim()).ToList();
-        headers.Should().Contain(["Leave Conversion", "Separation Pay", "Retirement Pay", "Final-Pay Non-Taxable"]);
+        // The column leaves out the exempt share of leave beyond de minimis, so it says what it holds.
+        headers.Should().Contain(["Leave Conversion", "Separation Pay", "Retirement Pay",
+                                  "Non-taxable (de minimis + separation/retirement)"]);
+        headers.Should().NotContain("Final-Pay Non-Taxable");
         cut.Find("[data-leave-conversion]").TextContent.Should().Contain("7,500.00");
         cut.Find("[data-separation-pay]").TextContent.Should().Contain("100,000.00");
         cut.Find("[data-retirement-pay]").TextContent.Should().Contain("25,000.00");
         cut.Find("[data-final-pay-non-taxable]").TextContent.Should().Contain("131,000.00");
         cut.Find("[data-final-pay-badge]").TextContent.Should().Be("Final pay");
+    }
+
+    [Theory]
+    [InlineData("FinalPay", "Approved", new[] { "Compute", "Mark Paid" })]
+    [InlineData("FinalPay", "Paid", new string[0])]
+    [InlineData("Regular", "Approved", new[] { "Mark Paid" })]
+    public void AnApprovedFinalPay_CanStillBeComputed_ARegularRunCannot(string runType, string status, string[] expected)
+    {
+        // The API recomputes an Approved final pay (and sends it back to Draft) - it's where a Mark
+        // Paid refused with "recompute it before paying" leads. A regular run's approval holds.
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson(status, runType: runType, employees: FinalPayLine(1200m)));
+
+        var cut = RenderPage();
+
+        ActionButtons(cut).Should().Equal(expected);
+    }
+
+    [Fact]
+    public void ComputingAnApprovedFinalPay_AsksFirst_SayingItGoesBackForApproval_ThenRecomputes()
+    {
+        var status = "Approved";
+        _api.On(HttpMethod.Get, RunPath, () => Json(RunJson(status, runType: "FinalPay", employees: FinalPayLine(1200m))))
+            .On(HttpMethod.Put, $"{RunPath}/compute", () =>
+            {
+                status = "Draft";
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            });
+        var cut = RenderPage();
+
+        Button(cut, "Compute").Click();
+
+        cut.WaitForElement("[data-confirm-compute]").TextContent.Should()
+            .Contain("goes back to Draft").And.Contain("approval again");
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Put);
+
+        cut.Find("[data-confirm-compute]").QuerySelectorAll("button").Last().Click();
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain(">Draft<"));
+        _api.Requests.Where(r => r.Method == HttpMethod.Put).Should().ContainSingle()
+            .Which.RequestUri!.AbsolutePath.Should().Be($"{RunPath}/compute");
+        ActionButtons(cut).Should().Equal("Compute", "Approve");
+    }
+
+    [Fact]
+    public void CancellingTheComputeOfAnApprovedFinalPay_LeavesItApproved()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Approved", runType: "FinalPay", employees: FinalPayLine(1200m)));
+        var cut = RenderPage();
+
+        Button(cut, "Compute").Click();
+        cut.WaitForElement("[data-confirm-compute]").QuerySelectorAll("button").First().Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[data-confirm-compute]").Should().BeEmpty());
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Put);
+    }
+
+    [Fact]
+    public void ComputingADraftRun_DoesNotAsk()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", runType: "FinalPay", employees: FinalPayLine(1200m)))
+            .On(HttpMethod.Put, $"{RunPath}/compute", HttpStatusCode.NoContent);
+        var cut = RenderPage();
+
+        Button(cut, "Compute").Click();
+
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Put));
+        cut.FindAll("[data-confirm-compute]").Should().BeEmpty();
     }
 
     [Fact]

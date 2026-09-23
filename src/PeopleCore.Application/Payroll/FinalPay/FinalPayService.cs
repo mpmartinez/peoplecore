@@ -395,7 +395,7 @@ public sealed class FinalPayService : IFinalPayService
         if (unpaid is not null)
             throw new DomainException(unpaid.PeriodStart > lastDay
                 ? $"Payroll {unpaid.RunNumber} covers {unpaid.PeriodLabel} after {separation.Employee.FullName}'s last working day; take them off it before creating final pay."
-                : $"Payroll {unpaid.RunNumber} covers {unpaid.PeriodLabel} and isn't paid yet; pay it before creating final pay.");
+                : $"Payroll {unpaid.RunNumber} covers {unpaid.PeriodLabel} and isn't paid yet; pay it, or take {separation.Employee.FullName} off it, before creating final pay.");
 
         return period;
     }

@@ -780,7 +780,7 @@ public class FinalPayServiceTests
         var act = () => _sut.CreateAsync(_separation.Id, Request());
 
         await act.Should().ThrowAsync<DomainException>().WithMessage(
-            "Payroll PAY-2026-005 covers Mar 1 – Mar 15, 2026 and isn't paid yet; pay it before creating final pay.");
+            "Payroll PAY-2026-005 covers Mar 1 – Mar 15, 2026 and isn't paid yet; pay it, or take Maria Santos off it, before creating final pay.");
         _runs.Verify(r => r.AddFinalPayRunAsync(It.IsAny<PayrollRun>(), It.IsAny<Separation>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -801,7 +801,7 @@ public class FinalPayServiceTests
         var act = () => _sut.UpdateAsync(_separation.Id, Request(periodStart: new DateOnly(2026, 3, 9)));
 
         await act.Should().ThrowAsync<DomainException>().WithMessage(
-            "Payroll PAY-2026-005 covers Mar 1 – Mar 15, 2026 and isn't paid yet; pay it before creating final pay.");
+            "Payroll PAY-2026-005 covers Mar 1 – Mar 15, 2026 and isn't paid yet; pay it, or take Maria Santos off it, before creating final pay.");
     }
 
     [Fact]
@@ -843,7 +843,7 @@ public class FinalPayServiceTests
         var act = () => _sut.CreateAsync(_separation.Id, Request(periodStart: new DateOnly(2026, 3, 16)));
 
         await act.Should().ThrowAsync<DomainException>().WithMessage(
-            "Payroll PAY-2026-005 covers Mar 1 – Mar 15, 2026 and isn't paid yet; pay it before creating final pay.");
+            "Payroll PAY-2026-005 covers Mar 1 – Mar 15, 2026 and isn't paid yet; pay it, or take Maria Santos off it, before creating final pay.");
     }
 
     /// <summary>
@@ -879,7 +879,7 @@ public class FinalPayServiceTests
                                                                  periodStart: new DateOnly(2026, 4, 1)));
 
         await act.Should().ThrowAsync<DomainException>().WithMessage(
-            "Payroll PAY-2026-006 covers Mar 16 – Mar 31, 2026 and isn't paid yet; pay it before creating final pay.");
+            "Payroll PAY-2026-006 covers Mar 16 – Mar 31, 2026 and isn't paid yet; pay it, or take Maria Santos off it, before creating final pay.");
         _runs.Verify(r => r.AddFinalPayRunAsync(It.IsAny<PayrollRun>(), It.IsAny<Separation>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -896,7 +896,7 @@ public class FinalPayServiceTests
                                                                  periodStart: new DateOnly(2026, 4, 1)));
 
         await act.Should().ThrowAsync<DomainException>().WithMessage(
-            "Payroll PAY-2026-006 covers Mar 16 – Mar 31, 2026 and isn't paid yet; pay it before creating final pay.");
+            "Payroll PAY-2026-006 covers Mar 16 – Mar 31, 2026 and isn't paid yet; pay it, or take Maria Santos off it, before creating final pay.");
     }
 
     [Fact]
