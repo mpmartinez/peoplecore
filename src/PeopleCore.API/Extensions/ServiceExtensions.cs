@@ -21,6 +21,7 @@ using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Application.Leave.Services;
 using PeopleCore.Application.Organization.Interfaces;
 using PeopleCore.Application.Organization.Services;
+using PeopleCore.Application.Payroll.FinalPay;
 using PeopleCore.Application.Payroll.GovernmentReports;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Application.Payroll.Services;
@@ -221,6 +222,7 @@ public static class ServiceExtensions
         services.AddScoped<IPayrollSettingsRepository, PayrollSettingsRepository>();
         services.AddScoped<PayrollComputationService>();
         services.AddScoped<IPayrollAttendanceBridge, PayrollAttendanceBridge>();
+        services.AddScoped<IFinalPayService, FinalPayService>();
         services.AddScoped<IPayrollRunService, PayrollRunService>();
         services.AddScoped<IEmployeeCompensationService, EmployeeCompensationService>();
         services.AddScoped<IPayrollSettingsService, PayrollSettingsService>();

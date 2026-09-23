@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Payroll.DTOs;
+using PeopleCore.Application.Payroll.FinalPay;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Application.Payroll.Validation;
 using PeopleCore.Domain.Entities.Payroll;
@@ -22,7 +23,13 @@ public class PayrollRunService : IPayrollRunService
     private readonly IPayrollAttendanceBridge _attendanceBridge;
     private readonly IEmployeeRepository _employeeRepo;
     private readonly ILogger<PayrollRunService> _logger;
+    private readonly IFinalPayService? _finalPay;
 
+    /// <param name="finalPay">
+    /// Recomputes final-pay runs, which are built from a separation rather than from a list of
+    /// employees. Optional so callers that never see a final-pay run needn't supply one; computing
+    /// a final-pay run without it is refused.
+    /// </param>
     public PayrollRunService(
         IPayrollRunRepository runRepo,
         IEmployeeCompensationRepository compensationRepo,
@@ -32,7 +39,8 @@ public class PayrollRunService : IPayrollRunService
         PayrollComputationService computationService,
         IPayrollAttendanceBridge attendanceBridge,
         IEmployeeRepository employeeRepo,
-        ILogger<PayrollRunService> logger)
+        ILogger<PayrollRunService> logger,
+        IFinalPayService? finalPay = null)
     {
         _runRepo = runRepo;
         _compensationRepo = compensationRepo;
@@ -43,6 +51,7 @@ public class PayrollRunService : IPayrollRunService
         _attendanceBridge = attendanceBridge;
         _employeeRepo = employeeRepo;
         _logger = logger;
+        _finalPay = finalPay;
     }
 
     public async Task<PayrollRunDto> CreateAsync(CreatePayrollRunRequest request, CancellationToken ct = default)
@@ -93,6 +102,21 @@ public class PayrollRunService : IPayrollRunService
 
         if (run.Employees.Count == 0)
             throw new DomainException("Payroll run has no employees to compute.");
+
+        // A final-pay run is rebuilt from its separation and stored inputs - its short period's
+        // working days, HR's overrides and deductions - and its tax is settled for the year, none
+        // of which the regular path below knows about.
+        if (run.RunType == PayrollRunType.FinalPay)
+        {
+            var finalPay = _finalPay ?? throw new InvalidOperationException(
+                "PayrollRunService was built without an IFinalPayService, so it can't recompute a final-pay run.");
+            var recomputed = await finalPay.RecomputeAsync(run, ct);
+
+            run.Status = PayrollRunStatus.Draft;
+            run.UpdatedAt = DateTime.UtcNow;
+            await _runRepo.ReplaceEntriesAsync(run, recomputed, ct);
+            return;
+        }
 
         // Recompute against current rates/settings, but from the attendance SNAPSHOT taken when
         // the run was created - never from the bridge. Re-deriving here would let a punch edited
@@ -283,16 +307,7 @@ public class PayrollRunService : IPayrollRunService
                 basicEarnedEarlierInYear: earlierInYear.GetValueOrDefault(employee.EmployeeId).Basic,
                 isThirteenthMonthEligible: !ineligible.Contains(employee.EmployeeId));
 
-            // Snapshot the inputs the figures above were struck from. The entry's own
-            // OvertimeHours and HolidayDays are roll-ups Compute wrote; these seven are the
-            // parts, and a recompute is rebuilt from them rather than from today's punches.
-            entry.AbsenceDays        = attendance.AbsenceDays;
-            entry.LateMinutes        = attendance.LateMinutes;
-            entry.UndertimeMinutes   = attendance.UndertimeMinutes;
-            entry.NightDiffHours     = attendance.NightDiffHours;
-            entry.RestDayOTHours     = attendance.RestDayOTHours;
-            entry.HolidayRegularDays = attendance.HolidayRegularDays;
-            entry.HolidaySpecialDays = attendance.HolidaySpecialDays;
+            SnapshotAttendance(entry, attendance);
 
             entries.Add(entry);
         }
@@ -367,11 +382,27 @@ public class PayrollRunService : IPayrollRunService
         .ToList();
 
     /// <summary>
+    /// Snapshots onto the entry the attendance its figures were struck from. The entry's own
+    /// OvertimeHours and HolidayDays are roll-ups Compute wrote; these seven are the parts, and a
+    /// recompute is rebuilt from them (<see cref="FromSnapshot"/>) rather than from today's punches.
+    /// </summary>
+    internal static void SnapshotAttendance(PayrollRunEmployee entry, PayrollAttendanceInput attendance)
+    {
+        entry.AbsenceDays        = attendance.AbsenceDays;
+        entry.LateMinutes        = attendance.LateMinutes;
+        entry.UndertimeMinutes   = attendance.UndertimeMinutes;
+        entry.NightDiffHours     = attendance.NightDiffHours;
+        entry.RestDayOTHours     = attendance.RestDayOTHours;
+        entry.HolidayRegularDays = attendance.HolidayRegularDays;
+        entry.HolidaySpecialDays = attendance.HolidaySpecialDays;
+    }
+
+    /// <summary>
     /// Rebuilds the attendance a stored entry was computed from, so a recompute reproduces it
     /// exactly. An entry saved before the per-day breakdown existed has no premium days, and
     /// its totals are repriced the way they were then.
     /// </summary>
-    private static PayrollAttendanceInput FromSnapshot(PayrollRunEmployee entry) => new()
+    internal static PayrollAttendanceInput FromSnapshot(PayrollRunEmployee entry) => new()
     {
         // entry.OvertimeHours is the TOTAL that Compute wrote back; the input wants the
         // ordinary part only, or every rest-day hour reprices from 1.69x down to 1.25x.
@@ -388,7 +419,7 @@ public class PayrollRunService : IPayrollRunService
             .ToList()
     };
 
-    private static ContributionRates ToRates(PayrollSettings? settings) => settings is null
+    internal static ContributionRates ToRates(PayrollSettings? settings) => settings is null
         ? new ContributionRates()
         : new ContributionRates
         {
@@ -410,14 +441,14 @@ public class PayrollRunService : IPayrollRunService
         run.Frequency, run.Status,
         run.EmployeeCount, run.TotalGrossPay, run.TotalDeductions, run.TotalNetPay,
         run.CreatedAt, run.AttendancePeriodId, run.EmployeesMissingAttendance,
-        run.Employees.Select(ToEmployeeDto).ToList());
+        run.Employees.Select(ToEmployeeDto).ToList(), run.RunType);
 
     private static PayrollRunSummaryDto ToSummaryDto(PayrollRun run) => new(
         run.Id, run.RunNumber, run.PeriodLabel,
         run.PeriodStart, run.PeriodEnd, run.PayDate,
         run.Frequency, run.Status,
         run.EmployeeCount, run.TotalGrossPay, run.TotalNetPay,
-        run.EmployeesMissingAttendance, run.CreatedAt);
+        run.EmployeesMissingAttendance, run.CreatedAt, run.RunType);
 
     private static PayrollRunEmployeeDto ToEmployeeDto(PayrollRunEmployee e) => new(
         e.Id, e.EmployeeId, e.Employee?.FullName ?? string.Empty,

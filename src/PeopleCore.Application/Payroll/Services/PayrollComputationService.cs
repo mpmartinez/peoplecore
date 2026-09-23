@@ -128,6 +128,17 @@ public class PayrollComputationService
     }
 
     /// <summary>
+    /// The applicable daily rate <see cref="Compute"/> prices a day at: monthly x 12 / factor,
+    /// rounded to centavos, with a missing or non-positive factor meaning the default 365. Public
+    /// so final pay prices leave conversion and retirement pay at exactly the same rate.
+    /// </summary>
+    public static decimal DailyRateFor(decimal monthlyBasic, decimal? dailyRateFactor)
+    {
+        decimal factor = dailyRateFactor is > 0m ? dailyRateFactor.Value : DefaultDailyRateFactor;
+        return Math.Round(monthlyBasic * 12m / factor, 2);
+    }
+
+    /// <summary>
     /// Full computation for one employee in one payroll run.
     /// </summary>
     /// <param name="attendance">
@@ -165,7 +176,7 @@ public class PayrollComputationService
         // The handbook calls these formulas suggestions "without prejudice to existing company
         // policies", so the factor is configurable per company.
         decimal factor = dailyRateFactor is > 0m ? dailyRateFactor.Value : DefaultDailyRateFactor;
-        decimal dailyRate = Math.Round(compensation.BasicSalary * 12m / factor, 2);
+        decimal dailyRate = DailyRateFor(compensation.BasicSalary, factor);
         decimal hourlyRate = Math.Round(dailyRate / 8m, 2);
 
         // A full period pays the full salary slice, and attendance adjusts it from there.

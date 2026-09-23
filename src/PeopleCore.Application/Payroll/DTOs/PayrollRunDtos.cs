@@ -91,7 +91,8 @@ public record PayrollRunDto(
     DateTime CreatedAt,
     Guid? AttendancePeriodId,
     int EmployeesMissingAttendance,
-    IReadOnlyList<PayrollRunEmployeeDto> Employees);
+    IReadOnlyList<PayrollRunEmployeeDto> Employees,
+    PayrollRunType RunType = PayrollRunType.Regular);
 
 /// <summary>
 /// A run as it appears in a list. Deliberately omits the Employees collection that
@@ -111,4 +112,5 @@ public record PayrollRunSummaryDto(
     decimal TotalGrossPay,
     decimal TotalNetPay,
     int EmployeesMissingAttendance,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    PayrollRunType RunType = PayrollRunType.Regular);

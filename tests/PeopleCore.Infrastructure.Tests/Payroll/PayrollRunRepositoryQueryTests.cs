@@ -130,6 +130,25 @@ public class PayrollRunRepositoryQueryTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task CountForYear_LeavesFinalPayRunsToTheirOwnSequence()
+    {
+        // FP- runs are numbered by pay-date year on their own sequence; counting them here would
+        // leave gaps in the PAY- numbers.
+        var regular = ARun("PAY-2026-001", new(2026, 1, 1), new(2026, 1, 15), new(2026, 1, 20));
+        var finalPay = ARun("FP-2026-001", new(2026, 3, 1), new(2026, 3, 13), new(2026, 3, 31));
+        finalPay.RunType = PayrollRunType.FinalPay;
+        var finalPayPaidNextYear = ARun("FP-2027-001", new(2026, 12, 1), new(2026, 12, 15), new(2027, 1, 5));
+        finalPayPaidNextYear.RunType = PayrollRunType.FinalPay;
+
+        Context.PayrollRuns.AddRange(regular, finalPay, finalPayPaidNextYear);
+        await Context.SaveChangesAsync();
+
+        (await Sut.CountForYearAsync(2026)).Should().Be(1);
+        (await Sut.CountFinalPayForYearAsync(2026)).Should().Be(1);
+        (await Sut.CountFinalPayForYearAsync(2027)).Should().Be(1);
+    }
+
+    [Fact]
     public async Task GetPaidYearsForEmployee_IsDistinctAndDescending()
     {
         var employee = AnEmployee();

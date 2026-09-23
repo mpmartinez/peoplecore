@@ -886,4 +886,67 @@ public class PayrollRunServiceTests
         result.Page.Should().Be(2);
         result.PageSize.Should().Be(5);
     }
+
+    // ------------------------------------------------------------------
+    // Final-pay runs: ComputeAsync hands them to FinalPayService
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task ComputeAsync_OnAFinalPayRun_RecomputesThroughFinalPayService_AndSendsItBackToDraft()
+    {
+        var employeeId = Guid.NewGuid();
+        var run = new PayrollRun
+        {
+            RunNumber = "FP-2026-001",
+            RunType = PayrollRunType.FinalPay,
+            Status = PayrollRunStatus.ForApproval,
+            PeriodStart = new DateOnly(2026, 3, 1),
+            PeriodEnd = new DateOnly(2026, 3, 13),
+            PayDate = new DateOnly(2026, 3, 31),
+        };
+        run.Employees.Add(new PayrollRunEmployee { PayrollRunId = run.Id, EmployeeId = employeeId, RegularPay = 1m });
+        var recomputed = new List<PayrollRunEmployee>
+        {
+            new() { PayrollRunId = run.Id, EmployeeId = employeeId, RegularPay = 12_000m }
+        };
+
+        var finalPay = new Mock<PeopleCore.Application.Payroll.FinalPay.IFinalPayService>();
+        finalPay.Setup(f => f.RecomputeAsync(run, It.IsAny<CancellationToken>())).ReturnsAsync(recomputed);
+        _runRepo.Setup(r => r.GetWithEntriesAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+
+        var sut = new PayrollRunService(
+            _runRepo.Object, _compensationRepo.Object, _allowanceRepo.Object, _loanRepo.Object,
+            _settingsRepo.Object, new PayrollComputationService(), _attendanceBridge.Object,
+            _employeeRepo.Object, NullLogger<PayrollRunService>.Instance, finalPay.Object);
+
+        await sut.ComputeAsync(run.Id);
+
+        run.Status.Should().Be(PayrollRunStatus.Draft);
+        _runRepo.Verify(r => r.ReplaceEntriesAsync(run, recomputed, It.IsAny<CancellationToken>()), Times.Once);
+        // The regular path (compensation lookups, the attendance bridge) is never taken.
+        _compensationRepo.Verify(r => r.GetByEmployeeIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetAsync_CarriesTheRunType()
+    {
+        var run = new PayrollRun { RunNumber = "FP-2026-001", RunType = PayrollRunType.FinalPay };
+        _runRepo.Setup(r => r.GetWithEntriesAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+
+        var dto = await _sut.GetAsync(run.Id);
+
+        dto!.RunType.Should().Be(PayrollRunType.FinalPay);
+    }
+
+    [Fact]
+    public async Task GetPagedAsync_CarriesTheRunType()
+    {
+        var run = new PayrollRun { RunNumber = "FP-2026-001", RunType = PayrollRunType.FinalPay };
+        _runRepo.Setup(r => r.GetPagedAsync(1, 10, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(((IReadOnlyList<PayrollRun>)[run], 1));
+
+        var page = await _sut.GetPagedAsync(1, 10);
+
+        page.Items.Single().RunType.Should().Be(PayrollRunType.FinalPay);
+    }
 }

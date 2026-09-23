@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using PeopleCore.Application.Payroll.Interfaces;
+using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Enums;
+using PeopleCore.Domain.Exceptions;
 using PeopleCore.Infrastructure.Persistence;
 
 namespace PeopleCore.Infrastructure.Persistence.Repositories;
@@ -20,7 +22,12 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
             .FirstOrDefaultAsync(r => r.Id == id, ct);
 
     public async Task<int> CountForYearAsync(int year, CancellationToken ct = default)
-        => await Context.PayrollRuns.CountAsync(r => r.PeriodStart.Year == year, ct);
+        => await Context.PayrollRuns.CountAsync(
+            r => r.RunType == PayrollRunType.Regular && r.PeriodStart.Year == year, ct);
+
+    public async Task<int> CountFinalPayForYearAsync(int payYear, CancellationToken ct = default)
+        => await Context.PayrollRuns.CountAsync(
+            r => r.RunType == PayrollRunType.FinalPay && r.PayDate.Year == payYear, ct);
 
     public async Task<IReadOnlyList<PayrollRun>> GetRunsForEmployeeAsync(Guid employeeId, CancellationToken ct = default)
         => await Context.PayrollRuns
@@ -152,6 +159,47 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
         await Context.SaveChangesAsync(ct);
     }
 
+    public async Task AddFinalPayRunAsync(PayrollRun run, Separation separation, CancellationToken ct = default)
+    {
+        await using var tx = await Context.Database.BeginTransactionAsync(ct);
+
+        // The link is written below by a conditional UPDATE, not by the change tracker: the
+        // caller has already set separation.FinalPayRunId, and if the tracker saved that it would
+        // overwrite a link another request made in the meantime. Marking the value as already
+        // saved keeps SaveChanges from writing it. Change detection is off while doing so, or
+        // Entry() would first run DetectChanges and flag the property Modified anyway.
+        var autoDetect = Context.ChangeTracker.AutoDetectChangesEnabled;
+        Context.ChangeTracker.AutoDetectChangesEnabled = false;
+        try
+        {
+            var entry = Context.Entry(separation);
+            if (entry.State != EntityState.Detached)
+            {
+                var link = entry.Property(s => s.FinalPayRunId);
+                link.OriginalValue = link.CurrentValue;
+                link.IsModified = false;
+            }
+        }
+        finally
+        {
+            Context.ChangeTracker.AutoDetectChangesEnabled = autoDetect;
+        }
+
+        // Inserts the run, its entry and its inputs with their deductions - each added explicitly,
+        // see AddWithEntriesAsync.
+        await AddWithEntriesAsync(run, ct);
+
+        // Links the separation only if nothing else has: a second final pay for one separation
+        // must never be saved. Rolled back with the inserts above when it matches no row.
+        var linked = await Context.Separations
+            .Where(s => s.Id == separation.Id && s.FinalPayRunId == null)
+            .ExecuteUpdateAsync(u => u.SetProperty(s => s.FinalPayRunId, run.Id), ct);
+        if (linked == 0)
+            throw new DomainException("This separation already has a final-pay run.");
+
+        await tx.CommitAsync(ct);
+    }
+
     public async Task ReplaceEntriesAsync(
         PayrollRun run, IReadOnlyList<PayrollRunEmployee> newEntries, CancellationToken ct = default)
     {
@@ -172,7 +220,44 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
 
         await Context.PayrollRunEmployees.AddRangeAsync(newEntries, ct);
 
+        if (run.FinalPayInputs is { } inputs)
+            TrackFinalPayDeductions(inputs);
+
         await Context.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+    }
+
+    /// <summary>
+    /// Brings the tracked deductions of a final-pay run's inputs in line with its Deductions
+    /// collection: rows loaded earlier and since dropped from the collection are deleted, and new
+    /// objects in it are inserted. Change detection is off throughout - left on, it would find the
+    /// new deductions through the tracked inputs and, their keys already set, mark them Modified
+    /// (an UPDATE of a row that doesn't exist) before they could be marked Added.
+    /// </summary>
+    private void TrackFinalPayDeductions(FinalPayInputs inputs)
+    {
+        var autoDetect = Context.ChangeTracker.AutoDetectChangesEnabled;
+        Context.ChangeTracker.AutoDetectChangesEnabled = false;
+        try
+        {
+            var current = new HashSet<FinalPayDeduction>(inputs.Deductions, ReferenceEqualityComparer.Instance);
+
+            var dropped = Context.ChangeTracker.Entries<FinalPayDeduction>()
+                .Where(e => e.Entity.FinalPayInputsId == inputs.Id && !current.Contains(e.Entity))
+                .ToList();
+            foreach (var entry in dropped)
+                entry.State = entry.State == EntityState.Added ? EntityState.Detached : EntityState.Deleted;
+
+            foreach (var deduction in inputs.Deductions)
+            {
+                var entry = Context.Entry(deduction);
+                if (entry.State == EntityState.Detached)
+                    entry.State = EntityState.Added;
+            }
+        }
+        finally
+        {
+            Context.ChangeTracker.AutoDetectChangesEnabled = autoDetect;
+        }
     }
 }
