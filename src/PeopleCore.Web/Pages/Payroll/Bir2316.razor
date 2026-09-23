@@ -98,7 +98,8 @@ else if (_preview is not null)
                 <hr />
 
                 <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                    <ReadOnlyField Label="Item 39 - Basic Salary" Value="@Peso(_preview.Item39_BasicSalary)" />
+                    <ReadOnlyField Label="Item 39 - Basic Salary" Value="@Peso(_preview.Item39_BasicSalary)"
+                                   Hint="net of employee SSS/PhilHealth/Pag-IBIG" />
                     <ReadOnlyField Label="Item 50 - Overtime Pay" Value="@Peso(_preview.Item50_OvertimePay)" />
                     <ReadOnlyField Label="Item 36 - SSS/PhilHealth/Pag-IBIG" Value="@Peso(_preview.Item36_SssPhicPagibigContributions)" />
                     <ReadOnlyField Label="Item 34 - 13th Month (non-taxable)" Value="@Peso(_preview.Item34_ThirteenthMonthAndBenefits)" />

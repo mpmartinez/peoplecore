@@ -7,13 +7,19 @@
     looks editable at a glance, both of which are exactly the impressions this component exists
     to avoid.
 *@
-<div>
+<div data-readonly-field>
     <div class="text-xs text-muted-foreground">@Label</div>
     <div class="@(Bold ? "font-semibold" : "")">@Value</div>
+    @if (!string.IsNullOrEmpty(Hint))
+    {
+        <p class="text-xs text-muted-foreground" data-hint>@Hint</p>
+    }
 </div>
 
 @code {
     [Parameter] public string? Label { get; set; }
     [Parameter] public string? Value { get; set; }
     [Parameter] public bool Bold { get; set; }
+    /// <summary>A short note under the value on what the figure is, e.g. what it's net of.</summary>
+    [Parameter] public string? Hint { get; set; }
 }
