@@ -303,8 +303,43 @@ public class FinalPayTests : BunitContext
             Separation(type: "AuthorizedCause"));
 
         Text(cut, "[data-separation-pay]").Should().Contain("50,000.00");
+        Text(cut, "[data-overridden]").Should().Contain("(overridden)");
         Text(cut, "[data-computed-pay]").Should().Contain("42,000.00");
         Text(cut, "[data-override-note]").Should().Contain("Per CBA");
+    }
+
+    [Fact]
+    public void AnOverrideWithNoComputedFigure_IsStillMarkedAsOverridden()
+    {
+        // A goodwill payment on a resignation: there is no statutory separation pay to compare.
+        var cut = RenderWithRun(Summary(separationPay: 20000m, overrideNote: "Goodwill", separationPayOverride: "20000"));
+
+        cut.Find("[data-separation-pay] [data-overridden]").TextContent.Should().Contain("(overridden)");
+        cut.FindAll("[data-computed-pay]").Should().BeEmpty();
+        Text(cut, "[data-override-note]").Should().Contain("Goodwill");
+    }
+
+    [Fact]
+    public void ANoteWithoutAStoredOverride_IsNotShown()
+    {
+        var cut = RenderWithRun(Summary(separationPay: 0m, overrideNote: "Left over from an earlier edit"));
+
+        cut.FindAll("[data-override-note]").Should().BeEmpty();
+        cut.FindAll("[data-overridden]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AnOverrideWithoutANote_IsCaughtBeforeCallingTheApi()
+    {
+        var cut = RenderWithoutRun();
+
+        cut.Find("#final-pay-override").Input("1000");
+        cut.Find("[data-submit-final-pay]").Click();
+
+        cut.WaitForElement("[data-final-pay-error]").TextContent.Should()
+            .Contain("Explain the separation or retirement pay override.");
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Post);
+        cut.FindAll("[data-final-pay-form]").Should().ContainSingle();
     }
 
     [Fact]
@@ -577,14 +612,13 @@ public class FinalPayTests : BunitContext
     public void ARefusedEdit_ShowsTheApisReason_AndKeepsTheEditForm()
     {
         _api.On(HttpMethod.Put, FinalPayPath, HttpStatusCode.BadRequest,
-            """{"title":"Bad request","detail":"Explain the separation or retirement pay override.","status":400}""");
+            """{"title":"Bad request","detail":"Only draft or for-approval final pay can be changed.","status":400}""");
         var cut = RenderWithRun(Summary());
 
         cut.Find("[data-edit-final-pay]").Click();
-        cut.Find("#final-pay-override").Input("1000");
         cut.Find("[data-submit-final-pay]").Click();
 
-        cut.WaitForElement("[data-final-pay-error]").TextContent.Should().Contain("Explain the separation or retirement pay override.");
+        cut.WaitForElement("[data-final-pay-error]").TextContent.Should().Contain("Only draft or for-approval final pay can be changed.");
         cut.FindAll("[data-final-pay-form]").Should().ContainSingle();
     }
 

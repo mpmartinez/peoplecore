@@ -454,6 +454,12 @@ else
     {
         if (_savingFinalPay) return;
         _finalPayActionError = null;
+        // The API's own rule and wording, checked here so the form says so before a round trip.
+        if (_finalPayForm.OverrideAmount is not null && string.IsNullOrWhiteSpace(_finalPayForm.OverrideNote))
+        {
+            _finalPayActionError = "Explain the separation or retirement pay override.";
+            return;
+        }
         _savingFinalPay = true;
         // Starting the save drops any load already out. If another load starts while the save is
         // out (a clearance change), the save's answer may predate it, so it is not applied: the
@@ -636,7 +642,13 @@ else
                     {
                         <div class="py-2 border-b border-dashed" data-separation-pay>
                             <div class="flex justify-between">
-                                <span class="text-muted-foreground text-sm">Separation pay</span>
+                                <span class="text-muted-foreground text-sm">
+                                    Separation pay
+                                    @if (summary.SeparationPayOverride is not null)
+                                    {
+                                        <span class="font-medium text-foreground" data-overridden>(overridden)</span>
+                                    }
+                                </span>
                                 <span class="text-sm font-medium text-right">@Peso(summary.SeparationPay)</span>
                             </div>
                             @if (!IsRetirement)
@@ -649,7 +661,13 @@ else
                     {
                         <div class="py-2 border-b border-dashed" data-retirement-pay>
                             <div class="flex justify-between">
-                                <span class="text-muted-foreground text-sm">Retirement pay</span>
+                                <span class="text-muted-foreground text-sm">
+                                    Retirement pay
+                                    @if (summary.RetirementPayOverride is not null)
+                                    {
+                                        <span class="font-medium text-foreground" data-overridden>(overridden)</span>
+                                    }
+                                </span>
                                 <span class="text-sm font-medium text-right">@Peso(summary.RetirementPay)</span>
                             </div>
                             @if (IsRetirement)
@@ -720,18 +738,20 @@ else
         </div>
     };
 
+    // The computed figure and HR's note belong to an override, so neither shows without one - a
+    // note can outlive the override it explained.
     private RenderFragment OverrideDetails(FinalPaySummaryDto summary) => __builder =>
     {
-        if (StoredOverride(summary) is not null && summary.ComputedSeparationOrRetirementPay is decimal computed)
+        if (StoredOverride(summary) is null) return;
+        if (summary.ComputedSeparationOrRetirementPay is decimal computed)
         {
-            <p class="text-xs text-muted-foreground mt-1" data-computed-pay>Overridden; computed @Peso(computed).</p>
+            <p class="text-xs text-muted-foreground mt-1" data-computed-pay>Computed: @Peso(computed)</p>
         }
         if (!string.IsNullOrWhiteSpace(summary.OverrideNote))
         {
             <p class="text-xs text-muted-foreground mt-1" data-override-note>Note: @summary.OverrideNote</p>
         }
     };
-
 
     private sealed class FinalPayFormModel
     {
