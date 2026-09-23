@@ -27,7 +27,8 @@ public interface IPayrollRunService
     /// <summary>
     /// Retires each active loan's balance by exactly what this run withheld (its
     /// PayrollLoanDeduction line), never by re-deriving the instalment from the loan's own
-    /// schedule, and marks the run Paid.
+    /// schedule, and marks the run Paid. A final-pay run is refused until its separation's
+    /// clearance is complete.
     /// </summary>
     Task MarkPaidAsync(Guid runId, CancellationToken ct = default);
 

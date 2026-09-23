@@ -22,6 +22,7 @@ public class PayrollRunService : IPayrollRunService
     private readonly PayrollComputationService _computationService;
     private readonly IPayrollAttendanceBridge _attendanceBridge;
     private readonly IEmployeeRepository _employeeRepo;
+    private readonly ISeparationRepository _separations;
     private readonly ILogger<PayrollRunService> _logger;
     private readonly IFinalPayService? _finalPay;
 
@@ -39,6 +40,7 @@ public class PayrollRunService : IPayrollRunService
         PayrollComputationService computationService,
         IPayrollAttendanceBridge attendanceBridge,
         IEmployeeRepository employeeRepo,
+        ISeparationRepository separations,
         ILogger<PayrollRunService> logger,
         IFinalPayService? finalPay = null)
     {
@@ -50,6 +52,7 @@ public class PayrollRunService : IPayrollRunService
         _computationService = computationService;
         _attendanceBridge = attendanceBridge;
         _employeeRepo = employeeRepo;
+        _separations = separations;
         _logger = logger;
         _finalPay = finalPay;
     }
@@ -173,6 +176,9 @@ public class PayrollRunService : IPayrollRunService
         if (run.Status != PayrollRunStatus.Approved)
             throw new DomainException("Only approved payroll runs can be marked as paid.");
 
+        if (run.RunType == PayrollRunType.FinalPay)
+            await EnsureClearanceCompleteAsync(run, ct);
+
         var loanIds = run.Employees
             .SelectMany(e => e.LoanDeductionLines)
             .Select(l => l.EmployeeLoanId)
@@ -217,6 +223,29 @@ public class PayrollRunService : IPayrollRunService
         var (items, total) = await _runRepo.GetPagedAsync(page, pageSize, ct);
         return PagedResult<PayrollRunSummaryDto>.Create(
             items.Select(ToSummaryDto).ToList(), total, page, pageSize);
+    }
+
+    /// <summary>
+    /// A final pay is released only once the separation's clearance is complete: every item
+    /// cleared, and at least one item to clear.
+    /// </summary>
+    private async Task EnsureClearanceCompleteAsync(PayrollRun run, CancellationToken ct)
+    {
+        var separationId = run.FinalPayInputs?.SeparationId
+            ?? throw new InvalidOperationException($"Final-pay run {run.RunNumber} has no final-pay inputs.");
+        var separation = await _separations.GetAsync(separationId, ct)
+            ?? throw new KeyNotFoundException($"Separation {separationId} not found.");
+
+        if (separation.ClearanceComplete)
+            return;
+        if (separation.ClearanceItems.Count == 0)
+            throw new DomainException("Add the separation's clearance items and clear them before paying final pay.");
+
+        var outstanding = separation.ClearanceItems
+            .Where(i => i.ClearedAt is null)
+            .OrderBy(i => i.SortOrder)
+            .Select(i => i.Name);
+        throw new DomainException($"Clear {string.Join(", ", outstanding)} before paying final pay.");
     }
 
     /// <summary>

@@ -22,7 +22,7 @@ public class SeparationsControllerTests
         SeparationId, Guid.NewGuid(), "Juan Dela Cruz", "EMP-001", "Clerk",
         SeparationType.Resignation, null, new DateOnly(2026, 9, 1), new DateOnly(2026, 10, 1),
         "Personal reasons", SeparationStatus.NoticeGiven, "hr@acme.com", null, null,
-        new DateOnly(2026, 10, 31), false, 0, 0, []);
+        new DateOnly(2026, 10, 31), false, 0, 0, [], null, null, null);
 
     private SeparationsController Controller() => new(_service.Object);
 

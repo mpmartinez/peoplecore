@@ -184,7 +184,8 @@ public class FinalPayServiceDbTests : DatabaseTestBase
                 runs, new EmployeeCompensationRepository(context), new EmployeeAllowanceRepository(context),
                 new EmployeeLoanRepository(context), new PayrollSettingsRepository(context),
                 new PayrollComputationService(), Mock.Of<IPayrollAttendanceBridge>(),
-                new EmployeeRepository(context), NullLogger<PayrollRunService>.Instance, Service(context));
+                new EmployeeRepository(context), new SeparationRepository(context),
+                NullLogger<PayrollRunService>.Instance, Service(context));
             await payrollRuns.ComputeAsync(runId);
         }
 

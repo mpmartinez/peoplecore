@@ -6,6 +6,7 @@ using PeopleCore.Application.Employees.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Employees.Services;
 using PeopleCore.Domain.Entities.Employees;
+using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
 using Xunit;
@@ -94,6 +95,62 @@ public class SeparationServiceTests
         var act = () => Recorded();
 
         (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be("Juan dela Cruz is no longer active.");
+    }
+
+    [Fact]
+    public async Task Record_ForAnInactiveEmployeeWithASeparationDate_RecordsItAlreadySeparated()
+    {
+        // Deactivated before separations were tracked: they left on Mar 3, 2026.
+        _employee.IsActive = false;
+        _employee.SeparationDate = new DateOnly(2026, 3, 3);
+
+        var dto = await Recorded(noticeDate: new DateOnly(2026, 2, 16), lastDay: new DateOnly(2026, 3, 3));
+
+        dto.Status.Should().Be(SeparationStatus.Separated);
+        dto.LastWorkingDay.Should().Be(new DateOnly(2026, 3, 3));
+        dto.SeparatedBy.Should().Be("hr@company.test");
+        dto.SeparatedAt.Should().Be(new DateTime(2026, 9, 21, 8, 0, 0));   // the clock, in Manila
+        dto.ClearanceCount.Should().Be(5);
+        _saved!.Status.Should().Be(SeparationStatus.Separated);
+        // The employee was already inactive with that date; nothing about them changes.
+        _employees.Verify(e => e.UpdateAsync(It.IsAny<Employee>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Record_ForAnInactiveEmployee_WithAnotherLastWorkingDay_IsRefused()
+    {
+        _employee.IsActive = false;
+        _employee.SeparationDate = new DateOnly(2026, 3, 3);
+
+        var act = () => Recorded(noticeDate: new DateOnly(2026, 2, 16), lastDay: new DateOnly(2026, 3, 4));
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message
+            .Should().Be("Juan dela Cruz left on Mar 3, 2026; record the separation with that last working day.");
+        _separations.Verify(s => s.AddAsync(It.IsAny<Separation>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Record_ForAnInactiveEmployeeWhoAlreadyHasASeparation_IsRefused()
+    {
+        _employee.IsActive = false;
+        _employee.SeparationDate = new DateOnly(2026, 3, 3);
+        await Recorded(noticeDate: new DateOnly(2026, 2, 16), lastDay: new DateOnly(2026, 3, 3));
+
+        var act = () => Recorded(noticeDate: new DateOnly(2026, 2, 16), lastDay: new DateOnly(2026, 3, 3));
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be("Juan dela Cruz already has a separation recorded.");
+    }
+
+    [Fact]
+    public async Task Record_ForAnInactiveEmployee_StillAppliesTheOtherRules()
+    {
+        _employee.IsActive = false;
+        _employee.SeparationDate = new DateOnly(2026, 3, 3);
+
+        var act = () => Recorded(noticeDate: new DateOnly(2026, 3, 10), lastDay: new DateOnly(2026, 3, 3));
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message
+            .Should().Be("The last working day can't be before the notice date.");
     }
 
     [Fact]
@@ -240,6 +297,19 @@ public class SeparationServiceTests
     }
 
     [Fact]
+    public async Task Cancel_WhenFinalPayHasBeenStarted_IsRefused()
+    {
+        var s = await Recorded();
+        GiveFinalPay(PayrollRunStatus.Draft);
+
+        var act = () => _sut.CancelAsync(s.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message
+            .Should().Be("Final pay has already been started for this separation.");
+        _separations.Verify(r => r.DeleteAsync(It.IsAny<Separation>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task Cancel_WhenNoticeGiven_DeletesTheRecord()
     {
         var s = await Recorded();
@@ -374,6 +444,35 @@ public class SeparationServiceTests
     }
 
     [Fact]
+    public async Task UndoClearItem_RecordsWhoUndidIt_When_AndTheNoteItCleared()
+    {
+        var s = await Recorded();
+        var itemId = s.ClearanceItems[0].Id;
+        await _sut.ClearItemAsync(s.Id, itemId, "handed over badge");
+        _currentUser.Setup(c => c.Email).Returns("supervisor@company.test");
+
+        var dto = await _sut.UndoClearItemAsync(s.Id, itemId);
+
+        var saved = _saved!.ClearanceItems.Single(i => i.Id == itemId);
+        saved.LastUndoneBy.Should().Be("supervisor@company.test");
+        saved.LastUndoneAt.Should().Be(new DateTime(2026, 9, 21, 8, 0, 0));   // the clock, in Manila
+        saved.LastUndoneNote.Should().Be("handed over badge");
+        saved.Note.Should().BeNull();
+
+        var item = dto.ClearanceItems.Single(i => i.Id == itemId);
+        item.LastUndoneBy.Should().Be("supervisor@company.test");
+        item.LastUndoneAt.Should().Be(new DateTime(2026, 9, 21, 8, 0, 0));
+    }
+
+    [Fact]
+    public async Task ClearanceItem_NeverUndone_HasNoUndoRecorded()
+    {
+        var s = await Recorded();
+
+        s.ClearanceItems.Should().OnlyContain(i => i.LastUndoneBy == null && i.LastUndoneAt == null);
+    }
+
+    [Fact]
     public async Task DeleteClearanceItem_WhenCleared_IsRefused()
     {
         var s = await Recorded();
@@ -407,6 +506,32 @@ public class SeparationServiceTests
         var dto = await _sut.MarkSeparatedAsync(s.Id);
 
         dto.FinalPayOverdue.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task FinalPayOverdue_WhenTheFinalPayIsPaid_IsFalse()
+    {
+        var s = await Recorded(noticeDate: new DateOnly(2026, 7, 1), lastDay: new DateOnly(2026, 8, 1));
+        await _sut.MarkSeparatedAsync(s.Id);
+        GiveFinalPay(PayrollRunStatus.Paid);
+
+        var dto = await _sut.GetAsync(s.Id);
+
+        dto!.FinalPayOverdue.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(PayrollRunStatus.Draft)]
+    [InlineData(PayrollRunStatus.Approved)]
+    public async Task FinalPayOverdue_WhenTheFinalPayIsNotPaidYet_IsTrue(PayrollRunStatus status)
+    {
+        var s = await Recorded(noticeDate: new DateOnly(2026, 7, 1), lastDay: new DateOnly(2026, 8, 1));
+        await _sut.MarkSeparatedAsync(s.Id);
+        GiveFinalPay(status);
+
+        var dto = await _sut.GetAsync(s.Id);
+
+        dto!.FinalPayOverdue.Should().BeTrue();
     }
 
     [Fact]
@@ -548,5 +673,79 @@ public class SeparationServiceTests
         dto.NoticeDate.Should().Be(new DateOnly(2026, 8, 15));
         dto.LastWorkingDay.Should().Be(new DateOnly(2026, 8, 15));
         dto.Status.Should().Be(SeparationStatus.Separated);
+    }
+
+    // ── Final pay ─────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Links the recorded separation to a final-pay run in the given status.</summary>
+    private PayrollRun GiveFinalPay(PayrollRunStatus status)
+    {
+        var run = new PayrollRun { RunNumber = "FP-2026-004", RunType = PayrollRunType.FinalPay, Status = status };
+        _saved!.FinalPayRunId = run.Id;
+        _saved.FinalPayRun = run;
+        return run;
+    }
+
+    [Fact]
+    public async Task Dto_CarriesTheFinalPayRunsIdNumberAndStatus()
+    {
+        var s = await Recorded();
+        var run = GiveFinalPay(PayrollRunStatus.Approved);
+
+        var dto = await _sut.GetAsync(s.Id);
+
+        dto!.FinalPayRunId.Should().Be(run.Id);
+        dto.FinalPayRunNumber.Should().Be("FP-2026-004");
+        dto.FinalPayStatus.Should().Be(PayrollRunStatus.Approved);
+    }
+
+    [Fact]
+    public async Task Dto_WithoutAFinalPayRun_LeavesItsFieldsEmpty()
+    {
+        var dto = await Recorded();
+
+        dto.FinalPayRunId.Should().BeNull();
+        dto.FinalPayRunNumber.Should().BeNull();
+        dto.FinalPayStatus.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("Add")]
+    [InlineData("Clear")]
+    [InlineData("Undo")]
+    [InlineData("Delete")]
+    public async Task Clearance_OnceFinalPayIsPaid_CantChange(string change)
+    {
+        var s = await Recorded();
+        var cleared = s.ClearanceItems[0].Id;
+        var outstanding = s.ClearanceItems[1].Id;
+        await _sut.ClearItemAsync(s.Id, cleared, "done");
+        GiveFinalPay(PayrollRunStatus.Paid);
+        _separations.Invocations.Clear();
+
+        Func<Task> act = change switch
+        {
+            "Add" => () => _sut.AddClearanceItemAsync(s.Id, "Library"),
+            "Clear" => () => _sut.ClearItemAsync(s.Id, outstanding, null),
+            "Undo" => () => _sut.UndoClearItemAsync(s.Id, cleared),
+            "Delete" => () => _sut.DeleteClearanceItemAsync(s.Id, outstanding),
+            _ => throw new ArgumentOutOfRangeException(nameof(change)),
+        };
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message
+            .Should().Be("Final pay has been paid; clearance can't change now.");
+        NothingSaved();
+        _separations.Verify(r => r.AddClearanceItemAsync(It.IsAny<SeparationClearanceItem>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Clearance_WhileFinalPayIsApprovedButNotPaid_CanStillChange()
+    {
+        var s = await Recorded();
+        GiveFinalPay(PayrollRunStatus.Approved);
+
+        var dto = await _sut.ClearItemAsync(s.Id, s.ClearanceItems[0].Id, null);
+
+        dto.ClearedCount.Should().Be(1);
     }
 }

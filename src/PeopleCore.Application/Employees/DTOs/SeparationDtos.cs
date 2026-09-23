@@ -29,14 +29,19 @@ public record SeparationDto(
     bool FinalPayOverdue,
     int ClearedCount,
     int ClearanceCount,
-    IReadOnlyList<ClearanceItemDto> ClearanceItems);
+    IReadOnlyList<ClearanceItemDto> ClearanceItems,
+    Guid? FinalPayRunId,
+    string? FinalPayRunNumber,
+    PayrollRunStatus? FinalPayStatus);
 
 public record ClearanceItemDto(
     Guid Id,
     string Name,
     string? ClearedBy,
     DateTime? ClearedAt,
-    string? Note);
+    string? Note,
+    string? LastUndoneBy,
+    DateTime? LastUndoneAt);
 
 public record ClearItemRequest(string? Note);
 

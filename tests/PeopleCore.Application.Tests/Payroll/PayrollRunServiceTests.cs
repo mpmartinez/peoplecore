@@ -10,6 +10,8 @@ using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
 using PeopleCore.Domain.Payroll;
 using Employee = PeopleCore.Domain.Entities.Employees.Employee;
+using Separation = PeopleCore.Domain.Entities.Employees.Separation;
+using SeparationClearanceItem = PeopleCore.Domain.Entities.Employees.SeparationClearanceItem;
 using Xunit;
 
 namespace PeopleCore.Application.Tests.Payroll;
@@ -23,6 +25,7 @@ public class PayrollRunServiceTests
     private readonly Mock<IPayrollSettingsRepository> _settingsRepo = new();
     private readonly Mock<IPayrollAttendanceBridge> _attendanceBridge = new();
     private readonly Mock<IEmployeeRepository> _employeeRepo = new();
+    private readonly Mock<ISeparationRepository> _separations = new();
     private readonly PayrollRunService _sut;
 
     public PayrollRunServiceTests()
@@ -45,6 +48,7 @@ public class PayrollRunServiceTests
             new PayrollComputationService(),
             _attendanceBridge.Object,
             _employeeRepo.Object,
+            _separations.Object,
             NullLogger<PayrollRunService>.Instance);
     }
 
@@ -917,7 +921,7 @@ public class PayrollRunServiceTests
         var sut = new PayrollRunService(
             _runRepo.Object, _compensationRepo.Object, _allowanceRepo.Object, _loanRepo.Object,
             _settingsRepo.Object, new PayrollComputationService(), _attendanceBridge.Object,
-            _employeeRepo.Object, NullLogger<PayrollRunService>.Instance, finalPay.Object);
+            _employeeRepo.Object, _separations.Object, NullLogger<PayrollRunService>.Instance, finalPay.Object);
 
         await sut.ComputeAsync(run.Id);
 
@@ -975,5 +979,88 @@ public class PayrollRunServiceTests
         var page = await _sut.GetPagedAsync(1, 10);
 
         page.Items.Single().RunType.Should().Be(PayrollRunType.FinalPay);
+    }
+
+    // ------------------------------------------------------------------
+    // Final-pay runs: Mark Paid waits for the separation's clearance
+    // ------------------------------------------------------------------
+
+    /// <summary>An approved final-pay run for Maria Santos, and her separation with the given clearance items.</summary>
+    private (PayrollRun Run, Separation Separation) ApprovedFinalPay(params SeparationClearanceItem[] items)
+    {
+        var employee = new Employee { FirstName = "Maria", LastName = "Santos" };
+        var run = new PayrollRun
+        {
+            RunNumber = "FP-2026-001",
+            RunType = PayrollRunType.FinalPay,
+            Status = PayrollRunStatus.Approved,
+            PeriodStart = new DateOnly(2026, 3, 1),
+            PeriodEnd = new DateOnly(2026, 3, 13),
+            PayDate = new DateOnly(2026, 3, 31),
+        };
+        var separation = new Separation
+        {
+            EmployeeId = employee.Id,
+            Employee = employee,
+            LastWorkingDay = new DateOnly(2026, 3, 13),
+            Status = SeparationStatus.Separated,
+            FinalPayRunId = run.Id,
+            FinalPayRun = run,
+            ClearanceItems = items.ToList(),
+        };
+        run.FinalPayInputs = new FinalPayInputs { PayrollRunId = run.Id, SeparationId = separation.Id };
+        run.Employees.Add(new PayrollRunEmployee { PayrollRunId = run.Id, EmployeeId = employee.Id, RegularPay = 15_600m });
+
+        _runRepo.Setup(r => r.GetWithEntriesAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        _separations.Setup(s => s.GetAsync(separation.Id, It.IsAny<CancellationToken>())).ReturnsAsync(separation);
+        return (run, separation);
+    }
+
+    private static SeparationClearanceItem Item(string name, int sortOrder, bool cleared) => new()
+    {
+        Name = name,
+        SortOrder = sortOrder,
+        ClearedBy = cleared ? "hr@company.test" : null,
+        ClearedAt = cleared ? new DateTime(2026, 3, 20, 0, 0, 0, DateTimeKind.Utc) : null,
+    };
+
+    [Fact]
+    public async Task MarkPaidAsync_OnAFinalPayRun_WhileClearanceIsOutstanding_NamesTheItemsInOrder()
+    {
+        var (run, _) = ApprovedFinalPay(
+            Item("HR exit interview", 3, cleared: false),
+            Item("IT equipment", 1, cleared: true),
+            Item("Finance", 2, cleared: false));
+
+        var act = () => _sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message
+            .Should().Be("Clear Finance, HR exit interview before paying final pay.");
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+        _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_OnAFinalPayRun_WhenEveryClearanceItemIsCleared_MarksItPaid()
+    {
+        var (run, _) = ApprovedFinalPay(Item("IT equipment", 1, cleared: true), Item("Finance", 2, cleared: true));
+
+        await _sut.MarkPaidAsync(run.Id);
+
+        run.Status.Should().Be(PayrollRunStatus.Paid);
+        _runRepo.Verify(r => r.UpdateAsync(run, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_OnAFinalPayRun_WithNoClearanceItemsAtAll_IsRefused()
+    {
+        // Every item was removed: nothing has been cleared, so clearance isn't complete.
+        var (run, _) = ApprovedFinalPay();
+
+        var act = () => _sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message
+            .Should().Be("Add the separation's clearance items and clear them before paying final pay.");
+        run.Status.Should().Be(PayrollRunStatus.Approved);
     }
 }
