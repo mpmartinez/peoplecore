@@ -22,7 +22,7 @@ public class FinalPayControllerTests
     private static readonly FinalPaySummaryDto Summary = new(
         Guid.NewGuid(), "PR-2026-0042", PayrollRunStatus.Draft,
         new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 9), new DateOnly(2026, 10, 15),
-        7m, false, true, 8_000m, 8_000m, [new FinalPayLeaveLineDto("Vacation Leave", 5m, true)], true,
+        7m, false, true, 1_600m, 8_000m, 8_000m, [new FinalPayLeaveLineDto("Vacation Leave", 5m, true)], true,
         0m, 0m, null, null, null, null, 3,
         Request.Deductions, [new FinalPayDeductionLineDto("Unreturned laptop", 5_000m, 5_000m, 0m)],
         [], 1_200m, 20_000m, 13_800m, false, ["Return laptop"]);

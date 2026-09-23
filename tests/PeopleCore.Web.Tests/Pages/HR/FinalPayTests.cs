@@ -63,7 +63,7 @@ public class FinalPayTests : BunitContext
         bool hasConvertibleLeaveType = true, string? deductionLines = null) =>
         $$"""
         {"runId":"{{RunId}}","runNumber":"FP-2026-001","status":"{{status}}","periodStart":"{{periodStart}}","periodEnd":"2026-04-15",
-         "payDate":"2026-04-30","workingDays":{{workingDays}},"noSalaryDays":{{(noSalaryDays ? "true" : "false")}},
+         "payDate":"2026-04-30","workingDays":{{workingDays}},"dailyRate":1500,"noSalaryDays":{{(noSalaryDays ? "true" : "false")}},
          "periodStartIsDefault":{{(periodStartIsDefault ? "true" : "false")}},
          "leaveConversionPay":7500,"leaveConversionNonTaxable":7500,"leaveLines":{{leaveLines}},
          "hasConvertibleLeaveType":{{(hasConvertibleLeaveType ? "true" : "false")}},
@@ -300,6 +300,8 @@ public class FinalPayTests : BunitContext
         summary.Should().Contain("Apr 1, 2026").And.Contain("Apr 15, 2026").And.Contain("Apr 30, 2026");
         Text(cut, "[data-salary-days]").Should().Contain("Salary days").And.Contain("10");
         Text(cut, "[data-leave-lines]").Should().Contain("Vacation Leave").And.Contain("5");
+        // The spec: the page shows the days and the rate they were paid at (5 x 1,500 = 7,500).
+        Text(cut, "[data-daily-rate]").Should().Contain("Daily rate").And.Contain("1,500.00");
         summary.Should().Contain("7,500.00");
         Text(cut, "[data-final-pay-deductions]").Should().Contain("Unreturned phone").And.Contain("3,500.00");
         Text(cut, "[data-tax]").Should().Contain("Withholding tax").And.Contain("1,250.50");

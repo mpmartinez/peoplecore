@@ -52,6 +52,9 @@ public record FinalPayLoanLineDto(string LoanType, decimal Balance, decimal Dedu
 /// equal to the computed figure can't be told apart from the figures alone.
 /// </param>
 /// <param name="RetirementPayOverride">HR's stored retirement pay override, null when there is none.</param>
+/// <param name="DailyRate">
+/// The daily rate the entry was computed at: what the salary days and each leave day were paid at.
+/// </param>
 /// <param name="HasConvertibleLeaveType">
 /// Whether any leave type converts to cash. With no <paramref name="LeaveLines"/>, false means
 /// nothing is marked convertible, true that the convertible leave is all used up.
@@ -82,6 +85,7 @@ public record FinalPaySummaryDto(
     decimal WorkingDays,
     bool NoSalaryDays,
     bool PeriodStartIsDefault,
+    decimal DailyRate,
     decimal LeaveConversionPay,
     decimal LeaveConversionNonTaxable,
     IReadOnlyList<FinalPayLeaveLineDto> LeaveLines,

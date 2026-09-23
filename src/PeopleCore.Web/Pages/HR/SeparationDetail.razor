@@ -632,6 +632,10 @@ else
                             <span class="text-sm font-medium text-right">@summary.WorkingDays.ToString("0.##")</span>
                         </div>
                     }
+                    <div class="flex justify-between py-2 border-b border-dashed" data-daily-rate>
+                        <span class="text-muted-foreground text-sm">Daily rate</span>
+                        <span class="text-sm font-medium text-right">@Peso(summary.DailyRate)</span>
+                    </div>
                     <InfoRow Label="Years of Service" Value="@summary.ServiceYears.ToString()" />
 
                     <div class="py-2 border-b border-dashed" data-leave-lines>
@@ -652,7 +656,7 @@ else
                             <ul class="text-xs text-muted-foreground mt-1 space-y-0.5">
                                 @foreach (var line in summary.LeaveLines)
                                 {
-                                    <li>@line.LeaveType: @Days(line.Days)@(line.CountsAsVacation ? " (counts toward the de minimis ceiling)" : "")</li>
+                                    <li>@line.LeaveType: @Days(line.Days) x @Peso(summary.DailyRate)@(line.CountsAsVacation ? " (counts toward the de minimis ceiling)" : "")</li>
                                 }
                             </ul>
                             @if (summary.LeaveConversionNonTaxable > 0m)

@@ -318,6 +318,7 @@ public class FinalPayServiceTests
         summary.NetPay.Should().Be(204_579.17m);
         summary.LeaveConversionPay.Should().Be(6_000m);
         summary.LeaveConversionNonTaxable.Should().Be(6_000m);
+        summary.DailyRate.Should().Be(1_200m);   // the rate the leave (and the salary days) were paid at
         summary.SeparationPay.Should().Be(182_500m);
         summary.ComputedSeparationOrRetirementPay.Should().Be(182_500m);
     }

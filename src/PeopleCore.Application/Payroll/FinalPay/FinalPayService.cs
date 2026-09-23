@@ -679,6 +679,7 @@ public sealed class FinalPayService : IFinalPayService
             inputs.WorkingDays,
             noSalary,
             startIsDefault,
+            entry.DailyRate,
             entry.LeaveConversionPay,
             entry.LeaveConversionNonTaxable + await LeaveOtherBenefitsExemptAsync(separation.EmployeeId, run, entry, ct),
             figures.LeaveLines,

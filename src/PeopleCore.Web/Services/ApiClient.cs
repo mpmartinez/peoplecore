@@ -829,6 +829,8 @@ public record FinalPaySummaryDto(
     // True when the stored start is what no start gives (the default, or the no-salary path's
     // last working day); an edit form then leaves the start empty rather than pinning it.
     bool PeriodStartIsDefault,
+    // The rate the salary days and each converted leave day were paid at.
+    decimal DailyRate,
     decimal LeaveConversionPay,
     decimal LeaveConversionNonTaxable,
     IReadOnlyList<FinalPayLeaveLineDto> LeaveLines,
