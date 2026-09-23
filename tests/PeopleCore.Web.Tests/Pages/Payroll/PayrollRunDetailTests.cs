@@ -82,6 +82,16 @@ public class PayrollRunDetailTests : BunitContext
             .Contain("2 employees had no shift schedule for this period, so no absences were derived for those employees.");
     }
 
+    [Fact]
+    public void TheStatusBadge_ReadsAsWords_NotTheRawStatusName()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("ForApproval"));
+
+        var cut = RenderPage();
+
+        cut.Markup.Should().Contain(">For approval<").And.NotContain("ForApproval");
+    }
+
     [Theory]
     [InlineData("Draft", new[] { "Compute", "Approve" })]
     [InlineData("Processing", new[] { "Compute", "Approve" })]
@@ -131,11 +141,11 @@ public class PayrollRunDetailTests : BunitContext
     }
 
     [Theory]
-    [InlineData("Draft", "Compute", "compute", "ForApproval", new[] { "Compute", "Approve" })]
-    [InlineData("ForApproval", "Approve", "approve", "Approved", new[] { "Mark Paid" })]
-    [InlineData("Approved", "Mark Paid", "mark-paid", "Paid", new string[0])]
+    [InlineData("Draft", "Compute", "compute", "ForApproval", "For approval", new[] { "Compute", "Approve" })]
+    [InlineData("ForApproval", "Approve", "approve", "Approved", "Approved", new[] { "Mark Paid" })]
+    [InlineData("Approved", "Mark Paid", "mark-paid", "Paid", "Paid", new string[0])]
     public void AnAction_PutsToItsEndpoint_AndReloadsTheRunIntoItsNextStatus(
-        string status, string button, string endpoint, string nextStatus, string[] nextActions)
+        string status, string button, string endpoint, string nextStatus, string nextLabel, string[] nextActions)
     {
         _api.On(HttpMethod.Get, RunPath, () => Json(RunJson(status)))
             .On(HttpMethod.Put, $"{RunPath}/{endpoint}", () =>
@@ -147,7 +157,7 @@ public class PayrollRunDetailTests : BunitContext
 
         Button(cut, button).Click();
 
-        cut.WaitForAssertion(() => cut.Markup.Should().Contain($">{nextStatus}<"));
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain($">{nextLabel}<"));
         ActionButtons(cut).Should().Equal(nextActions);
         _api.Requests.Where(r => r.Method == HttpMethod.Put).Should().ContainSingle();
         cut.FindAll("[role=alert]").Should().BeEmpty();

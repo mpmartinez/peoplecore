@@ -11,7 +11,7 @@
     <ChildContent>
         @if (_run is not null)
         {
-            <Badge Variant="@RunStatusVariant(_run.Status)" Class="mt-1">@_run.Status</Badge>
+            <Badge Variant="@RunStatusVariant(_run.Status)" Class="mt-1">@PayrollLabels.RunStatusOf(_run.Status)</Badge>
             @if (IsFinalPay)
             {
                 <Badge Variant="outline" Class="mt-1 ml-2" data-final-pay-badge>Final pay</Badge>

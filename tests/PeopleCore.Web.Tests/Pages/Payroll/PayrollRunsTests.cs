@@ -85,7 +85,7 @@ public class PayrollRunsTests : BunitContext
 
         var rows = cut.FindAll("tbody tr");
         rows.Should().HaveCount(2);
-        rows[0].TextContent.Should().Contain("PR-2026-0017").And.Contain("ForApproval").And.Contain("12");
+        rows[0].TextContent.Should().Contain("PR-2026-0017").And.Contain("For approval").And.NotContain("ForApproval").And.Contain("12");
         rows[1].TextContent.Should().Contain("PR-2026-0016").And.Contain("Paid");
 
         rows[0].Click();
