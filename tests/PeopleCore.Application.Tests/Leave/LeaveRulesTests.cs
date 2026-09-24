@@ -219,6 +219,29 @@ public class LeaveRulesTests
     // ---- EnsureWithinLimits: checks 9, 10, 12, 13 ----
 
     [Fact]
+    public void EnsureEligible_NegativeFatherAllocation_Throws()
+    {
+        // A negative allocation would otherwise raise the limit: 105 - (-15) = 120 without a solo parent ID.
+        var type = MakeType(name: "Maternity Leave", isMaternity: true, kind: LeaveEntitlementKind.PerEvent, daysPerEvent: 105);
+        var ctx = MakeContext(type, MakeEmployee(gender: Gender.Female),
+            maternityCase: MaternityCase.LiveBirth, daysAllocatedToFather: -15);
+
+        var act = () => LeaveRules.EnsureEligible(ctx);
+
+        act.Should().Throw<DomainException>().WithMessage("Up to 7 days can be allocated to the father, for a live birth only.");
+    }
+
+    [Fact]
+    public void EnsureSpan_ThreeYears_Throws_TwoYears_Passes()
+    {
+        var threeYears = () => LeaveRules.EnsureSpan(new DateOnly(2025, 12, 29), new DateOnly(2027, 1, 4));
+        var twoYears = () => LeaveRules.EnsureSpan(new DateOnly(2025, 12, 29), new DateOnly(2026, 1, 4));
+
+        threeYears.Should().Throw<DomainException>().WithMessage("A leave request can't span more than two years.");
+        twoYears.Should().NotThrow();
+    }
+
+    [Fact]
     public void EnsureWithinLimits_ThreeYearSpan_Throws()
     {
         var type = MakeType();

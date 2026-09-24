@@ -1,13 +1,34 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Domain.Entities.Leave;
+using PeopleCore.Domain.Exceptions;
 using PeopleCore.Infrastructure.Persistence;
 
 namespace PeopleCore.Infrastructure.Persistence.Repositories;
 
 public class LeaveBalanceRepository : Repository<LeaveBalance>, ILeaveBalanceRepository
 {
+    private const string UniqueViolation = "23505";
+
     public LeaveBalanceRepository(AppDbContext context) : base(context) { }
+
+    public async Task AddNewAsync(LeaveBalance balance, CancellationToken ct = default)
+    {
+        // Added explicitly: the row has its Guid from construction, so reached through a tracked
+        // parent EF would take it for an existing row and UPDATE it.
+        Context.LeaveBalances.Add(balance);
+        try
+        {
+            await Context.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: UniqueViolation })
+        {
+            // Left Added, the rejected row would be inserted again by the next SaveChanges on this context.
+            Context.Entry(balance).State = EntityState.Detached;
+            throw new DomainException("Your leave is being filed already; try again in a moment.");
+        }
+    }
 
     public async Task<LeaveBalance?> GetByEmployeeAndTypeAsync(
         Guid employeeId, Guid leaveTypeId, int year, CancellationToken ct = default)

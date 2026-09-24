@@ -70,7 +70,7 @@ public class LeaveRequestService : ILeaveRequestService
 
                 // Added explicitly - an AuditableEntity has its Guid from construction, so EF would
                 // otherwise take a new row reached through a tracked parent for an UPDATE.
-                await _balanceRepo.AddAsync(new LeaveBalance
+                await _balanceRepo.AddNewAsync(new LeaveBalance
                 {
                     EmployeeId = employee.Id,
                     LeaveTypeId = leaveType.Id,
@@ -148,7 +148,7 @@ public class LeaveRequestService : ILeaveRequestService
                 {
                     // YearlyAllowance: created at filing, so only missing if deleted since; the
                     // allowance still applies. Added explicitly (the EF trap, as at filing).
-                    await _balanceRepo.AddAsync(new LeaveBalance
+                    await _balanceRepo.AddNewAsync(new LeaveBalance
                     {
                         EmployeeId = employee.Id,
                         LeaveTypeId = leaveType.Id,
@@ -179,18 +179,34 @@ public class LeaveRequestService : ILeaveRequestService
         IReadOnlyDictionary<int, LeaveBalance> Balances);
 
     /// <summary>
-    /// Counts the days and runs the filing checks in the Global Constraints order: eligibility
-    /// (1-8), overlap (11), then limits (9, 10, 12, 13). A year's available days are its balance
-    /// (YearlyAllowance with no row: the allowance; Accrued with no row: 0) less the days the
-    /// employee's other Pending requests of the type hold there. <paramref name="excludeId"/>
-    /// leaves the request being approved out of both the holds and the overlap check.
+    /// Runs the filing checks, counting the days only once the cheap checks have passed:
+    /// eligibility (1-8), span (9), overlap (11), then the count, then the limits (10, 12, 13; the
+    /// span is re-checked there, harmlessly). So an absurd range is refused before it is walked day
+    /// by day. A year's available days are its balance (YearlyAllowance with no row: the allowance;
+    /// Accrued with no row: 0) less the days the employee's other Pending requests of the type hold
+    /// there. <paramref name="excludeId"/> leaves the request being approved out of both the holds
+    /// and the overlap check.
     /// </summary>
     private async Task<CheckedRequest> CheckAsync(
         Employee employee, LeaveType leaveType, DateOnly start, DateOnly end,
         MaternityCase? maternityCase, int daysAllocatedToFather, Guid? excludeId, CancellationToken ct)
     {
-        var daysByYear = await _dayCounter.CountByYearAsync(employee.Id, leaveType, start, end, ct);
         var approvedEvents = await _leaveRepo.CountApprovedAsync(employee.Id, leaveType.Id, ct);
+
+        // Checks 1-8 read nothing from the day counts or the balances.
+        var context = new LeaveRuleContext(
+            leaveType, employee, start, end,
+            DaysByYear: new Dictionary<int, decimal>(),
+            maternityCase, daysAllocatedToFather, approvedEvents,
+            AvailableByYear: new Dictionary<int, decimal>());
+
+        LeaveRules.EnsureEligible(context);
+        LeaveRules.EnsureSpan(start, end);
+
+        if (await _leaveRepo.HasOverlapAsync(employee.Id, start, end, excludeId, ct))
+            throw new DomainException("Employee has an overlapping leave request for these dates.");
+
+        var daysByYear = await _dayCounter.CountByYearAsync(employee.Id, leaveType, start, end, ct);
 
         var balances = new Dictionary<int, LeaveBalance>();
         var availableByYear = new Dictionary<int, decimal>();
@@ -213,16 +229,7 @@ public class LeaveRequestService : ILeaveRequestService
             }
         }
 
-        var context = new LeaveRuleContext(
-            leaveType, employee, start, end, daysByYear,
-            maternityCase, daysAllocatedToFather, approvedEvents, availableByYear);
-
-        LeaveRules.EnsureEligible(context);
-
-        if (await _leaveRepo.HasOverlapAsync(employee.Id, start, end, excludeId, ct))
-            throw new DomainException("Employee has an overlapping leave request for these dates.");
-
-        LeaveRules.EnsureWithinLimits(context);
+        LeaveRules.EnsureWithinLimits(context with { DaysByYear = daysByYear, AvailableByYear = availableByYear });
 
         return new CheckedRequest(
             daysByYear,

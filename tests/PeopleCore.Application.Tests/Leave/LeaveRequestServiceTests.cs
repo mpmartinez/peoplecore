@@ -41,8 +41,6 @@ public class LeaveRequestServiceTests
                   .ReturnsAsync([]);
         _leaveRepo.Setup(r => r.AddAsync(It.IsAny<LeaveRequest>(), It.IsAny<CancellationToken>()))
                   .ReturnsAsync((LeaveRequest l, CancellationToken _) => l);
-        _balanceRepo.Setup(r => r.AddAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()))
-                    .ReturnsAsync((LeaveBalance b, CancellationToken _) => b);
 
         var counter = new LeaveDayCounter(_shiftRepo.Object, _holidayService.Object);
         _sut = new LeaveRequestService(_leaveRepo.Object, _balanceRepo.Object, counter, _employeeRepo.Object, _leaveTypeRepo.Object);
@@ -448,7 +446,7 @@ public class LeaveRequestServiceTests
         var result = await _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), null));
 
         result.TotalDays.Should().Be(3);
-        _balanceRepo.Verify(r => r.AddAsync(It.Is<LeaveBalance>(b =>
+        _balanceRepo.Verify(r => r.AddNewAsync(It.Is<LeaveBalance>(b =>
             b.EmployeeId == emp.Id && b.LeaveTypeId == lt.Id && b.Year == 2025 && b.TotalDays == 7 && b.UsedDays == 0),
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -466,7 +464,7 @@ public class LeaveRequestServiceTests
         var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 19), null));
 
         await act.Should().ThrowAsync<DomainException>().WithMessage("You have 7 days of Solo Parent Leave left for 2025.");
-        _balanceRepo.Verify(r => r.AddAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()), Times.Never);
+        _balanceRepo.Verify(r => r.AddNewAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -481,7 +479,7 @@ public class LeaveRequestServiceTests
 
         await _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), null));
 
-        _balanceRepo.Verify(r => r.AddAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()), Times.Never);
+        _balanceRepo.Verify(r => r.AddNewAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── Per event ────────────────────────────────────────────────────────────
@@ -502,7 +500,7 @@ public class LeaveRequestServiceTests
 
         approved.Status.Should().Be(LeaveStatus.Approved);
         _balanceRepo.Verify(r => r.GetByEmployeeAndTypeAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
-        _balanceRepo.Verify(r => r.AddAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()), Times.Never);
+        _balanceRepo.Verify(r => r.AddNewAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()), Times.Never);
         _balanceRepo.Verify(r => r.UpdateAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -700,5 +698,154 @@ public class LeaveRequestServiceTests
         result.DaysAllocatedToFather.Should().Be(7);
         result.HasDocument.Should().BeFalse();
         result.DocumentFileName.Should().BeNull();
+    }
+
+    // ── Review fixes ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Maternity_NegativeFatherAllocation_IsRefused()
+    {
+        // -15 would otherwise lift the live-birth limit to 120 days without a solo parent ID.
+        var emp = MakeEmployee(gender: Gender.Female);
+        var lt = Maternity();
+        Known(emp, lt);
+        var start = new DateOnly(2025, 3, 1);
+
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, start, start.AddDays(119), null,
+            MaternityCase.LiveBirth, DaysAllocatedToFather: -15));
+
+        await act.Should().ThrowAsync<DomainException>()
+                 .WithMessage("Up to 7 days can be allocated to the father, for a live birth only.");
+        _leaveRepo.Verify(r => r.AddAsync(It.IsAny<LeaveRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateAsync_ThreeYearRange_IsRefusedWithoutCountingTheDays()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        var counter = new Mock<ILeaveDayCounter>();
+        var sut = new LeaveRequestService(_leaveRepo.Object, _balanceRepo.Object, counter.Object, _employeeRepo.Object, _leaveTypeRepo.Object);
+
+        var act = () => sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(9999, 12, 31), null));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("A leave request can't span more than two years.");
+        counter.Verify(c => c.CountByYearAsync(It.IsAny<Guid>(), It.IsAny<LeaveType>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateAsync_OverlapAndInsufficientBalance_ReportsTheOverlap()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        HasBalance(emp, lt, 2025, total: 1);
+        _leaveRepo.Setup(r => r.HasOverlapAsync(emp.Id, It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), null, It.IsAny<CancellationToken>()))
+                  .ReturnsAsync(true);
+
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 14), null));
+
+        await act.Should().ThrowAsync<DomainException>()
+                 .WithMessage("Employee has an overlapping leave request for these dates.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_InactiveTypeAndOverlap_ReportsInactive()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        lt.IsActive = false;
+        Known(emp, lt);
+        HasBalance(emp, lt, 2025, total: 10);
+        _leaveRepo.Setup(r => r.HasOverlapAsync(emp.Id, It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), null, It.IsAny<CancellationToken>()))
+                  .ReturnsAsync(true);
+
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 11), null));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Vacation Leave is no longer available.");
+    }
+
+    [Theory]
+    [InlineData(2025, 3, 10, "You have 1 days of Vacation Leave left for 2025.")] // 4 - 3 held in 2025
+    [InlineData(2026, 3, 9, "You have 1 days of Vacation Leave left for 2026.")]  // 3 - 2 held in 2026
+    public async Task CreateAsync_APendingHoldSpanningTwoYears_IsChargedToBothYears(int year, int month, int day, string message)
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        HasBalance(emp, lt, 2025, total: 4);
+        HasBalance(emp, lt, 2026, total: 3);
+        var pending = new LeaveRequest
+        {
+            EmployeeId = emp.Id, LeaveTypeId = lt.Id, Status = LeaveStatus.Pending,
+            StartDate = new DateOnly(2025, 12, 29), EndDate = new DateOnly(2026, 1, 2), TotalDays = 5, DaysInStartYear = 3
+        };
+        _leaveRepo.Setup(r => r.GetPendingAsync(emp.Id, lt.Id, null, It.IsAny<CancellationToken>())).ReturnsAsync([pending]);
+
+        // A Monday and Tuesday: 2 days, one more than the year has left after the hold.
+        var start = new DateOnly(year, month, day);
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, start, start.AddDays(1), null));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(message);
+    }
+
+    [Fact]
+    public async Task ApproveAsync_YearlyAllowance_ChargesUsedDays()
+    {
+        var emp = MakeEmployee();
+        emp.SoloParentIdNumber = "SP-1";
+        emp.SoloParentIdValidUntil = new DateOnly(2030, 1, 1);
+        var lt = SoloParent();
+        Known(emp, lt);
+        var balance = HasBalance(emp, lt, 2025, total: 7);
+        var request = Stored(emp, lt, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), totalDays: 3, daysInStartYear: 3);
+
+        await _sut.ApproveAsync(request.Id, Guid.NewGuid());
+
+        balance.UsedDays.Should().Be(3);
+        _balanceRepo.Verify(r => r.UpdateAsync(balance, It.IsAny<CancellationToken>()), Times.Once);
+        _balanceRepo.Verify(r => r.AddNewAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ApproveAsync_BalanceDroppedSinceFiling_IsRefused()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        var balance = HasBalance(emp, lt, 2025, total: 10);
+        LeaveRequest? saved = null;
+        _leaveRepo.Setup(r => r.AddAsync(It.IsAny<LeaveRequest>(), It.IsAny<CancellationToken>()))
+                  .Callback((LeaveRequest l, CancellationToken _) => saved = l)
+                  .ReturnsAsync((LeaveRequest l, CancellationToken _) => l);
+        await _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), null));
+        _leaveRepo.Setup(r => r.GetByIdAsync(saved!.Id, It.IsAny<CancellationToken>())).ReturnsAsync(saved);
+
+        balance.UsedDays = 9; // other leave approved in between
+
+        var act = () => _sut.ApproveAsync(saved!.Id, Guid.NewGuid());
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("You have 1 days of Vacation Leave left for 2025.");
+        saved!.Status.Should().Be(LeaveStatus.Pending);
+        balance.UsedDays.Should().Be(9);
+    }
+
+    [Fact]
+    public async Task CreateAsync_YearlyAllowance_ConcurrentFilingAddedTheRow_IsRefusedAndNothingIsSaved()
+    {
+        var emp = MakeEmployee();
+        emp.SoloParentIdNumber = "SP-1";
+        emp.SoloParentIdValidUntil = new DateOnly(2030, 1, 1);
+        var lt = SoloParent();
+        Known(emp, lt);
+        _balanceRepo.Setup(r => r.AddNewAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()))
+                    .ThrowsAsync(new DomainException("Your leave is being filed already; try again in a moment."));
+
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), null));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Your leave is being filed already; try again in a moment.");
+        _leaveRepo.Verify(r => r.AddAsync(It.IsAny<LeaveRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

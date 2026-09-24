@@ -24,6 +24,7 @@ public sealed record LeaveRuleContext(
 /// messages of the Global Constraints filing-checks table. Throws <see cref="DomainException"/>.
 /// Check 11 (overlap) is the caller's responsibility, run between <see cref="EnsureEligible"/> and
 /// <see cref="EnsureWithinLimits"/>; check 14 (document, on approval only) is the caller's too.
+/// <see cref="EnsureSpan"/> lets the caller refuse check 9 before counting any days.
 /// </summary>
 public static class LeaveRules
 {
@@ -51,6 +52,9 @@ public static class LeaveRules
         CheckPerEventLimit(c);
         CheckBalance(c);
     }
+
+    /// <summary>Check 9 on its own. It needs no day counts, so it runs before the days are counted.</summary>
+    public static void EnsureSpan(DateOnly start, DateOnly end) => CheckSpan(start, end);
 
     /// <summary>The per-event limit, or null for non-PerEvent types. Maternity follows the RA 11210 rule.</summary>
     public static decimal? PerEventLimit(
@@ -133,12 +137,13 @@ public static class LeaveRules
 
     private static void CheckFatherAllocation(LeaveType type, MaternityCase? maternityCase, int daysAllocatedToFather)
     {
-        if (!type.IsMaternity || daysAllocatedToFather <= 0)
+        if (!type.IsMaternity || daysAllocatedToFather == 0)
             return;
 
-        var exceedsMax = daysAllocatedToFather > StatutoryLeave.MaxDaysAllocatedToFather;
+        // A negative allocation is refused too: PerEventLimit subtracts it, so it would raise the limit.
+        var outOfRange = daysAllocatedToFather is < 0 or > StatutoryLeave.MaxDaysAllocatedToFather;
         var notLiveBirth = maternityCase != PeopleCore.Domain.Enums.MaternityCase.LiveBirth;
-        if (exceedsMax || notLiveBirth)
+        if (outOfRange || notLiveBirth)
             throw new DomainException("Up to 7 days can be allocated to the father, for a live birth only.");
     }
 
