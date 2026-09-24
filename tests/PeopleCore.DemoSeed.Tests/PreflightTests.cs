@@ -65,6 +65,37 @@ public class PreflightTests
         Preflight.LeaveTypeProblem("SL", LeaveType("null", isPaid: false)).Should().Contain("SL").And.Contain("unpaid");
     }
 
+    [Fact]
+    public void AnInactiveLeaveType_IsRefused()
+    {
+        // An inactive type accrues nothing and can't be filed.
+        var type = LeaveType("null", isPaid: true);
+        type["isActive"] = false;
+
+        Preflight.LeaveTypeProblem("VL", type).Should().Contain("VL").And.Contain("inactive");
+    }
+
+    [Theory]
+    [InlineData("YearlyAllowance")]
+    [InlineData("PerEvent")]
+    public void ALeaveTypeThatIsNotAccrued_IsRefused(string kind)
+    {
+        // The demo's balances come from its monthly accrual policies, which only accrued types use.
+        var type = LeaveType("null", isPaid: true);
+        type["entitlementKind"] = kind;
+
+        Preflight.LeaveTypeProblem("SL", type).Should().Contain("SL").And.Contain("accrue");
+    }
+
+    [Fact]
+    public void AnAccruedLeaveType_IsAccepted()
+    {
+        var type = LeaveType("null", isPaid: true);
+        type["entitlementKind"] = "Accrued";
+
+        Preflight.LeaveTypeProblem("VL", type).Should().BeNull();
+    }
+
     [Theory]
     [InlineData(1, true)]
     [InlineData(0, false)]

@@ -167,7 +167,22 @@ public sealed partial class Seeder
             Count("accrual policies");
         }
         Say("Leave: Vacation and Sick Leave at 15 days a year, accruing monthly.");
+
+        // The Philippine statutory types (SIL, maternity, paternity, solo parent, VAWC, Magna Carta).
+        // The action is idempotent and leaves a type the site already has alone, so a rerun or a
+        // site that set some up by hand is fine. The demo files only VL and SL.
+        var statutory = await api.PostAsync("Add the statutory leave types", "api/leave-types/statutory", null, admin);
+        var added = CodesIn(statutory?["added"]);
+        Count("leave types", added.Count);
+        var skipped = CodesIn(statutory?["skipped"]);
+        Say(added.Count == 0
+            ? "Statutory leave types: the site already had all of them."
+            : $"Statutory leave types added: {string.Join(", ", added)}"
+              + (skipped.Count == 0 ? "." : $" (already there: {string.Join(", ", skipped)})."));
     }
+
+    private static List<string> CodesIn(JsonNode? node) =>
+        (node as JsonArray)?.Select(c => c?.GetValue<string>()).OfType<string>().ToList() ?? [];
 
     /// <summary>
     /// LeaveAccrualPoliciesController's GET takes leaveTypeId as a required query parameter and

@@ -3,6 +3,7 @@ using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Leave.DTOs;
 using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Domain.Entities.Leave;
+using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Interfaces;
 
 namespace PeopleCore.Application.Leave.Services;
@@ -89,7 +90,13 @@ public class LeaveAccrualService : ILeaveAccrualService
     {
         var employees = await _employeeRepo.GetAllAsync(ct);
         var activeEmployees = employees.Where(e => e.SeparationDate == null);
-        var policies = await _accrualRepo.GetAllActivePoliciesAsync(ct);
+        // Only accrued types build balances from policies: a yearly allowance's balance is created on
+        // first filing and a per-event type has none, so accruing either would grant days twice or
+        // out of nothing. An inactive type can't be filed, so it accrues nothing either. The
+        // repository loads each policy with its type.
+        var policies = (await _accrualRepo.GetAllActivePoliciesAsync(ct))
+            .Where(p => p.LeaveType is { IsActive: true, EntitlementKind: LeaveEntitlementKind.Accrued })
+            .ToList();
         var accrualDate = new DateOnly(year, month, 1);
 
         foreach (var employee in activeEmployees)
@@ -99,6 +106,9 @@ public class LeaveAccrualService : ILeaveAccrualService
 
             foreach (var policy in policies)
             {
+                // A type for one gender accrues nothing for the other (the same test LeaveRules files by).
+                if (policy.LeaveType.GenderRestriction is { } gender && gender != employee.Gender.ToString()) continue;
+
                 if (tenureMonths < policy.TenureMonthsMin) continue;
                 if (policy.TenureMonthsMax.HasValue && tenureMonths > policy.TenureMonthsMax.Value) continue;
 

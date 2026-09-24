@@ -1,13 +1,22 @@
 using PeopleCore.Application.Leave.DTOs;
 using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Domain.Entities.Leave;
+using PeopleCore.Domain.Enums;
+using PeopleCore.Domain.Exceptions;
+using PeopleCore.Domain.Interfaces;
 
 namespace PeopleCore.Application.Leave.Services;
 
 public class LeaveTypeService : ILeaveTypeService
 {
     private readonly ILeaveTypeRepository _repo;
-    public LeaveTypeService(ILeaveTypeRepository repo) => _repo = repo;
+    private readonly ILeaveAccrualRepository _accruals;
+
+    public LeaveTypeService(ILeaveTypeRepository repo, ILeaveAccrualRepository accruals)
+    {
+        _repo = repo;
+        _accruals = accruals;
+    }
 
     public async Task<IReadOnlyList<LeaveTypeDto>> GetAllAsync(CancellationToken ct = default)
     {
@@ -24,20 +33,9 @@ public class LeaveTypeService : ILeaveTypeService
 
     public async Task<LeaveTypeDto> CreateAsync(CreateLeaveTypeDto dto, CancellationToken ct = default)
     {
-        var lt = new LeaveType
-        {
-            Name = dto.Name,
-            Code = dto.Code,
-            MaxDaysPerYear = dto.MaxDaysPerYear,
-            IsPaid = dto.IsPaid,
-            IsCarryOver = dto.IsCarryOver,
-            CarryOverMaxDays = dto.CarryOverMaxDays,
-            GenderRestriction = dto.GenderRestriction,
-            RequiresDocument = dto.RequiresDocument,
-            IsConvertibleToCash = dto.IsConvertibleToCash,
-            CountsAsVacationForDeMinimis = dto.CountsAsVacationForDeMinimis,
-            IsActive = true
-        };
+        Validate(dto);
+        var lt = new LeaveType();
+        Apply(dto, lt);
         var created = await _repo.AddAsync(lt, ct);
         return ToDto(created);
     }
@@ -46,16 +44,8 @@ public class LeaveTypeService : ILeaveTypeService
     {
         var lt = await _repo.GetByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Leave type {id} not found.");
-        lt.Name = dto.Name;
-        lt.Code = dto.Code;
-        lt.MaxDaysPerYear = dto.MaxDaysPerYear;
-        lt.IsPaid = dto.IsPaid;
-        lt.IsCarryOver = dto.IsCarryOver;
-        lt.CarryOverMaxDays = dto.CarryOverMaxDays;
-        lt.GenderRestriction = dto.GenderRestriction;
-        lt.RequiresDocument = dto.RequiresDocument;
-        lt.IsConvertibleToCash = dto.IsConvertibleToCash;
-        lt.CountsAsVacationForDeMinimis = dto.CountsAsVacationForDeMinimis;
+        Validate(dto);
+        Apply(dto, lt);
         lt.UpdatedAt = DateTime.UtcNow;
         await _repo.UpdateAsync(lt, ct);
         return ToDto(lt);
@@ -65,12 +55,63 @@ public class LeaveTypeService : ILeaveTypeService
     {
         var lt = await _repo.GetByIdAsync(id, ct)
             ?? throw new KeyNotFoundException($"Leave type {id} not found.");
+        if (await _repo.IsUsedAsync(id, ct))
+            throw new DomainException($"{lt.Name} has been used; deactivate it instead.");
+
+        // The policies' foreign key restricts deletes. An unused type's policies have accrued
+        // nothing (an accrual always writes a balance row), so they go with it.
+        foreach (var policy in await _accruals.GetPoliciesByLeaveTypeAsync(id, ct))
+            await _accruals.DeletePolicyAsync(policy, ct);
+
         await _repo.DeleteAsync(lt, ct);
+    }
+
+    public Task<StatutoryLeaveResultDto> AddStatutoryAsync(CancellationToken ct = default)
+        => StatutoryLeaveSet.ApplyAsync(_repo, _accruals, ct);
+
+    private static void Validate(CreateLeaveTypeDto dto)
+    {
+        if (dto.EntitlementKind == LeaveEntitlementKind.PerEvent && !(dto.DaysPerEvent > 0))
+            throw new DomainException("Set the days per event.");
+        if (dto.EntitlementKind == LeaveEntitlementKind.YearlyAllowance && !(dto.MaxDaysPerYear > 0))
+            throw new DomainException("Set the days per year.");
+        if (dto.IsMaternity && dto.EntitlementKind != LeaveEntitlementKind.PerEvent)
+            throw new DomainException("A maternity type must be per event.");
+    }
+
+    /// <summary>Writes every setting. Create and update are both full replacements.</summary>
+    private static void Apply(CreateLeaveTypeDto dto, LeaveType lt)
+    {
+        lt.Name = dto.Name;
+        lt.Code = dto.Code;
+        lt.MaxDaysPerYear = dto.MaxDaysPerYear;
+        lt.IsPaid = dto.IsPaid;
+        lt.IsCarryOver = dto.IsCarryOver;
+        lt.CarryOverMaxDays = dto.CarryOverMaxDays;
+        // LeaveRules compares this to employee.Gender.ToString(); a blank would shut everyone out.
+        lt.GenderRestriction = string.IsNullOrWhiteSpace(dto.GenderRestriction) ? null : dto.GenderRestriction.Trim();
+        lt.RequiresDocument = dto.RequiresDocument;
+        lt.IsConvertibleToCash = dto.IsConvertibleToCash;
+        lt.CountsAsVacationForDeMinimis = dto.CountsAsVacationForDeMinimis;
+        lt.IsActive = dto.IsActive;
+        lt.EntitlementKind = dto.EntitlementKind;
+        lt.CountsCalendarDays = dto.CountsCalendarDays;
+        lt.DaysPerEvent = dto.DaysPerEvent;
+        lt.MinServiceMonths = dto.MinServiceMonths;
+        lt.RequiresMarried = dto.RequiresMarried;
+        lt.RequiresSoloParentId = dto.RequiresSoloParentId;
+        lt.MaxEvents = dto.EntitlementKind == LeaveEntitlementKind.PerEvent ? dto.MaxEvents : null;
+        lt.IsConfidential = dto.IsConfidential;
+        lt.IsMaternity = dto.IsMaternity;
     }
 
     private static LeaveTypeDto ToDto(LeaveType lt) => new(
         lt.Id, lt.Name, lt.Code, lt.MaxDaysPerYear, lt.IsPaid,
         lt.IsCarryOver, lt.CarryOverMaxDays, lt.GenderRestriction,
         lt.RequiresDocument, lt.IsActive,
-        lt.IsConvertibleToCash, lt.CountsAsVacationForDeMinimis);
+        lt.IsConvertibleToCash, lt.CountsAsVacationForDeMinimis,
+        lt.EntitlementKind, lt.CountsCalendarDays,
+        lt.DaysPerEvent, lt.MinServiceMonths,
+        lt.RequiresMarried, lt.RequiresSoloParentId,
+        lt.MaxEvents, lt.IsConfidential, lt.IsMaternity);
 }

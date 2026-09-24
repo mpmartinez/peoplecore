@@ -123,6 +123,10 @@ public class PermissionEquivalenceTests
         ["LeaveController.UploadDocument"] = [],
         ["LeaveController.GetDocument"] = [],
 
+        // POST api/leave-types/statutory adds the Philippine statutory leave types a site lacks;
+        // it manages leave types, like creating one.
+        ["LeaveController.AddStatutoryLeaveTypes"] = [Permissions.LeaveManage],
+
         ["GovernmentReportsController.Get"] = [Permissions.PayrollManage],
 
         ["Bir2316Controller.GetInputs"] = [Permissions.PayrollManage],

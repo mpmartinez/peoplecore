@@ -76,6 +76,15 @@ public class LeaveController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>
+    /// Adds the Philippine statutory leave types the site lacks, matched by code. Idempotent:
+    /// returns <see cref="StatutoryLeaveResultDto"/> naming the codes added and the codes skipped.
+    /// </summary>
+    [HttpPost("leave-types/statutory")]
+    [RequirePermission(Permissions.LeaveManage)]
+    public async Task<IActionResult> AddStatutoryLeaveTypes(CancellationToken ct = default)
+        => Ok(await _typeService.AddStatutoryAsync(ct));
+
     // Leave Requests
     /// <summary>
     /// Leave requests, reasons included. Naming an employee needs access to that employee. With no

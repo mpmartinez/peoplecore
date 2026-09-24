@@ -29,7 +29,9 @@ internal static class Preflight
     /// <summary>
     /// An existing VL or SL type is reused as it is. LeaveRequestService refuses a request from anyone
     /// whose gender differs from a non-null GenderRestriction (an empty string included), and the
-    /// payroll bridge counts a day of unpaid leave as an absence, so either would break the demo.
+    /// payroll bridge counts a day of unpaid leave as an absence, so either would break the demo. The
+    /// accrual run skips an inactive type and any type that isn't Accrued, and filing refuses an
+    /// inactive one, so those would leave the demo's staff without the balances it files against.
     /// </summary>
     public static string? LeaveTypeProblem(string code, JsonNode type)
     {
@@ -37,6 +39,10 @@ internal static class Preflight
             return $"The existing {code} leave type is limited to one gender ({restriction}), so some of the demo's leave would be refused.";
         if (type["isPaid"] is JsonValue paid && paid.TryGetValue<bool>(out var isPaid) && !isPaid)
             return $"The existing {code} leave type is unpaid, so the demo's leave days would be paid as absences.";
+        if (type["isActive"] is JsonValue active && active.TryGetValue<bool>(out var isActive) && !isActive)
+            return $"The existing {code} leave type is inactive, so the demo's leave would be refused.";
+        if (type["entitlementKind"] is JsonValue kind && kind.TryGetValue<string>(out var entitlement) && entitlement != "Accrued")
+            return $"The existing {code} leave type is {entitlement}, not Accrued, so it wouldn't accrue the balances the demo's leave needs.";
         return null;
     }
 

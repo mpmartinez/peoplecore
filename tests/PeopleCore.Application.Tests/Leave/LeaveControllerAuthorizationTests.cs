@@ -531,6 +531,22 @@ public class LeaveControllerAuthorizationTests
         VerifyNoServiceReached();
     }
 
+    // ---- POST api/leave-types/statutory ---------------------------------------------------
+
+    [Fact]
+    public async Task AddStatutoryLeaveTypes_IsAPostToLeaveTypesStatutory_ReturningWhatWasAddedAndSkipped()
+    {
+        // leave.manage is pinned by PermissionEquivalenceTests.
+        var action = typeof(LeaveController).GetMethod(nameof(LeaveController.AddStatutoryLeaveTypes))!;
+        action.GetCustomAttribute<HttpPostAttribute>()!.Template.Should().Be("leave-types/statutory");
+        var outcome = new StatutoryLeaveResultDto(["ML"], ["SIL"]);
+        _types.Setup(s => s.AddStatutoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(outcome);
+
+        var result = await _sut.AddStatutoryLeaveTypes(CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>().Which.Value.Should().BeSameAs(outcome);
+    }
+
     [Fact]
     public void EveryActionTakingAnEmployeeId_IsCoveredByTheseTests()
     {
