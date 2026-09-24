@@ -248,6 +248,44 @@ public class ApiClient
         return await response.Content.ReadFromJsonAsync<LeaveRequestDto>(JsonOptions);
     }
 
+    // Leave types (reading: anyone signed in; changing: leave.manage). Inactive types are listed too.
+    public async Task<IReadOnlyList<LeaveTypeDto>?> GetLeaveTypesAsync()
+        => await GetJsonAsync<List<LeaveTypeDto>>("api/leave-types");
+
+    public Task<LeaveTypeDto?> CreateLeaveTypeAsync(CreateLeaveTypeDto request)
+        => SendJsonAsync<LeaveTypeDto>(HttpMethod.Post, "api/leave-types", request);
+
+    /// <summary>A full replacement: a setting left at its default here is reset on the server.</summary>
+    public Task<LeaveTypeDto?> UpdateLeaveTypeAsync(Guid id, CreateLeaveTypeDto request)
+        => SendJsonAsync<LeaveTypeDto>(HttpMethod.Put, $"api/leave-types/{id}", request);
+
+    /// <summary>Refused, with the API's reason, once the type has been used.</summary>
+    public async Task DeleteLeaveTypeAsync(Guid id)
+        => await EnsureSuccessAsync(await _http.DeleteAsync($"api/leave-types/{id}"));
+
+    /// <summary>Creates the Philippine statutory types the site doesn't have yet, matched by code.</summary>
+    public Task<StatutoryLeaveResultDto?> AddStatutoryLeaveTypesAsync()
+        => SendJsonAsync<StatutoryLeaveResultDto>(HttpMethod.Post, "api/leave-types/statutory");
+
+    // Leave accrual policies (leave.manage). Update and delete answer 204 with no body.
+    public async Task<IReadOnlyList<LeaveAccrualPolicyDto>?> GetAccrualPoliciesAsync(Guid leaveTypeId)
+        => await GetJsonAsync<List<LeaveAccrualPolicyDto>>($"api/leave-accrual-policies?leaveTypeId={leaveTypeId}");
+
+    public Task<LeaveAccrualPolicyDto?> CreateAccrualPolicyAsync(CreateLeaveAccrualPolicyRequest request)
+        => SendJsonAsync<LeaveAccrualPolicyDto>(HttpMethod.Post, "api/leave-accrual-policies", request);
+
+    public async Task UpdateAccrualPolicyAsync(Guid id, CreateLeaveAccrualPolicyRequest request)
+    {
+        using var message = new HttpRequestMessage(HttpMethod.Put, $"api/leave-accrual-policies/{id}")
+        {
+            Content = JsonContent.Create(request, options: JsonOptions)
+        };
+        await EnsureSuccessAsync(await _http.SendAsync(message));
+    }
+
+    public async Task DeleteAccrualPolicyAsync(Guid id)
+        => await EnsureSuccessAsync(await _http.DeleteAsync($"api/leave-accrual-policies/{id}"));
+
     // Attendance import
     /// <summary>What importing this file would do, without saving anything.</summary>
     public Task<AttendanceImportPreviewDto?> PreviewAttendanceImportAsync(byte[] content, string fileName)
@@ -857,6 +895,48 @@ public record ClearItemRequest(string? Note);
 public record AddClearanceItemRequest(string Name);
 public record LeaveBalanceDto(Guid Id, Guid EmployeeId, string EmployeeName, Guid LeaveTypeId, string LeaveTypeName, int Year, decimal TotalDays, decimal UsedDays, decimal CarriedOverDays, decimal RemainingDays);
 public record LeaveRequestDto(Guid Id, Guid EmployeeId, string EmployeeName, string LeaveTypeName, string StartDate, string EndDate, decimal TotalDays, string Status, string? Reason);
+
+// Leave types and their accrual policies. Copies of PeopleCore.Application.Leave.DTOs records,
+// field by field and in the same order: a field named differently here deserialises silently to
+// its default, and on an update (a full replacement) resets the setting on the server. The enums
+// travel as their names, as the API's JsonStringEnumConverter writes and reads them.
+public enum LeaveEntitlementKind { Accrued, YearlyAllowance, PerEvent }
+public enum AccrualFrequency { Monthly, Annual }
+
+public record LeaveTypeDto(
+    Guid Id, string Name, string Code,
+    decimal MaxDaysPerYear, bool IsPaid, bool IsCarryOver,
+    decimal? CarryOverMaxDays, string? GenderRestriction,
+    bool RequiresDocument, bool IsActive,
+    bool IsConvertibleToCash, bool CountsAsVacationForDeMinimis,
+    LeaveEntitlementKind EntitlementKind, bool CountsCalendarDays,
+    decimal? DaysPerEvent, int? MinServiceMonths,
+    bool RequiresMarried, bool RequiresSoloParentId,
+    int? MaxEvents, bool IsConfidential, bool IsMaternity);
+
+// The API's copy gives the later members defaults; this one doesn't, so every caller has to say
+// what it sends rather than reset a setting by leaving it out.
+public record CreateLeaveTypeDto(
+    string Name, string Code, decimal MaxDaysPerYear,
+    bool IsPaid, bool IsCarryOver, decimal? CarryOverMaxDays,
+    string? GenderRestriction, bool RequiresDocument,
+    bool IsConvertibleToCash, bool CountsAsVacationForDeMinimis,
+    bool IsActive, LeaveEntitlementKind EntitlementKind,
+    bool CountsCalendarDays, decimal? DaysPerEvent, int? MinServiceMonths,
+    bool RequiresMarried, bool RequiresSoloParentId, int? MaxEvents,
+    bool IsConfidential, bool IsMaternity);
+
+public record StatutoryLeaveResultDto(IReadOnlyList<string> Added, IReadOnlyList<string> Skipped);
+
+// AccrualFrequency comes back as a string here (the API writes it with ToString()) but goes out as the enum.
+public record LeaveAccrualPolicyDto(
+    Guid Id, Guid LeaveTypeId, string LeaveTypeName,
+    int TenureMonthsMin, int? TenureMonthsMax, decimal DaysPerYear,
+    string AccrualFrequency, bool IsActive);
+
+public record CreateLeaveAccrualPolicyRequest(
+    Guid LeaveTypeId, int TenureMonthsMin, int? TenureMonthsMax,
+    decimal DaysPerYear, AccrualFrequency AccrualFrequency);
 public record AttendanceImportEmployeeDto(Guid Id, string EmployeeNumber, string FullName, string? BiometricId, bool IsActive);
 public record UnmatchedDeviceIdDto(string DeviceId, int Punches);
 public record AttendanceImportPreviewDto(string Layout, int Punches, int MatchedPeople, DateOnly? From, DateOnly? To,
