@@ -117,6 +117,35 @@ public class LeaveRulesTests
         act.Should().Throw<DomainException>().WithMessage("Employee is not eligible for this leave type.");
     }
 
+    [Theory]
+    [InlineData("", Gender.Male)]
+    [InlineData("", Gender.Female)]
+    [InlineData("   ", Gender.Male)]
+    [InlineData("   ", Gender.Female)]
+    public void ABlankGenderRestriction_IsNoRestriction(string blank, Gender gender)
+    {
+        // A type saved before blanks were stored as null would otherwise be closed to everyone.
+        // Accrual reads a blank the same way.
+        var type = MakeType(genderRestriction: blank);
+        var employee = MakeEmployee(gender: gender);
+
+        var act = () => LeaveRules.EnsureEligible(MakeContext(type, employee));
+
+        act.Should().NotThrow();
+        LeaveRules.IsEligibleOn(type, employee, new DateOnly(2026, 9, 24)).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(Gender.Female, true)]
+    [InlineData(Gender.Male, false)]
+    public void AGenderRestriction_IsComparedTrimmed(Gender gender, bool eligible)
+    {
+        var type = MakeType(genderRestriction: " Female ");
+        var employee = MakeEmployee(gender: gender);
+
+        LeaveRules.IsEligibleOn(type, employee, new DateOnly(2026, 9, 24)).Should().Be(eligible);
+    }
+
     [Fact]
     public void EnsureEligible_InsufficientService_Throws()
     {

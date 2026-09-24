@@ -102,7 +102,10 @@ public static class LeaveRules
 
     private static void CheckGender(LeaveType type, Employee employee)
     {
-        if (type.GenderRestriction is not null && type.GenderRestriction != employee.Gender.ToString())
+        // A blank restriction means any gender (saving a type stores it as null; accrual reads it
+        // the same way), so an older type stored with "" isn't closed to everyone.
+        if (!string.IsNullOrWhiteSpace(type.GenderRestriction)
+            && type.GenderRestriction.Trim() != employee.Gender.ToString())
             throw new DomainException("Employee is not eligible for this leave type.");
     }
 
