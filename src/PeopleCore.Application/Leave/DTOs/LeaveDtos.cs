@@ -34,10 +34,15 @@ public record LeaveRequestDto(
     DateOnly StartDate, DateOnly EndDate,
     decimal TotalDays, string? Reason,
     LeaveStatus Status, Guid? ApprovedBy, DateTime? ApprovedAt,
-    string? RejectionReason, DateTime CreatedAt);
+    string? RejectionReason, DateTime CreatedAt,
+    MaternityCase? MaternityCase, int DaysAllocatedToFather,
+    bool HasDocument, string? DocumentFileName);
 
+/// <param name="MaternityCase">Required on a maternity type; cleared on any other type.</param>
+/// <param name="DaysAllocatedToFather">Maternity days given to the father (live birth only); cleared on any other type.</param>
 public record CreateLeaveRequestDto(
     Guid EmployeeId, Guid LeaveTypeId,
-    DateOnly StartDate, DateOnly EndDate, string? Reason);
+    DateOnly StartDate, DateOnly EndDate, string? Reason,
+    MaternityCase? MaternityCase = null, int DaysAllocatedToFather = 0);
 
 public record RejectLeaveDto(string RejectionReason);

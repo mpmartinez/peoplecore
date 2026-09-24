@@ -52,4 +52,21 @@ public class LeaveRequestRepository : Repository<LeaveRequest>, ILeaveRequestRep
             .Include(r => r.LeaveType)
             .Where(r => r.Status == LeaveStatus.Approved && r.StartDate <= to && r.EndDate >= from)
             .ToListAsync(ct);
+
+    public async Task<IReadOnlyList<LeaveRequest>> GetPendingAsync(
+        Guid employeeId, Guid leaveTypeId, Guid? excludeId, CancellationToken ct = default)
+    {
+        var query = Context.LeaveRequests
+            .Where(r => r.EmployeeId == employeeId &&
+                        r.LeaveTypeId == leaveTypeId &&
+                        r.Status == LeaveStatus.Pending);
+        if (excludeId.HasValue) query = query.Where(r => r.Id != excludeId.Value);
+        return await query.ToListAsync(ct);
+    }
+
+    public async Task<int> CountApprovedAsync(Guid employeeId, Guid leaveTypeId, CancellationToken ct = default)
+        => await Context.LeaveRequests.CountAsync(r =>
+            r.EmployeeId == employeeId &&
+            r.LeaveTypeId == leaveTypeId &&
+            r.Status == LeaveStatus.Approved, ct);
 }

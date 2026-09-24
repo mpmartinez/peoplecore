@@ -50,7 +50,8 @@ public class LeaveControllerAuthorizationTests
     private static LeaveRequestDto RequestOf(Guid employeeId) => new(
         RequestId, employeeId, "Maria Santos", LeaveTypeId, "Vacation Leave",
         new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 6), 2, "Family trip",
-        LeaveStatus.Pending, null, null, null, DateTime.UtcNow);
+        LeaveStatus.Pending, null, null, null, DateTime.UtcNow,
+        null, 0, false, null);
 
     private static CreateLeaveRequestDto NewRequestFor(Guid employeeId) =>
         new(employeeId, LeaveTypeId, new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 6), "Family trip");
