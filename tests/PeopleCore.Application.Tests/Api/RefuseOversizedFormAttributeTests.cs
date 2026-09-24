@@ -80,16 +80,20 @@ public class RefuseOversizedFormAttributeTests
     }
 
     [Fact]
-    public async Task AnyOtherReadFailure_IsLeftAlone()
+    public async Task AnyOtherReadFailure_IsLeftToModelBinding()
     {
-        // A client that drops the connection is not "your file is too big".
+        // A malformed or abandoned body is not "your file is too big" - and must not escape as a
+        // 500 either. The filter passes on; the request remembers the failed read, so model binding
+        // meets the same failure and answers with its usual 400 validation problem.
         var http = await MultipartRequest(fileBytes: 10);
-        http.Request.Body = new ThrowingStream(new IOException("The client disconnected."));
-        var (context, _, next) = ContextFor(http);
+        http.Request.Body = new ThrowingStream(new IOException("Unexpected end of Stream."));
+        var (context, nextCalled, next) = ContextFor(http);
 
-        var act = () => _sut.OnResourceExecutionAsync(context, next);
+        await _sut.OnResourceExecutionAsync(context, next);
 
-        await act.Should().ThrowAsync<IOException>();
+        nextCalled().Should().BeTrue();
+        var modelBindingRead = () => http.Request.ReadFormAsync();
+        await modelBindingRead.Should().ThrowAsync<IOException>();
     }
 
     [Fact]

@@ -16,7 +16,8 @@ namespace PeopleCore.API.Filters;
 /// <para>
 /// This filter reads the form first, before model binding, and throws a <see cref="DomainException"/>
 /// instead. The exception middleware returns it like any other refusal: 400 with <c>detail</c> set to
-/// <see cref="Message"/>. A form that reads cleanly stays cached on the request for model binding.
+/// <see cref="Message"/>. A form that reads cleanly stays cached on the request for model binding,
+/// and so does any other read failure, which model binding then reports as before.
 /// </para>
 /// <para>
 /// It runs after the limit filters (order 900), so their limits apply to this read.
@@ -52,6 +53,12 @@ public sealed class RefuseOversizedFormAttribute : Attribute, IAsyncResourceFilt
                                        or BadHttpRequestException { StatusCode: StatusCodes.Status413PayloadTooLarge })
             {
                 throw new DomainException(Message);
+            }
+            // Any other read failure (a malformed or abandoned body) is not "too big". The request
+            // remembers the failed read, so model binding meets it again and answers with its usual
+            // 400 validation problem - rather than this escaping as a 500.
+            catch (IOException)
+            {
             }
         }
 
