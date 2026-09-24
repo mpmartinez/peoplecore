@@ -94,8 +94,11 @@ permission that edits the rest of the employee record).
   presigned short-lived link.
 - One file per request. PDF, JPEG or PNG, at most 10 MB. Anything else: "Attach a PDF, JPG or PNG
   of at most 10 MB."
-- Filing is a multipart request: the request fields plus the optional file. A document-requiring
-  type without a file: "{Type} needs a supporting document."
+- Filing stays a JSON request (the demo seed and any API client file leave that way). The file is
+  uploaded right after, with `PUT api/leave-requests/{id}/document` (multipart). My Leave won't
+  submit a document-requiring type without a file, and uploads it straight after filing. Approving
+  a request of a document-requiring type without a file is refused: "{Type} needs a supporting
+  document."
 - The employee who filed may replace the file while the request is Pending.
 - Who may open it: the employee who filed; anyone who may decide the request; users with
   `approvals.all`. For confidential types: the employee and `approvals.all` only.
@@ -128,15 +131,15 @@ Checked in this order when filing, and all re-checked when approving:
 | Type inactive | "{Type} is no longer available." |
 | Gender | the existing message |
 | Service | "{Type} needs {n} months of service; you'll qualify on {MMM d, yyyy}." |
-| Married | "{Type} is for married employees." (Paternity: "Paternity leave is for married employees (RA 8187).") |
+| Married | "{Type} is for married employees." |
 | Solo parent ID | "{Type} needs a valid solo parent ID on your record; ask HR to add it." |
 | Maternity case missing | "Choose whether this is a live birth or a miscarriage or emergency termination." |
 | Father allocation outside 0-7 or on a non-live-birth case | "Up to 7 days can be allocated to the father, for a live birth only." |
-| Event limit | "You've used {Type} for {n} {events}, the most allowed." ("deliveries" for paternity) |
+| Event limit | "You've used {Type} {n} times, the most allowed." |
 | Overlap with a Pending or Approved request | the existing message |
-| Per-event limit | "{Type} is up to {n} days per {event}; this request is {m}." Maternity words it by case, e.g. "Maternity leave for a live birth is up to 105 days; this request is 110." |
+| Per-event limit | "{Type} is up to {n} days each time; this request is {m}." Maternity words it by case, e.g. "Maternity leave for a live birth is up to 105 days; this request is 110." |
 | Balance / allowance | "You have {n} days of {Type} left for {year}." |
-| Document | "{Type} needs a supporting document." |
+| Document (on approval only) | "{Type} needs a supporting document." |
 
 Pending requests now hold their days: the balance available for a new request is
 `RemainingDays` minus the days of that employee's Pending requests of the same type and year.
