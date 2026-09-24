@@ -3,20 +3,14 @@ using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Domain.Entities.Leave;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
-using PeopleCore.Domain.Interfaces;
 
 namespace PeopleCore.Application.Leave.Services;
 
 public class LeaveTypeService : ILeaveTypeService
 {
     private readonly ILeaveTypeRepository _repo;
-    private readonly ILeaveAccrualRepository _accruals;
 
-    public LeaveTypeService(ILeaveTypeRepository repo, ILeaveAccrualRepository accruals)
-    {
-        _repo = repo;
-        _accruals = accruals;
-    }
+    public LeaveTypeService(ILeaveTypeRepository repo) => _repo = repo;
 
     public async Task<IReadOnlyList<LeaveTypeDto>> GetAllAsync(CancellationToken ct = default)
     {
@@ -59,15 +53,12 @@ public class LeaveTypeService : ILeaveTypeService
             throw new DomainException($"{lt.Name} has been used; deactivate it instead.");
 
         // The policies' foreign key restricts deletes. An unused type's policies have accrued
-        // nothing (an accrual always writes a balance row), so they go with it.
-        foreach (var policy in await _accruals.GetPoliciesByLeaveTypeAsync(id, ct))
-            await _accruals.DeletePolicyAsync(policy, ct);
-
-        await _repo.DeleteAsync(lt, ct);
+        // nothing (no transaction references it), so they go with it, in the same save.
+        await _repo.DeleteWithPoliciesAsync(lt, ct);
     }
 
     public Task<StatutoryLeaveResultDto> AddStatutoryAsync(CancellationToken ct = default)
-        => StatutoryLeaveSet.ApplyAsync(_repo, _accruals, ct);
+        => StatutoryLeaveSet.ApplyAsync(_repo, ct);
 
     private static void Validate(CreateLeaveTypeDto dto)
     {
@@ -77,6 +68,11 @@ public class LeaveTypeService : ILeaveTypeService
             throw new DomainException("Set the days per year.");
         if (dto.IsMaternity && dto.EntitlementKind != LeaveEntitlementKind.PerEvent)
             throw new DomainException("A maternity type must be per event.");
+        // Only a per-event type keeps MaxEvents; on any other kind it is cleared, not checked.
+        if (dto.EntitlementKind == LeaveEntitlementKind.PerEvent && dto.MaxEvents < 1)
+            throw new DomainException("Set at least 1 for the most times allowed.");
+        if (dto.MinServiceMonths < 0)
+            throw new DomainException("Service months can't be negative.");
     }
 
     /// <summary>Writes every setting. Create and update are both full replacements.</summary>

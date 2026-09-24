@@ -2,7 +2,6 @@ using PeopleCore.Application.Leave.DTOs;
 using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Domain.Entities.Leave;
 using PeopleCore.Domain.Enums;
-using PeopleCore.Domain.Interfaces;
 using PeopleCore.Domain.Leave;
 
 namespace PeopleCore.Application.Leave.Services;
@@ -89,11 +88,10 @@ public static class StatutoryLeaveSet
 
     /// <summary>
     /// Creates each type whose code the site doesn't have yet (codes compared trimmed and ignoring
-    /// case), and SIL's policy when SIL itself is created. A type already there is skipped untouched,
-    /// policies and all, so running this twice changes nothing.
+    /// case), and SIL's policy when SIL itself is created, in the same save as SIL. A type already
+    /// there is skipped untouched, policies and all, so running this twice changes nothing.
     /// </summary>
-    public static async Task<StatutoryLeaveResultDto> ApplyAsync(
-        ILeaveTypeRepository types, ILeaveAccrualRepository accruals, CancellationToken ct = default)
+    public static async Task<StatutoryLeaveResultDto> ApplyAsync(ILeaveTypeRepository types, CancellationToken ct = default)
     {
         var existing = (await types.GetAllAsync(ct))
             .Select(t => Normalize(t.Code))
@@ -109,9 +107,10 @@ public static class StatutoryLeaveSet
                 continue;
             }
 
-            var created = await types.AddAsync(definition, ct);
-            if (created.Code == ServiceIncentiveLeaveCode)
-                await accruals.AddPolicyAsync(ServiceIncentiveLeavePolicy(created.Id), ct);
+            IReadOnlyList<LeaveAccrualPolicy> policies = definition.Code == ServiceIncentiveLeaveCode
+                ? [ServiceIncentiveLeavePolicy(definition.Id)]
+                : [];
+            await types.AddWithPoliciesAsync(definition, policies, ct);
             added.Add(definition.Code);
         }
 

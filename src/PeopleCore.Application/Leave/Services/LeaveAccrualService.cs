@@ -106,8 +106,10 @@ public class LeaveAccrualService : ILeaveAccrualService
 
             foreach (var policy in policies)
             {
-                // A type for one gender accrues nothing for the other (the same test LeaveRules files by).
-                if (policy.LeaveType.GenderRestriction is { } gender && gender != employee.Gender.ToString()) continue;
+                // A type for one gender accrues nothing for the other (the same test LeaveRules files
+                // by). A blank restriction means any gender, as saving a type now stores it.
+                if (!string.IsNullOrWhiteSpace(policy.LeaveType.GenderRestriction)
+                    && policy.LeaveType.GenderRestriction.Trim() != employee.Gender.ToString()) continue;
 
                 if (tenureMonths < policy.TenureMonthsMin) continue;
                 if (policy.TenureMonthsMax.HasValue && tenureMonths > policy.TenureMonthsMax.Value) continue;
@@ -121,10 +123,9 @@ public class LeaveAccrualService : ILeaveAccrualService
                 if (await _accrualRepo.TransactionExistsAsync(employee.Id, policy.LeaveTypeId, year, month, ct))
                     continue;
 
-                // For annual: full DaysPerYear at once; for monthly: DaysPerYear / 12
                 var daysAccrued = policy.AccrualFrequency == AccrualFrequency.Annual
                     ? policy.DaysPerYear
-                    : policy.DaysPerYear / 12m;
+                    : MonthlyAmount(policy.DaysPerYear, month);
                 var transaction = new LeaveAccrualTransaction
                 {
                     EmployeeId = employee.Id,
@@ -157,6 +158,19 @@ public class LeaveAccrualService : ILeaveAccrualService
             }
         }
     }
+
+    /// <summary>
+    /// Month <paramref name="month"/>'s share of <paramref name="daysPerYear"/>, at the two decimals
+    /// the balances store: the rounded running total to this month less the rounded running total to
+    /// last month. The twelve months then add up to exactly <paramref name="daysPerYear"/> (5 days
+    /// is 0.42, 0.41, 0.42, 0.42, ...; rounding each month's 5/12 on its own would give 0.42 x 12 =
+    /// 5.04). An amount that divides evenly, such as 15 days at 1.25, is the same every month.
+    /// </summary>
+    internal static decimal MonthlyAmount(decimal daysPerYear, int month)
+        => RunningTotal(daysPerYear, month) - RunningTotal(daysPerYear, month - 1);
+
+    private static decimal RunningTotal(decimal daysPerYear, int months)
+        => Math.Round(daysPerYear * months / 12m, 2, MidpointRounding.AwayFromZero);
 
     public async Task<IReadOnlyList<LeaveAccrualTransactionDto>> GetEmployeeAccrualHistoryAsync(Guid employeeId, CancellationToken ct = default)
     {

@@ -7,7 +7,6 @@ using PeopleCore.Application.Leave.Services;
 using PeopleCore.Domain.Entities.Leave;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
-using PeopleCore.Domain.Interfaces;
 using Xunit;
 
 namespace PeopleCore.Application.Tests.Leave;
@@ -19,16 +18,13 @@ namespace PeopleCore.Application.Tests.Leave;
 public class LeaveTypeServiceTests
 {
     private readonly Mock<ILeaveTypeRepository> _repo = new();
-    private readonly Mock<ILeaveAccrualRepository> _accruals = new();
     private readonly LeaveTypeService _sut;
 
     public LeaveTypeServiceTests()
     {
         _repo.Setup(r => r.AddAsync(It.IsAny<LeaveType>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((LeaveType lt, CancellationToken _) => lt);
-        _accruals.Setup(r => r.GetPoliciesByLeaveTypeAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
-        _sut = new LeaveTypeService(_repo.Object, _accruals.Object);
+        _sut = new LeaveTypeService(_repo.Object);
     }
 
     private static CreateLeaveTypeDto Request(bool convertible, bool countsAsVacation) => new(
@@ -254,6 +250,13 @@ public class LeaveTypeServiceTests
               EntitlementKind: LeaveEntitlementKind.Accrued, IsMaternity: true), "A maternity type must be per event." },
         { new("Maternity Leave", "ML", 105m, true, false, null, "Female", true,
               EntitlementKind: LeaveEntitlementKind.YearlyAllowance, IsMaternity: true), "A maternity type must be per event." },
+        { new("Paternity Leave", "PL", 0m, true, false, null, "Male", true,
+              EntitlementKind: LeaveEntitlementKind.PerEvent, DaysPerEvent: 7m, MaxEvents: 0), "Set at least 1 for the most times allowed." },
+        { new("Paternity Leave", "PL", 0m, true, false, null, "Male", true,
+              EntitlementKind: LeaveEntitlementKind.PerEvent, DaysPerEvent: 7m, MaxEvents: -2), "Set at least 1 for the most times allowed." },
+        { new("Solo Parent Leave", "SPL", 7m, true, false, null, null, false,
+              EntitlementKind: LeaveEntitlementKind.YearlyAllowance, MinServiceMonths: -1), "Service months can't be negative." },
+        { new("Vacation Leave", "VL", 15m, true, false, null, null, false, MinServiceMonths: -6), "Service months can't be negative." },
     };
 
     [Theory]
@@ -293,6 +296,28 @@ public class LeaveTypeServiceTests
     }
 
     [Fact]
+    public async Task MaxEvents_OnATypeThatIsNotPerEvent_IsClearedRatherThanChecked()
+    {
+        // It is thrown away anyway, so a stale 0 from a hidden form field doesn't block the save.
+        var dto = await _sut.CreateAsync(new CreateLeaveTypeDto(
+            "Solo Parent Leave", "SPL", 7m, true, false, null, null, false,
+            EntitlementKind: LeaveEntitlementKind.YearlyAllowance, MaxEvents: 0));
+
+        dto.MaxEvents.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ZeroServiceMonths_AndOneEvent_AreAllowed()
+    {
+        var dto = await _sut.CreateAsync(new CreateLeaveTypeDto(
+            "Paternity Leave", "PL", 0m, true, false, null, "Male", true,
+            EntitlementKind: LeaveEntitlementKind.PerEvent, DaysPerEvent: 7m, MinServiceMonths: 0, MaxEvents: 1));
+
+        dto.MinServiceMonths.Should().Be(0);
+        dto.MaxEvents.Should().Be(1);
+    }
+
+    [Fact]
     public async Task MaxEvents_IsKeptOnAPerEventType()
     {
         var dto = await _sut.CreateAsync(new CreateLeaveTypeDto(
@@ -329,24 +354,22 @@ public class LeaveTypeServiceTests
         (await act.Should().ThrowAsync<DomainException>())
             .WithMessage("Vacation Leave has been used; deactivate it instead.");
         _repo.Verify(r => r.DeleteAsync(It.IsAny<LeaveType>(), It.IsAny<CancellationToken>()), Times.Never);
-        _accruals.Verify(r => r.DeletePolicyAsync(It.IsAny<LeaveAccrualPolicy>(), It.IsAny<CancellationToken>()), Times.Never);
+        _repo.Verify(r => r.DeleteWithPoliciesAsync(It.IsAny<LeaveType>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task Delete_AnUnusedType_DeletesIt_AndItsAccrualPolicies()
+    public async Task Delete_AnUnusedType_DeletesIt_WithItsAccrualPolicies_InOneStep()
     {
         // The policies' foreign key restricts deletes, so an unused SIL (which the statutory set
-        // gives a policy) could not otherwise be deleted.
+        // gives a policy) could not otherwise be deleted. The repository removes both in one save
+        // (LeaveTypeRepositoryTests).
         var existing = new LeaveType { Name = "Service Incentive Leave", Code = "SIL", MaxDaysPerYear = 5m };
-        var policy = new LeaveAccrualPolicy { LeaveTypeId = existing.Id, TenureMonthsMin = 12, DaysPerYear = 5m };
         _repo.Setup(r => r.GetByIdAsync(existing.Id, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
         _repo.Setup(r => r.IsUsedAsync(existing.Id, It.IsAny<CancellationToken>())).ReturnsAsync(false);
-        _accruals.Setup(r => r.GetPoliciesByLeaveTypeAsync(existing.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([policy]);
 
         await _sut.DeleteAsync(existing.Id);
 
-        _accruals.Verify(r => r.DeletePolicyAsync(policy, It.IsAny<CancellationToken>()), Times.Once);
-        _repo.Verify(r => r.DeleteAsync(existing, It.IsAny<CancellationToken>()), Times.Once);
+        _repo.Verify(r => r.DeleteWithPoliciesAsync(existing, It.IsAny<CancellationToken>()), Times.Once);
+        _repo.Verify(r => r.DeleteAsync(It.IsAny<LeaveType>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

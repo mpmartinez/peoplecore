@@ -4,7 +4,6 @@ using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Application.Leave.Services;
 using PeopleCore.Domain.Entities.Leave;
 using PeopleCore.Domain.Enums;
-using PeopleCore.Domain.Interfaces;
 using Xunit;
 
 namespace PeopleCore.Application.Tests.Leave;
@@ -19,21 +18,25 @@ public class StatutoryLeaveSetTests
 
     private readonly List<LeaveType> _types = [];
     private readonly List<LeaveAccrualPolicy> _policies = [];
+    /// <summary>Each save: the type and the policies that went in with it.</summary>
+    private readonly List<(LeaveType Type, IReadOnlyList<LeaveAccrualPolicy> Policies)> _saves = [];
     private readonly Mock<ILeaveTypeRepository> _typeRepo = new();
-    private readonly Mock<ILeaveAccrualRepository> _accrualRepo = new();
     private readonly LeaveTypeService _sut;
 
     public StatutoryLeaveSetTests()
     {
         _typeRepo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => _types.ToList());
-        _typeRepo.Setup(r => r.AddAsync(It.IsAny<LeaveType>(), It.IsAny<CancellationToken>()))
-            .Callback((LeaveType lt, CancellationToken _) => _types.Add(lt))
-            .ReturnsAsync((LeaveType lt, CancellationToken _) => lt);
-        _accrualRepo.Setup(r => r.AddPolicyAsync(It.IsAny<LeaveAccrualPolicy>(), It.IsAny<CancellationToken>()))
-            .Callback((LeaveAccrualPolicy p, CancellationToken _) => _policies.Add(p))
-            .ReturnsAsync((LeaveAccrualPolicy p, CancellationToken _) => p);
-        _sut = new LeaveTypeService(_typeRepo.Object, _accrualRepo.Object);
+        _typeRepo.Setup(r => r.AddWithPoliciesAsync(
+                It.IsAny<LeaveType>(), It.IsAny<IReadOnlyList<LeaveAccrualPolicy>>(), It.IsAny<CancellationToken>()))
+            .Callback((LeaveType lt, IReadOnlyList<LeaveAccrualPolicy> policies, CancellationToken _) =>
+            {
+                _saves.Add((lt, policies));
+                _types.Add(lt);
+                _policies.AddRange(policies);
+            })
+            .ReturnsAsync((LeaveType lt, IReadOnlyList<LeaveAccrualPolicy> _, CancellationToken _) => lt);
+        _sut = new LeaveTypeService(_typeRepo.Object);
     }
 
     private LeaveType Added(string code) => _types.Single(t => t.Code == code);
@@ -97,6 +100,18 @@ public class StatutoryLeaveSetTests
         policy.DaysPerYear.Should().Be(5m);
         policy.AccrualFrequency.Should().Be(AccrualFrequency.Monthly);
         policy.IsActive.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ServiceIncentiveLeave_AndItsPolicy_AreSavedTogether()
+    {
+        // One save: a failure can't leave SIL without the policy that accrues it.
+        await _sut.AddStatutoryAsync();
+
+        var silSave = _saves.Single(s => s.Type.Code == "SIL");
+        silSave.Policies.Should().ContainSingle().Which.LeaveTypeId.Should().Be(silSave.Type.Id);
+        _saves.Where(s => s.Type.Code != "SIL").Should().OnlyContain(s => s.Policies.Count == 0);
+        _typeRepo.Verify(r => r.AddAsync(It.IsAny<LeaveType>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     /// <summary>One row of the statutory table: what each type other than SIL must say.</summary>
@@ -163,7 +178,6 @@ public class StatutoryLeaveSetTests
     {
         await _sut.AddStatutoryAsync();
         _typeRepo.Invocations.Clear();
-        _accrualRepo.Invocations.Clear();
 
         var result = await _sut.AddStatutoryAsync();
 
@@ -171,8 +185,8 @@ public class StatutoryLeaveSetTests
         result.Skipped.Should().Equal(AllCodes);
         _types.Should().HaveCount(7);
         _policies.Should().ContainSingle();
-        _typeRepo.Verify(r => r.AddAsync(It.IsAny<LeaveType>(), It.IsAny<CancellationToken>()), Times.Never);
-        _accrualRepo.Verify(r => r.AddPolicyAsync(It.IsAny<LeaveAccrualPolicy>(), It.IsAny<CancellationToken>()), Times.Never);
+        _typeRepo.Verify(r => r.AddWithPoliciesAsync(
+            It.IsAny<LeaveType>(), It.IsAny<IReadOnlyList<LeaveAccrualPolicy>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

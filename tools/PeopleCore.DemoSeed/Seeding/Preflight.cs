@@ -32,6 +32,9 @@ internal static class Preflight
     /// payroll bridge counts a day of unpaid leave as an absence, so either would break the demo. The
     /// accrual run skips an inactive type and any type that isn't Accrued, and filing refuses an
     /// inactive one, so those would leave the demo's staff without the balances it files against.
+    /// The statutory rules would each stop the demo partway through: a required document (approval
+    /// refuses without one), a minimum service, marriage or a solo parent ID (filing refuses), a
+    /// confidential type (only approvals.all may decide it) or calendar-day counting (weekends charged).
     /// </summary>
     public static string? LeaveTypeProblem(string code, JsonNode type)
     {
@@ -43,8 +46,23 @@ internal static class Preflight
             return $"The existing {code} leave type is inactive, so the demo's leave would be refused.";
         if (type["entitlementKind"] is JsonValue kind && kind.TryGetValue<string>(out var entitlement) && entitlement != "Accrued")
             return $"The existing {code} leave type is {entitlement}, not Accrued, so it wouldn't accrue the balances the demo's leave needs.";
+        if (IsOn(type, "requiresDocument"))
+            return $"The existing {code} leave type needs a supporting document before approval, which the demo doesn't upload, so its leave would stay unapproved.";
+        if (type["minServiceMonths"] is JsonValue service && service.TryGetValue<int>(out var months) && months > 0)
+            return $"The existing {code} leave type needs {months} months of service, so the demo's newer staff would be refused.";
+        if (IsOn(type, "requiresMarried"))
+            return $"The existing {code} leave type is for married employees only, so some of the demo's leave would be refused.";
+        if (IsOn(type, "requiresSoloParentId"))
+            return $"The existing {code} leave type needs a solo parent ID, which the demo's staff don't have, so their leave would be refused.";
+        if (IsOn(type, "isConfidential"))
+            return $"The existing {code} leave type is confidential, so the demo's managers couldn't approve or reject it.";
+        if (IsOn(type, "countsCalendarDays"))
+            return $"The existing {code} leave type counts calendar days, so weekends would be charged and the demo's leave would run past its balances.";
         return null;
     }
+
+    private static bool IsOn(JsonNode type, string field) =>
+        type[field] is JsonValue value && value.TryGetValue<bool>(out var on) && on;
 
     /// <summary>The demo's departments hang off the site's one company; with several, it can't tell which is meant.</summary>
     public static string? CompanyProblem(int companies) => companies switch
