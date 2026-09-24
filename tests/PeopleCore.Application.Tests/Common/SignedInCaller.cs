@@ -41,4 +41,11 @@ internal sealed class SignedInCaller
         CurrentUser.Setup(c => c.EmployeeId).Returns(employeeId);
         CurrentUser.Setup(c => c.HasPermission(It.IsAny<string>())).Returns((string key) => granted.Contains(key));
     }
+
+    /// <summary>Signs in holding exactly <paramref name="permissions"/> - for a mix no seeded role has.</summary>
+    public void Holding(Guid? employeeId, params string[] permissions)
+    {
+        CurrentUser.Setup(c => c.EmployeeId).Returns(employeeId);
+        CurrentUser.Setup(c => c.HasPermission(It.IsAny<string>())).Returns((string key) => permissions.Contains(key));
+    }
 }

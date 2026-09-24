@@ -1,12 +1,14 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
+using PeopleCore.API.Filters;
 using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Leave.DTOs;
 using PeopleCore.Application.Leave.Interfaces;
+using PeopleCore.Application.Leave.Services;
 
 namespace PeopleCore.API.Controllers.Leave;
 
@@ -197,11 +199,20 @@ public class LeaveController : ControllerBase
     }
 
     /// <summary>
+    /// The upload's body cap: the 10 MB file plus room for the multipart framing. Anything larger is
+    /// never read past this; a file between 10 MB and the cap reaches the service's own check.
+    /// </summary>
+    private const long MaxDocumentRequestBytes = LeaveDocumentService.MaxSizeBytes + 512 * 1024;
+
+    /// <summary>
     /// Attaches or replaces the request's supporting document (multipart field <c>file</c>).
     /// Self-service: the uploader is the employee in the caller's employee_id claim, and the service
     /// refuses anyone but the request's owner, and any request that is no longer Pending.
     /// </summary>
     [HttpPut("leave-requests/{id:guid}/document")]
+    [RequestSizeLimit(MaxDocumentRequestBytes)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaxDocumentRequestBytes)]
+    [RefuseOversizedForm(LeaveDocumentService.FileRefusal)]
     public async Task<IActionResult> UploadDocument(Guid id, [FromForm] IFormFile file, CancellationToken ct = default)
     {
         var employeeId = _currentUser.EmployeeId;
@@ -264,7 +275,8 @@ public class LeaveController : ControllerBase
 
     /// <summary>
     /// Confidential leave as shown to anyone but its employee and <c>approvals.all</c>: just "Leave"
-    /// on those dates - no type, reason or document.
+    /// on those dates - no type, reason, rejection reason (HR may have named the type in it) or
+    /// document.
     /// </summary>
     private LeaveRequestDto Mask(LeaveRequestDto dto)
         => !dto.IsConfidential || SeesConfidentialOf(dto.EmployeeId)
@@ -274,6 +286,7 @@ public class LeaveController : ControllerBase
                 LeaveTypeId = Guid.Empty,
                 LeaveTypeName = "Leave",
                 Reason = null,
+                RejectionReason = null,
                 HasDocument = false,
                 DocumentFileName = null,
                 IsConfidential = false

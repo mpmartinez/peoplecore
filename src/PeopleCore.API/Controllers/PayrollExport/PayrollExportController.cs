@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
 using PeopleCore.Application.Common.Authorization;
+using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.PayrollIntegration.Interfaces;
 
 namespace PeopleCore.API.Controllers.PayrollExport;
@@ -12,7 +13,13 @@ namespace PeopleCore.API.Controllers.PayrollExport;
 public class PayrollExportController : ControllerBase
 {
     private readonly IPayrollExportService _service;
-    public PayrollExportController(IPayrollExportService service) => _service = service;
+    private readonly ICurrentUserService _currentUser;
+
+    public PayrollExportController(IPayrollExportService service, ICurrentUserService currentUser)
+    {
+        _service = service;
+        _currentUser = currentUser;
+    }
 
     [HttpGet("employees")]
     public async Task<IActionResult> GetEmployees(CancellationToken ct)
@@ -24,10 +31,12 @@ public class PayrollExportController : ControllerBase
         [FromQuery] Guid? employeeId, CancellationToken ct)
         => Ok(await _service.GetAttendanceSummaryAsync(from, to, employeeId, ct));
 
+    /// <summary>Confidential types (VAWC) go out as "Leave" with no code unless the caller also holds <c>approvals.all</c>.</summary>
     [HttpGet("approved-leaves")]
     public async Task<IActionResult> GetApprovedLeaves(
         [FromQuery] DateOnly from, [FromQuery] DateOnly to, CancellationToken ct)
-        => Ok(await _service.GetApprovedLeavesAsync(from, to, ct));
+        => Ok(await _service.GetApprovedLeavesAsync(
+            from, to, showConfidentialTypes: _currentUser.HasPermission(Permissions.ApprovalsAll), ct));
 
     [HttpGet("approved-overtime")]
     public async Task<IActionResult> GetApprovedOvertime(

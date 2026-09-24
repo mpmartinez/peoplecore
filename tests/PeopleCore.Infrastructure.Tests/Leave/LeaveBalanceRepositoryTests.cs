@@ -34,6 +34,30 @@ public class LeaveBalanceRepositoryTests : DatabaseTestBase
         => new() { EmployeeId = employeeId, LeaveTypeId = leaveTypeId, Year = 2026, TotalDays = 7 };
 
     [Fact]
+    public async Task GetByEmployeeAsync_LoadsTheType_SoTheBalanceSaysWhetherItIsConfidential()
+    {
+        // The balances endpoint leaves confidential rows out for managers by this flag; a type not
+        // loaded would read as "not confidential" and show VAWC to them.
+        var employee = AnEmployee();
+        var vawc = new LeaveType
+        {
+            Name = "VAWC Leave", Code = "VAWC", MaxDaysPerYear = 10, IsConfidential = true,
+            EntitlementKind = LeaveEntitlementKind.YearlyAllowance
+        };
+        var vacation = new LeaveType { Name = "Vacation Leave", Code = "VL", MaxDaysPerYear = 15 };
+        Context.Employees.Add(employee);
+        Context.LeaveTypes.AddRange(vawc, vacation);
+        Context.LeaveBalances.AddRange(ARow(employee.Id, vawc.Id), ARow(employee.Id, vacation.Id));
+        await Context.SaveChangesAsync();
+        var sut = new PeopleCore.Application.Leave.Services.LeaveBalanceService(new LeaveBalanceRepository(NewContext()));
+
+        var rows = await sut.GetByEmployeeAsync(employee.Id, 2026);
+
+        rows.Should().ContainSingle(r => r.LeaveTypeId == vawc.Id).Which.IsConfidential.Should().BeTrue();
+        rows.Should().ContainSingle(r => r.LeaveTypeId == vacation.Id).Which.IsConfidential.Should().BeFalse();
+    }
+
+    [Fact]
     public async Task AddNewAsync_InsertsTheRow()
     {
         var (employeeId, leaveTypeId) = await SeedAsync();

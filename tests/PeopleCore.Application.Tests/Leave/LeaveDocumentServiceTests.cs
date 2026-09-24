@@ -76,6 +76,25 @@ public class LeaveDocumentServiceTests
         _leaveRepo.Verify(r => r.UpdateAsync(_request, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Theory]
+    [InlineData("Application/PDF", "application/pdf", ".pdf")]
+    [InlineData("IMAGE/PNG", "image/png", ".png")]
+    [InlineData("image/jpg", "image/jpeg", ".jpg")]
+    [InlineData("Image/JPG", "image/jpeg", ".jpg")]
+    public async Task Upload_NormalisesTheContentType(string sent, string stored, string extension)
+    {
+        string? storedKey = null;
+        _storage.Setup(s => s.UploadAsync(Bucket, It.IsAny<string>(), It.IsAny<Stream>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .Callback((string _, string key, Stream _, string _, CancellationToken _) => storedKey = key)
+                .ReturnsAsync("stored");
+
+        await Upload(sent);
+
+        _request.DocumentContentType.Should().Be(stored);
+        storedKey.Should().EndWith(extension);
+        _storage.Verify(s => s.UploadAsync(Bucket, storedKey!, It.IsAny<Stream>(), stored, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task Upload_RecordsTheFileAndWhoUploadedIt()
     {

@@ -170,7 +170,7 @@ public class PayrollExportServiceTests
         _leaveRepo.Setup(r => r.GetApprovedByPeriodAsync(from, to, It.IsAny<CancellationToken>()))
             .ReturnsAsync([leaveRequest]);
 
-        var result = await _sut.GetApprovedLeavesAsync(from, to);
+        var result = await _sut.GetApprovedLeavesAsync(from, to, showConfidentialTypes: false);
 
         result.Should().HaveCount(1);
         var dto = result[0];

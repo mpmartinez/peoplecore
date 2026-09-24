@@ -13,14 +13,19 @@ public class LeaveDocumentService : ILeaveDocumentService
 {
     public const long MaxSizeBytes = 10 * 1024 * 1024;
     public const int LinkExpirySeconds = 300;
+    public const string FileRefusal = "Attach a PDF, JPG or PNG of at most 10 MB.";
 
-    /// <summary>The accepted content types, and the extension each is stored under.</summary>
-    private static readonly IReadOnlyDictionary<string, string> Extensions =
-        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    /// <summary>
+    /// The accepted content types, matched ignoring case, with the type each is stored as and the
+    /// extension it is stored under. Some clients send the non-standard <c>image/jpg</c>; it is JPEG.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, (string ContentType, string Extension)> Accepted =
+        new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase)
         {
-            ["application/pdf"] = ".pdf",
-            ["image/jpeg"] = ".jpg",
-            ["image/png"] = ".png",
+            ["application/pdf"] = ("application/pdf", ".pdf"),
+            ["image/jpeg"] = ("image/jpeg", ".jpg"),
+            ["image/jpg"] = ("image/jpeg", ".jpg"),
+            ["image/png"] = ("image/png", ".png"),
         };
 
     /// <summary>The column's length (LeaveRequestConfiguration).</summary>
@@ -56,10 +61,10 @@ public class LeaveDocumentService : ILeaveDocumentService
             throw new DomainException("Only a pending request's document can be replaced.");
 
         // The extension comes from the (checked) content type, never from the client's file name.
-        if (!Extensions.TryGetValue(contentType ?? string.Empty, out var extension) || length <= 0 || length > MaxSizeBytes)
-            throw new DomainException("Attach a PDF, JPG or PNG of at most 10 MB.");
+        if (!Accepted.TryGetValue(contentType?.Trim() ?? string.Empty, out var accepted) || length <= 0 || length > MaxSizeBytes)
+            throw new DomainException(FileRefusal);
 
-        var normalizedType = contentType!.ToLowerInvariant();
+        var (normalizedType, extension) = accepted;
         var bucket = _storageOptions.BucketName;
         var objectKey = $"leave-requests/{requestId}/{Guid.NewGuid()}{extension}";
         await _storage.UploadAsync(bucket, objectKey, content, normalizedType, ct);

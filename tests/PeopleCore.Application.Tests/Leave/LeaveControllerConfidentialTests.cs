@@ -2,7 +2,10 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
+using System.Reflection;
 using PeopleCore.API.Controllers.Leave;
+using PeopleCore.API.Filters;
+using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Leave.DTOs;
 using PeopleCore.Application.Leave.Interfaces;
@@ -49,7 +52,7 @@ public class LeaveControllerConfidentialTests
     private static LeaveRequestDto Vawc(Guid employeeId, Guid? id = null) => new(
         id ?? RequestId, employeeId, "Maria Santos", VawcTypeId, "VAWC Leave",
         new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 6), 2, "Protection order hearing",
-        LeaveStatus.Pending, null, null, null, DateTime.UtcNow,
+        LeaveStatus.Pending, null, null, "Needs the barangay protection order", DateTime.UtcNow,
         null, 0, true, "barangay-protection-order.pdf", IsConfidential: true);
 
     private static LeaveRequestDto Vacation(Guid employeeId, Guid? id = null) => new(
@@ -70,6 +73,7 @@ public class LeaveControllerConfidentialTests
         dto.LeaveTypeId.Should().Be(Guid.Empty);
         dto.LeaveTypeName.Should().Be("Leave");
         dto.Reason.Should().BeNull();
+        dto.RejectionReason.Should().BeNull("an HR-written rejection can name the type");
         dto.HasDocument.Should().BeFalse();
         dto.DocumentFileName.Should().BeNull();
         dto.IsConfidential.Should().BeFalse();
@@ -153,6 +157,32 @@ public class LeaveControllerConfidentialTests
         result.Should().BeOfType<OkObjectResult>();
     }
 
+    [Fact]
+    public async Task Approve_TheirOwnConfidentialLeave_ReturnsForbid_WithoutApprovalsAll()
+    {
+        // Deciding confidential leave needs approvals.all, whoever it belongs to - the owner is not
+        // passed through to the service's "your own request" refusal.
+        SignInAs(Caller, "Manager");
+        RequestIs(Vawc(Caller));
+
+        var result = await _sut.Approve(RequestId, CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+        _requests.Verify(s => s.ApproveAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Reject_TheirOwnConfidentialLeave_ReturnsForbid_WithoutApprovalsAll()
+    {
+        SignInAs(Caller, "Manager");
+        RequestIs(Vawc(Caller));
+
+        var result = await _sut.Reject(RequestId, new RejectLeaveDto("No"), CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+        _requests.Verify(s => s.RejectAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<RejectLeaveDto>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Theory]
     [MemberData(nameof(HrRoles), MemberType = typeof(SignedInCaller))]
     public async Task Approve_ConfidentialLeave_IsAllowed_ForApprovalsAll(string role)
@@ -220,6 +250,48 @@ public class LeaveControllerConfidentialTests
 
         items[0].LeaveTypeName.Should().Be("VAWC Leave");
         items[0].Reason.Should().Be("Protection order hearing");
+    }
+
+    [Fact]
+    public async Task EmployeeList_MasksConfidentialLeave_ForEmployeesViewAllWithoutApprovalsAll()
+    {
+        // Seeing every employee is not seeing their confidential leave.
+        _caller.Holding(Caller, Permissions.EmployeesViewAll);
+        EmployeeHasRequests(Stranger, Vawc(Stranger));
+
+        var items = ItemsOf(await _sut.GetAll(Stranger, null, 1, 20, CancellationToken.None));
+
+        ShouldBeMasked(items[0]);
+    }
+
+    [Fact]
+    public async Task GetById_MasksConfidentialLeave_ForEmployeesViewAllWithoutApprovalsAll()
+    {
+        _caller.Holding(Caller, Permissions.EmployeesViewAll);
+        RequestIs(Vawc(Stranger));
+
+        ShouldBeMasked(BodyOf(await _sut.GetById(RequestId, CancellationToken.None)));
+    }
+
+    [Fact]
+    public async Task Queue_ExcludesConfidentialLeave_ForEmployeesViewAllWithoutApprovalsAll()
+    {
+        _caller.Holding(Caller, Permissions.EmployeesViewAll);
+
+        await _sut.GetAll(null, null, 1, 20, CancellationToken.None);
+
+        _requests.Verify(s => s.GetAllAsync(null, null, null, 1, 20, true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Balances_HideConfidentialTypes_FromEmployeesViewAllWithoutApprovalsAll()
+    {
+        _caller.Holding(Caller, Permissions.EmployeesViewAll);
+        EmployeeHasBalances(Stranger);
+
+        var rows = BalancesOf(await _sut.GetBalances(Stranger, 2026, CancellationToken.None));
+
+        rows.Select(r => r.LeaveTypeName).Should().Equal("Vacation Leave");
     }
 
     [Fact]
@@ -388,6 +460,23 @@ public class LeaveControllerConfidentialTests
 
         BodyOf(result).Id.Should().Be(RequestId);
         _documents.Verify(s => s.UploadAsync(RequestId, Caller, It.IsAny<Stream>(), "certificate.pdf", "application/pdf", 3, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public void UploadDocument_CapsTheRequestBody_AtTenAndAHalfMegabytes_AndRefusesMoreReadably()
+    {
+        // Without the caps a body is read up to Kestrel's 30 MB before the service's 10 MB check.
+        // With them, reading the form fails past 10.5 MB, and the filter turns that failure into the
+        // service's own refusal instead of a "Failed to read the request form" validation problem.
+        var action = typeof(LeaveController).GetMethod(nameof(LeaveController.UploadDocument))!;
+        const long cap = 10 * 1024 * 1024 + 512 * 1024;
+
+        action.GetCustomAttributesData()
+              .Single(a => a.AttributeType == typeof(RequestSizeLimitAttribute))
+              .ConstructorArguments[0].Value.Should().Be(cap);
+        action.GetCustomAttribute<RequestFormLimitsAttribute>()!.MultipartBodyLengthLimit.Should().Be(cap);
+        action.GetCustomAttribute<RefuseOversizedFormAttribute>()!.Message
+              .Should().Be("Attach a PDF, JPG or PNG of at most 10 MB.");
     }
 
     [Fact]
