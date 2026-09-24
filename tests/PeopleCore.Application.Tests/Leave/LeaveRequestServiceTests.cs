@@ -848,4 +848,39 @@ public class LeaveRequestServiceTests
         await act.Should().ThrowAsync<DomainException>().WithMessage("Your leave is being filed already; try again in a moment.");
         _leaveRepo.Verify(r => r.AddAsync(It.IsAny<LeaveRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    // ---- confidential types ----------------------------------------------------------------
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetAllAsync_PassesTheConfidentialExclusionToTheQuery(bool excludeConfidential)
+    {
+        var managerId = Guid.NewGuid();
+        _leaveRepo.Setup(r => r.GetPagedAsync(null, managerId, "Pending", 1, 20, excludeConfidential, It.IsAny<CancellationToken>()))
+                  .ReturnsAsync(([], 0));
+
+        await _sut.GetAllAsync(null, managerId, "Pending", 1, 20, excludeConfidential);
+
+        _leaveRepo.Verify(r => r.GetPagedAsync(null, managerId, "Pending", 1, 20, excludeConfidential, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetByIdAsync_CarriesTheTypesConfidentialFlag(bool isConfidential)
+    {
+        var request = new LeaveRequest
+        {
+            EmployeeId = Guid.NewGuid(), LeaveTypeId = Guid.NewGuid(),
+            LeaveType = new LeaveType { Name = "VAWC Leave", Code = "VAWC", IsConfidential = isConfidential },
+            StartDate = new DateOnly(2026, 10, 5), EndDate = new DateOnly(2026, 10, 5), TotalDays = 1
+        };
+        _leaveRepo.Setup(r => r.GetByIdAsync(request.Id, It.IsAny<CancellationToken>())).ReturnsAsync(request);
+
+        var dto = await _sut.GetByIdAsync(request.Id);
+
+        dto.IsConfidential.Should().Be(isConfidential);
+        dto.LeaveTypeName.Should().Be("VAWC Leave");
+    }
 }

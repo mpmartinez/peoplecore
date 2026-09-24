@@ -75,4 +75,44 @@ public class LeaveRequestRepositoryTests : DatabaseTestBase
 
         count.Should().Be(2);
     }
+
+    [Fact]
+    public async Task GetPagedAsync_ExcludingConfidential_LeavesOutConfidentialTypes_AndCountsWithoutThem()
+    {
+        var (employee, _, type, otherType) = await SeedAsync();
+        var vawc = new LeaveType { Name = "VAWC Leave", Code = "VAWC", IsConfidential = true, EntitlementKind = LeaveEntitlementKind.YearlyAllowance };
+        Context.LeaveTypes.Add(vawc);
+        Context.LeaveRequests.AddRange(
+            ARequest(employee, type, LeaveStatus.Pending, 5),
+            ARequest(employee, otherType, LeaveStatus.Pending, 6),
+            ARequest(employee, vawc, LeaveStatus.Pending, 7));
+        await Context.SaveChangesAsync();
+        var sut = new LeaveRequestRepository(NewContext());
+
+        var (kept, keptTotal) = await sut.GetPagedAsync(null, null, null, 1, 20, excludeConfidential: true);
+        var (all, allTotal) = await sut.GetPagedAsync(null, null, null, 1, 20, excludeConfidential: false);
+
+        kept.Should().OnlyContain(r => r.LeaveTypeId != vawc.Id);
+        keptTotal.Should().Be(2, "the count drives the pager, so it must leave them out too");
+        all.Should().Contain(r => r.LeaveTypeId == vawc.Id);
+        allTotal.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task GetByIdAsync_LoadsTheTypeAndTheEmployee()
+    {
+        // The controller reads the type's IsConfidential from the loaded request to decide who may
+        // see, decide or open it; an unloaded type would read as "not confidential".
+        var (employee, _, type, _) = await SeedAsync();
+        var request = ARequest(employee, type, LeaveStatus.Pending);
+        Context.LeaveRequests.Add(request);
+        await Context.SaveChangesAsync();
+        var sut = new LeaveRequestRepository(NewContext());
+
+        var loaded = await sut.GetByIdAsync(request.Id);
+
+        loaded!.LeaveType.Should().NotBeNull();
+        loaded.LeaveType.Name.Should().Be("Paternity Leave");
+        loaded.Employee.Should().NotBeNull();
+    }
 }

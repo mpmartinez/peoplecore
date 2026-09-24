@@ -57,5 +57,6 @@ public class LeaveBalanceService : ILeaveBalanceService
     private static LeaveBalanceDto ToDto(Domain.Entities.Leave.LeaveBalance b) => new(
         b.Id, b.EmployeeId, b.Employee?.FullName ?? string.Empty,
         b.LeaveTypeId, b.LeaveType?.Name ?? string.Empty,
-        b.Year, b.TotalDays, b.UsedDays, b.CarriedOverDays, b.RemainingDays);
+        b.Year, b.TotalDays, b.UsedDays, b.CarriedOverDays, b.RemainingDays,
+        b.LeaveType?.IsConfidential ?? false);
 }

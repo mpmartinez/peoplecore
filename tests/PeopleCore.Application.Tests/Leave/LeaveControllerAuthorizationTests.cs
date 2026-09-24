@@ -3,6 +3,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 using PeopleCore.API.Controllers.Leave;
+using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Leave.DTOs;
 using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Application.Tests.Common;
@@ -28,12 +29,19 @@ public class LeaveControllerAuthorizationTests
     private readonly Mock<ILeaveTypeService> _types = new();
     private readonly Mock<ILeaveRequestService> _requests = new();
     private readonly Mock<ILeaveBalanceService> _balances = new();
+    private readonly Mock<ILeaveDocumentService> _documents = new();
     private readonly SignedInCaller _caller = new();
     private readonly LeaveController _sut;
 
     public LeaveControllerAuthorizationTests()
     {
-        _sut = new LeaveController(_types.Object, _requests.Object, _balances.Object, _caller.CurrentUser.Object, _caller.Access);
+        _requests.Setup(s => s.GetAllAsync(It.IsAny<Guid?>(), It.IsAny<Guid?>(), It.IsAny<string?>(),
+                      It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                 .ReturnsAsync(PagedResult<LeaveRequestDto>.Create([], 0, 1, 20));
+        _balances.Setup(s => s.GetByEmployeeAsync(It.IsAny<Guid>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()))
+                 .ReturnsAsync([]);
+        _sut = new LeaveController(
+            _types.Object, _requests.Object, _balances.Object, _documents.Object, _caller.CurrentUser.Object, _caller.Access);
     }
 
     private void SignInAs(Guid? employeeId, params string[] roles) => _caller.As(employeeId, roles);
@@ -51,7 +59,7 @@ public class LeaveControllerAuthorizationTests
         RequestId, employeeId, "Maria Santos", LeaveTypeId, "Vacation Leave",
         new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 6), 2, "Family trip",
         LeaveStatus.Pending, null, null, null, DateTime.UtcNow,
-        null, 0, false, null);
+        null, 0, false, null, false);
 
     private static CreateLeaveRequestDto NewRequestFor(Guid employeeId) =>
         new(employeeId, LeaveTypeId, new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 6), "Family trip");
@@ -64,7 +72,7 @@ public class LeaveControllerAuthorizationTests
         var result = await _sut.GetAll(Caller, "Pending", 1, 20, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
-        _requests.Verify(s => s.GetAllAsync(Caller, null, "Pending", 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+        _requests.Verify(s => s.GetAllAsync(Caller, null, "Pending", 1, 20, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -84,7 +92,7 @@ public class LeaveControllerAuthorizationTests
         var result = await _sut.GetAll(DirectReport, null, 1, 20, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
-        _requests.Verify(s => s.GetAllAsync(DirectReport, null, null, 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+        _requests.Verify(s => s.GetAllAsync(DirectReport, null, null, 1, 20, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -141,7 +149,7 @@ public class LeaveControllerAuthorizationTests
         var result = await _sut.GetAll(null, "Pending", 1, 20, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
-        _requests.Verify(s => s.GetAllAsync(null, null, "Pending", 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+        _requests.Verify(s => s.GetAllAsync(null, null, "Pending", 1, 20, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -153,7 +161,7 @@ public class LeaveControllerAuthorizationTests
         var result = await _sut.GetAll(null, "Pending", 1, 20, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
-        _requests.Verify(s => s.GetAllAsync(null, Caller, "Pending", 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+        _requests.Verify(s => s.GetAllAsync(null, Caller, "Pending", 1, 20, true, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

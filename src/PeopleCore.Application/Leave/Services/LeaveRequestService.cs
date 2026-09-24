@@ -32,9 +32,11 @@ public class LeaveRequestService : ILeaveRequestService
     }
 
     public async Task<PagedResult<LeaveRequestDto>> GetAllAsync(
-        Guid? employeeId, Guid? reportingManagerId, string? status, int page, int pageSize, CancellationToken ct = default)
+        Guid? employeeId, Guid? reportingManagerId, string? status, int page, int pageSize,
+        bool excludeConfidential, CancellationToken ct = default)
     {
-        var (items, total) = await _leaveRepo.GetPagedAsync(employeeId, reportingManagerId, status, page, pageSize, ct);
+        var (items, total) = await _leaveRepo.GetPagedAsync(
+            employeeId, reportingManagerId, status, page, pageSize, excludeConfidential, ct);
         return PagedResult<LeaveRequestDto>.Create(items.Select(ToDto).ToList(), total, page, pageSize);
     }
 
@@ -313,11 +315,16 @@ public class LeaveRequestService : ILeaveRequestService
         await _leaveRepo.UpdateAsync(request, ct);
     }
 
-    private static LeaveRequestDto ToDto(LeaveRequest r) => new(
+    /// <summary>
+    /// The request as its DTO. The type's name and confidential flag come from the loaded
+    /// <see cref="LeaveRequest.LeaveType"/>, which the repository's reads include.
+    /// </summary>
+    internal static LeaveRequestDto ToDto(LeaveRequest r) => new(
         r.Id, r.EmployeeId, r.Employee?.FullName ?? string.Empty,
         r.LeaveTypeId, r.LeaveType?.Name ?? string.Empty,
         r.StartDate, r.EndDate, r.TotalDays, r.Reason,
         r.Status, r.ApprovedBy, r.ApprovedAt, r.RejectionReason, r.CreatedAt,
         r.MaternityCase, r.DaysAllocatedToFather,
-        r.DocumentStorageKey != null, r.DocumentFileName);
+        r.DocumentStorageKey != null, r.DocumentFileName,
+        r.LeaveType?.IsConfidential ?? false);
 }

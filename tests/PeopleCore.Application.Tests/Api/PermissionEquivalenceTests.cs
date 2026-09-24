@@ -116,6 +116,13 @@ public class PermissionEquivalenceTests
         ["AttendanceCorrectionsController.Approve"] = [Permissions.ApprovalsTeam, Permissions.ApprovalsAll],
         ["AttendanceCorrectionsController.Reject"] = [Permissions.ApprovalsTeam, Permissions.ApprovalsAll],
 
+        // A leave request's document: uploading is self-service (the service refuses anyone but the
+        // request's owner), and who may open it is checked inside the action - the owner,
+        // approvals.all, or a team approver managing the employee on a non-confidential type
+        // (LeaveControllerConfidentialTests).
+        ["LeaveController.UploadDocument"] = [],
+        ["LeaveController.GetDocument"] = [],
+
         ["GovernmentReportsController.Get"] = [Permissions.PayrollManage],
 
         ["Bir2316Controller.GetInputs"] = [Permissions.PayrollManage],

@@ -22,12 +22,18 @@ public record CreateLeaveTypeDto(
     string? GenderRestriction, bool RequiresDocument,
     bool IsConvertibleToCash = false, bool CountsAsVacationForDeMinimis = true);
 
+/// <param name="IsConfidential">The type is confidential (VAWC): the row is shown only to the employee and to <c>approvals.all</c>.</param>
 public record LeaveBalanceDto(
     Guid Id, Guid EmployeeId, string EmployeeName,
     Guid LeaveTypeId, string LeaveTypeName,
     int Year, decimal TotalDays, decimal UsedDays,
-    decimal CarriedOverDays, decimal RemainingDays);
+    decimal CarriedOverDays, decimal RemainingDays,
+    bool IsConfidential);
 
+/// <param name="IsConfidential">
+/// The type is confidential (VAWC). Anyone but the employee and <c>approvals.all</c> gets the
+/// request masked - type "Leave", no reason, no document - with this cleared to false.
+/// </param>
 public record LeaveRequestDto(
     Guid Id, Guid EmployeeId, string EmployeeName,
     Guid LeaveTypeId, string LeaveTypeName,
@@ -36,7 +42,8 @@ public record LeaveRequestDto(
     LeaveStatus Status, Guid? ApprovedBy, DateTime? ApprovedAt,
     string? RejectionReason, DateTime CreatedAt,
     MaternityCase? MaternityCase, int DaysAllocatedToFather,
-    bool HasDocument, string? DocumentFileName);
+    bool HasDocument, string? DocumentFileName,
+    bool IsConfidential);
 
 /// <param name="MaternityCase">Required on a maternity type; cleared on any other type.</param>
 /// <param name="DaysAllocatedToFather">Maternity days given to the father (live birth only); cleared on any other type.</param>
