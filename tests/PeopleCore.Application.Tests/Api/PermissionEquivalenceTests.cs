@@ -123,6 +123,10 @@ public class PermissionEquivalenceTests
         ["LeaveController.UploadDocument"] = [],
         ["LeaveController.GetDocument"] = [],
 
+        // GET api/leave-requests/options - what the caller may file. Self-service: the employee is
+        // the one in the caller's employee_id claim (LeaveControllerAuthorizationTests).
+        ["LeaveController.GetFilingOptions"] = [],
+
         // POST api/leave-types/statutory adds the Philippine statutory leave types a site lacks;
         // it manages leave types, like creating one.
         ["LeaveController.AddStatutoryLeaveTypes"] = [Permissions.LeaveManage],

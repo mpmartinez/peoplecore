@@ -1,4 +1,5 @@
 using PeopleCore.Application.Common.DTOs;
+using PeopleCore.Application.Common.Time;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Leave.DTOs;
 using PeopleCore.Application.Leave.Interfaces;
@@ -16,19 +17,74 @@ public class LeaveRequestService : ILeaveRequestService
     private readonly ILeaveDayCounter _dayCounter;
     private readonly IEmployeeRepository _employeeRepo;
     private readonly ILeaveTypeRepository _leaveTypeRepo;
+    private readonly TimeProvider _clock;
 
     public LeaveRequestService(
         ILeaveRequestRepository leaveRepo,
         ILeaveBalanceRepository balanceRepo,
         ILeaveDayCounter dayCounter,
         IEmployeeRepository employeeRepo,
-        ILeaveTypeRepository leaveTypeRepo)
+        ILeaveTypeRepository leaveTypeRepo,
+        TimeProvider clock)
     {
         _leaveRepo = leaveRepo;
         _balanceRepo = balanceRepo;
         _dayCounter = dayCounter;
         _employeeRepo = employeeRepo;
         _leaveTypeRepo = leaveTypeRepo;
+        _clock = clock;
+    }
+
+    public async Task<IReadOnlyList<LeaveFilingOptionDto>> GetFilingOptionsAsync(Guid employeeId, CancellationToken ct = default)
+    {
+        var employee = await _employeeRepo.GetByIdAsync(employeeId, ct)
+            ?? throw new KeyNotFoundException($"Employee {employeeId} not found.");
+
+        var today = DateOnly.FromDateTime(PhilippineTime.Now(_clock));
+        var types = await _leaveTypeRepo.GetAllAsync(ct);
+        var balances = (await _balanceRepo.GetByEmployeeAsync(employeeId, today.Year, ct))
+            .ToDictionary(b => b.LeaveTypeId);
+
+        var options = new List<LeaveFilingOptionDto>();
+        foreach (var type in types.Where(t => LeaveRules.IsEligibleOn(t, employee, today)))
+        {
+            balances.TryGetValue(type.Id, out var balance);
+
+            decimal? daysLeft = null;
+            var eventsUsed = 0;
+            switch (type.EntitlementKind)
+            {
+                case LeaveEntitlementKind.Accrued:
+                    // Nothing to file against until accrual has built this year's row.
+                    if (balance is null)
+                        continue;
+                    daysLeft = balance.RemainingDays - await HeldThisYearAsync(type);
+                    break;
+
+                case LeaveEntitlementKind.YearlyAllowance:
+                    // The row is created on first filing; until then the whole allowance is left.
+                    daysLeft = (balance?.RemainingDays ?? type.MaxDaysPerYear) - await HeldThisYearAsync(type);
+                    break;
+
+                case LeaveEntitlementKind.PerEvent:
+                    eventsUsed = await _leaveRepo.CountApprovedAsync(employeeId, type.Id, ct);
+                    break;
+            }
+
+            options.Add(new LeaveFilingOptionDto(
+                type.Id, type.Name, type.Code, type.EntitlementKind,
+                type.CountsCalendarDays, type.RequiresDocument, type.IsMaternity,
+                daysLeft,
+                type.EntitlementKind == LeaveEntitlementKind.PerEvent ? type.DaysPerEvent : null,
+                type.EntitlementKind == LeaveEntitlementKind.PerEvent ? type.MaxEvents : null,
+                eventsUsed,
+                type.IsMaternity && employee.HasValidSoloParentId(today)));
+        }
+
+        return options.OrderBy(o => o.Name, StringComparer.OrdinalIgnoreCase).ToList();
+
+        async Task<decimal> HeldThisYearAsync(LeaveType type)
+            => (await HeldByYearAsync(employeeId, type.Id, excludeId: null, ct)).GetValueOrDefault(today.Year);
     }
 
     public async Task<PagedResult<LeaveRequestDto>> GetAllAsync(
@@ -214,10 +270,7 @@ public class LeaveRequestService : ILeaveRequestService
         var availableByYear = new Dictionary<int, decimal>();
         if (leaveType.EntitlementKind != LeaveEntitlementKind.PerEvent)
         {
-            var pending = await _leaveRepo.GetPendingAsync(employee.Id, leaveType.Id, excludeId, ct);
-            var held = new Dictionary<int, decimal>();
-            foreach (var (year, days) in pending.SelectMany(DaysChargedByYear))
-                held[year] = held.GetValueOrDefault(year) + days;
+            var held = await HeldByYearAsync(employee.Id, leaveType.Id, excludeId, ct);
 
             foreach (var year in daysByYear.Keys)
             {
@@ -238,6 +291,20 @@ public class LeaveRequestService : ILeaveRequestService
             daysByYear.Values.Sum(),
             daysByYear.GetValueOrDefault(start.Year),
             balances);
+    }
+
+    /// <summary>
+    /// The days the employee's Pending requests of the type hold, by the year they would be charged
+    /// to. <paramref name="excludeId"/> leaves out the request being approved.
+    /// </summary>
+    private async Task<Dictionary<int, decimal>> HeldByYearAsync(
+        Guid employeeId, Guid leaveTypeId, Guid? excludeId, CancellationToken ct)
+    {
+        var pending = await _leaveRepo.GetPendingAsync(employeeId, leaveTypeId, excludeId, ct);
+        var held = new Dictionary<int, decimal>();
+        foreach (var (year, days) in pending.SelectMany(DaysChargedByYear))
+            held[year] = held.GetValueOrDefault(year) + days;
+        return held;
     }
 
     /// <summary>A request's days by the year they are charged to: DaysInStartYear to the start year, the rest to the end year.</summary>

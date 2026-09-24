@@ -78,3 +78,24 @@ public record CreateLeaveRequestDto(
     MaternityCase? MaternityCase = null, int DaysAllocatedToFather = 0);
 
 public record RejectLeaveDto(string RejectionReason);
+
+/// <summary>
+/// A leave type the employee may file today (checks 1-5 pass on the Philippine date). An Accrued
+/// type is offered only once the employee has a balance row for this year.
+/// </summary>
+/// <param name="DaysLeftThisYear">
+/// Accrued and YearlyAllowance: this year's remaining days (a YearlyAllowance type with no row yet:
+/// its MaxDaysPerYear) less the days the employee's Pending requests of the type hold in this year.
+/// Null for PerEvent.
+/// </param>
+/// <param name="DaysPerEvent">PerEvent: the days each request may take (a maternity type's live-birth base). Null otherwise.</param>
+/// <param name="MaxEvents">PerEvent: the most approved requests allowed, or null for no limit.</param>
+/// <param name="EventsUsed">PerEvent: the employee's approved requests of the type. 0 otherwise.</param>
+/// <param name="HasSoloParentBonus">A maternity type, and the employee has a valid solo parent ID today (+15 days on a live birth).</param>
+public record LeaveFilingOptionDto(
+    Guid LeaveTypeId, string Name, string Code, LeaveEntitlementKind Kind,
+    bool CountsCalendarDays, bool RequiresDocument, bool IsMaternity,
+    decimal? DaysLeftThisYear,
+    decimal? DaysPerEvent,
+    int? MaxEvents, int EventsUsed,
+    bool HasSoloParentBonus);

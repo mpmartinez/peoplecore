@@ -119,6 +119,21 @@ public class LeaveController : ControllerBase
     }
 
     /// <summary>
+    /// What the caller may file today, with what is left of each type. Self-service: the employee is
+    /// the one in the caller's employee_id claim, and an account with none is refused. The literal
+    /// segment cannot be taken for a request id - every <c>leave-requests/{id}</c> route is <c>:guid</c>.
+    /// </summary>
+    [HttpGet("leave-requests/options")]
+    public async Task<IActionResult> GetFilingOptions(CancellationToken ct = default)
+    {
+        var employeeId = _currentUser.EmployeeId;
+        if (employeeId is null)
+            return Forbid();
+
+        return Ok(await _requestService.GetFilingOptionsAsync(employeeId.Value, ct));
+    }
+
+    /// <summary>
     /// The owner is only known once the request is loaded, so the check follows the read. A
     /// refused caller gets 403 rather than the request.
     /// </summary>

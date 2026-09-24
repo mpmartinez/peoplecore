@@ -18,4 +18,10 @@ public interface ILeaveRequestService
     Task<LeaveRequestDto> ApproveAsync(Guid id, Guid approverId, CancellationToken ct = default);
     Task<LeaveRequestDto> RejectAsync(Guid id, Guid rejecterId, RejectLeaveDto dto, CancellationToken ct = default);
     Task CancelAsync(Guid id, Guid requestingEmployeeId, CancellationToken ct = default);
+
+    /// <summary>
+    /// The leave types the employee may file today (the Philippine date), sorted by name, with what
+    /// is left of each. See <see cref="LeaveFilingOptionDto"/>.
+    /// </summary>
+    Task<IReadOnlyList<LeaveFilingOptionDto>> GetFilingOptionsAsync(Guid employeeId, CancellationToken ct = default);
 }

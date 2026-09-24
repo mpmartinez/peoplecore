@@ -30,7 +30,11 @@ public record EmployeeDto(
     bool Is13thMonthEligible,
     // The day they left, for an employee who has; the record-separation form uses it for those
     // who left without a separation being recorded.
-    DateOnly? SeparationDate = null);
+    DateOnly? SeparationDate = null,
+    // The solo parent ID (RA 11861). One valid on a date opens Solo Parent Leave and adds 15 days
+    // to a live-birth maternity leave. Personal: the directory entry does not carry it.
+    string? SoloParentIdNumber = null,
+    DateOnly? SoloParentIdValidUntil = null);
 
 /// <summary>
 /// One row of the company directory, which every signed-in user may list. Deliberately a subset of
@@ -72,7 +76,10 @@ public record CreateEmployeeDto(
     Guid? ReportingManagerId,
     EmploymentStatus EmploymentStatus,
     EmploymentType EmploymentType,
-    DateOnly HireDate);
+    DateOnly HireDate,
+    // The number is trimmed, and a blank one is stored as null.
+    string? SoloParentIdNumber = null,
+    DateOnly? SoloParentIdValidUntil = null);
 
 public record UpdateEmployeeDto(
     string FirstName,
@@ -88,7 +95,11 @@ public record UpdateEmployeeDto(
     Guid? ReportingManagerId,
     EmploymentStatus EmploymentStatus,
     DateOnly? RegularizationDate,
-    bool Is13thMonthEligible);
+    bool Is13thMonthEligible,
+    // Replaced like every other field here, so a body that leaves them out clears them. The number
+    // is trimmed, and a blank one is stored as null.
+    string? SoloParentIdNumber = null,
+    DateOnly? SoloParentIdValidUntil = null);
 
 public record EmployeeFilterDto(
     string? Search,

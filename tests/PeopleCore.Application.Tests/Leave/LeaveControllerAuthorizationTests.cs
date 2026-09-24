@@ -531,6 +531,54 @@ public class LeaveControllerAuthorizationTests
         VerifyNoServiceReached();
     }
 
+    // ---- GET api/leave-requests/options ---------------------------------------------------
+
+    [Fact]
+    public async Task GetFilingOptions_ReturnsTheCallersOwnOptions()
+    {
+        IReadOnlyList<LeaveFilingOptionDto> options = [];
+        _requests.Setup(s => s.GetFilingOptionsAsync(Caller, It.IsAny<CancellationToken>())).ReturnsAsync(options);
+
+        var result = await _sut.GetFilingOptions(CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>().Which.Value.Should().BeSameAs(options);
+    }
+
+    [Fact]
+    public async Task GetFilingOptions_ForACallerWithNoEmployeeIdClaim_ReturnsForbid()
+    {
+        SignInAs(null, "Admin");
+
+        var result = await _sut.GetFilingOptions(CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+        VerifyNoServiceReached();
+    }
+
+    [Fact]
+    public void GetFilingOptions_IsAGetToLeaveRequestsOptions_TakingNoEmployeeId()
+    {
+        var action = typeof(LeaveController).GetMethod(nameof(LeaveController.GetFilingOptions))!;
+        action.GetCustomAttribute<HttpGetAttribute>()!.Template.Should().Be("leave-requests/options");
+        action.GetParameters().Select(p => p.Name).Should().BeEquivalentTo(["ct"]);
+    }
+
+    [Fact]
+    public void LeaveRequestsOptions_CannotBeTakenForARequestId()
+    {
+        // GET leave-requests/{id} would otherwise also match "options"; the :guid constraint on
+        // every id segment is what keeps the two routes apart.
+        var idTemplates = typeof(LeaveController)
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .SelectMany(m => m.GetCustomAttributes<Microsoft.AspNetCore.Mvc.Routing.HttpMethodAttribute>())
+            .Select(a => a.Template)
+            .Where(t => t is not null && t.StartsWith("leave-requests/{"))
+            .ToList();
+
+        idTemplates.Should().NotBeEmpty().And.OnlyContain(t => t!.StartsWith("leave-requests/{id:guid}"));
+        Guid.TryParse("options", out _).Should().BeFalse();
+    }
+
     // ---- POST api/leave-types/statutory ---------------------------------------------------
 
     [Fact]

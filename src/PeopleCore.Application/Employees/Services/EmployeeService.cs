@@ -54,7 +54,9 @@ public class EmployeeService : IEmployeeService
             EmploymentType = dto.EmploymentType,
             HireDate = dto.HireDate,
             IsActive = true,
-            Is13thMonthEligible = true
+            Is13thMonthEligible = true,
+            SoloParentIdNumber = CleanIdNumber(dto.SoloParentIdNumber),
+            SoloParentIdValidUntil = dto.SoloParentIdValidUntil
         };
 
         var created = await _repo.AddAsync(employee, ct);
@@ -81,6 +83,8 @@ public class EmployeeService : IEmployeeService
         employee.EmploymentStatus = dto.EmploymentStatus;
         employee.RegularizationDate = dto.RegularizationDate;
         employee.Is13thMonthEligible = dto.Is13thMonthEligible;
+        employee.SoloParentIdNumber = CleanIdNumber(dto.SoloParentIdNumber);
+        employee.SoloParentIdValidUntil = dto.SoloParentIdValidUntil;
         employee.UpdatedAt = DateTime.UtcNow;
 
         await _repo.UpdateAsync(employee, ct);
@@ -172,5 +176,21 @@ public class EmployeeService : IEmployeeService
         e.ReportingManagerId, e.ReportingManager?.FullName,
         e.TeamId,
         e.EmploymentStatus, e.EmploymentType, e.HireDate, e.RegularizationDate,
-        e.IsActive, e.Is13thMonthEligible, e.SeparationDate);
+        e.IsActive, e.Is13thMonthEligible, e.SeparationDate,
+        e.SoloParentIdNumber, e.SoloParentIdValidUntil);
+
+    /// <summary>The column's length (EmployeeConfiguration); refused here rather than failing the save.</summary>
+    private const int SoloParentIdNumberMaxLength = 50;
+
+    /// <summary>The solo parent ID number trimmed, with a blank one as null (no ID).</summary>
+    private static string? CleanIdNumber(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var trimmed = value.Trim();
+        if (trimmed.Length > SoloParentIdNumberMaxLength)
+            throw new DomainException($"The solo parent ID number can't be longer than {SoloParentIdNumberMaxLength} characters.");
+        return trimmed;
+    }
 }
