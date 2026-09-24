@@ -136,11 +136,15 @@
                         }
                     </Select>
                 </FormField>
+                @if (_editing is { } saved && saved.EntitlementKind != _form.Kind)
+                {
+                    <p class="-mt-2 text-xs text-warning" data-kind-change-note>Existing balances and requests stay as they are.</p>
+                }
 
                 @if (_form.Kind == LeaveEntitlementKind.YearlyAllowance)
                 {
                     <FormField LabelText="Days per year" Id="lt-max-days" Required="true">
-                        <Input TValue="decimal" Id="lt-max-days" Type="number" Min="0" Step="0.5" @bind-Value="_form.MaxDaysPerYear" />
+                        <Input TValue="decimal?" Id="lt-max-days" Type="number" Min="0" Step="0.5" @bind-Value="_form.MaxDaysPerYear" />
                     </FormField>
                 }
 
@@ -220,6 +224,10 @@
                 @if (_editing is null)
                 {
                     <p class="text-sm text-muted-foreground">Save the type first, then edit it to add its accrual rules.</p>
+                }
+                else if (_editing.EntitlementKind != LeaveEntitlementKind.Accrued)
+                {
+                    <p class="text-sm text-muted-foreground">Save the change of kind first, then edit the type again to add its accrual rules.</p>
                 }
                 else
                 {
@@ -309,7 +317,7 @@
     </ChildContent>
     <FooterContent>
         <div class="mt-4 flex justify-end gap-2">
-            <Button Variant="outline" Size="sm" OnClick="CloseForm">Cancel</Button>
+            <Button Variant="outline" Size="sm" OnClick="CloseForm" Disabled="@_saving">Cancel</Button>
             <Button Type="submit" Variant="primary" Size="sm" Loading="@_saving" form="leave-type-form" data-save-leave-type>Save</Button>
         </div>
     </FooterContent>
@@ -351,6 +359,10 @@
     private LeaveTypeForm _form = new();
     private string? _formError;
     private bool _saving;
+    // Counts each opening and closing of the form, so a save that finishes after the form has
+    // closed (the dialog's own close button still works mid-save) or moved on to another type
+    // knows its result isn't about the form now shown.
+    private int _formSession;
 
     private List<LeaveAccrualPolicyDto>? _policies;
     private string? _policyError;
@@ -432,6 +444,7 @@
         _policyError = null;
         _policyForm = null;
         _policiesLoad++;
+        _formSession++;
         _formOpen = true;
     }
 
@@ -442,14 +455,12 @@
         _policyForm = null;
         // Any rules still loading were for the type just closed.
         _policiesLoad++;
+        _formSession++;
     }
 
-    private async Task OnKindChanged(LeaveEntitlementKind kind)
-    {
-        _form.Kind = kind;
-        if (kind == LeaveEntitlementKind.Accrued && _editing is { } type && _policies is null)
-            await LoadPolicies(type.Id);
-    }
+    // Rules are offered only for a type saved as Accrued (loaded when it's opened), so switching
+    // another type to Accrued can't add rules before that change is saved.
+    private void OnKindChanged(LeaveEntitlementKind kind) => _form.Kind = kind;
 
     private async Task Save()
     {
@@ -461,9 +472,16 @@
             _formError = "Enter a name and a code.";
             return;
         }
+        // The API's own message for the same refusal.
+        if (_form.Kind == LeaveEntitlementKind.YearlyAllowance && _form.MaxDaysPerYear is not > 0m)
+        {
+            _formError = "Set the days per year.";
+            return;
+        }
 
         var request = _form.ToRequest();
         var editing = _editing;
+        var session = _formSession;
         _saving = true;
         try
         {
@@ -472,7 +490,7 @@
         }
         catch (Exception ex)
         {
-            _formError = ex.Message;
+            if (session == _formSession) _formError = ex.Message;
             return;
         }
         finally
@@ -480,7 +498,8 @@
             _saving = false;
         }
 
-        CloseForm();
+        // Saved either way, so the list reloads; but a form that now shows another type stays open.
+        if (session == _formSession) CloseForm();
         await LoadTypes();
     }
 
@@ -635,7 +654,9 @@
         LeaveEntitlementKind.PerEvent when type.IsMaternity => $"{Days(type.DaysPerEvent ?? 0m)} a birth",
         LeaveEntitlementKind.PerEvent => $"{Days(type.DaysPerEvent ?? 0m)} each time"
             + (type.MaxEvents is { } most ? $", up to {most} {(most == 1 ? "time" : "times")}" : ""),
-        LeaveEntitlementKind.Accrued when type.MaxDaysPerYear <= 0m => "Set by its accrual rules",
+        // Nothing grants an accrued type days but its accrual rules, and the list doesn't load every
+        // type's rules (one request each) just to describe them; the form lists them.
+        LeaveEntitlementKind.Accrued => "Set by accrual rules",
         _ => $"{Days(type.MaxDaysPerYear)} a year",
     };
 
@@ -669,7 +690,8 @@
         public string Name { get; set; } = "";
         public string Code { get; set; } = "";
         public LeaveEntitlementKind Kind { get; set; } = LeaveEntitlementKind.Accrued;
-        public decimal MaxDaysPerYear { get; set; }
+        // Nullable so a cleared field is blank rather than the last number typed.
+        public decimal? MaxDaysPerYear { get; set; }
         public decimal? DaysPerEvent { get; set; }
         public int? MaxEvents { get; set; }
         public bool IsMaternity { get; set; }
@@ -714,13 +736,13 @@
 
         // Every setting goes out, as the API replaces the whole type. The per-event figures and the
         // maternity flag belong to a per-event type only, and a per-event type has no yearly figure,
-        // so a value left behind by an earlier kind isn't sent. An accrued type keeps its yearly
-        // figure: the form doesn't show it, but the list does.
+        // so a value left behind by an earlier kind isn't sent. An accrued type keeps whatever yearly
+        // figure it had, unshown: accrual doesn't use it, and a full replacement mustn't wipe it.
         public CreateLeaveTypeDto ToRequest()
         {
             var perEvent = Kind == LeaveEntitlementKind.PerEvent;
             return new CreateLeaveTypeDto(
-                Name.Trim(), Code.Trim(), perEvent ? 0m : MaxDaysPerYear,
+                Name.Trim(), Code.Trim(), perEvent ? 0m : MaxDaysPerYear ?? 0m,
                 IsPaid, IsCarryOver, IsCarryOver ? CarryOverMaxDays : null,
                 string.IsNullOrWhiteSpace(Gender) ? null : Gender, RequiresDocument,
                 IsConvertibleToCash, CountsAsVacationForDeMinimis,

@@ -140,7 +140,7 @@ public class LeaveTypesTests : BunitContext
         var sil = Row(cut, "SIL");
         sil.TextContent.Should().Contain("Service Incentive Leave").And.Contain("SIL");
         sil.QuerySelector("[data-kind]")!.TextContent.Trim().Should().Be("Accrued");
-        sil.QuerySelector("[data-limit]")!.TextContent.Trim().Should().Be("5 days a year");
+        sil.QuerySelector("[data-limit]")!.TextContent.Trim().Should().Be("Set by accrual rules");
         sil.QuerySelector("[data-days]")!.TextContent.Trim().Should().Be("Working days");
         sil.QuerySelector("[data-status]")!.TextContent.Trim().Should().Be("Active");
 
@@ -175,11 +175,15 @@ public class LeaveTypesTests : BunitContext
     }
 
     [Fact]
-    public void AnAccruedTypeWithNoYearlyFigure_SaysItsDaysComeFromItsAccrualRules()
+    public void AnAccruedType_SaysItsDaysComeFromItsAccrualRules_NotFromItsYearlyFigure_WithoutLoadingThem()
     {
-        var cut = RenderPage(Old);
+        // SIL's yearly figure is 5, but nothing grants an accrued type days except its rules - and
+        // the list doesn't load every type's rules just to describe them.
+        var cut = RenderPage(Sil, Old);
 
-        Row(cut, "OLD").QuerySelector("[data-limit]")!.TextContent.Trim().Should().Be("Set by its accrual rules");
+        Row(cut, "SIL").QuerySelector("[data-limit]")!.TextContent.Trim().Should().Be("Set by accrual rules");
+        Row(cut, "OLD").QuerySelector("[data-limit]")!.TextContent.Trim().Should().Be("Set by accrual rules");
+        _api.Requests.Should().NotContain(r => r.RequestUri!.AbsolutePath == PoliciesPath);
     }
 
     [Fact]
@@ -384,11 +388,121 @@ public class LeaveTypesTests : BunitContext
         cut.Find("form[data-leave-type-form]").Submit();
 
         cut.WaitForAssertion(() => cut.Find("[data-save-leave-type]").HasAttribute("disabled").Should().BeTrue());
+        ButtonIn(cut.Find("[data-leave-type-dialog]"), "Cancel").HasAttribute("disabled").Should().BeTrue();
         cut.Find("form[data-leave-type-form]").Submit();
         Calls(HttpMethod.Put, $"{TypesPath}/{PlId}").Should().Be(1);
 
         gate.SetResult(Json(Pl));
         cut.WaitForAssertion(() => cut.FindAll("form[data-leave-type-form]").Should().BeEmpty());
+    }
+
+    [Fact]
+    public async Task ASaveThatFailsAfterTheDialogMovedOnToAnotherType_LeavesThatTypesFormAlone()
+    {
+        var gate = _api.OnGated(HttpMethod.Put, $"{TypesPath}/{PlId}");
+        _api.On(HttpMethod.Get, PoliciesOf(VlId), HttpStatusCode.OK, "[]");
+        var cut = RenderPage(Pl, Vl);
+
+        await ButtonIn(Row(cut, "PL"), "Edit").ClickAsync(new MouseEventArgs());
+        // Not awaited yet: the save is held until the gate opens.
+        var save = cut.Find("form[data-leave-type-form]").SubmitAsync(EventArgs.Empty);
+        cut.WaitForAssertion(() => Calls(HttpMethod.Put, $"{TypesPath}/{PlId}").Should().Be(1));
+        // Cancel is disabled, but the dialog's own close button still works.
+        await ButtonIn(cut.Find("[data-leave-type-dialog]"), "Close").ClickAsync(new MouseEventArgs());
+        await ButtonIn(Row(cut, "VL"), "Edit").ClickAsync(new MouseEventArgs());
+
+        gate.SetResult(new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(Problem("Set the days per event."), Encoding.UTF8, "application/json")
+        });
+        await save;
+
+        cut.FindAll("[data-leave-type-error]").Should().BeEmpty("PL's refusal is not about the type now open");
+        cut.Find("#lt-name").GetAttribute("value").Should().Be("Vacation Leave");
+    }
+
+    [Fact]
+    public async Task ASaveThatSucceedsAfterTheDialogMovedOnToAnotherType_KeepsThatTypesFormOpen_AndReloadsTheList()
+    {
+        var gate = _api.OnGated(HttpMethod.Put, $"{TypesPath}/{PlId}");
+        _api.On(HttpMethod.Get, PoliciesOf(VlId), HttpStatusCode.OK, "[]");
+        var cut = RenderPage(Pl, Vl);
+
+        await ButtonIn(Row(cut, "PL"), "Edit").ClickAsync(new MouseEventArgs());
+        var save = cut.Find("form[data-leave-type-form]").SubmitAsync(EventArgs.Empty);
+        cut.WaitForAssertion(() => Calls(HttpMethod.Put, $"{TypesPath}/{PlId}").Should().Be(1));
+        await ButtonIn(cut.Find("[data-leave-type-dialog]"), "Close").ClickAsync(new MouseEventArgs());
+        await ButtonIn(Row(cut, "VL"), "Edit").ClickAsync(new MouseEventArgs());
+
+        gate.SetResult(Json(Pl));
+        await save;
+
+        cut.FindAll("form[data-leave-type-form]").Should().ContainSingle("VL's form was not the one saved");
+        cut.Find("#lt-name").GetAttribute("value").Should().Be("Vacation Leave");
+        Calls(HttpMethod.Get, TypesPath).Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ClearingTheDaysPerYear_OfAYearlyAllowance_IsRefused_BeforeAnythingIsSent()
+    {
+        var cut = RenderPage(Vawc);
+
+        await ButtonIn(Row(cut, "VAWC"), "Edit").ClickAsync(new MouseEventArgs());
+        cut.Find("#lt-max-days").GetAttribute("value").Should().Be("10");
+        await cut.Find("#lt-max-days").InputAsync(new ChangeEventArgs { Value = "" });
+        await cut.Find("form[data-leave-type-form]").SubmitAsync(EventArgs.Empty);
+
+        cut.Find("[data-leave-type-error]").TextContent.Trim().Should().Be("Set the days per year.");
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Put);
+    }
+
+    [Fact]
+    public async Task ANewYearlyAllowance_StartsWithNoDaysPerYear_AndIsRefusedUntilItHasSome()
+    {
+        _api.On(HttpMethod.Post, TypesPath, HttpStatusCode.Created, Vawc);
+        var cut = RenderPage(Sil);
+
+        await cut.Find("[data-new-leave-type]").ClickAsync(new MouseEventArgs());
+        await cut.Find("#lt-name").InputAsync(new ChangeEventArgs { Value = "Wellness Leave" });
+        await cut.Find("#lt-code").InputAsync(new ChangeEventArgs { Value = "WL" });
+        await cut.Find("#lt-kind").ChangeAsync(new ChangeEventArgs { Value = "YearlyAllowance" });
+        cut.Find("#lt-max-days").GetAttribute("value").Should().Be("");
+        await cut.Find("form[data-leave-type-form]").SubmitAsync(EventArgs.Empty);
+
+        cut.Find("[data-leave-type-error]").TextContent.Trim().Should().Be("Set the days per year.");
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Post);
+
+        await cut.Find("#lt-max-days").InputAsync(new ChangeEventArgs { Value = "3" });
+        await cut.Find("form[data-leave-type-form]").SubmitAsync(EventArgs.Empty);
+
+        cut.WaitForAssertion(() => cut.FindAll("form[data-leave-type-form]").Should().BeEmpty());
+        BodyOf(HttpMethod.Post, TypesPath).GetProperty("maxDaysPerYear").GetDecimal().Should().Be(3m);
+    }
+
+    [Fact]
+    public async Task ChangingASavedTypesKind_SaysExistingBalancesAndRequestsStay()
+    {
+        var cut = RenderPage(Pl);
+
+        await ButtonIn(Row(cut, "PL"), "Edit").ClickAsync(new MouseEventArgs());
+        cut.FindAll("[data-kind-change-note]").Should().BeEmpty();
+
+        await cut.Find("#lt-kind").ChangeAsync(new ChangeEventArgs { Value = "YearlyAllowance" });
+        cut.Find("[data-kind-change-note]").TextContent.Trim().Should().Be("Existing balances and requests stay as they are.");
+
+        await cut.Find("#lt-kind").ChangeAsync(new ChangeEventArgs { Value = "PerEvent" });
+        cut.FindAll("[data-kind-change-note]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ANewTypesKind_NeedsNoNoteAboutExistingBalances()
+    {
+        var cut = RenderPage(Sil);
+
+        await cut.Find("[data-new-leave-type]").ClickAsync(new MouseEventArgs());
+        await cut.Find("#lt-kind").ChangeAsync(new ChangeEventArgs { Value = "PerEvent" });
+
+        cut.FindAll("[data-kind-change-note]").Should().BeEmpty();
     }
 
     [Fact]
@@ -431,6 +545,19 @@ public class LeaveTypesTests : BunitContext
         await ButtonIn(Row(cut, "PL"), "Edit").ClickAsync(new MouseEventArgs());
 
         cut.FindAll("[data-accrual-policies]").Should().BeEmpty();
+        _api.Requests.Should().NotContain(r => r.RequestUri!.AbsolutePath == PoliciesPath);
+    }
+
+    [Fact]
+    public async Task SwitchingASavedTypeToAccrued_OffersNoRules_UntilTheChangeIsSaved()
+    {
+        var cut = RenderPage(Pl);
+
+        await ButtonIn(Row(cut, "PL"), "Edit").ClickAsync(new MouseEventArgs());
+        await cut.Find("#lt-kind").ChangeAsync(new ChangeEventArgs { Value = "Accrued" });
+
+        cut.Find("[data-accrual-policies]").TextContent.Should().Contain("Save the change of kind first");
+        cut.FindAll("[data-add-policy]").Should().BeEmpty();
         _api.Requests.Should().NotContain(r => r.RequestUri!.AbsolutePath == PoliciesPath);
     }
 
