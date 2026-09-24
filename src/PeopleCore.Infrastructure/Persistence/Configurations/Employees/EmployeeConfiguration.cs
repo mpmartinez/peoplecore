@@ -20,6 +20,7 @@ public class EmployeeConfiguration : IEntityTypeConfiguration<Employee>
         builder.Property(e => e.EmploymentType).HasConversion<string>();
         builder.Property(e => e.Gender).HasConversion<string>();
         builder.Property(e => e.CivilStatus).HasConversion<string>();
+        builder.Property(e => e.SoloParentIdNumber).HasMaxLength(50);
 
         // Ignore base class properties superseded by PeopleCore equivalents
         builder.Ignore("BirthDate");          // PeopleCore uses DateOfBirth (DateOnly)
