@@ -279,3 +279,27 @@ public interface IYearEndLeaveConversion
 - [ ] Run the whole solution: every project passes with no compiler warnings.
 - [ ] Read `AddYearEndLeaveConversion`'s `Up`: it should hold only the two columns and the SIL update.
 - [ ] Browser check: this needs a signed-in account. If no one can sign in, record it as not done.
+
+---
+
+### Task 5b: The 13th month from the web (added 2026-09-25)
+
+The web could not pay the 13th month on any regular payroll: the create form never sent `IncludeThirteenthMonth`, nothing could change it after create, and the run page had no 13th month column. The legal deadline is Dec 24 (PD 851).
+
+**Rules:**
+- **API:** `IPayrollRunService.SetThirteenthMonthAsync(Guid runId, bool include)` and `PUT api/payroll-runs/{id:guid}/thirteenth-month` with body `{ "include": bool }`, under `PayrollManage`, returning the updated `PayrollRunDto`. Pin it in `PermissionEquivalenceTests`.
+  - It sets every entry's `IncludeThirteenthMonth`, recomputes the run, and sends an Approved or For approval run back to Draft.
+  - Refusals:
+    - a Paid run: "A paid payroll run can't be changed.";
+    - a final pay: "A final pay's 13th month can't be changed here.";
+    - no change: "This payroll already includes the 13th month." / "This payroll already leaves out the 13th month."
+  - Allowed in any month, so advances work (the engine nets out 13th month paid earlier in the year).
+- **Run DTOs:** `PayrollRunDto` and `PayrollRunSummaryDto` gain a trailing `bool IncludesThirteenthMonth`, true when any entry includes it.
+- **Create form:** an "Include 13th month" tick box (`data-thirteenth-month`), shown for every period, in a "Year-end pay" group with Convert unused leave. It sends `includeThirteenthMonth` on every employee input.
+- **Run detail:**
+  - a "13th month" badge (`data-thirteenth-month-badge`) when the run includes it;
+  - a "13th month" column when any entry has `ThirteenthMonth > 0`;
+  - on a regular run that isn't Paid, a toggle ("Include 13th month" / "Leave out the 13th month"). It asks first; on an Approved or For approval run, the confirmation says the run goes back to Draft for approval again. It reloads afterwards and shows the API's refusals.
+- **Runs list:** a "13th month" badge on runs that include it.
+
+- [ ] Steps: failing tests (service: toggle on/off recomputes and resets status, refusals; controller route and permission; bUnit: tick box sends the flag on every employee, badge, column, toggle and confirm, refusals) → run and confirm they fail → implement → run the whole solution → commit `feat(payroll): pay the 13th month from the web - tick it on a payroll, or switch it on afterwards`.
