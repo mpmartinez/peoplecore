@@ -27,6 +27,12 @@ public class LeaveRequestConfiguration : IEntityTypeConfiguration<LeaveRequest>
                .WithMany()
                .HasForeignKey(l => l.ApprovedBy)
                .OnDelete(DeleteBehavior.Restrict);
+        // A used type is retired, not deleted (LeaveTypeService refuses); the key backs that up
+        // rather than cascading the employee's leave history away with the type.
+        builder.HasOne(l => l.LeaveType)
+               .WithMany()
+               .HasForeignKey(l => l.LeaveTypeId)
+               .OnDelete(DeleteBehavior.Restrict);
         builder.HasIndex(l => new { l.EmployeeId, l.StartDate, l.EndDate });
         builder.ToTable("leave_requests");
     }

@@ -127,6 +127,50 @@ public class LeaveTypeRepositoryTests : DatabaseTestBase
         (await read.LeaveAccrualPolicies.CountAsync(p => p.LeaveTypeId == type.Id)).Should().Be(1);
     }
 
+    [Fact]
+    public async Task DeletingATypeARequestReferences_FailsAtTheDatabase_AndTheRequestStays()
+    {
+        // The service refuses a used type first (IsUsedAsync); this is the backstop. A cascading
+        // key would silently take the employee's leave history with the type. ON DELETE RESTRICT
+        // raises restrict_violation (23001), not foreign_key_violation.
+        var (employeeId, type, _) = await SeedAsync();
+        var request = new LeaveRequest
+        {
+            EmployeeId = employeeId, LeaveTypeId = type.Id, Status = LeaveStatus.Approved, TotalDays = 1, DaysInStartYear = 1,
+            StartDate = new DateOnly(2026, 10, 5), EndDate = new DateOnly(2026, 10, 5),
+        };
+        Context.LeaveRequests.Add(request);
+        await Context.SaveChangesAsync();
+        var sut = new LeaveTypeRepository(NewContext());
+
+        var act = async () => await sut.DeleteWithPoliciesAsync((await sut.GetByIdAsync(type.Id))!);
+
+        (await act.Should().ThrowAsync<DbUpdateException>())
+            .WithInnerException<Npgsql.PostgresException>()
+            .Which.SqlState.Should().Be(Npgsql.PostgresErrorCodes.RestrictViolation);
+        await using var read = NewContext();
+        (await read.LeaveRequests.AnyAsync(r => r.Id == request.Id)).Should().BeTrue();
+        (await read.LeaveTypes.AnyAsync(t => t.Id == type.Id)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task DeletingATypeABalanceReferences_FailsAtTheDatabase_AndTheBalanceStays()
+    {
+        var (employeeId, type, _) = await SeedAsync();
+        var balance = new LeaveBalance { EmployeeId = employeeId, LeaveTypeId = type.Id, Year = 2026, TotalDays = 5 };
+        Context.LeaveBalances.Add(balance);
+        await Context.SaveChangesAsync();
+        var sut = new LeaveTypeRepository(NewContext());
+
+        var act = async () => await sut.DeleteWithPoliciesAsync((await sut.GetByIdAsync(type.Id))!);
+
+        (await act.Should().ThrowAsync<DbUpdateException>())
+            .WithInnerException<Npgsql.PostgresException>()
+            .Which.SqlState.Should().Be(Npgsql.PostgresErrorCodes.RestrictViolation);
+        await using var read = NewContext();
+        (await read.LeaveBalances.AnyAsync(b => b.Id == balance.Id)).Should().BeTrue();
+    }
+
     // ---- AddWithPoliciesAsync --------------------------------------------------------------
 
     [Fact]
