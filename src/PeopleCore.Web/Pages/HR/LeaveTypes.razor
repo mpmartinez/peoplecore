@@ -84,6 +84,10 @@
                                     {
                                         <p class="mt-1 text-xs text-muted-foreground max-w-xs" data-maternity-note>@MaternityNote</p>
                                     }
+                                    @if (IsSil(type.Code))
+                                    {
+                                        <p class="mt-1 text-xs text-warning max-w-xs" data-sil-note>@SilNote</p>
+                                    }
                                 </TableCell>
                                 <TableCell Class="px-4 py-3" data-kind>@KindLabel(type.EntitlementKind)</TableCell>
                                 <TableCell Class="px-4 py-3" data-limit>@LimitOf(type)</TableCell>
@@ -126,6 +130,10 @@
                     <Input TValue="string" Id="lt-code" @bind-Value="_form.Code" MaxLength="20" />
                 </FormField>
             </div>
+            @if (IsSil(_form.Code))
+            {
+                <p class="-mt-4 text-xs text-warning" data-sil-note>@SilNote</p>
+            }
 
             <div class="space-y-4">
                 <FormField LabelText="Kind" Id="lt-kind" Description="@KindHelp(_form.Kind)">
@@ -349,6 +357,12 @@
 
 @code {
     private const string MaternityNote = "Paid through regular payroll for now; the SSS benefit split comes in a later release.";
+
+    // Art. 95 makes unused service incentive leave commutable to cash at the end of the year. The
+    // accrual engine credits it, but nothing converts what is left yet.
+    private const string SilNote = "Unused SIL must be converted to cash at year-end (Labor Code Art. 95); PeopleCore doesn't do this automatically yet.";
+
+    private static bool IsSil(string? code) => string.Equals(code?.Trim(), "SIL", StringComparison.OrdinalIgnoreCase);
 
     private List<LeaveTypeDto>? _types;
     private string? _loadError;

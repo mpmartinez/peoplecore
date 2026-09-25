@@ -36,6 +36,8 @@ public class LeaveTypesTests : BunitContext
 
     private const string MaternityNote = "Paid through regular payroll for now; the SSS benefit split comes in a later release.";
 
+    private const string SilNote = "Unused SIL must be converted to cash at year-end (Labor Code Art. 95); PeopleCore doesn't do this automatically yet.";
+
     private readonly StubHttpHandler _api = new();
 
     public LeaveTypesTests()
@@ -193,6 +195,43 @@ public class LeaveTypesTests : BunitContext
 
         Row(cut, "ML").QuerySelector("[data-maternity-note]")!.TextContent.Trim().Should().Be(MaternityNote);
         Row(cut, "PL").QuerySelector("[data-maternity-note]").Should().BeNull();
+    }
+
+    [Fact]
+    public void SilCarriesTheYearEndCashConversionNote_AndOthersDoNot()
+    {
+        var cut = RenderPage(Sil, Vl, Ml);
+
+        Row(cut, "SIL").QuerySelector("[data-sil-note]")!.TextContent.Trim().Should().Be(SilNote);
+        Row(cut, "VL").QuerySelector("[data-sil-note]").Should().BeNull();
+        Row(cut, "ML").QuerySelector("[data-sil-note]").Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SilsForm_CarriesTheYearEndCashConversionNote()
+    {
+        _api.On(HttpMethod.Get, PoliciesOf(SilId), HttpStatusCode.OK, "[]");
+        _api.On(HttpMethod.Get, PoliciesOf(VlId), HttpStatusCode.OK, "[]");
+        var cut = RenderPage(Sil, Vl);
+
+        await ButtonIn(Row(cut, "SIL"), "Edit").ClickAsync(new MouseEventArgs());
+        cut.Find("[data-leave-type-form] [data-sil-note]").TextContent.Trim().Should().Be(SilNote);
+        await ButtonIn(cut.Find("[data-leave-type-dialog]"), "Cancel").ClickAsync(new MouseEventArgs());
+
+        await ButtonIn(Row(cut, "VL"), "Edit").ClickAsync(new MouseEventArgs());
+        cut.FindAll("[data-leave-type-form] [data-sil-note]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ANewTypeCodedSil_CarriesTheNoteToo()
+    {
+        var cut = RenderPage(Vl);
+
+        await cut.Find("[data-new-leave-type]").ClickAsync(new MouseEventArgs());
+        cut.FindAll("[data-leave-type-form] [data-sil-note]").Should().BeEmpty();
+        await cut.Find("#lt-code").InputAsync(new ChangeEventArgs { Value = " sil " });
+
+        cut.Find("[data-leave-type-form] [data-sil-note]").TextContent.Trim().Should().Be(SilNote);
     }
 
     [Fact]
