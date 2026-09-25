@@ -800,6 +800,58 @@ public class EmployeesTests : BunitContext
         FieldLabelled(cut, "firstName").GetAttribute("value").Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task PositionsAnsweredAfterTheFormWasReopened_DoNotLandOnTheNewForm()
+    {
+        var api = FreshApi();
+        api.On(HttpMethod.Get, FirstPagePath, HttpStatusCode.OK, Paged(1))
+            .On(HttpMethod.Get, "/api/departments?page=1&pageSize=100", HttpStatusCode.OK, Paged(1, Department(FinanceId, "Finance")))
+            .On(HttpMethod.Get, "/api/users/employee-links", HttpStatusCode.OK, "[]");
+        var gate = api.OnGated(HttpMethod.Get, $"/api/positions?page=1&pageSize=100&departmentId={FinanceId}");
+        var cut = Render<Employees>();
+        cut.WaitForAssertion(() => cut.FindAll(".animate-spin").Should().BeEmpty());
+        OpenForm(cut);
+        cut.Find("#department").Change(FinanceId.ToString());
+        ButtonNamed(cut, "Cancel").Click();
+        OpenForm(cut);
+
+        gate.SetResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(Paged(1, Position(AccountantId, FinanceId, "Accountant")), Encoding.UTF8, "application/json")
+        });
+        await Task.Delay(100); // let the late answer land, if it is going to
+
+        cut.FindAll("#position option").Select(o => o.TextContent).Should().Equal("None");
+        cut.FindAll("[role=alert]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AnEarlierDepartmentsPositions_AnsweredLate_DoNotReplaceTheLaterOnes()
+    {
+        var api = FreshApi();
+        api.On(HttpMethod.Get, FirstPagePath, HttpStatusCode.OK, Paged(1))
+            .On(HttpMethod.Get, "/api/departments?page=1&pageSize=100", HttpStatusCode.OK,
+                Paged(1, Department(FinanceId, "Finance"), Department(LegalId, "Legal")))
+            .On(HttpMethod.Get, "/api/users/employee-links", HttpStatusCode.OK, "[]")
+            .On(HttpMethod.Get, $"/api/positions?page=1&pageSize=100&departmentId={LegalId}", HttpStatusCode.OK,
+                Paged(1, Position(CounselId, LegalId, "Counsel")));
+        var financeGate = api.OnGated(HttpMethod.Get, $"/api/positions?page=1&pageSize=100&departmentId={FinanceId}");
+        var cut = Render<Employees>();
+        cut.WaitForAssertion(() => cut.FindAll(".animate-spin").Should().BeEmpty());
+        OpenForm(cut);
+        cut.Find("#department").Change(FinanceId.ToString());
+        cut.Find("#department").Change(LegalId.ToString());
+        cut.WaitForAssertion(() => cut.FindAll("#position option").Select(o => o.TextContent).Should().Equal("None", "Counsel"));
+
+        financeGate.SetResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(Paged(1, Position(AccountantId, FinanceId, "Accountant")), Encoding.UTF8, "application/json")
+        });
+        await Task.Delay(100); // let the late answer land, if it is going to
+
+        cut.FindAll("#position option").Select(o => o.TextContent).Should().Equal("None", "Counsel");
+    }
+
     private JsonElement BodyOf(HttpMethod method, string path)
     {
         var index = _api.Requests.FindIndex(r => r.Method == method && r.RequestUri!.AbsolutePath == path);

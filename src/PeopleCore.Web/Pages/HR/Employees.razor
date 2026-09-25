@@ -543,21 +543,24 @@
         }
     }
 
+    // The answer lands only on the form, and the department, it was asked for: the form may have
+    // closed or reopened meanwhile, or another department been picked.
     private async Task OnDepartmentChanged()
     {
         _form.PositionId = null;
         _positions = [];
-        if (_form.DepartmentId.HasValue)
+        if (_form.DepartmentId is not { } departmentId) return;
+
+        var session = _formSession;
+        bool Current() => session == _formSession && _form.DepartmentId == departmentId;
+        try
         {
-            try
-            {
-                var result = await Api.GetPositionsAsync(_form.DepartmentId, pageSize: 100);
-                _positions = result?.Items.ToList() ?? [];
-            }
-            catch (Exception ex)
-            {
-                _formError = $"Positions could not be loaded: {ex.Message}";
-            }
+            var result = await Api.GetPositionsAsync(departmentId, pageSize: 100);
+            if (Current()) _positions = result?.Items.ToList() ?? [];
+        }
+        catch (Exception ex)
+        {
+            if (Current()) _formError = $"Positions could not be loaded: {ex.Message}";
         }
     }
 

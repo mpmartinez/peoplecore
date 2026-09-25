@@ -254,9 +254,9 @@ public class ApiClient
         => await GetJsonAsync<List<LeaveFilingOptionDto>>("api/leave-requests/options");
 
     /// <summary>
-    /// Attaches (or replaces) a pending request's supporting document. The API cuts off a body over
-    /// its cap mid-send, which reaches the browser as a network error rather than a response, so a
-    /// failure with no status is reported as the file being too large.
+    /// Attaches (or replaces) a pending request's supporting document. A failure with no response
+    /// is the connection: the page refuses a file over 10 MB before sending it, so it isn't the
+    /// API cutting off an oversized body.
     /// </summary>
     public async Task<LeaveRequestDto?> UploadLeaveDocumentAsync(Guid requestId, byte[] content, string fileName, string contentType)
     {
@@ -272,7 +272,7 @@ public class ApiClient
         }
         catch (HttpRequestException ex) when (ex.StatusCode is null)
         {
-            throw new HttpRequestException(LeaveFiling.FileRefusal, ex);
+            throw new HttpRequestException(LeaveFiling.UploadNotSent, ex);
         }
 
         await EnsureSuccessAsync(response);

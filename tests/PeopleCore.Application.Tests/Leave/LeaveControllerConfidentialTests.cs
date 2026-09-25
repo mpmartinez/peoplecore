@@ -49,11 +49,13 @@ public class LeaveControllerConfidentialTests
 
     private void SignInAs(Guid? employeeId, params string[] roles) => _caller.As(employeeId, roles);
 
+    // A real VAWC request has no maternity case; this one carries one (and father days) only so the
+    // masking tests can see them cleared - a case alone would tell a viewer it is maternity leave.
     private static LeaveRequestDto Vawc(Guid employeeId, Guid? id = null) => new(
         id ?? RequestId, employeeId, "Maria Santos", VawcTypeId, "VAWC Leave",
         new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 6), 2, "Protection order hearing",
         LeaveStatus.Pending, null, null, "Needs the barangay protection order", DateTime.UtcNow,
-        null, 0, true, "barangay-protection-order.pdf", IsConfidential: true);
+        MaternityCase.LiveBirth, 3, true, "barangay-protection-order.pdf", IsConfidential: true);
 
     private static LeaveRequestDto Vacation(Guid employeeId, Guid? id = null) => new(
         id ?? RequestId, employeeId, "Maria Santos", VacationTypeId, "Vacation Leave",
@@ -77,6 +79,8 @@ public class LeaveControllerConfidentialTests
         dto.HasDocument.Should().BeFalse();
         dto.DocumentFileName.Should().BeNull();
         dto.IsConfidential.Should().BeFalse();
+        dto.MaternityCase.Should().BeNull("a maternity case names the kind of leave");
+        dto.DaysAllocatedToFather.Should().Be(0);
     }
 
     private static IReadOnlyList<LeaveRequestDto> ItemsOf(IActionResult result)

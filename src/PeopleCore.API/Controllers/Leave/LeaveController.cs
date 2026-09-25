@@ -299,8 +299,8 @@ public class LeaveController : ControllerBase
 
     /// <summary>
     /// Confidential leave as shown to anyone but its employee and <c>approvals.all</c>: just "Leave"
-    /// on those dates - no type, reason, rejection reason (HR may have named the type in it) or
-    /// document.
+    /// on those dates - no type, reason, rejection reason (HR may have named the type in it),
+    /// document, or maternity case and father days (either would say it is maternity leave).
     /// </summary>
     private LeaveRequestDto Mask(LeaveRequestDto dto)
         => !dto.IsConfidential || SeesConfidentialOf(dto.EmployeeId)
@@ -313,6 +313,8 @@ public class LeaveController : ControllerBase
                 RejectionReason = null,
                 HasDocument = false,
                 DocumentFileName = null,
+                MaternityCase = null,
+                DaysAllocatedToFather = 0,
                 IsConfidential = false
             };
 

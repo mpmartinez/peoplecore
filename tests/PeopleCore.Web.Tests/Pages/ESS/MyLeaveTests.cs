@@ -25,6 +25,7 @@ public class MyLeaveTests : BunitContext
     private static readonly Guid PendingRequestId = Guid.Parse("b2d1f6e8-3c4a-4d9f-8e2b-7a5c8f3d1e02");
 
     private const string OptionsPath = "/api/leave-requests/options";
+    private const string TypesPath = "/api/leave-types";
     private const string FileRefusal = "Attach a PDF, JPG or PNG of at most 10 MB.";
 
     private readonly StubHttpHandler _api = new();
@@ -33,6 +34,7 @@ public class MyLeaveTests : BunitContext
     private string _balancesJson = "[]";
     private string _requestsJson = Paged();
     private string _optionsJson = $"[{VacationOption(daysLeft: 12)}]";
+    private string _typesJson = "[]";
 
     public MyLeaveTests()
     {
@@ -104,8 +106,20 @@ public class MyLeaveTests : BunitContext
     {
         _api.On(HttpMethod.Get, BalancesPath(EmployeeId), () => Json(_balancesJson))
             .On(HttpMethod.Get, RequestsPath(EmployeeId), () => Json(_requestsJson))
-            .On(HttpMethod.Get, OptionsPath, () => Json(_optionsJson));
+            .On(HttpMethod.Get, OptionsPath, () => Json(_optionsJson))
+            .On(HttpMethod.Get, TypesPath, () => Json(_typesJson));
     }
+
+    /// <summary>A LeaveTypeDto as the API sends it, with only what this page reads set.</summary>
+    private static string LeaveType(Guid id, string name, bool requiresDocument) =>
+        JsonSerializer.Serialize(new
+        {
+            id, name, code = name[..2].ToUpperInvariant(), maxDaysPerYear = 7m, isPaid = true, isCarryOver = false,
+            carryOverMaxDays = (decimal?)null, genderRestriction = (string?)null, requiresDocument, isActive = true,
+            isConvertibleToCash = false, countsAsVacationForDeMinimis = false, entitlementKind = "YearlyAllowance",
+            countsCalendarDays = false, daysPerEvent = (decimal?)null, minServiceMonths = (int?)null, requiresMarried = false,
+            requiresSoloParentId = true, maxEvents = (int?)null, isConfidential = false, isMaternity = false,
+        });
 
     private IRenderedComponent<MyLeave> RenderPage()
     {
@@ -152,7 +166,7 @@ public class MyLeaveTests : BunitContext
 
         cut.Markup.Should().Contain("No leave balances found.").And.Contain("No leave requests yet.");
         _api.Requests.Select(r => r.RequestUri!.PathAndQuery)
-            .Should().BeEquivalentTo([BalancesPath(EmployeeId), RequestsPath(EmployeeId), OptionsPath]);
+            .Should().BeEquivalentTo([BalancesPath(EmployeeId), RequestsPath(EmployeeId), OptionsPath, TypesPath]);
     }
 
     [Fact]
@@ -395,9 +409,8 @@ public class MyLeaveTests : BunitContext
     }
 
     [Fact]
-    public void AnUploadCutOffMidSend_IsExplainedAsAFileTooLarge()
+    public void AnUploadThatNeverReachedTheServer_IsExplainedAsTheConnection()
     {
-        // A body over the API's cap: Kestrel closes the connection, and the browser sees a network error.
         _optionsJson = $"[{SoloParentOption()}]";
         _api.On(HttpMethod.Post, "/api/leave-requests", () =>
                 Json(Request("2026-10-05", "2026-10-05", 1, "Pending", NewRequestId, SoloParentTypeId, "Solo Parent Leave"), HttpStatusCode.Created))
@@ -410,7 +423,7 @@ public class MyLeaveTests : BunitContext
         SubmitButton(cut).Click();
 
         cut.WaitForAssertion(() => cut.Find("[data-upload-warning]").TextContent.Trim().Should().Be(
-            "Your request was filed, but the document didn't upload: Attach a PDF, JPG or PNG of at most 10 MB. Attach it again from the request."));
+            "Your request was filed, but the document didn't upload: The upload didn't reach the server. Check your connection and try again. Attach it again from the request."));
     }
 
     [Fact]
@@ -465,6 +478,79 @@ public class MyLeaveTests : BunitContext
             .UploadFiles(InputFileContent.CreateFromBinary(SmallPdf, "id.pdf", contentType: "application/pdf"));
 
         cut.WaitForAssertion(() => cut.Find("[data-document-error]").TextContent.Should().Contain("Only a pending request's document can be replaced."));
+    }
+
+    [Fact]
+    public void APendingRequestOfATypeNoLongerOffered_CanStillHaveItsDocumentAttached()
+    {
+        // The solo parent ID expired after filing, so Solo Parent Leave is no longer among the
+        // options - but the request still needs its document before HR can approve it.
+        _optionsJson = $"[{VacationOption(12)}]";
+        _typesJson = $"[{LeaveType(SoloParentTypeId, "Solo Parent Leave", requiresDocument: true)},{LeaveType(VacationTypeId, "Vacation Leave", requiresDocument: false)}]";
+        _requestsJson = Paged(
+            Request("2026-10-05", "2026-10-05", 1, "Pending", PendingRequestId, SoloParentTypeId, "Solo Parent Leave"),
+            Request("2026-10-20", "2026-10-21", 2, "Pending"));
+
+        var cut = RenderAsLinkedEmployee();
+
+        cut.FindAll("[data-attach-document]").Should().ContainSingle()
+            .Which.GetAttribute("data-attach-document").Should().Be(PendingRequestId.ToString());
+    }
+
+    [Fact]
+    public void LeaveTypesThatFailToLoad_LeaveThePageWorking_OnTheFilingOptionsAlone()
+    {
+        _auth.SetClaims(new Claim("employee_id", EmployeeId.ToString()));
+        _optionsJson = $"[{SoloParentOption()}]";
+        _requestsJson = Paged(Request("2026-10-05", "2026-10-05", 1, "Pending", PendingRequestId, SoloParentTypeId, "Solo Parent Leave"));
+        _api.On(HttpMethod.Get, TypesPath, () => Json("""{"detail":"Leave types are unavailable."}""", HttpStatusCode.InternalServerError));
+        ServeOwnLeave();
+
+        var cut = RenderPage();
+
+        cut.FindAll("[role=alert]").Should().BeEmpty("the types only fill in what the options can't say");
+        cut.Find($"[data-attach-document='{PendingRequestId}']");
+    }
+
+    [Fact]
+    public void AfterAFailedAttachment_TheSameFileCanBePickedAgain()
+    {
+        // A browser fires no change event for the file already in the input, so the input is
+        // replaced after each attempt.
+        _optionsJson = $"[{SoloParentOption()}]";
+        _requestsJson = Paged(Request("2026-10-05", "2026-10-05", 1, "Pending", PendingRequestId, SoloParentTypeId, "Solo Parent Leave"));
+        var attempts = 0;
+        _api.On(HttpMethod.Put, DocumentPath(PendingRequestId), () =>
+            ++attempts == 1
+                ? Refusal("Only a pending request's document can be replaced.")
+                : Json(Request("2026-10-05", "2026-10-05", 1, "Pending", PendingRequestId, SoloParentTypeId, "Solo Parent Leave", true, "id.pdf")));
+        var cut = RenderAsLinkedEmployee();
+        var first = FileInput(cut, "data-attach-document", PendingRequestId.ToString());
+        var firstInput = first.Instance;
+        first.UploadFiles(InputFileContent.CreateFromBinary(SmallPdf, "id.pdf", contentType: "application/pdf"));
+        cut.WaitForAssertion(() => cut.Find("[data-document-error]"));
+
+        var second = FileInput(cut, "data-attach-document", PendingRequestId.ToString());
+        second.Instance.Should().NotBeSameAs(firstInput, "a fresh input fires for the same file");
+        second.UploadFiles(InputFileContent.CreateFromBinary(SmallPdf, "id.pdf", contentType: "application/pdf"));
+
+        cut.WaitForAssertion(() => cut.Find("[data-document-message]").TextContent.Should().Contain("id.pdf"));
+        DocumentUploads.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void TheAttachControl_CanBeReachedByKeyboard()
+    {
+        // "hidden" (display: none) takes the input out of the tab order; sr-only keeps it focusable.
+        _optionsJson = $"[{SoloParentOption()}]";
+        _requestsJson = Paged(Request("2026-10-05", "2026-10-05", 1, "Pending", PendingRequestId, SoloParentTypeId, "Solo Parent Leave"));
+
+        var cut = RenderAsLinkedEmployee();
+
+        var input = cut.Find($"[data-attach-document='{PendingRequestId}']");
+        input.ClassList.Should().Contain("sr-only").And.NotContain("hidden");
+        input.GetAttribute("aria-label").Should().Be("Attach document to your Solo Parent Leave request from 2026-10-05");
+        input.ParentElement!.ClassName.Should().Contain("focus-within:ring-2");
     }
 
     [Fact]

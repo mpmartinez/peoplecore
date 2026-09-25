@@ -156,16 +156,16 @@ public class ApiClientLeaveFilingTests
     }
 
     [Fact]
-    public async Task AnUploadCutOffMidSend_ThrowsTheFileSizeRefusal()
+    public async Task AnUploadThatNeverReachedTheServer_SaysSo_RatherThanBlamingTheFile()
     {
-        // Kestrel closes the connection on a body over the cap rather than read it, so the browser
-        // never sees the API's 400.
+        // The page refuses a file over 10 MB before sending it, so a failure with no response is
+        // the connection, not the file.
         _api.On(HttpMethod.Put, $"/api/leave-requests/{RequestId}/document", () => throw new HttpRequestException("Connection reset."));
 
         var act = () => CreateClient().UploadLeaveDocumentAsync(RequestId, [1], "scan.pdf", "application/pdf");
 
         (await act.Should().ThrowAsync<HttpRequestException>())
-            .Which.Message.Should().Be("Attach a PDF, JPG or PNG of at most 10 MB.");
+            .Which.Message.Should().Be("The upload didn't reach the server. Check your connection and try again.");
     }
 
     [Fact]

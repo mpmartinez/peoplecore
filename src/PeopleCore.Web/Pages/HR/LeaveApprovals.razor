@@ -56,7 +56,7 @@
                             <TableCell Class="px-4 py-3 font-medium">@r.EmployeeName</TableCell>
                             <TableCell Class="px-4 py-3">
                                 <div>@r.LeaveTypeName</div>
-                                @if (r.MaternityCase is { } maternityCase)
+                                @if (!r.IsMasked && r.MaternityCase is { } maternityCase)
                                 {
                                     <div class="text-xs text-muted-foreground" data-maternity>@MaternityText(maternityCase, r.DaysAllocatedToFather)</div>
                                 }
@@ -107,6 +107,14 @@
 {
     <Alert Variant="destructive" Class="mt-4">@_error</Alert>
 }
+@if (_documentLink is not null)
+{
+    <p class="mt-4 text-sm text-muted-foreground" data-document-fallback>
+        If the document didn't open,
+        <a href="@_documentLink" target="_blank" rel="noopener noreferrer" class="font-medium text-primary underline" data-document-link>open it here</a>.
+        The link works for 5 minutes.
+    </p>
+}
 
 @code {
     private PagedResult<LeaveRequestDto>? _requests;
@@ -130,6 +138,8 @@
     // failure to load leaves them off rather than the queue.
     private HashSet<Guid> _typesNeedingDocument = [];
     private Guid? _openingDocument;
+    // The last document link, offered in case the browser didn't open it.
+    private string? _documentLink;
 
     private bool NeedsDocument(LeaveRequestDto request)
         => !request.IsMasked && !request.HasDocument && _typesNeedingDocument.Contains(request.LeaveTypeId);
@@ -165,17 +175,25 @@
         }
     }
 
-    // The link expires after 300 seconds, so it is fetched on each click and opened straight away.
+    // The link expires after 300 seconds, so it is fetched on each click and opened straight away,
+    // with noopener,noreferrer: the document's tab gets no handle on this page, nor its address.
     private async Task ViewDocument(Guid requestId)
     {
         if (_openingDocument is not null) return;
 
         _openingDocument = requestId;
+        _documentLink = null;
         try
         {
             var url = await Api.GetLeaveDocumentUrlAsync(requestId);
-            if (url is not null) await JS.InvokeVoidAsync("open", url, "_blank");
+            if (url is null)
+            {
+                _error = "The document's link didn't come back. Try again.";
+                return;
+            }
+
             _error = null;
+            if (!await OpenInNewTab(url)) _documentLink = url;
         }
         catch (Exception ex)
         {
@@ -184,6 +202,22 @@
         finally
         {
             _openingDocument = null;
+        }
+    }
+
+    // window.open answers null when it opened nothing (a popup blocker). With noopener, browsers
+    // following the HTML spec answer null even when the tab did open, so the fallback link is
+    // worded to make sense either way. A window that does come back can't be serialised, which
+    // surfaces as a JSException: that too means something opened.
+    private async Task<bool> OpenInNewTab(string url)
+    {
+        try
+        {
+            return await JS.InvokeAsync<object?>("open", url, "_blank", "noopener,noreferrer") is not null;
+        }
+        catch (JSException)
+        {
+            return true;
         }
     }
 

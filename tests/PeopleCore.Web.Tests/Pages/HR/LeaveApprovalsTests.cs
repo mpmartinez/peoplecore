@@ -408,14 +408,60 @@ public class LeaveApprovalsTests : BunitContext
             FullRequest(PendingId, "Maria Santos", "Pending", SoloParentTypeId, "Solo Parent Leave", hasDocument: true, fileName: "id.pdf"),
             FullRequest(ApprovedId, "Jose Rizal", "Pending", VacationTypeId, "Vacation Leave"));
         _api.On(HttpMethod.Get, $"/api/leave-requests/{PendingId}/document", HttpStatusCode.OK, $$"""{"url":"{{url}}"}""");
-        JSInterop.SetupVoid("open", _ => true).SetVoidResult();
+        JSInterop.Setup<object?>("open", url, "_blank", "noopener,noreferrer").SetResult(new object());
         var cut = RenderPage();
 
         RowFor(cut, "Jose Rizal").QuerySelector("[data-view-document]").Should().BeNull("there is nothing attached to open");
         RowFor(cut, "Maria Santos").QuerySelector("[data-view-document]")!.Click();
 
-        cut.WaitForAssertion(() => JSInterop.VerifyInvoke("open").Arguments.Should().Equal(url, "_blank"));
+        // Opened without handing the document's tab a way back to this page, or the page's address.
+        cut.WaitForAssertion(() => JSInterop.VerifyInvoke("open").Arguments.Should().Equal(url, "_blank", "noopener,noreferrer"));
         _api.Requests.Should().Contain(r => r.RequestUri!.PathAndQuery == $"/api/leave-requests/{PendingId}/document");
+        cut.FindAll("[data-document-link]").Should().BeEmpty("the document opened");
+    }
+
+    [Fact]
+    public void ADocumentTheBrowserWouldNotOpen_IsOfferedAsALink()
+    {
+        const string url = "https://files.test/leave-requests/doc.pdf?X-Amz-Signature=abc";
+        _requests = Paged(FullRequest(PendingId, "Maria Santos", "Pending", SoloParentTypeId, "Solo Parent Leave", hasDocument: true, fileName: "id.pdf"));
+        _api.On(HttpMethod.Get, $"/api/leave-requests/{PendingId}/document", HttpStatusCode.OK, $$"""{"url":"{{url}}"}""");
+        JSInterop.Setup<object?>("open", url, "_blank", "noopener,noreferrer").SetResult(null);
+        var cut = RenderPage();
+
+        RowFor(cut, "Maria Santos").QuerySelector("[data-view-document]")!.Click();
+
+        var link = cut.WaitForElement("[data-document-link]");
+        link.GetAttribute("href").Should().Be(url);
+        link.GetAttribute("target").Should().Be("_blank");
+        link.GetAttribute("rel").Should().Be("noopener noreferrer");
+        link.ParentElement!.TextContent.Should().Contain("works for 5 minutes");
+    }
+
+    [Fact]
+    public void ADocumentLinkThatDoesNotComeBack_SaysSo_AndOpensNothing()
+    {
+        _requests = Paged(FullRequest(PendingId, "Maria Santos", "Pending", SoloParentTypeId, "Solo Parent Leave", hasDocument: true, fileName: "id.pdf"));
+        _api.On(HttpMethod.Get, $"/api/leave-requests/{PendingId}/document", HttpStatusCode.OK, """{"url":null}""");
+        var cut = RenderPage();
+
+        RowFor(cut, "Maria Santos").QuerySelector("[data-view-document]")!.Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Trim()
+            .Should().Be("The document's link didn't come back. Try again."));
+        JSInterop.Invocations.Should().NotContain(i => i.Identifier == "open");
+        cut.FindAll("[data-document-link]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AMaskedRequest_DoesNotShowAMaternityCase()
+    {
+        // The API clears the case when it masks; were one to arrive anyway, it would name the leave.
+        _requests = Paged(FullRequest(PendingId, "Maria Santos", "Pending", Guid.Empty, "Leave", "LiveBirth", fatherDays: 3, reason: null));
+
+        var cut = RenderPage();
+
+        RowFor(cut, "Maria Santos").QuerySelector("[data-maternity]").Should().BeNull();
     }
 
     [Fact]

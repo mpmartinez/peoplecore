@@ -201,11 +201,16 @@ else
                                     @if (CanAttach(r))
                                     {
                                         var request = r;
-                                        <label class="inline-flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium hover:bg-accent">
-                                            <i class="bi bi-paperclip"></i>
-                                            <span>@(request.HasDocument ? "Replace document" : "Attach document")</span>
-                                            <InputFile OnChange="@(e => AttachDocument(request, e))" accept="@LeaveFiling.AcceptedExtensions"
-                                                       class="hidden" disabled="@(_attaching is not null)" data-attach-document="@request.Id" />
+                                        var action = request.HasDocument ? "Replace document" : "Attach document";
+                                        @* sr-only, not hidden: the input stays in the tab order, and the label shows where focus is.
+                                           Re-keyed after every attempt, since a browser fires no change for the file already in it. *@
+                                        <label class="inline-flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium hover:bg-accent focus-within:ring-2 focus-within:ring-ring">
+                                            <i class="bi bi-paperclip" aria-hidden="true"></i>
+                                            <span>@action</span>
+                                            <InputFile @key="@($"{request.Id}-{_attachInputVersion}")" OnChange="@(e => AttachDocument(request, e))"
+                                                       accept="@LeaveFiling.AcceptedExtensions" class="sr-only" disabled="@(_attaching is not null)"
+                                                       aria-label="@($"{action} to your {request.LeaveTypeName} request from {request.StartDate}")"
+                                                       data-attach-document="@request.Id" />
                                         </label>
                                     }
                                 </div>
@@ -223,6 +228,9 @@ else
     private IReadOnlyList<LeaveBalanceDto>? _balances;
     private PagedResult<LeaveRequestDto>? _requests;
     private IReadOnlyList<LeaveFilingOptionDto>? _options;
+    // Which types need a document, for requests of a type the employee can no longer file (their
+    // solo parent ID expired, say). Only attaching needs it, so a failed load is left silent.
+    private HashSet<Guid> _typesNeedingDocument = [];
     private Guid _employeeId;
     private string _leaveTypeId = string.Empty;
     private MaternityCase _maternityCase = MaternityCase.LiveBirth;
@@ -240,6 +248,7 @@ else
 
     // Documents attached to a request already filed, from the history.
     private Guid? _attaching;
+    private int _attachInputVersion;
     private string? _documentMessage;
     private string? _documentError;
 
@@ -275,7 +284,20 @@ else
     {
         var load = ++_load;
         _loadError = null;
-        await Task.WhenAll(LoadBalances(load), LoadRequests(load), LoadOptions(load));
+        await Task.WhenAll(LoadBalances(load), LoadRequests(load), LoadOptions(load), LoadLeaveTypes(load));
+    }
+
+    private async Task LoadLeaveTypes(int load)
+    {
+        try
+        {
+            var types = await Api.GetLeaveTypesAsync() ?? [];
+            if (load == _load) _typesNeedingDocument = types.Where(t => t.RequiresDocument).Select(t => t.Id).ToHashSet();
+        }
+        catch
+        {
+            // The filing options still say which of today's types need a document.
+        }
     }
 
     private async Task LoadBalances(int load)
@@ -458,10 +480,12 @@ else
     }
 
     // A pending request of a type that needs a document can have one attached, or replaced, until
-    // it is decided. The type's rule comes from the filing options.
+    // it is decided. The type's rule comes from the filing options, or from the leave types for a
+    // type no longer among them.
     private bool CanAttach(LeaveRequestDto request) =>
         request.Status == "Pending"
-        && _options?.FirstOrDefault(o => o.LeaveTypeId == request.LeaveTypeId)?.RequiresDocument == true;
+        && (_options?.FirstOrDefault(o => o.LeaveTypeId == request.LeaveTypeId)?.RequiresDocument
+            ?? _typesNeedingDocument.Contains(request.LeaveTypeId));
 
     private async Task AttachDocument(LeaveRequestDto request, InputFileChangeEventArgs e)
     {
@@ -489,6 +513,7 @@ else
         finally
         {
             _attaching = null;
+            _attachInputVersion++;
         }
 
         await LoadAll();

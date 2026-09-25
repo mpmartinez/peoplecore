@@ -29,6 +29,9 @@ public static class LeaveFiling
     /// <summary>The API's own refusal (LeaveDocumentService.FileRefusal) for a file it won't store.</summary>
     public const string FileRefusal = "Attach a PDF, JPG or PNG of at most 10 MB.";
 
+    /// <summary>An upload that failed with no response: the connection, since the file was checked first.</summary>
+    public const string UploadNotSent = "The upload didn't reach the server. Check your connection and try again.";
+
     /// <summary>For the file input's <c>accept</c>.</summary>
     public const string AcceptedExtensions = ".pdf,.jpg,.jpeg,.png";
 
