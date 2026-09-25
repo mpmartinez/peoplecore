@@ -120,8 +120,9 @@
         </div>
         @* The API takes year-end leave conversion only on a December payroll, so the box is offered
            only while the period ends in December; a tick left behind by an earlier period end isn't sent.
-           It starts ticked there - a December payroll is where unused leave is paid out - and stays
-           as the user leaves it. *@
+           It starts ticked when the period ends on Dec 31 - the year's last payroll is where unused
+           leave is paid out, and an earlier cutoff (Dec 1-15) would convert leave the rest of December
+           can still use - and stays as the user leaves it. *@
         @if (EndsInDecember)
         {
             <div class="space-y-1">
@@ -345,11 +346,12 @@
         public DateOnly PeriodEnd { get; set; } = DateOnly.FromDateTime(DateTime.Today);
         public DateOnly PayDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
         public string Frequency { get; set; } = "Monthly";
-        // Ticked until the user unticks it; offered, and sent, only while the period ends in December.
+        // Ticked for a period ending Dec 31 until the user unticks it, and unticked for any other
+        // until they tick it; offered, and sent, only while the period ends in December.
         private bool? _leaveConversionChoice;
         public bool IncludeLeaveConversion
         {
-            get => _leaveConversionChoice ?? true;
+            get => _leaveConversionChoice ?? PeriodEnd is { Month: 12, Day: 31 };
             set => _leaveConversionChoice = value;
         }
         public bool IncludeThirteenthMonth { get; set; }

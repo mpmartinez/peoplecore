@@ -116,8 +116,8 @@ share one code path; the entry fields are filled exactly as final pay fills them
 
 - **Payroll runs, create:** a "Year-end pay" group with "Include 13th month" (every period,
   noted "Due by Dec 24 (PD 851).") and "Convert unused leave", shown when the period ends in
-  December and ticked there by default; the user can untick it, and a tick is sent only while the
-  period ends in December.
+  December and ticked by default only when it ends on Dec 31 (a Dec 1-15 cutoff doesn't convert
+  early); the user can tick or untick it, and a tick is sent only while the period ends in December.
 - **Run detail:** a "Year-end leave conversion" badge and a Leave conversion column when the run
   has it, and a toggle to switch it on or off; a "13th month" badge and column, and a toggle whose
   include confirmation also says "Due by Dec 24 (PD 851)." Each toggle asks first and says an
@@ -156,5 +156,5 @@ Two migrations:
   Mark Paid draws the days down.
 - Migration: existing SIL turned on, others untouched; the statutory set creates SIL with it on.
 - Final pay's figures unchanged after the engine refactor.
-- bUnit: the tick boxes (Convert unused leave December only, ticked by default), the badges,
+- bUnit: the tick boxes (Convert unused leave December only, ticked by default for a Dec 31 period end), the badges,
   columns and toggles, the Leave Types setting (paid Accrued only) and note.

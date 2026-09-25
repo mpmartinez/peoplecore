@@ -260,9 +260,11 @@ public class PayrollRunsTests : BunitContext
     }
 
     [Theory]
-    // A December period converts unused leave unless the box is unticked.
+    // A period ending Dec 31 converts unused leave unless the box is unticked; an earlier December
+    // cutoff doesn't unless it's ticked, so the Dec 1-15 run doesn't convert before the year is out.
     [InlineData("2026-09-01", "2026-09-15", "2026-09-20", false)]
-    [InlineData("2026-12-01", "2026-12-15", "2026-12-20", true)]
+    [InlineData("2026-12-01", "2026-12-15", "2026-12-20", false)]
+    [InlineData("2026-12-16", "2026-12-31", "2026-12-29", true)]
     public void AValidRun_SendsOnlyTheSelectedEmployees_AndOpensTheNewRun(
         string start, string end, string payDate, bool convertsLeave)
     {
@@ -340,6 +342,44 @@ public class PayrollRunsTests : BunitContext
     }
 
     [Fact]
+    public void TheConvertUnusedLeaveBox_StartsTickedOnlyWhenThePeriodEndsOnDec31()
+    {
+        StubTwoActiveEmployees();
+        var cut = RenderWithCreateDialogOpen();
+
+        cut.Find("#periodStart").Input("2026-12-01");
+        cut.Find("#periodEnd").Input("2026-12-15");
+        cut.Find("[data-leave-conversion]").HasAttribute("aria-checked").Should()
+            .BeFalse("a Dec 1-15 run would convert leave the rest of December can still use");
+
+        cut.Find("#periodEnd").Input("2026-12-31");
+        cut.Find("[data-leave-conversion]").HasAttribute("aria-checked").Should().BeTrue();
+
+        cut.Find("#periodEnd").Input("2026-12-30");
+        cut.Find("[data-leave-conversion]").HasAttribute("aria-checked").Should().BeFalse("the user never chose");
+    }
+
+    [Fact]
+    public void AnEarlierDecemberCutoff_Ticked_Converts_AndTheTickStays()
+    {
+        StubTwoActiveEmployees();
+        _api.On(HttpMethod.Post, "/api/payroll-runs", HttpStatusCode.Created, $$"""{"id":"{{Guid.NewGuid()}}","runNumber":"PR-2026-0023"}""");
+        var cut = RenderWithCreateDialogOpen();
+
+        cut.Find("#periodStart").Input("2026-12-01");
+        cut.Find("#periodEnd").Input("2026-12-15");
+        cut.Find("[data-leave-conversion]").Click();
+        cut.Find("#periodEnd").Input("2026-11-30");
+        cut.Find("#periodEnd").Input("2026-12-15");
+        cut.Find("[data-leave-conversion]").HasAttribute("aria-checked").Should().BeTrue();
+        Button(cut, "Create").Click();
+
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Post));
+        var body = System.Text.Json.JsonDocument.Parse(_api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)]!).RootElement;
+        body.GetProperty("includeLeaveConversion").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
     public void ADecemberRun_AsksForTheConversion_WithoutATick()
     {
         var newRunId = Guid.NewGuid();
@@ -365,13 +405,13 @@ public class PayrollRunsTests : BunitContext
         _api.On(HttpMethod.Post, "/api/payroll-runs", HttpStatusCode.Created, $$"""{"id":"{{Guid.NewGuid()}}","runNumber":"PR-2026-0024"}""");
         var cut = RenderWithCreateDialogOpen();
 
-        cut.Find("#periodStart").Input("2026-12-01");
-        cut.Find("#periodEnd").Input("2026-12-15");
+        cut.Find("#periodStart").Input("2026-12-16");
+        cut.Find("#periodEnd").Input("2026-12-31");
         cut.Find("[data-leave-conversion]").Click();
         // Another December end, then out of December and back: the user's untick stands.
-        cut.Find("#periodEnd").Input("2026-12-31");
+        cut.Find("#periodEnd").Input("2026-12-30");
         cut.Find("#periodEnd").Input("2026-11-30");
-        cut.Find("#periodEnd").Input("2026-12-15");
+        cut.Find("#periodEnd").Input("2026-12-31");
         cut.Find("[data-leave-conversion]").HasAttribute("aria-checked").Should().BeFalse();
         Button(cut, "Create").Click();
 
@@ -507,8 +547,8 @@ public class PayrollRunsTests : BunitContext
         _api.On(HttpMethod.Post, "/api/payroll-runs", HttpStatusCode.Created, $$"""{"id":"{{Guid.NewGuid()}}","runNumber":"PR-2026-0024"}""");
         var cut = RenderWithCreateDialogOpen();
 
-        cut.Find("#periodStart").Input("2026-12-01");
-        cut.Find("#periodEnd").Input("2026-12-15");
+        cut.Find("#periodStart").Input("2026-12-16");
+        cut.Find("#periodEnd").Input("2026-12-31");
         cut.Find("[data-thirteenth-month]").Click();
         cut.Find("[data-leave-conversion]").HasAttribute("aria-checked").Should().BeTrue();
         Button(cut, "Create").Click();
