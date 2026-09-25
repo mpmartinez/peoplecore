@@ -99,7 +99,7 @@ public class PayrollRunService : IPayrollRunService
             EnsureLeaveConversionFits(run.RunType, run.PeriodEnd);
 
         // No snapshots to honour on a brand new run, so the attendance is derived.
-        run.Employees = await ComputeEntriesAsync(run, request.Employees, snapshots: null, ct);
+        run.Employees = await ComputeEntriesAsync(run, request.Employees, snapshots: null, ct, creating: true);
 
         await _runRepo.AddWithEntriesAsync(run, ct);
 
@@ -524,13 +524,20 @@ public class PayrollRunService : IPayrollRunService
     /// Jan 5 would work it out from the next year's basic - underpaying it - and count it as the
     /// next year's. Checked on create, on every recompute and when it's switched on.
     /// </summary>
-    private static void EnsureThirteenthMonthPaidInItsYear(PayrollRun run)
+    /// <param name="creating">
+    /// True when the run is being created, whose pay date can still be changed; a recompute or the
+    /// toggle can't change an existing run's pay date, so there the 13th month has to be left out.
+    /// </param>
+    private static void EnsureThirteenthMonthPaidInItsYear(PayrollRun run, bool creating)
     {
         if (run.PayDate.Year == run.PeriodEnd.Year)
             return;
         var year = run.PeriodEnd.Year;
-        throw new DomainException(string.Create(CultureInfo.InvariantCulture,
-            $"The {year} 13th month must be paid by Dec 24, {year}; give this payroll a pay date in {year}."));
+        throw new DomainException(creating
+            ? string.Create(CultureInfo.InvariantCulture,
+                $"The {year} 13th month must be paid by Dec 24, {year}; give this payroll a pay date in {year}.")
+            : string.Create(CultureInfo.InvariantCulture,
+                $"The {year} 13th month must be paid by Dec 24, {year}; leave it out of this payroll and include it on one paid in {year}."));
     }
 
     private IYearEndLeaveConversion YearEndLeave() => _yearEndLeave ?? throw new InvalidOperationException(
@@ -591,14 +598,16 @@ public class PayrollRunService : IPayrollRunService
     /// recompute, which must reproduce the run rather than re-read attendance. Null asks the
     /// bridge to derive it, which is what creating a run does.
     /// </param>
+    /// <param name="creating">True when the run is being created rather than recomputed.</param>
     private async Task<List<PayrollRunEmployee>> ComputeEntriesAsync(
         PayrollRun run,
         IReadOnlyList<PayrollRunEmployeeInput> employees,
         IReadOnlyDictionary<Guid, PayrollAttendanceInput>? snapshots,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool creating = false)
     {
         if (employees.Any(e => e.IncludeThirteenthMonth))
-            EnsureThirteenthMonthPaidInItsYear(run);
+            EnsureThirteenthMonthPaidInItsYear(run, creating);
 
         var settings = await _settingsRepo.GetDefaultAsync(ct);
         var rates = ToRates(settings);

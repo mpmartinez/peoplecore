@@ -979,7 +979,7 @@ public class PayrollRunDetailTests : BunitContext
     [InlineData("This payroll already includes the 13th month.")]
     [InlineData("This payroll already leaves out the 13th month.")]
     [InlineData("Maria Santos's leave for 2026 was already converted in PR-2026-0023.")]
-    [InlineData("The 2026 13th month must be paid by Dec 24, 2026; give this payroll a pay date in 2026.")]
+    [InlineData("The 2026 13th month must be paid by Dec 24, 2026; leave it out of this payroll and include it on one paid in 2026.")]
     public void ARefused13thMonthChange_ShowsTheApisReason(string reason)
     {
         _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", periodEnd: December))

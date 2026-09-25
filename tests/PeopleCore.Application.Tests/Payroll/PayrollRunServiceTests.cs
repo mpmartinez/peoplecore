@@ -2484,6 +2484,11 @@ public class PayrollRunServiceTests
     private const string PayItIn2026 =
         "The 2026 13th month must be paid by Dec 24, 2026; give this payroll a pay date in 2026.";
 
+    // An existing run's pay date can't be changed on a recompute or the toggle, so there the way
+    // out is to leave the 13th month off it.
+    private const string LeaveItOutUnlessPaidIn2026 =
+        "The 2026 13th month must be paid by Dec 24, 2026; leave it out of this payroll and include it on one paid in 2026.";
+
     /// <summary>Maria's Dec 16-31, 2026 run, paid Jan 5, 2027: a pay date in the next year.</summary>
     private static CreatePayrollRunRequest PaidInJanuaryRequest(Guid employeeId, bool includeThirteenthMonth) => new(
         new DateOnly(2026, 12, 16), new DateOnly(2026, 12, 31), new DateOnly(2027, 1, 5), PayFrequency.SemiMonthly,
@@ -2534,7 +2539,7 @@ public class PayrollRunServiceTests
 
         var act = () => _sut.ComputeAsync(run.Id);
 
-        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(PayItIn2026);
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(LeaveItOutUnlessPaidIn2026);
         _runRepo.Verify(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyList<PayrollRunEmployee>>(),
                                                    It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -2547,7 +2552,7 @@ public class PayrollRunServiceTests
 
         var act = () => _sut.SetThirteenthMonthAsync(run.Id, include: true);
 
-        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(PayItIn2026);
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(LeaveItOutUnlessPaidIn2026);
         run.Status.Should().Be(PayrollRunStatus.Approved);
         run.Employees.Single().IncludeThirteenthMonth.Should().BeFalse();
         _runRepo.Verify(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyList<PayrollRunEmployee>>(),
