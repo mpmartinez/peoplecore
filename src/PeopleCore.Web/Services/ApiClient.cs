@@ -645,6 +645,13 @@ public class ApiClient
     public Task<PayrollRunDto?> SetPayrollRunLeaveConversionAsync(Guid runId, bool include)
         => SendJsonAsync<PayrollRunDto>(HttpMethod.Put, $"api/payroll-runs/{runId}/leave-conversion", new { include });
 
+    /// <summary>
+    /// Includes or leaves out the 13th month for every employee on a regular run, in any month. The
+    /// API recomputes the run, which comes back in Draft; a refusal throws with the API's reason.
+    /// </summary>
+    public Task<PayrollRunDto?> SetPayrollRunThirteenthMonthAsync(Guid runId, bool include)
+        => SendJsonAsync<PayrollRunDto>(HttpMethod.Put, $"api/payroll-runs/{runId}/thirteenth-month", new { include });
+
     // Employee Compensation
     //
     // A 404 here means the employee simply has no compensation row yet - PUT creates one, so the
@@ -1150,7 +1157,9 @@ public record PayrollRunDto(
     // "Regular" or "FinalPay".
     string RunType = "Regular",
     // A regular December run that pays out unused year-end leave in cash.
-    bool IncludesLeaveConversion = false);
+    bool IncludesLeaveConversion = false,
+    // True when any employee on the run is to be paid the 13th month.
+    bool IncludesThirteenthMonth = false);
 
 public record PayrollRunSummaryDto(
     Guid Id,
@@ -1167,7 +1176,8 @@ public record PayrollRunSummaryDto(
     int EmployeesMissingAttendance,
     DateTime CreatedAt,
     string RunType = "Regular",
-    bool IncludesLeaveConversion = false);
+    bool IncludesLeaveConversion = false,
+    bool IncludesThirteenthMonth = false);
 
 public record EmployeeCompensationDto(
     Guid Id,

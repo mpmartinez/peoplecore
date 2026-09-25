@@ -29,13 +29,14 @@ public class PayrollRunsTests : BunitContext
     private string CurrentUri => Services.GetRequiredService<NavigationManager>().Uri;
 
     private static string RunSummary(Guid id, string runNumber, string status, int employees, string runType = "Regular",
-        bool includesLeaveConversion = false) =>
+        bool includesLeaveConversion = false, bool includesThirteenthMonth = false) =>
         $$"""
         {"id":"{{id}}","runNumber":"{{runNumber}}","periodLabel":"Sep 1-15, 2026","periodStart":"2026-09-01",
          "periodEnd":"2026-09-15","payDate":"2026-09-20","frequency":"SemiMonthly","status":"{{status}}",
          "employeeCount":{{employees}},"totalGrossPay":0,"totalNetPay":0,"employeesMissingAttendance":0,
          "createdAt":"2026-09-01T00:00:00Z","runType":"{{runType}}",
-         "includesLeaveConversion":{{(includesLeaveConversion ? "true" : "false")}}}
+         "includesLeaveConversion":{{(includesLeaveConversion ? "true" : "false")}},
+         "includesThirteenthMonth":{{(includesThirteenthMonth ? "true" : "false")}}}
         """;
 
     private static string Runs(params string[] runs) => RunsPage(1, 1, runs);
@@ -213,8 +214,8 @@ public class PayrollRunsTests : BunitContext
 
         cut.Markup.Should().Contain("Maria Santos").And.Contain("Jose Reyes").And.NotContain("Former Staff");
         // Blazor renders a true bool attribute as a bare aria-checked and drops a false one entirely.
-        // The employee checklist only: a December period end also offers the leave-conversion box.
-        cut.FindAll("[role=checkbox]:not([data-leave-conversion])").Should().HaveCount(2).And.OnlyContain(c => c.HasAttribute("aria-checked"));
+        // The employee checklist only: the year-end pay boxes are checkboxes too.
+        cut.FindAll("[role=checkbox]:not([data-leave-conversion]):not([data-thirteenth-month])").Should().HaveCount(2).And.OnlyContain(c => c.HasAttribute("aria-checked"));
         cut.Markup.Should().Contain("2 selected of 2 active employees");
     }
 
@@ -278,7 +279,7 @@ public class PayrollRunsTests : BunitContext
         // server derives from attendance and unpay overtime and holiday premiums.
         var body = _api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)];
         body.Should().Be(
-            $$"""{"periodStart":"2026-09-01","periodEnd":"2026-09-15","payDate":"2026-09-20","frequency":"SemiMonthly","employees":[{"employeeId":"{{MariaId}}"}],"includeLeaveConversion":false}""");
+            $$"""{"periodStart":"2026-09-01","periodEnd":"2026-09-15","payDate":"2026-09-20","frequency":"SemiMonthly","employees":[{"employeeId":"{{MariaId}}","includeThirteenthMonth":false}],"includeLeaveConversion":false}""");
     }
 
     [Fact]
@@ -392,6 +393,82 @@ public class PayrollRunsTests : BunitContext
             .Contain("Maria Santos's leave for 2026 was already converted in PR-2026-0023."));
         CurrentUri.Should().Be(before);
         cut.Find("[data-leave-conversion]").HasAttribute("aria-checked").Should().BeTrue("the tick stays for a retry");
+    }
+
+    // ---------- The 13th month ----------
+
+    [Fact]
+    public void ARunWithThe13thMonth_CarriesA13thMonthBadge_AndOthersDoNot()
+    {
+        _api.On(HttpMethod.Get, RunsPath, HttpStatusCode.OK,
+            Runs(RunSummary(Guid.NewGuid(), "PR-2026-0024", "Draft", 12, includesThirteenthMonth: true),
+                 RunSummary(Guid.NewGuid(), "PR-2026-0023", "Paid", 12)));
+
+        var cut = RenderPage();
+
+        var rows = cut.FindAll("tbody tr");
+        rows[0].QuerySelector("[data-thirteenth-month-badge]")!.TextContent.Trim().Should().Be("13th month");
+        rows[1].QuerySelector("[data-thirteenth-month-badge]").Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("2026-09-01", "2026-09-15")]
+    [InlineData("2026-12-16", "2026-12-31")]
+    public void TheInclude13thMonthBox_IsOfferedForEveryPeriod_UnderYearEndPay(string start, string end)
+    {
+        StubTwoActiveEmployees();
+        var cut = RenderWithCreateDialogOpen();
+
+        cut.Find("#periodStart").Input(start);
+        cut.Find("#periodEnd").Input(end);
+
+        var group = cut.Find("[data-year-end-pay]");
+        group.TextContent.Should().Contain("Year-end pay");
+        var box = group.QuerySelector("[data-thirteenth-month]")!;
+        box.ParentElement!.TextContent.Should().Contain("Include 13th month");
+        box.HasAttribute("aria-checked").Should().BeFalse("it starts unticked");
+        // In December, Convert unused leave sits in the same group.
+        (group.QuerySelector("[data-leave-conversion]") is not null).Should().Be(end.StartsWith("2026-12"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TheInclude13thMonthBox_IsSentOnEveryEmployee(bool ticked)
+    {
+        StubTwoActiveEmployees();
+        _api.On(HttpMethod.Post, "/api/payroll-runs", HttpStatusCode.Created, $$"""{"id":"{{Guid.NewGuid()}}","runNumber":"PR-2026-0021"}""");
+        var cut = RenderWithCreateDialogOpen();
+
+        cut.Find("#periodStart").Input("2026-06-01");
+        cut.Find("#periodEnd").Input("2026-06-15");
+        if (ticked) cut.Find("[data-thirteenth-month]").Click();
+        Button(cut, "Create").Click();
+
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Post));
+        var body = System.Text.Json.JsonDocument.Parse(_api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)]!).RootElement;
+        var employees = body.GetProperty("employees").EnumerateArray().ToList();
+        employees.Select(e => e.GetProperty("employeeId").GetGuid()).Should().BeEquivalentTo([MariaId, JoseId]);
+        employees.Should().OnlyContain(e => e.GetProperty("includeThirteenthMonth").GetBoolean() == ticked);
+    }
+
+    [Fact]
+    public void ADecemberRun_CanIncludeThe13thMonthAndConvertLeaveTogether()
+    {
+        StubTwoActiveEmployees();
+        _api.On(HttpMethod.Post, "/api/payroll-runs", HttpStatusCode.Created, $$"""{"id":"{{Guid.NewGuid()}}","runNumber":"PR-2026-0024"}""");
+        var cut = RenderWithCreateDialogOpen();
+
+        cut.Find("#periodStart").Input("2026-12-01");
+        cut.Find("#periodEnd").Input("2026-12-15");
+        cut.Find("[data-thirteenth-month]").Click();
+        cut.Find("[data-leave-conversion]").Click();
+        Button(cut, "Create").Click();
+
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Post));
+        var body = System.Text.Json.JsonDocument.Parse(_api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)]!).RootElement;
+        body.GetProperty("includeLeaveConversion").GetBoolean().Should().BeTrue();
+        body.GetProperty("employees").EnumerateArray().Should().OnlyContain(e => e.GetProperty("includeThirteenthMonth").GetBoolean());
     }
 
     private static HttpResponseMessage Json(string json) =>

@@ -60,6 +60,10 @@
                                 {
                                     <Badge Variant="outline" Class="ml-2" data-leave-conversion-badge>Leave conversion</Badge>
                                 }
+                                @if (r.IncludesThirteenthMonth)
+                                {
+                                    <Badge Variant="outline" Class="ml-2" data-thirteenth-month-badge>13th month</Badge>
+                                }
                             </TableCell>
                             <TableCell Class="px-4 py-3 cursor-pointer">@r.PeriodLabel</TableCell>
                             <TableCell Class="px-4 py-3 cursor-pointer">@r.PayDate</TableCell>
@@ -104,15 +108,24 @@
         </FormField>
     </div>
 
-    @* The API takes year-end leave conversion only on a December payroll, so the box is offered
-       only while the period ends in December; a tick left behind by an earlier period end isn't sent. *@
-    @if (EndsInDecember)
-    {
+    <fieldset class="space-y-2" data-year-end-pay>
+        <legend class="text-sm font-medium">Year-end pay</legend>
+        @* Offered for every period: a 13th month paid early is an advance, and the one paid later
+           in the year nets it out. *@
         <div class="space-y-1">
-            <Checkbox @bind-Value="_form.IncludeLeaveConversion" data-leave-conversion>Convert unused leave</Checkbox>
-            <p class="ml-6 text-xs text-muted-foreground">Pays out each employee's unused year-end leave (such as SIL) in cash on this payroll.</p>
+            <Checkbox @bind-Value="_form.IncludeThirteenthMonth" data-thirteenth-month>Include 13th month</Checkbox>
+            <p class="ml-6 text-xs text-muted-foreground">Pays each eligible employee's 13th month on this payroll, less any part already paid this year.</p>
         </div>
-    }
+        @* The API takes year-end leave conversion only on a December payroll, so the box is offered
+           only while the period ends in December; a tick left behind by an earlier period end isn't sent. *@
+        @if (EndsInDecember)
+        {
+            <div class="space-y-1">
+                <Checkbox @bind-Value="_form.IncludeLeaveConversion" data-leave-conversion>Convert unused leave</Checkbox>
+                <p class="ml-6 text-xs text-muted-foreground">Pays out each employee's unused year-end leave (such as SIL) in cash on this payroll.</p>
+            </div>
+        }
+    </fieldset>
 
     <div>
         <div class="flex items-center justify-between">
@@ -289,14 +302,16 @@
             // on the server). Null tells the attendance bridge to derive them from punches,
             // approved leave, approved overtime, the holiday calendar and the shift schedule -
             // sending a zero would silently beat the derived figure and unpay overtime and
-            // holiday premiums the employee actually earned.
+            // holiday premiums the employee actually earned. The 13th month is set per employee on
+            // the API, and the one tick applies to everyone on the run.
+            var includeThirteenthMonth = _form.IncludeThirteenthMonth;
             var (run, error) = await Api.CreatePayrollRunAsync(new
             {
                 periodStart = _form.PeriodStart.ToString("yyyy-MM-dd"),
                 periodEnd = _form.PeriodEnd.ToString("yyyy-MM-dd"),
                 payDate = _form.PayDate.ToString("yyyy-MM-dd"),
                 frequency = _form.Frequency,
-                employees = _selectedEmployeeIds.Select(id => new { employeeId = id }),
+                employees = _selectedEmployeeIds.Select(id => new { employeeId = id, includeThirteenthMonth }),
                 includeLeaveConversion = EndsInDecember && _form.IncludeLeaveConversion
             });
 
@@ -327,5 +342,6 @@
         public DateOnly PayDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
         public string Frequency { get; set; } = "Monthly";
         public bool IncludeLeaveConversion { get; set; }
+        public bool IncludeThirteenthMonth { get; set; }
     }
 }

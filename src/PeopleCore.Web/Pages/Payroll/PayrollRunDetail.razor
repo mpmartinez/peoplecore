@@ -20,12 +20,22 @@
             {
                 <Badge Variant="outline" Class="mt-1 ml-2" data-leave-conversion-badge>Year-end leave conversion</Badge>
             }
+            @if (_run.IncludesThirteenthMonth)
+            {
+                <Badge Variant="outline" Class="mt-1 ml-2" data-thirteenth-month-badge>13th month</Badge>
+            }
         }
     </ChildContent>
     <Actions>
         <Button Variant="outline" OnClick="GoBack">Back to Runs</Button>
         @if (_run is not null)
         {
+            @if (CanChangeThirteenthMonth)
+            {
+                <Button Variant="outline" OnClick="AskToChangeThirteenthMonth" Disabled="@Busy" data-thirteenth-month-toggle>
+                    @(_run.IncludesThirteenthMonth ? LeaveOutThirteenthMonthLabel : IncludeThirteenthMonthLabel)
+                </Button>
+            }
             @if (CanChangeLeaveConversion)
             {
                 <Button Variant="outline" OnClick="AskToChangeLeaveConversion" Disabled="@Busy" data-leave-conversion-toggle>
@@ -125,6 +135,10 @@ else
                             <TableHead Class="px-4">Overtime</TableHead>
                             <TableHead Class="px-4">Holiday / Rest Day</TableHead>
                             <TableHead Class="px-4">Night Diff</TableHead>
+                            @if (ShowsThirteenthMonth)
+                            {
+                                <TableHead Class="px-4">13th month</TableHead>
+                            }
                             @if (IsFinalPay)
                             {
                                 <TableHead Class="px-4">Leave Conversion</TableHead>
@@ -161,6 +175,10 @@ else
                                 <TableCell Class="px-4 py-3">&#8369;@e.OvertimePay.ToString("N2")</TableCell>
                                 <TableCell Class="px-4 py-3">&#8369;@e.HolidayPay.ToString("N2")</TableCell>
                                 <TableCell Class="px-4 py-3">&#8369;@e.NightDiffPay.ToString("N2")</TableCell>
+                                @if (ShowsThirteenthMonth)
+                                {
+                                    <TableCell Class="px-4 py-3" data-thirteenth-month>&#8369;@e.ThirteenthMonth.ToString("N2")</TableCell>
+                                }
                                 @if (IsFinalPay)
                                 {
                                     <TableCell Class="px-4 py-3" data-leave-conversion>&#8369;@e.LeaveConversionPay.ToString("N2")</TableCell>
@@ -223,6 +241,12 @@ else
              ConfirmText="@(_leaveConversionChange == true ? ConvertLabel : StopConvertingLabel)" ConfirmVariant="primary" CancelText="Leave it as it is"
              Loading="@_changingLeaveConversion" OnConfirm="ChangeLeaveConversion" OnCancel="@(() => _leaveConversionChange = null)" data-confirm-leave-conversion />
 
+<AlertDialog IsOpen="@(_thirteenthMonthChange is not null)"
+             Title="@(_thirteenthMonthChange == true ? $"{IncludeThirteenthMonthLabel}?" : $"{LeaveOutThirteenthMonthLabel}?")"
+             Description="@ThirteenthMonthConfirmation()"
+             ConfirmText="@(_thirteenthMonthChange == true ? IncludeThirteenthMonthLabel : LeaveOutThirteenthMonthLabel)" ConfirmVariant="primary" CancelText="Leave it as it is"
+             Loading="@_changingThirteenthMonth" OnConfirm="ChangeThirteenthMonth" OnCancel="@(() => _thirteenthMonthChange = null)" data-confirm-thirteenth-month />
+
 <AlertDialog IsOpen="@(_removingEmployee is not null)" Title="Remove from this run?"
              Description="@RemoveConfirmation()"
              ConfirmText="Remove" ConfirmVariant="destructive" CancelText="Keep them"
@@ -247,11 +271,25 @@ else
     private bool? _leaveConversionChange;
     private bool _changingLeaveConversion;
 
+    // The 13th month setting being confirmed (true includes it), or null while nothing is asked.
+    private bool? _thirteenthMonthChange;
+    private bool _changingThirteenthMonth;
+
     private const string ConvertLabel = "Convert unused leave";
     private const string StopConvertingLabel = "Stop converting unused leave";
+    private const string IncludeThirteenthMonthLabel = "Include 13th month";
+    private const string LeaveOutThirteenthMonthLabel = "Leave out the 13th month";
 
     // One run-level request at a time: each of these recomputes the run or moves it on.
-    private bool Busy => _computing || _approving || _markingPaid || _changingLeaveConversion || _removing;
+    private bool Busy => _computing || _approving || _markingPaid || _changingLeaveConversion
+                         || _changingThirteenthMonth || _removing;
+
+    // Shown whenever someone on the run is paid any 13th month - a final pay's included.
+    private bool ShowsThirteenthMonth => _run?.Employees.Any(e => e.ThirteenthMonth > 0m) == true;
+
+    // The API includes or leaves out the 13th month on a regular run that isn't paid, in any month
+    // (an advance nets out of the 13th month paid later). A final pay works out its own.
+    private bool CanChangeThirteenthMonth => _run is not null && !IsFinalPay && _run.Status != "Paid";
 
     private bool IsFinalPay => _run?.RunType == PayrollLabels.FinalPayRunType;
 
@@ -473,6 +511,47 @@ else
         {
             _changingLeaveConversion = false;
             _leaveConversionChange = null;
+        }
+    }
+
+    private void AskToChangeThirteenthMonth()
+    {
+        if (_run is null) return;
+        _actionError = null;
+        _thirteenthMonthChange = !_run.IncludesThirteenthMonth;
+    }
+
+    // As with the leave conversion: the API recomputes the run whatever its status, and it comes
+    // back in Draft, so a run awaiting or past approval is said to need approving again.
+    private string ThirteenthMonthConfirmation()
+    {
+        if (_thirteenthMonthChange is not { } include || _run is null) return "";
+        var text = include
+            ? $"Each eligible employee's 13th month will be paid on {_run.RunNumber}, less any part already paid this year, and the run recomputed."
+            : $"{_run.RunNumber} will no longer pay the 13th month, and the run will be recomputed.";
+        return _run.Status is "Approved" or "ForApproval"
+            ? text + " The run goes back to Draft and needs approval again."
+            : text;
+    }
+
+    private async Task ChangeThirteenthMonth()
+    {
+        if (_changingThirteenthMonth || _thirteenthMonthChange is not { } include) return;
+        _actionError = null;
+        _changingThirteenthMonth = true;
+        try
+        {
+            await Api.SetPayrollRunThirteenthMonthAsync(Id, include);
+            await LoadRun();
+        }
+        catch (Exception ex)
+        {
+            _actionError = ex.Message;
+        }
+        finally
+        {
+            _changingThirteenthMonth = false;
+            _thirteenthMonthChange = null;
         }
     }
 

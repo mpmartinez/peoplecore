@@ -180,11 +180,43 @@ public class PayrollRunService : IPayrollRunService
         return ToDto(saved);
     }
 
+    public async Task<PayrollRunDto> SetThirteenthMonthAsync(Guid runId, bool include, CancellationToken ct = default)
+    {
+        var run = await _runRepo.GetWithEntriesAsync(runId, ct)
+            ?? throw new KeyNotFoundException($"Payroll run {runId} not found.");
+
+        if (run.Status == PayrollRunStatus.Paid)
+            throw new DomainException("A paid payroll run can't be changed.");
+        // A final pay works out the employee's 13th month from their separation, its own way.
+        if (run.RunType != PayrollRunType.Regular)
+            throw new DomainException("A final pay's 13th month can't be changed here.");
+        // A request that changes nothing would still recompute the run - and so could recompute an
+        // approved run, which ComputeAsync refuses. A run where only some employees have it is a
+        // change either way.
+        if (run.Employees.All(e => e.IncludeThirteenthMonth == include))
+            throw new DomainException(include
+                ? "This payroll already includes the 13th month."
+                : "This payroll already leaves out the 13th month.");
+
+        // Allowed in any month: an advance pays part of it early, and the 13th month on a later run
+        // nets out what was paid earlier in the year. The figures change, so the run is recomputed
+        // and, like any recompute, goes back to Draft. The stored entries aren't touched until the
+        // recompute succeeds: a refused one leaves the run as it was.
+        await RecomputeRegularAsync(run, ct, includeThirteenthMonth: include);
+
+        var saved = await _runRepo.GetWithEntriesAsync(run.Id, ct)
+            ?? throw new InvalidOperationException($"Payroll run {run.Id} was not found immediately after being saved.");
+        return ToDto(saved);
+    }
+
     /// <summary>
     /// Recomputes a regular run in place from its stored inputs and sends it back to Draft.
-    /// Shared by ComputeAsync and SetLeaveConversionAsync.
+    /// Shared by ComputeAsync, SetLeaveConversionAsync and SetThirteenthMonthAsync.
     /// </summary>
-    private async Task RecomputeRegularAsync(PayrollRun run, CancellationToken ct)
+    /// <param name="includeThirteenthMonth">
+    /// Every employee's 13th month setting for the recompute, or null to keep each entry's own.
+    /// </param>
+    private async Task RecomputeRegularAsync(PayrollRun run, CancellationToken ct, bool? includeThirteenthMonth = null)
     {
         await EnsureNoOneHasLeftAsync(run, ct);
 
@@ -198,7 +230,8 @@ public class PayrollRunService : IPayrollRunService
         // rest-day hour and special-holiday day at the ordinary rate.
         var employeeInputs = run.Employees
             .Select(e => new PayrollRunEmployeeInput(
-                e.EmployeeId, e.DaysWorked, OvertimeHours: null, HolidayDays: null, e.IncludeThirteenthMonth))
+                e.EmployeeId, e.DaysWorked, OvertimeHours: null, HolidayDays: null,
+                includeThirteenthMonth ?? e.IncludeThirteenthMonth))
             .ToList();
 
         var snapshots = new Dictionary<Guid, PayrollAttendanceInput>();
@@ -747,14 +780,19 @@ public class PayrollRunService : IPayrollRunService
         run.Frequency, run.Status,
         run.EmployeeCount, run.TotalGrossPay, run.TotalDeductions, run.TotalNetPay,
         run.CreatedAt, run.AttendancePeriodId, run.EmployeesMissingAttendance,
-        run.Employees.Select(ToEmployeeDto).ToList(), run.RunType, run.IncludesLeaveConversion);
+        run.Employees.Select(ToEmployeeDto).ToList(), run.RunType, run.IncludesLeaveConversion,
+        IncludesThirteenthMonth(run));
 
     private static PayrollRunSummaryDto ToSummaryDto(PayrollRun run) => new(
         run.Id, run.RunNumber, run.PeriodLabel,
         run.PeriodStart, run.PeriodEnd, run.PayDate,
         run.Frequency, run.Status,
         run.EmployeeCount, run.TotalGrossPay, run.TotalNetPay,
-        run.EmployeesMissingAttendance, run.CreatedAt, run.RunType, run.IncludesLeaveConversion);
+        run.EmployeesMissingAttendance, run.CreatedAt, run.RunType, run.IncludesLeaveConversion,
+        IncludesThirteenthMonth(run));
+
+    /// <summary>A run includes the 13th month when any of its entries does.</summary>
+    private static bool IncludesThirteenthMonth(PayrollRun run) => run.Employees.Any(e => e.IncludeThirteenthMonth);
 
     private static PayrollRunEmployeeDto ToEmployeeDto(PayrollRunEmployee e) => new(
         e.Id, e.EmployeeId, e.Employee?.FullName ?? string.Empty,

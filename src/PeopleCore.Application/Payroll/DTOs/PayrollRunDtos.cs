@@ -18,6 +18,9 @@ public record CreatePayrollRunRequest(
 /// <summary>Turns a run's year-end leave conversion on or off (PUT api/payroll-runs/{id}/leave-conversion).</summary>
 public record SetLeaveConversionRequest(bool Include);
 
+/// <summary>Includes or leaves out a run's 13th month for every employee (PUT api/payroll-runs/{id}/thirteenth-month).</summary>
+public record SetThirteenthMonthRequest(bool Include);
+
 /// <summary>
 /// Per-employee inputs for a payroll run. Every quantity is a manual override: null means "use
 /// what the attendance bridge derived from punches, approved leave, approved overtime, the
@@ -111,7 +114,9 @@ public record PayrollRunDto(
     int EmployeesMissingAttendance,
     IReadOnlyList<PayrollRunEmployeeDto> Employees,
     PayrollRunType RunType = PayrollRunType.Regular,
-    bool IncludesLeaveConversion = false);
+    bool IncludesLeaveConversion = false,
+    // True when any entry includes the 13th month (PayrollRunEmployeeInput.IncludeThirteenthMonth).
+    bool IncludesThirteenthMonth = false);
 
 /// <summary>
 /// A run as it appears in a list. Deliberately omits the Employees collection that
@@ -133,4 +138,5 @@ public record PayrollRunSummaryDto(
     int EmployeesMissingAttendance,
     DateTime CreatedAt,
     PayrollRunType RunType = PayrollRunType.Regular,
-    bool IncludesLeaveConversion = false);
+    bool IncludesLeaveConversion = false,
+    bool IncludesThirteenthMonth = false);
