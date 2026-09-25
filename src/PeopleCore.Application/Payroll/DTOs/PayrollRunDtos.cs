@@ -2,13 +2,18 @@ using PeopleCore.Domain.Enums;
 
 namespace PeopleCore.Application.Payroll.DTOs;
 
+/// <param name="IncludeLeaveConversion">
+/// Pays out each eligible employee's unused year-end-convertible leave in cash. Allowed only on a
+/// Regular run whose PeriodEnd falls in December.
+/// </param>
 public record CreatePayrollRunRequest(
     DateOnly PeriodStart,
     DateOnly PeriodEnd,
     DateOnly PayDate,
     PayFrequency Frequency,
     IReadOnlyList<PayrollRunEmployeeInput> Employees,
-    Guid? AttendancePeriodId = null);
+    Guid? AttendancePeriodId = null,
+    bool IncludeLeaveConversion = false);
 
 /// <summary>
 /// Per-employee inputs for a payroll run. Every quantity is a manual override: null means "use
@@ -100,7 +105,8 @@ public record PayrollRunDto(
     Guid? AttendancePeriodId,
     int EmployeesMissingAttendance,
     IReadOnlyList<PayrollRunEmployeeDto> Employees,
-    PayrollRunType RunType = PayrollRunType.Regular);
+    PayrollRunType RunType = PayrollRunType.Regular,
+    bool IncludesLeaveConversion = false);
 
 /// <summary>
 /// A run as it appears in a list. Deliberately omits the Employees collection that
@@ -121,4 +127,5 @@ public record PayrollRunSummaryDto(
     decimal TotalNetPay,
     int EmployeesMissingAttendance,
     DateTime CreatedAt,
-    PayrollRunType RunType = PayrollRunType.Regular);
+    PayrollRunType RunType = PayrollRunType.Regular,
+    bool IncludesLeaveConversion = false);

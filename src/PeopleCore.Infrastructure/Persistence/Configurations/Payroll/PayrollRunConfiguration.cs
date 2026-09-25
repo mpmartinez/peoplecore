@@ -12,6 +12,7 @@ public class PayrollRunConfiguration : IEntityTypeConfiguration<PayrollRun>
         builder.HasKey(x => x.Id);
         builder.HasIndex(x => x.RunNumber).IsUnique();
         builder.Property(x => x.RunType).HasConversion<string>().HasMaxLength(16).HasDefaultValue(PayrollRunType.Regular);
+        builder.Property(x => x.IncludesLeaveConversion).HasDefaultValue(false);
 
         // Computed properties - not columns.
         builder.Ignore(x => x.PeriodLabel);

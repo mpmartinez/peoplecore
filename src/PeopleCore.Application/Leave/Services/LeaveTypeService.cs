@@ -76,6 +76,8 @@ public class LeaveTypeService : ILeaveTypeService
         // Only an accrued type has a yearly balance whose unused days could move to the next year.
         if (dto.IsCarryOver && dto.EntitlementKind != LeaveEntitlementKind.Accrued)
             throw new DomainException("Only accrued leave can carry over.");
+        if (dto.IsCarryOver && dto.ConvertsAtYearEnd)
+            throw new DomainException("A leave type can't both carry over and convert at year-end.");
     }
 
     /// <summary>Writes every setting. Create and update are both full replacements.</summary>
@@ -103,6 +105,7 @@ public class LeaveTypeService : ILeaveTypeService
         lt.MaxEvents = dto.EntitlementKind == LeaveEntitlementKind.PerEvent ? dto.MaxEvents : null;
         lt.IsConfidential = dto.IsConfidential;
         lt.IsMaternity = dto.IsMaternity;
+        lt.ConvertsAtYearEnd = dto.ConvertsAtYearEnd;
     }
 
     private static LeaveTypeDto ToDto(LeaveType lt) => new(
@@ -113,5 +116,6 @@ public class LeaveTypeService : ILeaveTypeService
         lt.EntitlementKind, lt.CountsCalendarDays,
         lt.DaysPerEvent, lt.MinServiceMonths,
         lt.RequiresMarried, lt.RequiresSoloParentId,
-        lt.MaxEvents, lt.IsConfidential, lt.IsMaternity);
+        lt.MaxEvents, lt.IsConfidential, lt.IsMaternity,
+        lt.ConvertsAtYearEnd);
 }

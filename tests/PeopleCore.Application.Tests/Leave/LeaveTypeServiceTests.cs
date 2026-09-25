@@ -80,6 +80,39 @@ public class LeaveTypeServiceTests
         dto.CountsAsVacationForDeMinimis.Should().BeTrue();
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Create_StoresAndReturnsTheConvertsAtYearEndSetting(bool convertsAtYearEnd)
+    {
+        LeaveType? saved = null;
+        _repo.Setup(r => r.AddAsync(It.IsAny<LeaveType>(), It.IsAny<CancellationToken>()))
+            .Callback((LeaveType lt, CancellationToken _) => saved = lt)
+            .ReturnsAsync((LeaveType lt, CancellationToken _) => lt);
+
+        var dto = await _sut.CreateAsync(new CreateLeaveTypeDto(
+            "Service Incentive Leave", "SIL", 5m, true, false, null, null, false,
+            ConvertsAtYearEnd: convertsAtYearEnd));
+
+        saved!.ConvertsAtYearEnd.Should().Be(convertsAtYearEnd);
+        dto.ConvertsAtYearEnd.Should().Be(convertsAtYearEnd);
+    }
+
+    [Fact]
+    public async Task Update_ChangesTheConvertsAtYearEndSetting()
+    {
+        var existing = new LeaveType { Name = "Service Incentive Leave", Code = "SIL", MaxDaysPerYear = 5m };
+        _repo.Setup(r => r.GetByIdAsync(existing.Id, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
+
+        var dto = await _sut.UpdateAsync(existing.Id, new CreateLeaveTypeDto(
+            "Service Incentive Leave", "SIL", 5m, true, false, null, null, false,
+            ConvertsAtYearEnd: true));
+
+        existing.ConvertsAtYearEnd.Should().BeTrue();
+        dto.ConvertsAtYearEnd.Should().BeTrue();
+        _repo.Verify(r => r.UpdateAsync(existing, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public void ARequestWithoutTheCashSettings_TakesTheEntitysDefaults()
     {
@@ -119,6 +152,7 @@ public class LeaveTypeServiceTests
         dto.MaxEvents.Should().Be(entity.MaxEvents).And.BeNull();
         dto.IsConfidential.Should().Be(entity.IsConfidential).And.BeFalse();
         dto.IsMaternity.Should().Be(entity.IsMaternity).And.BeFalse();
+        dto.ConvertsAtYearEnd.Should().Be(entity.ConvertsAtYearEnd).And.BeFalse();
     }
 
     // ---- every setting ---------------------------------------------------------------------
@@ -133,7 +167,7 @@ public class LeaveTypeServiceTests
         IsConvertibleToCash: true, CountsAsVacationForDeMinimis: false,
         IsActive: false, EntitlementKind: LeaveEntitlementKind.PerEvent, CountsCalendarDays: true,
         DaysPerEvent: 105m, MinServiceMonths: 6, RequiresMarried: true, RequiresSoloParentId: true,
-        MaxEvents: 4, IsConfidential: true, IsMaternity: true);
+        MaxEvents: 4, IsConfidential: true, IsMaternity: true, ConvertsAtYearEnd: true);
 
     private static void ShouldHoldEverySetting(LeaveType lt)
     {
@@ -157,6 +191,7 @@ public class LeaveTypeServiceTests
         lt.MaxEvents.Should().Be(4);
         lt.IsConfidential.Should().BeTrue();
         lt.IsMaternity.Should().BeTrue();
+        lt.ConvertsAtYearEnd.Should().BeTrue();
     }
 
     private static void ShouldHoldEverySetting(LeaveTypeDto dto)
@@ -181,6 +216,7 @@ public class LeaveTypeServiceTests
         dto.MaxEvents.Should().Be(4);
         dto.IsConfidential.Should().BeTrue();
         dto.IsMaternity.Should().BeTrue();
+        dto.ConvertsAtYearEnd.Should().BeTrue();
     }
 
     [Fact]
@@ -220,7 +256,7 @@ public class LeaveTypeServiceTests
             IsConvertibleToCash = true, CountsAsVacationForDeMinimis = false, IsActive = false,
             EntitlementKind = LeaveEntitlementKind.PerEvent, CountsCalendarDays = true, DaysPerEvent = 105m,
             MinServiceMonths = 6, RequiresMarried = true, RequiresSoloParentId = true, MaxEvents = 4,
-            IsConfidential = true, IsMaternity = true,
+            IsConfidential = true, IsMaternity = true, ConvertsAtYearEnd = true,
         };
         _repo.Setup(r => r.GetByIdAsync(existing.Id, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
 
@@ -264,6 +300,9 @@ public class LeaveTypeServiceTests
               EntitlementKind: LeaveEntitlementKind.PerEvent, DaysPerEvent: 7m), "Only accrued leave can carry over." },
         { new("Solo Parent Leave", "SPL", 7m, true, IsCarryOver: true, 3m, null, false,
               EntitlementKind: LeaveEntitlementKind.YearlyAllowance), "Only accrued leave can carry over." },
+        { new("Vacation Leave", "VL", 15m, true, IsCarryOver: true, CarryOverMaxDays: 5m, null, false,
+              EntitlementKind: LeaveEntitlementKind.Accrued, ConvertsAtYearEnd: true),
+          "A leave type can't both carry over and convert at year-end." },
     };
 
     [Theory]

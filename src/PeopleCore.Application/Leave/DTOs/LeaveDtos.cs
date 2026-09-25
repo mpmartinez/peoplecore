@@ -11,6 +11,7 @@ namespace PeopleCore.Application.Leave.DTOs;
 /// <param name="MaxEvents">Most approved requests an employee may have, for a PerEvent type; null on any other kind.</param>
 /// <param name="IsConfidential">Hidden from managers (VAWC).</param>
 /// <param name="IsMaternity">The Expanded Maternity Leave type; always PerEvent.</param>
+/// <param name="ConvertsAtYearEnd">Whether a remaining balance is paid out in cash on the December payroll.</param>
 public record LeaveTypeDto(
     Guid Id, string Name, string Code,
     decimal MaxDaysPerYear, bool IsPaid, bool IsCarryOver,
@@ -20,7 +21,8 @@ public record LeaveTypeDto(
     LeaveEntitlementKind EntitlementKind, bool CountsCalendarDays,
     decimal? DaysPerEvent, int? MinServiceMonths,
     bool RequiresMarried, bool RequiresSoloParentId,
-    int? MaxEvents, bool IsConfidential, bool IsMaternity);
+    int? MaxEvents, bool IsConfidential, bool IsMaternity,
+    bool ConvertsAtYearEnd);
 
 /// <summary>
 /// A leave type to create, or the full replacement of one on update. The final-pay and statutory
@@ -42,7 +44,7 @@ public record CreateLeaveTypeDto(
     bool IsActive = true, LeaveEntitlementKind EntitlementKind = LeaveEntitlementKind.Accrued,
     bool CountsCalendarDays = false, decimal? DaysPerEvent = null, int? MinServiceMonths = null,
     bool RequiresMarried = false, bool RequiresSoloParentId = false, int? MaxEvents = null,
-    bool IsConfidential = false, bool IsMaternity = false);
+    bool IsConfidential = false, bool IsMaternity = false, bool ConvertsAtYearEnd = false);
 
 /// <summary>What "add the statutory set" did: the codes it created and the codes the site already had, in the set's order.</summary>
 public record StatutoryLeaveResultDto(IReadOnlyList<string> Added, IReadOnlyList<string> Skipped);

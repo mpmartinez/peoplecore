@@ -12,6 +12,9 @@ public class PayrollRun : AuditableEntity
     public PayrollRunStatus Status { get; set; } = PayrollRunStatus.Draft;
     public PayrollRunType RunType { get; set; } = PayrollRunType.Regular;
 
+    /// <summary>Whether this run pays out each eligible employee's unused year-end-convertible leave in cash.</summary>
+    public bool IncludesLeaveConversion { get; set; } = false;
+
     /// <summary>Present only when <see cref="RunType"/> is <see cref="PayrollRunType.FinalPay"/>.</summary>
     public FinalPayInputs? FinalPayInputs { get; set; }
 

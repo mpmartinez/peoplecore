@@ -28,6 +28,7 @@ public static class StatutoryLeaveSet
             t.MaxDaysPerYear = 5m;
             t.IsConvertibleToCash = true;
             t.CountsAsVacationForDeMinimis = true;
+            t.ConvertsAtYearEnd = true;
         }),
         Type("ML", "Maternity Leave", LeaveEntitlementKind.PerEvent, t =>
         {
@@ -133,6 +134,7 @@ public static class StatutoryLeaveSet
             IsActive = true,
             IsConvertibleToCash = false,
             CountsAsVacationForDeMinimis = false,
+            ConvertsAtYearEnd = false,
         };
         rules(type);
         return type;
