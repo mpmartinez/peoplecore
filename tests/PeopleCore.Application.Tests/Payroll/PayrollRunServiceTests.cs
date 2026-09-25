@@ -2587,6 +2587,96 @@ public class PayrollRunServiceTests
         savedRun()!.Employees.Single().ThirteenthMonth.Should().Be(0m);
     }
 
+    // The 13th month is worked out from the basic on the pay year's Paid runs, so an earlier
+    // cutoff that isn't paid yet would silently drop out of it.
+
+    private const string OnUnpaidPay2026021 =
+        "Maria Santos is on PAY-2026-021, which isn't paid yet; pay it before computing the 13th month.";
+
+    private void EarlierRunUnpaid(Guid employeeId, int payYear, string runNumber)
+        => _runRepo.Setup(r => r.GetEarlierUnpaidRunsInYearAsync(payYear, It.IsAny<DateOnly>(),
+                    It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(employeeId)), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync([new EarlierUnpaidRun(employeeId, runNumber)]);
+
+    [Fact]
+    public async Task CreateAsync_WithThe13thMonth_WhileAnEarlierRunOfThePayYearIsUnpaid_IsRefused()
+    {
+        // Dec 1-15 isn't paid yet; Dec 16-31's 13th month would leave its basic out.
+        var (maria, _) = MariaAt36500();
+        EarlierRunUnpaid(maria.Id, 2026, "PAY-2026-021");
+
+        var act = () => _sut.CreateAsync(DecemberRequest(maria.Id, includeThirteenthMonth: true) with { IncludeLeaveConversion = false });
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(OnUnpaidPay2026021);
+        _runRepo.Verify(r => r.AddWithEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TheEarlierUnpaidRunCheck_LooksBeforeThisRunsPayDate_InItsPayYear_AndNeverAtTheRunItself()
+    {
+        var run = await SeptemberRunForMaria(includeThirteenthMonth: true);
+        var maria = run.Employees.Single().EmployeeId;
+        _runRepo.Invocations.Clear();
+
+        await _sut.ComputeAsync(run.Id);
+
+        _runRepo.Verify(r => r.GetEarlierUnpaidRunsInYearAsync(2026, new DateOnly(2026, 9, 30),
+            It.Is<IReadOnlyCollection<Guid>>(ids => ids.Single() == maria), run.Id, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ComputeAsync_WithThe13thMonth_WhileAnEarlierRunIsUnpaid_IsRefused_AndSavesNothing()
+    {
+        var run = await SeptemberRunForMaria(includeThirteenthMonth: true);
+        EarlierRunUnpaid(run.Employees.Single().EmployeeId, 2026, "PAY-2026-021");
+
+        var act = () => _sut.ComputeAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(OnUnpaidPay2026021);
+        _runRepo.Verify(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyList<PayrollRunEmployee>>(),
+                                                   It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SetThirteenthMonthAsync_TurningItOn_WhileAnEarlierRunIsUnpaid_IsRefused_AndChangesNothing()
+    {
+        var run = await SeptemberRunForMaria(includeThirteenthMonth: false);
+        run.Status = PayrollRunStatus.Approved;
+        EarlierRunUnpaid(run.Employees.Single().EmployeeId, 2026, "PAY-2026-021");
+
+        var act = () => _sut.SetThirteenthMonthAsync(run.Id, include: true);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(OnUnpaidPay2026021);
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+        run.Employees.Single().IncludeThirteenthMonth.Should().BeFalse();
+        _runRepo.Verify(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyList<PayrollRunEmployee>>(),
+                                                   It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ARunWithoutThe13thMonth_DoesNotLookForEarlierUnpaidRuns()
+    {
+        var run = await SeptemberRunForMaria(includeThirteenthMonth: true);
+        _runRepo.Invocations.Clear();
+
+        await _sut.SetThirteenthMonthAsync(run.Id, include: false);
+
+        _runRepo.Verify(r => r.GetEarlierUnpaidRunsInYearAsync(It.IsAny<int>(), It.IsAny<DateOnly>(),
+            It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TheEarlierUnpaidRunCheck_SkipsSomeoneIneligible_WhoIsPaidNoneOfIt()
+    {
+        var (maria, savedRun) = MariaAt36500();
+        maria.Is13thMonthEligible = false;
+        EarlierRunUnpaid(maria.Id, 2026, "PAY-2026-021");
+
+        await _sut.CreateAsync(DecemberRequest(maria.Id, includeThirteenthMonth: true) with { IncludeLeaveConversion = false });
+
+        savedRun()!.Employees.Single().ThirteenthMonth.Should().Be(0m);
+    }
+
     [Fact]
     public async Task CreateAsync_StoresThe13thMonthPaidEarlierInYear_ThatTheEntryWasComputedWith()
     {

@@ -631,7 +631,7 @@ public class PayrollRunService : IPayrollRunService
 
         // The 13th month is paid once. Only Paid runs count as paid earlier above, so two unpaid
         // runs of the pay year that both included it would each pay the full amount due. Someone
-        // ineligible is paid none of it on either, so isn't held to this.
+        // ineligible is paid none of it on either, so isn't held to this - nor to the check below.
         var receivingThirteenthMonth = employees
             .Where(e => e.IncludeThirteenthMonth && !ineligible.Contains(e.EmployeeId))
             .Select(e => e.EmployeeId)
@@ -647,6 +647,18 @@ public class PayrollRunService : IPayrollRunService
                 var name = people.FirstOrDefault(p => p.Id == first.EmployeeId)?.FullName ?? first.EmployeeId.ToString();
                 throw new DomainException(
                     $"{name}'s 13th month is already on {first.RunNumber}, which isn't paid yet; pay it or leave it out there first.");
+            }
+
+            // The 13th month is worked out from the basic on the pay year's Paid runs, so an
+            // earlier cutoff that isn't paid yet would silently drop out of it.
+            var unpaidBefore = await _runRepo.GetEarlierUnpaidRunsInYearAsync(
+                run.PayDate.Year, run.PayDate, receivingThirteenthMonth, run.Id, ct) ?? [];
+            if (unpaidBefore.Count > 0)
+            {
+                var first = unpaidBefore[0];
+                var name = people.FirstOrDefault(p => p.Id == first.EmployeeId)?.FullName ?? first.EmployeeId.ToString();
+                throw new DomainException(
+                    $"{name} is on {first.RunNumber}, which isn't paid yet; pay it before computing the 13th month.");
             }
         }
 

@@ -122,6 +122,31 @@ public class ThirteenthMonthOnceDbTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task The13thMonth_CantBeComputedWhileAnEarlierCutoffIsUnpaid_UntilItIsPaid()
+    {
+        // The 13th month is worked out from the basic on the pay year's Paid runs, so Dec 1-15,
+        // unpaid, would drop out of Dec 16-31's.
+        var maria = await SeedMariaAsync();
+        var first = await InRequestAsync(s => s.CreateAsync(
+            Run(maria.Id, new(2026, 12, 1), new(2026, 12, 15), new(2026, 12, 15), thirteenthMonth: false)));
+        var secondRun = Run(maria.Id, new(2026, 12, 16), new(2026, 12, 31), new(2026, 12, 29), thirteenthMonth: true);
+
+        await InRequestAsync(async s =>
+        {
+            var act = () => s.CreateAsync(secondRun);
+            (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+                $"Maria Santos is on {first.RunNumber}, which isn't paid yet; pay it before computing the 13th month.");
+        });
+
+        // Once it's paid, both cutoffs' basic counts: (36,500 + 36,500) / 12 = 6,083.33.
+        await InRequestAsync(s => s.ApproveAsync(first.Id));
+        await InRequestAsync(s => s.MarkPaidAsync(first.Id));
+        var second = await InRequestAsync(s => s.CreateAsync(secondRun));
+
+        (await EntryAsync(second.Id)).ThirteenthMonth.Should().Be(6_083.33m);
+    }
+
+    [Fact]
     public async Task ARunWhoseFiguresPredateA13thMonthPaidSince_IsRefusedAtMarkPaid_ThenRecomputedAndPaid()
     {
         var maria = await SeedMariaAsync();
@@ -209,5 +234,49 @@ public class ThirteenthMonthOnceDbTests : DatabaseTestBase
         var found = await new PayrollRunRepository(reader).GetUnpaidThirteenthMonthsInYearAsync(2026, [maria.Id], thisRun.Id);
 
         found.Should().Equal(new ThirteenthMonthInRun(maria.Id, "PAY-2026-019"), new ThirteenthMonthInRun(maria.Id, "PAY-2026-023"));
+    }
+
+    [Fact]
+    public async Task GetEarlierUnpaidRunsInYear_FindsOnlyOtherUnpaidRegularRunsOfThatPayYear_PaidBeforeTheDate()
+    {
+        var maria = AnEmployee("Santos", "Maria");
+        var ana = AnEmployee("Reyes", "Ana");
+        Context.Employees.AddRange(maria, ana);
+
+        PayrollRun AddRun(string number, DateOnly payDate, PayrollRunStatus status = PayrollRunStatus.Approved,
+                          PayrollRunType type = PayrollRunType.Regular)
+        {
+            var run = ARun(number, payDate.AddDays(-14), payDate, payDate, status);
+            run.RunType = type;
+            Context.PayrollRuns.Add(run);
+            return run;
+        }
+        void AddEntry(PayrollRun run, Employee employee) =>
+            Context.PayrollRunEmployees.Add(AnEntry(run.Id, employee.Id));
+
+        var approved = AddRun("PAY-2026-021", new(2026, 12, 15));
+        AddEntry(approved, maria);
+        var draft = AddRun("PAY-2026-019", new(2026, 10, 15), PayrollRunStatus.Draft);
+        AddEntry(draft, maria);
+        var thisRun = AddRun("PAY-2026-024", new(2026, 12, 29), PayrollRunStatus.Draft);
+        AddEntry(thisRun, maria);
+        var sameDay = AddRun("PAY-2026-025", new(2026, 12, 29), PayrollRunStatus.Draft);
+        AddEntry(sameDay, maria);
+        var later = AddRun("PAY-2026-026", new(2026, 12, 30), PayrollRunStatus.Draft);
+        AddEntry(later, maria);
+        var paid = AddRun("PAY-2026-020", new(2026, 11, 30), PayrollRunStatus.Paid);
+        AddEntry(paid, maria);
+        var lastPayYear = AddRun("PAY-2025-024", new(2025, 12, 29));
+        AddEntry(lastPayYear, maria);
+        var finalPay = AddRun("FP-2026-001", new(2026, 12, 10), type: PayrollRunType.FinalPay);
+        AddEntry(finalPay, maria);
+        AddEntry(approved, ana);
+        await Context.SaveChangesAsync();
+
+        await using var reader = NewContext();
+        var found = await new PayrollRunRepository(reader).GetEarlierUnpaidRunsInYearAsync(
+            2026, new DateOnly(2026, 12, 29), [maria.Id], thisRun.Id);
+
+        found.Should().Equal(new EarlierUnpaidRun(maria.Id, "PAY-2026-019"), new EarlierUnpaidRun(maria.Id, "PAY-2026-021"));
     }
 }

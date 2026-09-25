@@ -188,10 +188,24 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     /// </summary>
     Task<IReadOnlyList<ThirteenthMonthInRun>> GetUnpaidThirteenthMonthsInYearAsync(
         int payYear, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId, CancellationToken ct = default);
+
+    /// <summary>
+    /// The unpaid runs the employees are on that are paid before this one: one per entry on a
+    /// Regular run that isn't Paid and whose PayDate falls in <paramref name="payYear"/> and before
+    /// <paramref name="payDate"/>, other than <paramref name="excludeRunId"/>, ordered by PayDate.
+    /// The 13th month is worked out from the basic on the pay year's Paid runs, so an earlier
+    /// cutoff that isn't paid yet would drop out of it. Final pays don't count.
+    /// </summary>
+    Task<IReadOnlyList<EarlierUnpaidRun>> GetEarlierUnpaidRunsInYearAsync(
+        int payYear, DateOnly payDate, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId,
+        CancellationToken ct = default);
 }
 
 /// <summary>An employee whose 13th month the unpaid run numbered <paramref name="RunNumber"/> includes.</summary>
 public sealed record ThirteenthMonthInRun(Guid EmployeeId, string RunNumber);
+
+/// <summary>An employee on the unpaid run numbered <paramref name="RunNumber"/>, paid before the one being computed.</summary>
+public sealed record EarlierUnpaidRun(Guid EmployeeId, string RunNumber);
 
 /// <summary>An employee whose leave the run numbered <paramref name="RunNumber"/> converted to cash.</summary>
 public sealed record LeaveConvertedInRun(Guid EmployeeId, string RunNumber);
