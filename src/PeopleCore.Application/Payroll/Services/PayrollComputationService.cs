@@ -176,10 +176,11 @@ public class PayrollComputationService
     /// </param>
     /// <param name="otherBenefitsExemptUsedEarlierInYear">
     /// How much of the 90,000 "13th month and other benefits" exemption the pay year's earlier Paid
-    /// runs have used - their 13th month plus their leave beyond de minimis. Zero falls back to
-    /// <paramref name="thirteenthMonthPaidEarlierInYear"/>, which is what callers that don't pass
-    /// it have always meant. It affects only the tax: the 13th month due still comes off
-    /// <paramref name="thirteenthMonthPaidEarlierInYear"/>.
+    /// runs have used - their 13th month plus their leave beyond de minimis. It can never be less
+    /// than <paramref name="thirteenthMonthPaidEarlierInYear"/>, which used the exemption too, so
+    /// the larger of the two is taken: a caller that doesn't pass it gets the 13th month alone, as
+    /// before, and inconsistent inputs err toward withholding more, not less. It affects only the
+    /// tax: the 13th month due still comes off <paramref name="thirteenthMonthPaidEarlierInYear"/>.
     /// </param>
     public PayrollRunEmployee Compute(EmployeeCompensation compensation, PayrollRun run, decimal daysWorked = 0,
         decimal overtimeHours = 0, decimal holidayDays = 0, bool includeThirteenthMonth = false,
@@ -382,11 +383,9 @@ public class PayrollComputationService
         // excess tax below - it is the actual figure HR has already worked out, not an estimate
         // to be layered on top of one. The leave beyond de minimis is taxed with the 13th month:
         // both are "13th month and other benefits", exempt together up to 90,000 - so what the
-        // year's earlier runs used of it is their 13th month and other benefits both, when the
-        // caller has it; otherwise their 13th month alone.
-        decimal exemptUsedEarlierInYear = otherBenefitsExemptUsedEarlierInYear > 0m
-            ? otherBenefitsExemptUsedEarlierInYear
-            : thirteenthMonthPaidEarlierInYear;
+        // year's earlier runs used of it is their 13th month and other benefits both - never less
+        // than their 13th month alone.
+        decimal exemptUsedEarlierInYear = Math.Max(otherBenefitsExemptUsedEarlierInYear, thirteenthMonthPaidEarlierInYear);
         decimal withholdingTax = finalPay?.WithholdingTaxOverride ??
             (ComputeWithholdingTax(taxableForBIR, compensation.PayFrequency)
                 + ComputeThirteenthMonthTax(taxableForBIR, compensation.PayFrequency,

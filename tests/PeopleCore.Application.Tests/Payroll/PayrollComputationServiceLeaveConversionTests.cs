@@ -81,11 +81,27 @@ public class PayrollComputationServiceLeaveConversionTests
     [Fact]
     public void Compute_without_the_exemption_used_falls_back_to_the_13th_month_paid_earlier()
     {
-        // Today's behaviour for a caller that doesn't pass the new figure: the 13th month paid
+        // A caller that doesn't pass the new figure: the 13th month paid
         // earlier (90,000) is what used the exemption, so again all 6,000 is taxable - 1,500.00.
         var result = _sut.Compute(NewEmployee(), DecemberRun(),
             thirteenthMonthPaidEarlierInYear: 90_000m,
             leaveConversion: new LeaveConversionInput(12_000m, 6_000m));
+
+        result.WithholdingTax.Should().Be(14_337.50m);
+    }
+
+    [Fact]
+    public void Compute_counts_the_exemption_used_as_at_least_the_13th_month_paid_earlier()
+    {
+        // Inconsistent inputs: 90,000 of 13th month paid earlier, yet only 30,000 of the exemption
+        // said to be used - the 13th month alone used 90,000, so the larger figure stands.
+        // Nothing of the exemption is left: all 6,000 is taxable, 6,000 x 25% = 1,500.00 on top of
+        // the regular 12,837.50 = 14,337.50. (Taking the 30,000 would leave 60,000 exempt and the
+        // withholding at 12,837.50 - under-withholding.)
+        var result = _sut.Compute(NewEmployee(), DecemberRun(),
+            thirteenthMonthPaidEarlierInYear: 90_000m,
+            leaveConversion: new LeaveConversionInput(12_000m, 6_000m),
+            otherBenefitsExemptUsedEarlierInYear: 30_000m);
 
         result.WithholdingTax.Should().Be(14_337.50m);
     }

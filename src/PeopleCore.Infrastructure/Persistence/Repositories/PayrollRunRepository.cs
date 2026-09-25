@@ -124,6 +124,23 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
         return await Context.PayrollRuns.CountAsync(r => r.Status != PayrollRunStatus.Paid && r.PayDate >= first && r.PayDate < next, ct);
     }
 
+    public async Task<IReadOnlyList<LeaveConvertedInRun>> GetLeaveConversionsInYearAsync(
+        int periodEndYear, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId, CancellationToken ct = default)
+    {
+        var first = new DateOnly(periodEndYear, 1, 1);
+        var next = first.AddYears(1);
+        var ids = employeeIds.ToList();
+        return await Context.PayrollRunEmployees
+            .Where(e => ids.Contains(e.EmployeeId)
+                        && e.LeaveConversionPay > 0m
+                        && e.PayrollRunId != excludeRunId
+                        && e.PayrollRun.RunType == PayrollRunType.Regular
+                        && e.PayrollRun.PeriodEnd >= first && e.PayrollRun.PeriodEnd < next)
+            .OrderBy(e => e.PayrollRun.PeriodEnd)
+            .Select(e => new LeaveConvertedInRun(e.EmployeeId, e.PayrollRun.RunNumber))
+            .ToListAsync(ct);
+    }
+
     // A half-open range so the index on the date column can be used, instead of the Year/Month
     // predicates it used to run as, which cannot.
     private static (DateOnly First, DateOnly Next) MonthRange(int year, int month)

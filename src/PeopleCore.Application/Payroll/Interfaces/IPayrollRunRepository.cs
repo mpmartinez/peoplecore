@@ -162,4 +162,16 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     /// Runs whose pay date falls in the year that aren't Paid yet, for the 1604-C's "not included" note.
     /// </summary>
     Task<int> CountUnpaidRunsPaidInYearAsync(int year, CancellationToken ct = default);
+
+    /// <summary>
+    /// Year-end leave conversions already on file for the employees: one per entry with
+    /// LeaveConversionPay above zero, on a Regular run - in any status - whose PeriodEnd falls in
+    /// <paramref name="periodEndYear"/>, other than <paramref name="excludeRunId"/>. Final pays
+    /// convert their own leave and don't count.
+    /// </summary>
+    Task<IReadOnlyList<LeaveConvertedInRun>> GetLeaveConversionsInYearAsync(
+        int periodEndYear, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId, CancellationToken ct = default);
 }
+
+/// <summary>An employee whose leave the run numbered <paramref name="RunNumber"/> converted to cash.</summary>
+public sealed record LeaveConvertedInRun(Guid EmployeeId, string RunNumber);

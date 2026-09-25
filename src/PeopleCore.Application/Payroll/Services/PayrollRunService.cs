@@ -26,11 +26,17 @@ public class PayrollRunService : IPayrollRunService
     private readonly ISeparationRepository _separations;
     private readonly ILogger<PayrollRunService> _logger;
     private readonly IFinalPayService? _finalPay;
+    private readonly IYearEndLeaveConversion? _yearEndLeave;
 
     /// <param name="finalPay">
     /// Recomputes final-pay runs, which are built from a separation rather than from a list of
     /// employees. Optional so callers that never see a final-pay run needn't supply one; computing
     /// a final-pay run without it is refused.
+    /// </param>
+    /// <param name="yearEndLeave">
+    /// Works out and records each employee's year-end convertible leave, for a December run that
+    /// includes the conversion. Optional so callers that never see such a run needn't supply one;
+    /// computing or paying one without it is refused.
     /// </param>
     public PayrollRunService(
         IPayrollRunRepository runRepo,
@@ -43,7 +49,8 @@ public class PayrollRunService : IPayrollRunService
         IEmployeeRepository employeeRepo,
         ISeparationRepository separations,
         ILogger<PayrollRunService> logger,
-        IFinalPayService? finalPay = null)
+        IFinalPayService? finalPay = null,
+        IYearEndLeaveConversion? yearEndLeave = null)
     {
         _runRepo = runRepo;
         _compensationRepo = compensationRepo;
@@ -56,6 +63,7 @@ public class PayrollRunService : IPayrollRunService
         _separations = separations;
         _logger = logger;
         _finalPay = finalPay;
+        _yearEndLeave = yearEndLeave;
     }
 
     public async Task<PayrollRunDto> CreateAsync(CreatePayrollRunRequest request, CancellationToken ct = default)
@@ -75,8 +83,10 @@ public class PayrollRunService : IPayrollRunService
             PayDate = request.PayDate,
             Frequency = request.Frequency,
             Status = PayrollRunStatus.Draft,
-            AttendancePeriodId = request.AttendancePeriodId
+            AttendancePeriodId = request.AttendancePeriodId,
+            IncludesLeaveConversion = request.IncludeLeaveConversion
         };
+        EnsureLeaveConversionFits(run);
 
         // No snapshots to honour on a brand new run, so the attendance is derived.
         run.Employees = await ComputeEntriesAsync(run, request.Employees, snapshots: null, ct);
@@ -190,9 +200,11 @@ public class PayrollRunService : IPayrollRunService
         if (run.Status != PayrollRunStatus.Approved)
             throw new DomainException("Only approved payroll runs can be marked as paid.");
 
-        // A final pay also pays out the employee's convertible leave: what it converted is
-        // checked against the balances now, before anything changes, and recorded as used below.
+        // A final pay also pays out the employee's convertible leave, and so does a December run
+        // that includes the year-end conversion: what each converted is checked against the
+        // balances now, before anything changes, and recorded as used below.
         IReadOnlyList<LeavePaidOut> leavePaidOut = [];
+        IReadOnlyList<LeavePaidOut> yearEndPaidOut = [];
         if (run.RunType == PayrollRunType.FinalPay)
         {
             await EnsureClearanceCompleteAsync(run, ct);
@@ -203,6 +215,8 @@ public class PayrollRunService : IPayrollRunService
         else
         {
             await EnsureNoOneHasLeftAsync(run, ct);
+            if (run.IncludesLeaveConversion)
+                yearEndPaidOut = await YearEndLeavePaidOutAsync(run, ct);
         }
 
         var loanIds = run.Employees
@@ -236,6 +250,8 @@ public class PayrollRunService : IPayrollRunService
         // whichever of these saves comes first.
         if (leavePaidOut.Count > 0)
             await _finalPay!.RecordLeavePaidOutAsync(leavePaidOut, ct);
+        if (yearEndPaidOut.Count > 0)
+            await _yearEndLeave!.RecordAsync(yearEndPaidOut, ct);
         if (loans.Count > 0)
             await _loanRepo.UpdateRangeAsync(loans, ct);
         await _runRepo.UpdateAsync(run, ct);
@@ -316,6 +332,46 @@ public class PayrollRunService : IPayrollRunService
         throw new DomainException($"Clear {string.Join(", ", outstanding)} before paying final pay.");
     }
 
+    /// <summary>
+    /// The days a run with the year-end conversion paid out, re-worked out now for every entry
+    /// that converted any. They must still price, at the entry's own daily rate, to what the entry
+    /// pays: leave taken or granted since the run was computed would otherwise be recorded as paid
+    /// out when it wasn't, or paid out without being recorded. Changes nothing.
+    /// </summary>
+    private async Task<IReadOnlyList<LeavePaidOut>> YearEndLeavePaidOutAsync(PayrollRun run, CancellationToken ct)
+    {
+        var yearEndLeave = YearEndLeave();
+        var paidOut = new List<LeavePaidOut>();
+        foreach (var entry in run.Employees.Where(e => e.LeaveConversionPay > 0m))
+        {
+            var days = await yearEndLeave.DaysAsync(entry.EmployeeId, run.PeriodEnd.Year, ct);
+            var (deMinimis, otherBenefits) = LeavePayout.Price(days, entry.DailyRate);
+            if (deMinimis + otherBenefits != entry.LeaveConversionPay)
+            {
+                var name = entry.Employee?.FullName
+                    ?? (await _employeeRepo.GetByIdAsync(entry.EmployeeId, ct))?.FullName
+                    ?? entry.EmployeeId.ToString();
+                throw new DomainException(
+                    $"{name}'s convertible leave has changed since this payroll was computed; recompute it before paying.");
+            }
+            paidOut.AddRange(days);
+        }
+        return paidOut;
+    }
+
+    private IYearEndLeaveConversion YearEndLeave() => _yearEndLeave ?? throw new InvalidOperationException(
+        "PayrollRunService was built without an IYearEndLeaveConversion, so it can't convert year-end leave.");
+
+    /// <summary>
+    /// Year-end leave conversion goes only on a Regular run whose period ends in December - a
+    /// final pay converts the employee's leave its own way.
+    /// </summary>
+    private static void EnsureLeaveConversionFits(PayrollRun run)
+    {
+        if (run.IncludesLeaveConversion && (run.RunType != PayrollRunType.Regular || run.PeriodEnd.Month != 12))
+            throw new DomainException("Year-end leave conversion goes on a December payroll.");
+    }
+
     private Task EnsureNoOneHasLeftAsync(PayrollRun run, CancellationToken ct)
         => EnsureNoOneHasLeftAsync(run.Employees.Select(e => e.EmployeeId).ToList(), run.PeriodStart, run.PeriodEnd, ct);
 
@@ -394,6 +450,7 @@ public class PayrollRunService : IPayrollRunService
         // leave, since nobody else's pay depends on it.
         var earlierInYear = new Dictionary<Guid, (decimal Basic, decimal ThirteenthMonth, decimal ExemptUsed)>();
         var ineligible = new HashSet<Guid>();
+        IReadOnlyList<Domain.Entities.Employees.Employee> people = [];
         if (employees.Any(e => e.IncludeThirteenthMonth) || run.IncludesLeaveConversion)
         {
             var paidRuns = await _runRepo.GetPaidRunsInYearAsync(run.PayDate.Year, ct) ?? [];
@@ -407,8 +464,28 @@ public class PayrollRunService : IPayrollRunService
                     g.Sum(e => e.ThirteenthMonth),
                     g.Sum(e => e.ThirteenthMonthAndOtherBenefits)));
 
-            var people = await _employeeRepo.GetByIdsAsync(employeeIds, ct) ?? [];
+            people = await _employeeRepo.GetByIdsAsync(employeeIds, ct) ?? [];
             ineligible = people.Where(p => !p.Is13thMonthEligible).Select(p => p.Id).ToHashSet();
+        }
+
+        // Year-end leave conversion (a December run that includes it): each employee's unused
+        // year-end leave for the period-end year, converted once a year - an employee whose leave
+        // for the year another regular run has already converted, in any status, is refused.
+        IYearEndLeaveConversion? yearEndLeave = null;
+        int conversionYear = run.PeriodEnd.Year;
+        if (run.IncludesLeaveConversion)
+        {
+            EnsureLeaveConversionFits(run);
+            yearEndLeave = YearEndLeave();
+
+            var converted = await _runRepo.GetLeaveConversionsInYearAsync(conversionYear, employeeIds, run.Id, ct) ?? [];
+            if (converted.Count > 0)
+            {
+                var first = converted[0];
+                var name = people.FirstOrDefault(p => p.Id == first.EmployeeId)?.FullName ?? first.EmployeeId.ToString();
+                throw new DomainException(string.Create(CultureInfo.InvariantCulture,
+                    $"{name}'s leave for {conversionYear} was already converted in {first.RunNumber}."));
+            }
         }
 
         var entries = new List<PayrollRunEmployee>();
@@ -430,6 +507,20 @@ public class PayrollRunService : IPayrollRunService
                     : new PayrollAttendanceInput(),
                 employee);
 
+            // Priced at the daily rate the engine gives the entry - the same helper, so the two
+            // always agree; Mark Paid re-prices the days at the entry's DailyRate.
+            decimal dailyRate = PayrollComputationService.DailyRateFor(compensation.BasicSalary, dailyRateFactor);
+            LeaveConversionInput? leaveConversion = null;
+            if (yearEndLeave is not null)
+            {
+                var days = await yearEndLeave.DaysAsync(employee.EmployeeId, conversionYear, ct);
+                if (days.Count > 0)
+                {
+                    var (deMinimis, otherBenefits) = LeavePayout.Price(days, dailyRate);
+                    leaveConversion = new LeaveConversionInput(deMinimis, otherBenefits);
+                }
+            }
+
             // overtimeHours/holidayDays are left at their defaults: Compute reads them only when
             // attendance is null, and any caller override has already been folded into the
             // attendance record above so that the snapshot records what was actually paid.
@@ -443,7 +534,12 @@ public class PayrollRunService : IPayrollRunService
                 basicEarnedEarlierInYear: earlierInYear.GetValueOrDefault(employee.EmployeeId).Basic,
                 isThirteenthMonthEligible: !ineligible.Contains(employee.EmployeeId),
                 otherBenefitsExemptUsedEarlierInYear:
-                    earlierInYear.GetValueOrDefault(employee.EmployeeId).ExemptUsed);
+                    earlierInYear.GetValueOrDefault(employee.EmployeeId).ExemptUsed,
+                leaveConversion: leaveConversion);
+
+            if (leaveConversion is not null && entry.DailyRate != dailyRate)
+                throw new InvalidOperationException(
+                    $"Leave was priced at {dailyRate} a day but the entry's daily rate is {entry.DailyRate}.");
 
             SnapshotAttendance(entry, attendance);
 
@@ -579,14 +675,14 @@ public class PayrollRunService : IPayrollRunService
         run.Frequency, run.Status,
         run.EmployeeCount, run.TotalGrossPay, run.TotalDeductions, run.TotalNetPay,
         run.CreatedAt, run.AttendancePeriodId, run.EmployeesMissingAttendance,
-        run.Employees.Select(ToEmployeeDto).ToList(), run.RunType);
+        run.Employees.Select(ToEmployeeDto).ToList(), run.RunType, run.IncludesLeaveConversion);
 
     private static PayrollRunSummaryDto ToSummaryDto(PayrollRun run) => new(
         run.Id, run.RunNumber, run.PeriodLabel,
         run.PeriodStart, run.PeriodEnd, run.PayDate,
         run.Frequency, run.Status,
         run.EmployeeCount, run.TotalGrossPay, run.TotalNetPay,
-        run.EmployeesMissingAttendance, run.CreatedAt, run.RunType);
+        run.EmployeesMissingAttendance, run.CreatedAt, run.RunType, run.IncludesLeaveConversion);
 
     private static PayrollRunEmployeeDto ToEmployeeDto(PayrollRunEmployee e) => new(
         e.Id, e.EmployeeId, e.Employee?.FullName ?? string.Empty,
