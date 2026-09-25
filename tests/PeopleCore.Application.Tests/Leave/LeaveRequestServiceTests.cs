@@ -888,6 +888,55 @@ public class LeaveRequestServiceTests
         dto.LeaveTypeName.Should().Be("VAWC Leave");
     }
 
+    [Fact]
+    public async Task ARequestWhoseTypeDidNotLoad_IsTreatedAsConfidential()
+    {
+        // Fail closed: "not confidential" would show a VAWC request to a manager.
+        var request = new LeaveRequest
+        {
+            EmployeeId = Guid.NewGuid(), LeaveTypeId = Guid.NewGuid(),
+            StartDate = new DateOnly(2026, 10, 5), EndDate = new DateOnly(2026, 10, 5), TotalDays = 1
+        };
+        _leaveRepo.Setup(r => r.GetByIdAsync(request.Id, It.IsAny<CancellationToken>())).ReturnsAsync(request);
+
+        var dto = await _sut.GetByIdAsync(request.Id);
+
+        dto.IsConfidential.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateAsync_SaysWhetherTheTypeIsConfidential_FromTheTypeItFiledAgainst(bool isConfidential)
+    {
+        // The saved request comes back without its navigation loaded; the type it was filed
+        // against is known, so the answer does not have to fall back to "confidential".
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        lt.IsConfidential = isConfidential;
+        Known(emp, lt);
+        HasBalance(emp, lt, 2026, total: 15);
+
+        var result = await _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 6), null));
+
+        result.IsConfidential.Should().Be(isConfidential);
+        result.LeaveTypeName.Should().Be("Vacation Leave");
+    }
+
+    [Fact]
+    public async Task ApproveAsync_SaysWhetherTheTypeIsConfidential_FromTheTypeItChecked()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        var request = Stored(emp, lt, new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 6), totalDays: 2, daysInStartYear: 2);
+        HasBalance(emp, lt, 2026, 10);
+
+        var result = await _sut.ApproveAsync(request.Id, Guid.NewGuid());
+
+        result.IsConfidential.Should().BeFalse();
+    }
+
     // ── Filing options ───────────────────────────────────────────────────────
 
     private static LeaveType AllocatedToFather() => new()

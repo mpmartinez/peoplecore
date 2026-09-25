@@ -77,6 +77,23 @@ public class PayrollExportConfidentialLeaveTests
         rows.Single(r => r.StartDate == new DateOnly(2026, 10, 5)).LeaveTypeCode.Should().Be("VAWC");
     }
 
+    [Fact]
+    public async Task ALeaveWhoseTypeDidNotLoad_GoesOutAsLeave()
+    {
+        var employee = new Employee { Id = Guid.NewGuid(), EmployeeNumber = "EMP-002", FirstName = "Jose", LastName = "Rizal" };
+        var unloaded = new LeaveRequest
+        {
+            EmployeeId = employee.Id, Employee = employee, LeaveTypeId = Guid.NewGuid(),
+            StartDate = new DateOnly(2026, 10, 12), EndDate = new DateOnly(2026, 10, 12), TotalDays = 1,
+            Status = LeaveStatus.Approved, ApprovedAt = new DateTime(2026, 9, 30, 0, 0, 0, DateTimeKind.Utc)
+        };
+        _leaveRepo.Setup(r => r.GetApprovedByPeriodAsync(From, To, It.IsAny<CancellationToken>())).ReturnsAsync([unloaded]);
+
+        var rows = await _sut.GetApprovedLeavesAsync(From, To, showConfidentialTypes: false);
+
+        rows.Should().ContainSingle().Which.LeaveTypeName.Should().Be("Leave");
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

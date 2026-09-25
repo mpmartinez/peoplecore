@@ -92,7 +92,8 @@ public class PayrollExportService : IPayrollExportService
 
         return leaves.Select(l =>
         {
-            var hidden = l.LeaveType?.IsConfidential == true && !showConfidentialTypes;
+            // Fail closed: a leave whose type did not load might be confidential.
+            var hidden = (l.LeaveType?.IsConfidential ?? true) && !showConfidentialTypes;
             return new PayrollLeaveDeductionDto(
             LeaveRequestId: l.Id,
             EmployeeId: l.EmployeeId,

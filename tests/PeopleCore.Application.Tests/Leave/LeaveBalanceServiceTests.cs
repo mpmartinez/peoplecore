@@ -28,6 +28,18 @@ public class LeaveBalanceServiceTests
         rows.Should().ContainSingle().Which.IsConfidential.Should().Be(isConfidential);
     }
 
+    [Fact]
+    public async Task GetByEmployeeAsync_ABalanceWhoseTypeDidNotLoad_IsTreatedAsConfidential()
+    {
+        var employeeId = Guid.NewGuid();
+        _repo.Setup(r => r.GetByEmployeeAsync(employeeId, 2026, It.IsAny<CancellationToken>()))
+             .ReturnsAsync([new LeaveBalance { EmployeeId = employeeId, LeaveTypeId = Guid.NewGuid(), Year = 2026, TotalDays = 10 }]);
+
+        var rows = await new LeaveBalanceService(_repo.Object).GetByEmployeeAsync(employeeId, 2026);
+
+        rows.Should().ContainSingle().Which.IsConfidential.Should().BeTrue();
+    }
+
     [Theory]
     [InlineData(LeaveEntitlementKind.PerEvent)]
     [InlineData(LeaveEntitlementKind.YearlyAllowance)]

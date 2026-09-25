@@ -62,5 +62,6 @@ public class LeaveBalanceService : ILeaveBalanceService
         b.Id, b.EmployeeId, b.Employee?.FullName ?? string.Empty,
         b.LeaveTypeId, b.LeaveType?.Name ?? string.Empty,
         b.Year, b.TotalDays, b.UsedDays, b.CarriedOverDays, b.RemainingDays,
-        b.LeaveType?.IsConfidential ?? false);
+        // Fail closed: a balance whose type did not load is treated as confidential.
+        b.LeaveType?.IsConfidential ?? true);
 }

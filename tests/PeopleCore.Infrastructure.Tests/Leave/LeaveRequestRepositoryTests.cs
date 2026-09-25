@@ -115,4 +115,21 @@ public class LeaveRequestRepositoryTests : DatabaseTestBase
         loaded.LeaveType.Name.Should().Be("Paternity Leave");
         loaded.Employee.Should().NotBeNull();
     }
+
+    [Fact]
+    public async Task GetPagedAsync_AndGetApprovedByPeriodAsync_LoadTheType()
+    {
+        // A request whose type did not load is treated as confidential (fail closed), so every
+        // read that ends in a DTO or an export row has to include it.
+        var (employee, _, type, _) = await SeedAsync();
+        Context.LeaveRequests.Add(ARequest(employee, type, LeaveStatus.Approved));
+        await Context.SaveChangesAsync();
+        var sut = new LeaveRequestRepository(NewContext());
+
+        var (items, _) = await sut.GetPagedAsync(null, null, null, 1, 20, excludeConfidential: false);
+        var approved = await sut.GetApprovedByPeriodAsync(new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 31));
+
+        items.Should().ContainSingle().Which.LeaveType.Should().NotBeNull();
+        approved.Should().ContainSingle().Which.LeaveType.Should().NotBeNull();
+    }
 }

@@ -93,7 +93,7 @@ public class LeaveRequestService : ILeaveRequestService
     {
         var (items, total) = await _leaveRepo.GetPagedAsync(
             employeeId, reportingManagerId, status, page, pageSize, excludeConfidential, ct);
-        return PagedResult<LeaveRequestDto>.Create(items.Select(ToDto).ToList(), total, page, pageSize);
+        return PagedResult<LeaveRequestDto>.Create(items.Select(r => ToDto(r)).ToList(), total, page, pageSize);
     }
 
     public async Task<LeaveRequestDto> GetByIdAsync(Guid id, CancellationToken ct = default)
@@ -153,7 +153,7 @@ public class LeaveRequestService : ILeaveRequestService
         };
 
         var created = await _leaveRepo.AddAsync(request, ct);
-        return ToDto(created);
+        return ToDto(created, leaveType);
     }
 
     public async Task<LeaveRequestDto> ApproveAsync(Guid id, Guid approverId, CancellationToken ct = default)
@@ -226,7 +226,7 @@ public class LeaveRequestService : ILeaveRequestService
         request.UpdatedAt = DateTime.UtcNow;
 
         await _leaveRepo.UpdateAsync(request, ct);
-        return ToDto(request);
+        return ToDto(request, leaveType);
     }
 
     /// <summary>What <see cref="CheckAsync"/> found: the day counts and the balance rows it read, by year.</summary>
@@ -384,14 +384,20 @@ public class LeaveRequestService : ILeaveRequestService
 
     /// <summary>
     /// The request as its DTO. The type's name and confidential flag come from the loaded
-    /// <see cref="LeaveRequest.LeaveType"/>, which the repository's reads include.
+    /// <see cref="LeaveRequest.LeaveType"/>, which the repository's reads include, or else from
+    /// <paramref name="knownType"/> - the type a filing or approval has just checked. With neither,
+    /// the request is treated as confidential: failing open would show a VAWC request to a manager.
     /// </summary>
-    internal static LeaveRequestDto ToDto(LeaveRequest r) => new(
-        r.Id, r.EmployeeId, r.Employee?.FullName ?? string.Empty,
-        r.LeaveTypeId, r.LeaveType?.Name ?? string.Empty,
-        r.StartDate, r.EndDate, r.TotalDays, r.Reason,
-        r.Status, r.ApprovedBy, r.ApprovedAt, r.RejectionReason, r.CreatedAt,
-        r.MaternityCase, r.DaysAllocatedToFather,
-        r.DocumentStorageKey != null, r.DocumentFileName,
-        r.LeaveType?.IsConfidential ?? false);
+    internal static LeaveRequestDto ToDto(LeaveRequest r, LeaveType? knownType = null)
+    {
+        var type = r.LeaveType ?? knownType;
+        return new(
+            r.Id, r.EmployeeId, r.Employee?.FullName ?? string.Empty,
+            r.LeaveTypeId, type?.Name ?? string.Empty,
+            r.StartDate, r.EndDate, r.TotalDays, r.Reason,
+            r.Status, r.ApprovedBy, r.ApprovedAt, r.RejectionReason, r.CreatedAt,
+            r.MaternityCase, r.DaysAllocatedToFather,
+            r.DocumentStorageKey != null, r.DocumentFileName,
+            type?.IsConfidential ?? true);
+    }
 }
