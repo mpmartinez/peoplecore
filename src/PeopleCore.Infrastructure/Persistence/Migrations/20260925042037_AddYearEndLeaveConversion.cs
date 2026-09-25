@@ -9,13 +9,15 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
     {
         /// <summary>
         /// Turns on ConvertsAtYearEnd for the leave type coded SIL (however the code was cased or
-        /// padded): unused Service Incentive Leave is commutable to cash once a year (Labor Code
-        /// Art. 95), and the app defaults that payout to the December payroll. Idempotent. Kept as
+        /// padded), when it is a paid Accrued type - the only kind that can convert: unused Service
+        /// Incentive Leave is commutable to cash once a year (Labor Code Art. 95), and the app
+        /// defaults that payout to the December payroll. Idempotent. Kept as
         /// a constant so YearEndLeaveConversionStorageTests can run it against a database with rows
         /// in it.
         /// </summary>
         public const string MarkSilConvertsAtYearEndSql = """
-            UPDATE leave_types SET converts_at_year_end = TRUE WHERE upper(btrim(code)) = 'SIL';
+            UPDATE leave_types SET converts_at_year_end = TRUE
+            WHERE upper(btrim(code)) = 'SIL' AND entitlement_kind = 'Accrued' AND is_paid;
             """;
 
         /// <inheritdoc />

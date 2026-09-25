@@ -93,4 +93,32 @@ public class YearEndLeaveConversionStorageTests : DatabaseTestBase
         await using var reader = NewContext();
         (await reader.LeaveTypes.SingleAsync()).ConvertsAtYearEnd.Should().BeFalse();
     }
+
+    [Fact]
+    public async Task Migration_LeavesAYearlyAllowanceSilOff()
+    {
+        var sil = AType("SIL");
+        sil.EntitlementKind = LeaveEntitlementKind.YearlyAllowance;
+        Context.LeaveTypes.Add(sil);
+        await Context.SaveChangesAsync();
+
+        await Context.Database.ExecuteSqlRawAsync(AddYearEndLeaveConversion.MarkSilConvertsAtYearEndSql);
+
+        await using var reader = NewContext();
+        (await reader.LeaveTypes.SingleAsync()).ConvertsAtYearEnd.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Migration_LeavesAnUnpaidSilOff()
+    {
+        var sil = AType("SIL");
+        sil.IsPaid = false;
+        Context.LeaveTypes.Add(sil);
+        await Context.SaveChangesAsync();
+
+        await Context.Database.ExecuteSqlRawAsync(AddYearEndLeaveConversion.MarkSilConvertsAtYearEndSql);
+
+        await using var reader = NewContext();
+        (await reader.LeaveTypes.SingleAsync()).ConvertsAtYearEnd.Should().BeFalse();
+    }
 }

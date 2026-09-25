@@ -10,7 +10,7 @@ namespace PeopleCore.Application.Tests.Payroll;
 
 /// <summary>
 /// YearEndLeaveConversion: an employee's convertible days for a year. Days = max(0, that year's balance less the employee's Pending holds of the type charged
-/// to that year); only active ConvertsAtYearEnd types count, and only balances that come to more
+/// to that year); only active, paid, Accrued ConvertsAtYearEnd types count, and only balances that come to more
 /// than 0 days are returned.
 /// </summary>
 public class YearEndLeaveConversionTests
@@ -96,6 +96,34 @@ public class YearEndLeaveConversionTests
         var noSetting = new LeaveType { Name = "Emergency", Code = "EL", IsActive = true, ConvertsAtYearEnd = false };
         GivenTypes(noSetting);
         GivenBalances(Balance(noSetting, 5m));
+
+        var result = await _sut.DaysAsync(_employeeId, Year);
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task DaysAsync_SkipsAYearlyAllowanceType_ThatHasTheSettingOn()
+    {
+        var yearly = new LeaveType
+        {
+            Name = "Birthday", Code = "BDAY", IsActive = true, ConvertsAtYearEnd = true,
+            EntitlementKind = LeaveEntitlementKind.YearlyAllowance
+        };
+        GivenTypes(yearly);
+        GivenBalances(Balance(yearly, 1m));
+
+        var result = await _sut.DaysAsync(_employeeId, Year);
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task DaysAsync_SkipsAnUnpaidType_ThatHasTheSettingOn()
+    {
+        var unpaid = new LeaveType { Name = "Unpaid", Code = "LWOP", IsActive = true, ConvertsAtYearEnd = true, IsPaid = false };
+        GivenTypes(unpaid);
+        GivenBalances(Balance(unpaid, 5m));
 
         var result = await _sut.DaysAsync(_employeeId, Year);
 
