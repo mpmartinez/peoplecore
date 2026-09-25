@@ -43,8 +43,8 @@ over, is lost. The first deadline is December 2026.
   - The entry's existing fields carry it exactly as on a final pay: `LeaveConversionPay`,
     `LeaveConversionNonTaxable`, `LeaveConversionOtherBenefits`, `FinalPayNonTaxable`
     (= the de minimis part here). The payslip, 2316, 1601-C and 1604-C need no changes.
-- **Once a year:** an employee whose leave for that year was already converted on another
-  Regular run that isn't Cancelled or deleted (any status) is refused: "{name}'s leave for {year}
+- **Once a year:** an employee whose leave for that year is already converted on another
+  Regular run of any status (the employee's entry there has `LeaveConversionPay > 0`) is refused: "{name}'s leave for {year}
   was already converted in {RunNumber}."
 - Employees who have left aren't on regular runs; final pay converts their leave.
 
