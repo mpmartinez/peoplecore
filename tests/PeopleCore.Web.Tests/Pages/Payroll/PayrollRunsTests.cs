@@ -443,6 +443,18 @@ public class PayrollRunsTests : BunitContext
         (group.QuerySelector("[data-leave-conversion]") is not null).Should().Be(end.StartsWith("2026-12"));
     }
 
+    [Fact]
+    public void TheInclude13thMonthBox_NotesItsDueByDec24()
+    {
+        StubTwoActiveEmployees();
+        var cut = RenderWithCreateDialogOpen();
+
+        var box = cut.Find("[data-thirteenth-month]");
+        var note = cut.Find("[data-thirteenth-month-due]");
+        note.TextContent.Trim().Should().Be("Due by Dec 24 (PD 851).");
+        box.Closest(".space-y-1")!.Contains(note).Should().BeTrue("the note sits under the box");
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

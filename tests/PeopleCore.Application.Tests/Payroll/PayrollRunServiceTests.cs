@@ -2400,6 +2400,95 @@ public class PayrollRunServiceTests
     }
 
     // ------------------------------------------------------------------
+    // The 13th month is paid in its own year: never on a payroll paid in another
+    // ------------------------------------------------------------------
+
+    private const string PayItIn2026 =
+        "The 2026 13th month must be paid by Dec 24, 2026; give this payroll a pay date in 2026.";
+
+    /// <summary>Maria's Dec 16-31, 2026 run, paid Jan 5, 2027: a pay date in the next year.</summary>
+    private static CreatePayrollRunRequest PaidInJanuaryRequest(Guid employeeId, bool includeThirteenthMonth) => new(
+        new DateOnly(2026, 12, 16), new DateOnly(2026, 12, 31), new DateOnly(2027, 1, 5), PayFrequency.SemiMonthly,
+        [new PayrollRunEmployeeInput(employeeId, IncludeThirteenthMonth: includeThirteenthMonth)]);
+
+    /// <summary>
+    /// Maria's Dec 16-31, 2026 run paid Jan 5, 2027, saved without the 13th month; and, when
+    /// <paramref name="flagged"/>, marked as including it, as a run saved before the rule would be.
+    /// </summary>
+    private async Task<PayrollRun> PaidInJanuaryRunForMaria(bool flagged)
+    {
+        var (maria, savedRun) = MariaAt36500();
+        RecomputesInPlace();
+        await _sut.CreateAsync(PaidInJanuaryRequest(maria.Id, includeThirteenthMonth: false));
+        var run = savedRun()!;
+        foreach (var entry in run.Employees)
+            entry.IncludeThirteenthMonth = flagged;
+        _runRepo.Invocations.Clear();
+        return run;
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithThe13thMonth_OnAPayrollPaidInTheNextYear_IsRefused_AndSavesNothing()
+    {
+        // Computed from 2027's basic, it would underpay, and count as 2027's 13th month.
+        var (maria, _) = MariaAt36500();
+
+        var act = () => _sut.CreateAsync(PaidInJanuaryRequest(maria.Id, includeThirteenthMonth: true));
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(PayItIn2026);
+        _runRepo.Verify(r => r.AddWithEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithoutThe13thMonth_OnAPayrollPaidInTheNextYear_IsAllowed()
+    {
+        var (maria, savedRun) = MariaAt36500();
+
+        await _sut.CreateAsync(PaidInJanuaryRequest(maria.Id, includeThirteenthMonth: false));
+
+        savedRun()!.PayDate.Should().Be(new DateOnly(2027, 1, 5));
+    }
+
+    [Fact]
+    public async Task ComputeAsync_OnAPayrollPaidInAnotherYear_ThatIncludesThe13thMonth_IsRefused_AndSavesNothing()
+    {
+        var run = await PaidInJanuaryRunForMaria(flagged: true);
+
+        var act = () => _sut.ComputeAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(PayItIn2026);
+        _runRepo.Verify(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyList<PayrollRunEmployee>>(),
+                                                   It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SetThirteenthMonthAsync_TurningItOn_OnAPayrollPaidInAnotherYear_IsRefused_AndChangesNothing()
+    {
+        var run = await PaidInJanuaryRunForMaria(flagged: false);
+        run.Status = PayrollRunStatus.Approved;
+
+        var act = () => _sut.SetThirteenthMonthAsync(run.Id, include: true);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(PayItIn2026);
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+        run.Employees.Single().IncludeThirteenthMonth.Should().BeFalse();
+        _runRepo.Verify(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyList<PayrollRunEmployee>>(),
+                                                   It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SetThirteenthMonthAsync_TurningItOff_OnAPayrollPaidInAnotherYear_IsAllowed()
+    {
+        // A run saved with it before the rule can still be put right.
+        var run = await PaidInJanuaryRunForMaria(flagged: true);
+
+        var dto = await _sut.SetThirteenthMonthAsync(run.Id, include: false);
+
+        dto.IncludesThirteenthMonth.Should().BeFalse();
+        run.Employees.Single().ThirteenthMonth.Should().Be(0m);
+    }
+
+    // ------------------------------------------------------------------
     // The 13th month is paid once: never on two unpaid runs of a pay year, and never on a run
     // whose figures predate a 13th month paid since
     // ------------------------------------------------------------------
@@ -2428,19 +2517,19 @@ public class PayrollRunServiceTests
     [Fact]
     public async Task The13thMonthCheck_LooksAtThePayYear_AndNeverAtTheRunItself()
     {
-        // Dec 16-31, 2026 paid Jan 5, 2027 is in the 2027 pay year.
+        // Dec 21, 2025 - Jan 5, 2026 paid Jan 10, 2026 is in the 2026 pay year, though it starts in 2025.
         var (maria, savedRun) = MariaAt36500();
         RecomputesInPlace();
         await _sut.CreateAsync(new CreatePayrollRunRequest(
-            new DateOnly(2026, 12, 16), new DateOnly(2026, 12, 31), new DateOnly(2027, 1, 5), PayFrequency.SemiMonthly,
+            new DateOnly(2025, 12, 21), new DateOnly(2026, 1, 5), new DateOnly(2026, 1, 10), PayFrequency.SemiMonthly,
             [new PayrollRunEmployeeInput(maria.Id, IncludeThirteenthMonth: true)]));
         var run = savedRun()!;
 
         await _sut.ComputeAsync(run.Id);
 
-        _runRepo.Verify(r => r.GetUnpaidThirteenthMonthsInYearAsync(2027,
+        _runRepo.Verify(r => r.GetUnpaidThirteenthMonthsInYearAsync(2026,
             It.Is<IReadOnlyCollection<Guid>>(ids => ids.Single() == maria.Id), run.Id, It.IsAny<CancellationToken>()), Times.Exactly(2));
-        _runRepo.Verify(r => r.GetUnpaidThirteenthMonthsInYearAsync(2026, It.IsAny<IReadOnlyCollection<Guid>>(),
+        _runRepo.Verify(r => r.GetUnpaidThirteenthMonthsInYearAsync(2025, It.IsAny<IReadOnlyCollection<Guid>>(),
             It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 

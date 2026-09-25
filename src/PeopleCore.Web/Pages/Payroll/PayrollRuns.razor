@@ -116,6 +116,7 @@
         <div class="space-y-1">
             <Checkbox @bind-Value="_form.IncludeThirteenthMonth" data-thirteenth-month>Include 13th month</Checkbox>
             <p class="ml-6 text-xs text-muted-foreground">Pays each eligible employee's 13th month on this payroll, less any part already paid this year.</p>
+            <p class="ml-6 text-xs text-muted-foreground" data-thirteenth-month-due>Due by Dec 24 (PD 851).</p>
         </div>
         @* The API takes year-end leave conversion only on a December payroll, so the box is offered
            only while the period ends in December; a tick left behind by an earlier period end isn't sent. *@

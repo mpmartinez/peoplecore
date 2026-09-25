@@ -491,6 +491,21 @@ public class PayrollRunService : IPayrollRunService
         }
     }
 
+    /// <summary>
+    /// The 13th month goes only on a regular run paid in the year its period ends: it's due by
+    /// Dec 24 (PD 851), and is worked out from the basic of the pay year. A Dec 16-31 run paid
+    /// Jan 5 would work it out from the next year's basic - underpaying it - and count it as the
+    /// next year's. Checked on create, on every recompute and when it's switched on.
+    /// </summary>
+    private static void EnsureThirteenthMonthPaidInItsYear(PayrollRun run)
+    {
+        if (run.PayDate.Year == run.PeriodEnd.Year)
+            return;
+        var year = run.PeriodEnd.Year;
+        throw new DomainException(string.Create(CultureInfo.InvariantCulture,
+            $"The {year} 13th month must be paid by Dec 24, {year}; give this payroll a pay date in {year}."));
+    }
+
     private IYearEndLeaveConversion YearEndLeave() => _yearEndLeave ?? throw new InvalidOperationException(
         "PayrollRunService was built without an IYearEndLeaveConversion, so it can't convert year-end leave.");
 
@@ -555,6 +570,9 @@ public class PayrollRunService : IPayrollRunService
         IReadOnlyDictionary<Guid, PayrollAttendanceInput>? snapshots,
         CancellationToken ct)
     {
+        if (employees.Any(e => e.IncludeThirteenthMonth))
+            EnsureThirteenthMonthPaidInItsYear(run);
+
         var settings = await _settingsRepo.GetDefaultAsync(ct);
         var rates = ToRates(settings);
         decimal dailyRateFactor = settings?.DailyRateFactor ?? 365m;

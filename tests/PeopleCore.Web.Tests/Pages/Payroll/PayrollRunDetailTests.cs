@@ -914,7 +914,8 @@ public class PayrollRunDetailTests : BunitContext
         ThirteenthMonthToggle(cut)!.Click();
 
         var dialog = cut.WaitForElement("[data-confirm-thirteenth-month]");
-        dialog.TextContent.Should().Contain("Include 13th month").And.NotContain("approval again");
+        dialog.TextContent.Should().Contain("Include 13th month").And.Contain("Due by Dec 24 (PD 851).")
+            .And.NotContain("approval again");
         _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Put);
 
         ConfirmThirteenthMonthButton(cut).Click();
@@ -948,7 +949,7 @@ public class PayrollRunDetailTests : BunitContext
 
         var dialog = cut.WaitForElement("[data-confirm-thirteenth-month]");
         dialog.TextContent.Should().Contain("Leave out the 13th month")
-            .And.Contain("goes back to Draft").And.Contain("approval again");
+            .And.Contain("goes back to Draft").And.Contain("approval again").And.NotContain("Dec 24");
 
         ConfirmThirteenthMonthButton(cut).Click();
 
@@ -978,6 +979,7 @@ public class PayrollRunDetailTests : BunitContext
     [InlineData("This payroll already includes the 13th month.")]
     [InlineData("This payroll already leaves out the 13th month.")]
     [InlineData("Maria Santos's leave for 2026 was already converted in PR-2026-0023.")]
+    [InlineData("The 2026 13th month must be paid by Dec 24, 2026; give this payroll a pay date in 2026.")]
     public void ARefused13thMonthChange_ShowsTheApisReason(string reason)
     {
         _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", periodEnd: December))

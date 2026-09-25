@@ -55,7 +55,8 @@ public interface IPayrollRunService
     /// <summary>
     /// Includes or leaves out the 13th month for every employee on a regular run and recomputes
     /// the run; an Approved or For-approval run goes back to Draft. Allowed in any month, so an
-    /// advance can be paid (a later 13th month nets out what was paid earlier in the year). A Paid
+    /// advance can be paid (a later 13th month nets out what was paid earlier in the year), but
+    /// turning it on is refused on a run paid in another year than its period ends in. A Paid
     /// run, a final pay, or a request that changes nothing is refused. Returns the run.
     /// </summary>
     Task<PayrollRunDto> SetThirteenthMonthAsync(Guid runId, bool include, CancellationToken ct = default);

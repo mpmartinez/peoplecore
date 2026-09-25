@@ -280,6 +280,8 @@ else
     private const string StopConvertingLabel = "Stop converting unused leave";
     private const string IncludeThirteenthMonthLabel = "Include 13th month";
     private const string LeaveOutThirteenthMonthLabel = "Leave out the 13th month";
+    // PD 851's deadline, as the create form notes it.
+    private const string ThirteenthMonthDue = "Due by Dec 24 (PD 851).";
 
     // One run-level request at a time: each of these recomputes the run or moves it on.
     private bool Busy => _computing || _approving || _markingPaid || _changingLeaveConversion
@@ -528,7 +530,7 @@ else
     {
         if (_thirteenthMonthChange is not { } include || _run is null) return "";
         var text = include
-            ? $"Each eligible employee's 13th month will be paid on {_run.RunNumber}, less any part already paid this year, and the run recomputed."
+            ? $"Each eligible employee's 13th month will be paid on {_run.RunNumber}, less any part already paid this year, and the run recomputed. {ThirteenthMonthDue}"
             : $"{_run.RunNumber} will no longer pay the 13th month, and the run will be recomputed.";
         return _run.Status is "Approved" or "ForApproval"
             ? text + " The run goes back to Draft and needs approval again."
