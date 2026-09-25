@@ -801,6 +801,60 @@ public class PayrollRunDetailTests : BunitContext
     }
 
     [Fact]
+    public void AFinalPay_HasNo13thMonthBadge_SinceItAlwaysIncludesIt_ButShowsTheColumn()
+    {
+        var finalPayLine = FinalPayLine(1200m).TrimEnd().TrimEnd('}') + ""","thirteenthMonth":3041.67}""";
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK,
+            RunJson("Draft", runType: "FinalPay", includesThirteenthMonth: true, employees: finalPayLine));
+
+        var cut = RenderPage();
+
+        cut.FindAll("[data-thirteenth-month-badge]").Should().BeEmpty();
+        cut.FindAll("[data-final-pay-badge]").Should().ContainSingle();
+        cut.Find("[data-thirteenth-month]").TextContent.Should().Contain("3,041.67");
+    }
+
+    [Fact]
+    public void AnApprovedRunWithThe13thMonth_CanBeRecomputed_AfterAskingFirst()
+    {
+        // The API recomputes it (back to Draft): it's where a Mark Paid refused because a 13th month
+        // was paid on another run since this one was computed leads.
+        var status = "Approved";
+        _api.On(HttpMethod.Get, RunPath, () => Json(RunJson(status, includesThirteenthMonth: true, employees: ThirteenthMonthLine)))
+            .On(HttpMethod.Put, $"{RunPath}/compute", () =>
+            {
+                status = "Draft";
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            });
+        var cut = RenderPage();
+
+        ActionButtons(cut).Should().Equal("Compute", "Mark Paid");
+        Button(cut, "Compute").Click();
+
+        var dialog = cut.WaitForElement("[data-confirm-compute]");
+        dialog.TextContent.Should().Contain("goes back to Draft").And.Contain("approval again").And.NotContain("final pay");
+        dialog.QuerySelectorAll("button").Last().Click();
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain(">Draft<"));
+        ActionButtons(cut).Should().Equal("Compute", "Approve");
+    }
+
+    [Fact]
+    public void AMarkPaidRefusedBecauseA13thMonthWasPaidElsewhere_SaysSo()
+    {
+        const string reason = "Maria Santos's 13th month was paid on PR-2026-0020 after this payroll was computed; recompute it before paying.";
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Approved", includesThirteenthMonth: true, employees: ThirteenthMonthLine))
+            .On(HttpMethod.Put, $"{RunPath}/mark-paid", HttpStatusCode.BadRequest,
+                System.Text.Json.JsonSerializer.Serialize(new { title = "Business rule violation", status = 400, detail = reason }));
+        var cut = RenderPage();
+
+        Button(cut, "Mark Paid").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain(reason));
+        Button(cut, "Compute").HasAttribute("disabled").Should().BeFalse("recomputing is the way on");
+    }
+
+    [Fact]
     public void ARunWithout13thMonthPay_HasNoBadgeOrColumn()
     {
         _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft"));

@@ -2261,7 +2261,6 @@ public class PayrollRunServiceTests
     {
         var (run, _) = RegularRunWithMaria(PayrollRunStatus.Draft);
         run.Employees[0].IncludeThirteenthMonth = true;
-        List<PayrollRunEmployeeInput>? inputs = null;
         _settingsRepo.Setup(r => r.GetDefaultAsync(It.IsAny<CancellationToken>())).ReturnsAsync((PayrollSettings?)null);
         _compensationRepo.Setup(r => r.GetByEmployeeIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
                          .ReturnsAsync(run.Employees.Select(e => new EmployeeCompensation
@@ -2364,13 +2363,15 @@ public class PayrollRunServiceTests
     [Fact]
     public async Task SetThirteenthMonthAsync_WhenTheRecomputeIsRefused_SavesNothing()
     {
-        // Maria left before the period: the recompute refuses, and the run keeps its entries.
-        var (run, maria) = RegularRunWithMaria(PayrollRunStatus.Draft);
+        // Maria left before the period: the recompute refuses, and the approved run keeps its
+        // entries and its approval.
+        var (run, maria) = RegularRunWithMaria(PayrollRunStatus.Approved);
         Separated(maria, new DateOnly(2026, 3, 10));
 
         var act = () => _sut.SetThirteenthMonthAsync(run.Id, include: true);
 
         await act.Should().ThrowAsync<DomainException>();
+        run.Status.Should().Be(PayrollRunStatus.Approved);
         run.Employees.Should().OnlyContain(e => !e.IncludeThirteenthMonth);
         _runRepo.Verify(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyList<PayrollRunEmployee>>(),
                                                    It.IsAny<CancellationToken>()), Times.Never);
@@ -2396,5 +2397,240 @@ public class PayrollRunServiceTests
 
         (await _sut.GetAsync(with.Id))!.IncludesThirteenthMonth.Should().BeTrue();
         (await _sut.GetPagedAsync(1, 20)).Items.Select(r => r.IncludesThirteenthMonth).Should().Equal(true, false);
+    }
+
+    // ------------------------------------------------------------------
+    // The 13th month is paid once: never on two unpaid runs of a pay year, and never on a run
+    // whose figures predate a 13th month paid since
+    // ------------------------------------------------------------------
+
+    private const string AlreadyOnPay2026023 =
+        "Maria Santos's 13th month is already on PAY-2026-023, which isn't paid yet; pay it or leave it out there first.";
+
+    private void ThirteenthMonthUnpaidOn(Guid employeeId, int payYear, string runNumber)
+        => _runRepo.Setup(r => r.GetUnpaidThirteenthMonthsInYearAsync(payYear,
+                    It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(employeeId)), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync([new ThirteenthMonthInRun(employeeId, runNumber)]);
+
+    [Fact]
+    public async Task CreateAsync_WithThe13thMonth_WhileAnotherUnpaidRunOfThePayYearHasIt_IsRefused()
+    {
+        // Dec 1-15 already carries it and isn't paid; Dec 16-31 would pay the full amount again.
+        var (maria, _) = MariaAt36500();
+        ThirteenthMonthUnpaidOn(maria.Id, 2026, "PAY-2026-023");
+
+        var act = () => _sut.CreateAsync(DecemberRequest(maria.Id, includeThirteenthMonth: true) with { IncludeLeaveConversion = false });
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(AlreadyOnPay2026023);
+        _runRepo.Verify(r => r.AddWithEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task The13thMonthCheck_LooksAtThePayYear_AndNeverAtTheRunItself()
+    {
+        // Dec 16-31, 2026 paid Jan 5, 2027 is in the 2027 pay year.
+        var (maria, savedRun) = MariaAt36500();
+        RecomputesInPlace();
+        await _sut.CreateAsync(new CreatePayrollRunRequest(
+            new DateOnly(2026, 12, 16), new DateOnly(2026, 12, 31), new DateOnly(2027, 1, 5), PayFrequency.SemiMonthly,
+            [new PayrollRunEmployeeInput(maria.Id, IncludeThirteenthMonth: true)]));
+        var run = savedRun()!;
+
+        await _sut.ComputeAsync(run.Id);
+
+        _runRepo.Verify(r => r.GetUnpaidThirteenthMonthsInYearAsync(2027,
+            It.Is<IReadOnlyCollection<Guid>>(ids => ids.Single() == maria.Id), run.Id, It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _runRepo.Verify(r => r.GetUnpaidThirteenthMonthsInYearAsync(2026, It.IsAny<IReadOnlyCollection<Guid>>(),
+            It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ComputeAsync_WhileAnotherUnpaidRunHasThe13thMonth_IsRefused_AndSavesNothing()
+    {
+        var run = await SeptemberRunForMaria(includeThirteenthMonth: true);
+        var maria = run.Employees.Single().EmployeeId;
+        ThirteenthMonthUnpaidOn(maria, 2026, "PAY-2026-023");
+
+        var act = () => _sut.ComputeAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(AlreadyOnPay2026023);
+        _runRepo.Verify(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyList<PayrollRunEmployee>>(),
+                                                   It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SetThirteenthMonthAsync_TurningItOn_WhileAnotherUnpaidRunHasIt_IsRefused_AndChangesNothing()
+    {
+        var run = await SeptemberRunForMaria(includeThirteenthMonth: false);
+        run.Status = PayrollRunStatus.Approved;
+        ThirteenthMonthUnpaidOn(run.Employees.Single().EmployeeId, 2026, "PAY-2026-023");
+
+        var act = () => _sut.SetThirteenthMonthAsync(run.Id, include: true);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(AlreadyOnPay2026023);
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+        run.Employees.Single().IncludeThirteenthMonth.Should().BeFalse();
+        _runRepo.Verify(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyList<PayrollRunEmployee>>(),
+                                                   It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SetThirteenthMonthAsync_TurningItOff_DoesNotLookForOtherRuns()
+    {
+        var run = await SeptemberRunForMaria(includeThirteenthMonth: true);
+        _runRepo.Invocations.Clear();
+
+        await _sut.SetThirteenthMonthAsync(run.Id, include: false);
+
+        _runRepo.Verify(r => r.GetUnpaidThirteenthMonthsInYearAsync(It.IsAny<int>(), It.IsAny<IReadOnlyCollection<Guid>>(),
+            It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task The13thMonthCheck_SkipsSomeoneIneligible_WhoIsPaidNoneOfIt()
+    {
+        var (maria, savedRun) = MariaAt36500();
+        maria.Is13thMonthEligible = false;
+        ThirteenthMonthUnpaidOn(maria.Id, 2026, "PAY-2026-023");
+
+        await _sut.CreateAsync(DecemberRequest(maria.Id, includeThirteenthMonth: true) with { IncludeLeaveConversion = false });
+
+        savedRun()!.Employees.Single().ThirteenthMonth.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task CreateAsync_StoresThe13thMonthPaidEarlierInYear_ThatTheEntryWasComputedWith()
+    {
+        var (maria, savedRun) = MariaAt36500();
+        var advance = PaidThirteenthMonth(maria.Id, "PAY-2026-010", 2_000m, paidAt: new DateTime(2026, 6, 30));
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([advance]);
+
+        await _sut.CreateAsync(new CreatePayrollRunRequest(
+            new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 30), new DateOnly(2026, 9, 30), PayFrequency.Monthly,
+            [new PayrollRunEmployeeInput(maria.Id, IncludeThirteenthMonth: true)]));
+
+        savedRun()!.Employees.Single().ThirteenthMonthPaidEarlierInYear.Should().Be(2_000m);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithoutThe13thMonth_StoresNoFigureForIt()
+    {
+        var run = await SeptemberRunForMaria(includeThirteenthMonth: false);
+
+        run.Employees.Single().ThirteenthMonthPaidEarlierInYear.Should().BeNull();
+    }
+
+    /// <summary>A Paid regular run of 2026 that paid Maria some 13th month, marked Paid at <paramref name="paidAt"/>.</summary>
+    private static PayrollRun PaidThirteenthMonth(Guid employeeId, string runNumber, decimal thirteenthMonth, DateTime paidAt)
+    {
+        var run = new PayrollRun
+        {
+            RunNumber = runNumber, PeriodStart = new DateOnly(2026, 6, 1), PeriodEnd = new DateOnly(2026, 6, 30),
+            PayDate = new DateOnly(2026, 6, 30), Status = PayrollRunStatus.Paid, UpdatedAt = paidAt
+        };
+        run.Employees.Add(new PayrollRunEmployee
+        {
+            PayrollRunId = run.Id, EmployeeId = employeeId, RegularPay = 36_500m, ThirteenthMonth = thirteenthMonth
+        });
+        return run;
+    }
+
+    /// <summary>
+    /// Maria's approved December run: a 13th month computed when <paramref name="paidEarlier"/> of it
+    /// had been paid in the year.
+    /// </summary>
+    private (PayrollRun Run, Employee Maria) ApprovedDecemberWithThe13thMonth(decimal? paidEarlier)
+    {
+        var maria = new Employee { FirstName = "Maria", LastName = "Santos" };
+        var run = new PayrollRun
+        {
+            RunNumber = "PAY-2026-024", PeriodStart = DecemberStart, PeriodEnd = DecemberEnd,
+            PayDate = new DateOnly(2026, 12, 29), Frequency = PayFrequency.Monthly, Status = PayrollRunStatus.Approved
+        };
+        run.Employees.Add(new PayrollRunEmployee
+        {
+            PayrollRunId = run.Id, EmployeeId = maria.Id, Employee = maria, RegularPay = 36_500m,
+            IncludeThirteenthMonth = true, ThirteenthMonth = 30_000m, ThirteenthMonthPaidEarlierInYear = paidEarlier
+        });
+        _runRepo.Setup(r => r.GetWithEntriesAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        return (run, maria);
+    }
+
+    private void VerifyNothingSavedAsPaid() =>
+        _runRepo.Verify(r => r.SavePaidAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
+                                              It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+                                              It.IsAny<CancellationToken>()), Times.Never);
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenA13thMonthWasPaidElsewhereSinceCompute_IsRefused_NamingTheLatestSuchRun()
+    {
+        // Computed with 6,000 paid earlier (June). Since then, PAY-2026-020 was paid with 3,000 more.
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: 6_000m);
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(
+        [
+            PaidThirteenthMonth(maria.Id, "PAY-2026-012", 6_000m, paidAt: new DateTime(2026, 6, 30)),
+            PaidThirteenthMonth(maria.Id, "PAY-2026-020", 3_000m, paidAt: new DateTime(2026, 11, 30)),
+            PaidThirteenthMonth(maria.Id, "PAY-2026-021", 0m, paidAt: new DateTime(2026, 12, 1)),
+        ]);
+
+        var act = () => _sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos's 13th month was paid on PAY-2026-020 after this payroll was computed; recompute it before paying.");
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenThe13thMonthPaidElsewhereIsWhatTheEntryWasComputedWith_PaysIt()
+    {
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: 6_000m);
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(
+            [PaidThirteenthMonth(maria.Id, "PAY-2026-012", 6_000m, paidAt: new DateTime(2026, 6, 30))]);
+
+        await _sut.MarkPaidAsync(run.Id);
+
+        run.Status.Should().Be(PayrollRunStatus.Paid);
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_OnAnEntryComputedBeforeTheFigureWasStored_DoesNotCheck()
+    {
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: null);
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(
+            [PaidThirteenthMonth(maria.Id, "PAY-2026-012", 6_000m, paidAt: new DateTime(2026, 6, 30))]);
+
+        await _sut.MarkPaidAsync(run.Id);
+
+        run.Status.Should().Be(PayrollRunStatus.Paid);
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_OnARunWithoutThe13thMonth_DoesNotLookUpThePaidRuns()
+    {
+        var (run, _) = RegularRunWithMaria(PayrollRunStatus.Approved);
+
+        await _sut.MarkPaidAsync(run.Id);
+
+        _runRepo.Verify(r => r.GetPaidRunsInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ComputeAsync_OnAnApprovedRunWithThe13thMonth_RecomputesIt_AndSendsItBackToDraft()
+    {
+        // The way on from a Mark Paid refused because a 13th month was paid elsewhere since compute.
+        var run = await SeptemberRunForMaria(includeThirteenthMonth: true);
+        run.Status = PayrollRunStatus.Approved;
+        var maria = run.Employees.Single().EmployeeId;
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(
+            [PaidThirteenthMonth(maria, "PAY-2026-020", 1_000m, paidAt: new DateTime(2026, 9, 29))]);
+
+        await _sut.ComputeAsync(run.Id);
+
+        // (36,500 June basic + 36,500) / 12 = 6,083.33, less the 1,000 paid: 5,083.33.
+        run.Status.Should().Be(PayrollRunStatus.Draft);
+        var entry = run.Employees.Single();
+        entry.ThirteenthMonth.Should().Be(5_083.33m);
+        entry.ThirteenthMonthPaidEarlierInYear.Should().Be(1_000m);
     }
 }

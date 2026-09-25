@@ -178,7 +178,20 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     /// </summary>
     Task<IReadOnlyList<LeaveConvertedInRun>> GetLeaveConversionsInYearAsync(
         int periodEndYear, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId, CancellationToken ct = default);
+
+    /// <summary>
+    /// The 13th months already on unpaid runs for the employees: one per entry that includes the
+    /// 13th month, on a Regular run that isn't Paid and whose PayDate falls in
+    /// <paramref name="payYear"/>, other than <paramref name="excludeRunId"/>, ordered by PayDate.
+    /// Two unpaid runs of a pay year would otherwise each pay the full 13th month due, since only
+    /// Paid runs count as paid earlier. Final pays work out their own and don't count.
+    /// </summary>
+    Task<IReadOnlyList<ThirteenthMonthInRun>> GetUnpaidThirteenthMonthsInYearAsync(
+        int payYear, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId, CancellationToken ct = default);
 }
+
+/// <summary>An employee whose 13th month the unpaid run numbered <paramref name="RunNumber"/> includes.</summary>
+public sealed record ThirteenthMonthInRun(Guid EmployeeId, string RunNumber);
 
 /// <summary>An employee whose leave the run numbered <paramref name="RunNumber"/> converted to cash.</summary>
 public sealed record LeaveConvertedInRun(Guid EmployeeId, string RunNumber);

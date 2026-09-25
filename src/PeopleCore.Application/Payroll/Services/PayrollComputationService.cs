@@ -473,6 +473,11 @@ public class PayrollComputationService
             TaxableAllowances = taxableAllowances,
             NonTaxableAllowances = nonTaxableAllowances,
             ThirteenthMonth = thirteenthMonth,
+            // What the 13th month above was netted of, so Mark Paid can tell whether more of it has
+            // been paid since. Only when a 13th month was computed at all.
+            ThirteenthMonthPaidEarlierInYear = includeThirteenthMonth && isThirteenthMonthEligible
+                ? thirteenthMonthPaidEarlierInYear
+                : null,
             LeaveConversionPay = leaveConversionPay,
             LeaveConversionNonTaxable = leaveConversionNonTaxable,
             SeparationPay = separationPay,

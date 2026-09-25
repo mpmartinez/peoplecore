@@ -161,6 +161,24 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
             .ToListAsync(ct);
     }
 
+    public async Task<IReadOnlyList<ThirteenthMonthInRun>> GetUnpaidThirteenthMonthsInYearAsync(
+        int payYear, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId, CancellationToken ct = default)
+    {
+        var first = new DateOnly(payYear, 1, 1);
+        var next = first.AddYears(1);
+        var ids = employeeIds.ToList();
+        return await Context.PayrollRunEmployees
+            .Where(e => ids.Contains(e.EmployeeId)
+                        && e.IncludeThirteenthMonth
+                        && e.PayrollRunId != excludeRunId
+                        && e.PayrollRun.RunType == PayrollRunType.Regular
+                        && e.PayrollRun.Status != PayrollRunStatus.Paid
+                        && e.PayrollRun.PayDate >= first && e.PayrollRun.PayDate < next)
+            .OrderBy(e => e.PayrollRun.PayDate)
+            .Select(e => new ThirteenthMonthInRun(e.EmployeeId, e.PayrollRun.RunNumber))
+            .ToListAsync(ct);
+    }
+
     // A half-open range so the index on the date column can be used, instead of the Year/Month
     // predicates it used to run as, which cannot.
     private static (DateOnly First, DateOnly Next) MonthRange(int year, int month)

@@ -52,6 +52,15 @@ public class PayrollRunEmployee : AuditableEntity
     public decimal NonTaxableAllowances { get; set; }
     public decimal ThirteenthMonth { get; set; }
 
+    /// <summary>
+    /// The 13th month already paid in the pay year (by the year's other Paid runs) when this
+    /// entry's <see cref="ThirteenthMonth"/> was computed - the figure it was netted of. Mark Paid
+    /// compares it with what those runs total now, so a 13th month paid elsewhere since the entry
+    /// was computed can't be paid a second time. Null when the entry computed no 13th month
+    /// (not included, or the employee isn't eligible), and on entries computed before it was kept.
+    /// </summary>
+    public decimal? ThirteenthMonthPaidEarlierInYear { get; set; }
+
     // Final-pay earnings - zero on a Regular run.
     /// <summary>
     /// Cash value of convertible leave balances: its de minimis part

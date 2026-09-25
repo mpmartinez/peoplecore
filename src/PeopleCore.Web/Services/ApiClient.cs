@@ -1158,7 +1158,7 @@ public record PayrollRunDto(
     string RunType = "Regular",
     // A regular December run that pays out unused year-end leave in cash.
     bool IncludesLeaveConversion = false,
-    // True when any employee on the run is to be paid the 13th month.
+    // True when the 13th month is included for any employee on the run.
     bool IncludesThirteenthMonth = false);
 
 public record PayrollRunSummaryDto(

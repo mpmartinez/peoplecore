@@ -60,7 +60,8 @@
                                 {
                                     <Badge Variant="outline" Class="ml-2" data-leave-conversion-badge>Leave conversion</Badge>
                                 }
-                                @if (r.IncludesThirteenthMonth)
+                                @* A final pay always includes the 13th month, so the badge would say nothing. *@
+                                @if (r.IncludesThirteenthMonth && r.RunType != PayrollLabels.FinalPayRunType)
                                 {
                                     <Badge Variant="outline" Class="ml-2" data-thirteenth-month-badge>13th month</Badge>
                                 }

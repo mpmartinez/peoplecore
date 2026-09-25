@@ -99,15 +99,15 @@ public class YearEndLeaveConversionDbTests : DatabaseTestBase
         return new Seeded(maria, balance, loan);
     }
 
-    private static CreatePayrollRunRequest December(Guid employeeId) => new(
+    private static CreatePayrollRunRequest December(Guid employeeId, bool thirteenthMonth = true) => new(
         DecemberStart, DecemberEnd, DecemberPayDate, PayFrequency.Monthly,
-        [new PayrollRunEmployeeInput(employeeId, IncludeThirteenthMonth: true)],
+        [new PayrollRunEmployeeInput(employeeId, IncludeThirteenthMonth: thirteenthMonth)],
         IncludeLeaveConversion: true);
 
-    private async Task<Guid> CreateAsync(Guid employeeId)
+    private async Task<Guid> CreateAsync(Guid employeeId, bool thirteenthMonth = true)
     {
         await using var context = NewContext();
-        return (await PayrollRuns(context).CreateAsync(December(employeeId))).Id;
+        return (await PayrollRuns(context).CreateAsync(December(employeeId, thirteenthMonth))).Id;
     }
 
     private async Task<Guid> CreateAndApproveAsync(Guid employeeId)
@@ -292,7 +292,8 @@ public class YearEndLeaveConversionDbTests : DatabaseTestBase
         turnedOff.Employees.Single().LeaveConversionPay.Should().Be(0m);
         turnedOff.Employees.Single().EmployeeName.Should().Be("Maria Santos");
 
-        var replacement = await CreateAsync(seeded.Maria.Id);
+        // The abandoned run still carries Maria's 13th month, unpaid, so the replacement leaves it out.
+        var replacement = await CreateAsync(seeded.Maria.Id, thirteenthMonth: false);
 
         await using var reader = NewContext();
         (await new PayrollRunRepository(reader).GetWithEntriesAsync(abandoned))!.IncludesLeaveConversion.Should().BeFalse();
@@ -413,9 +414,10 @@ public class YearEndLeaveConversionDbTests : DatabaseTestBase
         await using (var context = NewContext())
             firstRunNumber = (await PayrollRuns(context).CreateAsync(December(seeded.Maria.Id))).RunNumber;
 
+        // Without the 13th month, which the first run already carries unpaid.
         await using (var context = NewContext())
         {
-            var act = () => PayrollRuns(context).CreateAsync(December(seeded.Maria.Id));
+            var act = () => PayrollRuns(context).CreateAsync(December(seeded.Maria.Id, thirteenthMonth: false));
             await act.Should().ThrowAsync<DomainException>()
                 .WithMessage($"Maria Santos's leave for 2026 was already converted in {firstRunNumber}.");
         }

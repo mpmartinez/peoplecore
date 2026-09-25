@@ -117,13 +117,15 @@ public class PayrollRunService : IPayrollRunService
         // the one exception to the first: it can be approved before clearance is complete, and
         // clearance is where deductions such as an unreturned laptop come up, so an approved
         // final pay can still be recomputed - and goes back to Draft below, to be approved again.
-        // A regular run that converts leave is the other: its leave can change after approval (a
+        // A regular run that converts leave is another: its leave can change after approval (a
         // request filed, rejected or cancelled), Mark Paid then refuses it, and a recompute - back
-        // to Draft, to be approved again - is the way to pay it.
+        // to Draft, to be approved again - is the way to pay it. So is one that includes the 13th
+        // month: another run can pay some of it after approval, which Mark Paid refuses the same way.
         if (run.RunType == PayrollRunType.FinalPay && run.Status == PayrollRunStatus.Paid)
             throw new DomainException("A paid final pay can't be recomputed.");
         if (run.RunType != PayrollRunType.FinalPay
-            && (run.Status == PayrollRunStatus.Paid || (run.Status == PayrollRunStatus.Approved && !run.IncludesLeaveConversion)))
+            && (run.Status == PayrollRunStatus.Paid
+                || (run.Status == PayrollRunStatus.Approved && !run.IncludesLeaveConversion && !IncludesThirteenthMonth(run))))
             throw new DomainException("Only draft or for-approval payroll runs can be recomputed.");
 
         if (run.Employees.Count == 0)
@@ -301,6 +303,7 @@ public class PayrollRunService : IPayrollRunService
         else
         {
             await EnsureNoOneHasLeftAsync(run, ct);
+            await EnsureThirteenthMonthNotPaidSinceAsync(run, ct);
             if (run.IncludesLeaveConversion)
                 leavePaidOut = await YearEndLeavePaidOutAsync(run, ct);
         }
@@ -452,6 +455,42 @@ public class PayrollRunService : IPayrollRunService
         return paidOut;
     }
 
+    /// <summary>
+    /// Refuses a regular run whose 13th month was computed before more of it was paid elsewhere:
+    /// for every entry that computed one, the 13th month the pay year's other Paid runs hold for
+    /// the employee now must still be what the entry was netted of
+    /// (<see cref="PayrollRunEmployee.ThirteenthMonthPaidEarlierInYear"/>). Paid runs can't be
+    /// changed, so that total only grows; when it has, the entry would pay the difference twice.
+    /// Entries computed before the figure was kept (null) aren't checked. Changes nothing.
+    /// </summary>
+    private async Task EnsureThirteenthMonthNotPaidSinceAsync(PayrollRun run, CancellationToken ct)
+    {
+        var computed = run.Employees.Where(e => e.ThirteenthMonthPaidEarlierInYear is not null).ToList();
+        if (computed.Count == 0)
+            return;
+
+        var paidElsewhere = (await _runRepo.GetPaidRunsInYearAsync(run.PayDate.Year, ct) ?? [])
+            .Where(r => r.Id != run.Id)
+            .SelectMany(r => r.Employees.Select(e => (Run: r, Entry: e)))
+            .ToLookup(x => x.Entry.EmployeeId);
+
+        foreach (var entry in computed)
+        {
+            var paid = paidElsewhere[entry.EmployeeId].ToList();
+            if (paid.Sum(x => x.Entry.ThirteenthMonth) <= entry.ThirteenthMonthPaidEarlierInYear)
+                continue;
+
+            // Which run paid it isn't recorded against the entry; the latest one marked Paid that
+            // paid any 13th month is the likeliest, and is the one to look at.
+            var latest = paid.Where(x => x.Entry.ThirteenthMonth > 0m).MaxBy(x => x.Run.UpdatedAt).Run;
+            var name = entry.Employee?.FullName
+                ?? (await _employeeRepo.GetByIdAsync(entry.EmployeeId, ct))?.FullName
+                ?? entry.EmployeeId.ToString();
+            throw new DomainException(
+                $"{name}'s 13th month was paid on {latest.RunNumber} after this payroll was computed; recompute it before paying.");
+        }
+    }
+
     private IYearEndLeaveConversion YearEndLeave() => _yearEndLeave ?? throw new InvalidOperationException(
         "PayrollRunService was built without an IYearEndLeaveConversion, so it can't convert year-end leave.");
 
@@ -570,6 +609,27 @@ public class PayrollRunService : IPayrollRunService
 
             people = await _employeeRepo.GetByIdsAsync(employeeIds, ct) ?? [];
             ineligible = people.Where(p => !p.Is13thMonthEligible).Select(p => p.Id).ToHashSet();
+        }
+
+        // The 13th month is paid once. Only Paid runs count as paid earlier above, so two unpaid
+        // runs of the pay year that both included it would each pay the full amount due. Someone
+        // ineligible is paid none of it on either, so isn't held to this.
+        var receivingThirteenthMonth = employees
+            .Where(e => e.IncludeThirteenthMonth && !ineligible.Contains(e.EmployeeId))
+            .Select(e => e.EmployeeId)
+            .Distinct()
+            .ToList();
+        if (receivingThirteenthMonth.Count > 0)
+        {
+            var elsewhere = await _runRepo.GetUnpaidThirteenthMonthsInYearAsync(
+                run.PayDate.Year, receivingThirteenthMonth, run.Id, ct) ?? [];
+            if (elsewhere.Count > 0)
+            {
+                var first = elsewhere[0];
+                var name = people.FirstOrDefault(p => p.Id == first.EmployeeId)?.FullName ?? first.EmployeeId.ToString();
+                throw new DomainException(
+                    $"{name}'s 13th month is already on {first.RunNumber}, which isn't paid yet; pay it or leave it out there first.");
+            }
         }
 
         // Year-end leave conversion (a December run that includes it): each employee's unused

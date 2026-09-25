@@ -411,6 +411,18 @@ public class PayrollRunsTests : BunitContext
         rows[1].QuerySelector("[data-thirteenth-month-badge]").Should().BeNull();
     }
 
+    [Fact]
+    public void AFinalPay_CarriesNo13thMonthBadge_SinceItAlwaysIncludesIt()
+    {
+        _api.On(HttpMethod.Get, RunsPath, HttpStatusCode.OK,
+            Runs(RunSummary(Guid.NewGuid(), "FP-2026-001", "Draft", 1, runType: "FinalPay", includesThirteenthMonth: true)));
+
+        var cut = RenderPage();
+
+        cut.FindAll("[data-thirteenth-month-badge]").Should().BeEmpty();
+        cut.FindAll("[data-final-pay-badge]").Should().ContainSingle();
+    }
+
     [Theory]
     [InlineData("2026-09-01", "2026-09-15")]
     [InlineData("2026-12-16", "2026-12-31")]
