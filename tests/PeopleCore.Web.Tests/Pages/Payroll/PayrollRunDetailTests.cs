@@ -701,6 +701,45 @@ public class PayrollRunDetailTests : BunitContext
     }
 
     [Fact]
+    public void WhileAnEmployeeIsBeingRemoved_TheRunsOtherActionsAreDisabled()
+    {
+        // Removing recomputes the run too; a Compute, Approve or conversion change sent alongside it
+        // would race it.
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", periodEnd: December, employees: $"{EmployeeLine},{JoseLine}"));
+        var gate = _api.OnGated(HttpMethod.Delete, $"{RunPath}/employees/{JoseId}");
+        var cut = RenderPage();
+
+        cut.Find($"[data-remove-employee='{JoseId}']").Click();
+        cut.WaitForElement("[data-confirm-remove]").QuerySelectorAll("button").Last().Click();
+
+        cut.WaitForAssertion(() => LeaveConversionToggle(cut)!.HasAttribute("disabled").Should().BeTrue());
+        Button(cut, "Compute").HasAttribute("disabled").Should().BeTrue();
+        Button(cut, "Approve").HasAttribute("disabled").Should().BeTrue();
+
+        gate.SetResult(Json(RunJson("Draft", periodEnd: December)));
+        cut.WaitForAssertion(() => LeaveConversionToggle(cut)!.HasAttribute("disabled").Should().BeFalse());
+        Button(cut, "Compute").HasAttribute("disabled").Should().BeFalse();
+    }
+
+    [Fact]
+    public void AnApprovalRefusedBecauseTheConvertibleLeaveChanged_SaysSo_AndOffersRecompute()
+    {
+        const string reason = "Maria Santos's convertible leave has changed since this payroll was computed; recompute it before paying.";
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK,
+                RunJson("ForApproval", periodEnd: December, includesLeaveConversion: true, employees: YearEndLine))
+            .On(HttpMethod.Put, $"{RunPath}/approve", HttpStatusCode.BadRequest,
+                System.Text.Json.JsonSerializer.Serialize(new { title = "Business rule violation", status = 400, detail = reason }));
+        var cut = RenderPage();
+
+        Button(cut, "Approve").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain(reason));
+        cut.Markup.Should().Contain(">For approval<");
+        ActionButtons(cut).Should().Equal("Compute", "Approve");
+        Button(cut, "Compute").HasAttribute("disabled").Should().BeFalse("recomputing is the way on");
+    }
+
+    [Fact]
     public void AnApprovedFlaggedRun_CanBeRecomputed_AfterAskingFirst()
     {
         // The API recomputes an Approved run that converts leave (and sends it back to Draft): it's

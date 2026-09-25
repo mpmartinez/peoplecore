@@ -199,7 +199,7 @@ else
                                 {
                                     <TableCell Class="px-4 py-3">
                                         <Button Variant="ghost" Size="sm" OnClick="@(() => AskToRemove(e))"
-                                                Disabled="@(_removing || Busy)" data-remove-employee="@e.EmployeeId">Remove</Button>
+                                                Disabled="@Busy" data-remove-employee="@e.EmployeeId">Remove</Button>
                                     </TableCell>
                                 }
                             </TableRow>
@@ -251,7 +251,7 @@ else
     private const string StopConvertingLabel = "Stop converting unused leave";
 
     // One run-level request at a time: each of these recomputes the run or moves it on.
-    private bool Busy => _computing || _approving || _markingPaid || _changingLeaveConversion;
+    private bool Busy => _computing || _approving || _markingPaid || _changingLeaveConversion || _removing;
 
     private bool IsFinalPay => _run?.RunType == PayrollLabels.FinalPayRunType;
 
@@ -527,8 +527,10 @@ else
         status is "Draft" or "Processing" or "ForApproval"
         || (status == "Approved" && (IsFinalPay || _run?.IncludesLeaveConversion == true));
 
-    // Approve is offered for the same statuses as Compute: PayrollRunService.ApproveAsync accepts
-    // exactly Draft, Processing or ForApproval and throws a DomainException for Approved or Paid.
+    // Approve is offered for Draft, Processing and ForApproval - the statuses Compute is always
+    // offered for - because PayrollRunService.ApproveAsync accepts exactly those and throws a
+    // DomainException for Approved or Paid. Unlike Compute, it isn't offered on an Approved final
+    // pay or an Approved run converting year-end leave: that run is already approved.
     private static bool CanApprove(string status) => status is "Draft" or "Processing" or "ForApproval";
 
     // Mark Paid is offered only when Approved: PayrollRunService.MarkPaidAsync throws a

@@ -32,9 +32,11 @@ public record LeaveTypeDto(
 /// </summary>
 /// <remarks>
 /// Refused with a DomainException: a PerEvent type without DaysPerEvent &gt; 0 ("Set the days per
-/// event."), a YearlyAllowance type without MaxDaysPerYear &gt; 0 ("Set the days per year."), and
-/// IsMaternity on any kind but PerEvent ("A maternity type must be per event."). MaxEvents is
-/// cleared on any kind but PerEvent, and a blank GenderRestriction is stored as null (any gender).
+/// event."), a YearlyAllowance type without MaxDaysPerYear &gt; 0 ("Set the days per year."),
+/// IsMaternity on any kind but PerEvent ("A maternity type must be per event."), and
+/// ConvertsAtYearEnd on a PerEvent or unpaid type ("Only paid accrued or yearly-allowance leave
+/// can convert at year-end."). MaxEvents is cleared on any kind but PerEvent, and a blank
+/// GenderRestriction is stored as null (any gender).
 /// </remarks>
 public record CreateLeaveTypeDto(
     string Name, string Code, decimal MaxDaysPerYear,

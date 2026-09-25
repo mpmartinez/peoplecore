@@ -99,6 +99,20 @@ public class LeaveTypeServiceTests
     }
 
     [Fact]
+    public async Task APaidYearlyAllowance_MayConvertAtYearEnd()
+    {
+        // It has a yearly balance too, so its unused days can be paid out like an accrued type's.
+        _repo.Setup(r => r.AddAsync(It.IsAny<LeaveType>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((LeaveType lt, CancellationToken _) => lt);
+
+        var dto = await _sut.CreateAsync(new CreateLeaveTypeDto(
+            "Birthday Leave", "BL", 1m, true, false, null, null, false,
+            EntitlementKind: LeaveEntitlementKind.YearlyAllowance, ConvertsAtYearEnd: true));
+
+        dto.ConvertsAtYearEnd.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task Update_ChangesTheConvertsAtYearEndSetting()
     {
         var existing = new LeaveType { Name = "Service Incentive Leave", Code = "SIL", MaxDaysPerYear = 5m };
@@ -159,7 +173,9 @@ public class LeaveTypeServiceTests
 
     /// <summary>
     /// A per-event type with every setting moved off its default - bar carry-over, which only an
-    /// accrued type may have (<see cref="AnAccruedType_StoresItsCarryOver"/>).
+    /// accrued type may have (<see cref="AnAccruedType_StoresItsCarryOver"/>), and year-end
+    /// conversion, which only a paid accrued or yearly-allowance type may have
+    /// (<see cref="Create_StoresAndReturnsTheConvertsAtYearEndSetting"/>).
     /// </summary>
     private static CreateLeaveTypeDto EverySetting() => new(
         "Maternity Leave", "ML", 0m, IsPaid: false, IsCarryOver: false, CarryOverMaxDays: null,
@@ -167,7 +183,7 @@ public class LeaveTypeServiceTests
         IsConvertibleToCash: true, CountsAsVacationForDeMinimis: false,
         IsActive: false, EntitlementKind: LeaveEntitlementKind.PerEvent, CountsCalendarDays: true,
         DaysPerEvent: 105m, MinServiceMonths: 6, RequiresMarried: true, RequiresSoloParentId: true,
-        MaxEvents: 4, IsConfidential: true, IsMaternity: true, ConvertsAtYearEnd: true);
+        MaxEvents: 4, IsConfidential: true, IsMaternity: true, ConvertsAtYearEnd: false);
 
     private static void ShouldHoldEverySetting(LeaveType lt)
     {
@@ -191,7 +207,7 @@ public class LeaveTypeServiceTests
         lt.MaxEvents.Should().Be(4);
         lt.IsConfidential.Should().BeTrue();
         lt.IsMaternity.Should().BeTrue();
-        lt.ConvertsAtYearEnd.Should().BeTrue();
+        lt.ConvertsAtYearEnd.Should().BeFalse();
     }
 
     private static void ShouldHoldEverySetting(LeaveTypeDto dto)
@@ -216,7 +232,7 @@ public class LeaveTypeServiceTests
         dto.MaxEvents.Should().Be(4);
         dto.IsConfidential.Should().BeTrue();
         dto.IsMaternity.Should().BeTrue();
-        dto.ConvertsAtYearEnd.Should().BeTrue();
+        dto.ConvertsAtYearEnd.Should().BeFalse();
     }
 
     [Fact]
@@ -256,7 +272,7 @@ public class LeaveTypeServiceTests
             IsConvertibleToCash = true, CountsAsVacationForDeMinimis = false, IsActive = false,
             EntitlementKind = LeaveEntitlementKind.PerEvent, CountsCalendarDays = true, DaysPerEvent = 105m,
             MinServiceMonths = 6, RequiresMarried = true, RequiresSoloParentId = true, MaxEvents = 4,
-            IsConfidential = true, IsMaternity = true, ConvertsAtYearEnd = true,
+            IsConfidential = true, IsMaternity = true, ConvertsAtYearEnd = false,
         };
         _repo.Setup(r => r.GetByIdAsync(existing.Id, It.IsAny<CancellationToken>())).ReturnsAsync(existing);
 
@@ -303,6 +319,17 @@ public class LeaveTypeServiceTests
         { new("Vacation Leave", "VL", 15m, true, IsCarryOver: true, CarryOverMaxDays: 5m, null, false,
               EntitlementKind: LeaveEntitlementKind.Accrued, ConvertsAtYearEnd: true),
           "A leave type can't both carry over and convert at year-end." },
+        // A per-event type has no yearly balance to convert, and an unpaid type's days are worth
+        // nothing in cash.
+        { new("Paternity Leave", "PL", 0m, true, false, null, "Male", true,
+              EntitlementKind: LeaveEntitlementKind.PerEvent, DaysPerEvent: 7m, ConvertsAtYearEnd: true),
+          "Only paid accrued or yearly-allowance leave can convert at year-end." },
+        { new("Leave Without Pay", "LWOP", 0m, IsPaid: false, false, null, null, false,
+              EntitlementKind: LeaveEntitlementKind.Accrued, ConvertsAtYearEnd: true),
+          "Only paid accrued or yearly-allowance leave can convert at year-end." },
+        { new("Unpaid Allowance", "UA", 5m, IsPaid: false, false, null, null, false,
+              EntitlementKind: LeaveEntitlementKind.YearlyAllowance, ConvertsAtYearEnd: true),
+          "Only paid accrued or yearly-allowance leave can convert at year-end." },
     };
 
     [Theory]
