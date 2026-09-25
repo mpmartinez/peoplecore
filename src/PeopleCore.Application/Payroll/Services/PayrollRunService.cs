@@ -27,6 +27,7 @@ public class PayrollRunService : IPayrollRunService
     private readonly ILogger<PayrollRunService> _logger;
     private readonly IFinalPayService? _finalPay;
     private readonly IYearEndLeaveConversion? _yearEndLeave;
+    private readonly TimeProvider _clock;
 
     /// <param name="finalPay">
     /// Recomputes final-pay runs, which are built from a separation rather than from a list of
@@ -37,6 +38,10 @@ public class PayrollRunService : IPayrollRunService
     /// Works out each employee's year-end convertible leave, for a December run that includes the
     /// conversion. Optional so callers that never see such a run needn't supply one;
     /// computing or paying one without it is refused.
+    /// </param>
+    /// <param name="clock">
+    /// When Mark Paid happens, stamped on the run and the leave balances it draws down, as final
+    /// pay stamps them. Defaults to the system clock.
     /// </param>
     public PayrollRunService(
         IPayrollRunRepository runRepo,
@@ -50,7 +55,8 @@ public class PayrollRunService : IPayrollRunService
         ISeparationRepository separations,
         ILogger<PayrollRunService> logger,
         IFinalPayService? finalPay = null,
-        IYearEndLeaveConversion? yearEndLeave = null)
+        IYearEndLeaveConversion? yearEndLeave = null,
+        TimeProvider? clock = null)
     {
         _runRepo = runRepo;
         _compensationRepo = compensationRepo;
@@ -64,6 +70,7 @@ public class PayrollRunService : IPayrollRunService
         _logger = logger;
         _finalPay = finalPay;
         _yearEndLeave = yearEndLeave;
+        _clock = clock ?? TimeProvider.System;
     }
 
     public async Task<PayrollRunDto> CreateAsync(CreatePayrollRunRequest request, CancellationToken ct = default)
@@ -332,7 +339,7 @@ public class PayrollRunService : IPayrollRunService
                 loan.IsActive = false;
         }
 
-        var now = DateTime.UtcNow;
+        var now = _clock.GetUtcNow().UtcDateTime;
         var balances = LeavePayout.Apply(leavePaidOut, now);
         run.Status = PayrollRunStatus.Paid;
         run.UpdatedAt = now;

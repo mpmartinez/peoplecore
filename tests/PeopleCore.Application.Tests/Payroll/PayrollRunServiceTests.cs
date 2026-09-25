@@ -29,6 +29,7 @@ public class PayrollRunServiceTests
     // Pays no leave out unless a test says otherwise.
     private readonly Mock<PeopleCore.Application.Payroll.FinalPay.IFinalPayService> _finalPay = new();
     private readonly Mock<IYearEndLeaveConversion> _yearEnd = new();
+    private readonly PeopleCore.Application.Tests.Common.FixedClock _clock = new("2026-12-30T02:15:00Z");
     private readonly PayrollRunService _sut;
 
     public PayrollRunServiceTests()
@@ -59,7 +60,8 @@ public class PayrollRunServiceTests
             _separations.Object,
             NullLogger<PayrollRunService>.Instance,
             _finalPay.Object,
-            _yearEnd.Object);
+            _yearEnd.Object,
+            _clock);
         _finalPay.Setup(f => f.LeavePaidOutAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()))
                  .ReturnsAsync([]);
     }
@@ -1865,6 +1867,20 @@ public class PayrollRunServiceTests
         _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
         _loanRepo.Verify(r => r.UpdateRangeAsync(It.IsAny<IEnumerable<EmployeeLoan>>(), It.IsAny<CancellationToken>()), Times.Never);
         _yearEnd.Verify(y => y.DaysAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_StampsTheRunAndTheLeaveBalances_FromTheInjectedClock()
+    {
+        var (run, maria, _) = ApprovedDecemberConversion();
+        var paidOut = new LeavePaidOut(SilBalance(maria.Id, 3m), 3m);
+        ConvertibleDays(maria.Id, paidOut);
+
+        await _sut.MarkPaidAsync(run.Id);
+
+        var paidAt = new DateTime(2026, 12, 30, 2, 15, 0, DateTimeKind.Utc);
+        paidOut.Balance.UpdatedAt.Should().Be(paidAt);
+        run.UpdatedAt.Should().Be(paidAt);
     }
 
     [Fact]
