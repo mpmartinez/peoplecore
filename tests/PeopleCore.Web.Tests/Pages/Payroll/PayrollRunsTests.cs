@@ -259,17 +259,21 @@ public class PayrollRunsTests : BunitContext
         _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Post);
     }
 
-    [Fact]
-    public void AValidRun_SendsOnlyTheSelectedEmployees_AndOpensTheNewRun()
+    [Theory]
+    // A December period converts unused leave unless the box is unticked.
+    [InlineData("2026-09-01", "2026-09-15", "2026-09-20", false)]
+    [InlineData("2026-12-01", "2026-12-15", "2026-12-20", true)]
+    public void AValidRun_SendsOnlyTheSelectedEmployees_AndOpensTheNewRun(
+        string start, string end, string payDate, bool convertsLeave)
     {
         var newRunId = Guid.NewGuid();
         StubTwoActiveEmployees();
         _api.On(HttpMethod.Post, "/api/payroll-runs", HttpStatusCode.Created, $$"""{"id":"{{newRunId}}","runNumber":"PR-2026-0018"}""");
         var cut = RenderWithCreateDialogOpen();
 
-        cut.Find("#periodStart").Input("2026-09-01");
-        cut.Find("#periodEnd").Input("2026-09-15");
-        cut.Find("#payDate").Input("2026-09-20");
+        cut.Find("#periodStart").Input(start);
+        cut.Find("#periodEnd").Input(end);
+        cut.Find("#payDate").Input(payDate);
         cut.Find("#frequency").Change("SemiMonthly");
         EmployeeCheckbox(cut, "Jose Reyes").Click();
         Button(cut, "Create").Click();
@@ -279,7 +283,7 @@ public class PayrollRunsTests : BunitContext
         // server derives from attendance and unpay overtime and holiday premiums.
         var body = _api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)];
         body.Should().Be(
-            $$"""{"periodStart":"2026-09-01","periodEnd":"2026-09-15","payDate":"2026-09-20","frequency":"SemiMonthly","employees":[{"employeeId":"{{MariaId}}","includeThirteenthMonth":false}],"includeLeaveConversion":false}""");
+            $$"""{"periodStart":"{{start}}","periodEnd":"{{end}}","payDate":"{{payDate}}","frequency":"SemiMonthly","employees":[{"employeeId":"{{MariaId}}","includeThirteenthMonth":false}],"includeLeaveConversion":{{(convertsLeave ? "true" : "false")}}}""");
     }
 
     [Fact]
@@ -329,14 +333,14 @@ public class PayrollRunsTests : BunitContext
         cut.Find("#periodEnd").Input("2026-12-31");
         var box = cut.Find("[data-leave-conversion]");
         box.ParentElement!.TextContent.Should().Contain("Convert unused leave");
-        box.HasAttribute("aria-checked").Should().BeFalse("it starts unticked");
+        box.HasAttribute("aria-checked").Should().BeTrue("a December payroll converts unused leave unless it's unticked");
 
         cut.Find("#periodEnd").Input("2027-01-15");
         cut.FindAll("[data-leave-conversion]").Should().BeEmpty();
     }
 
     [Fact]
-    public void ADecemberRunWithTheBoxTicked_AsksForTheConversion()
+    public void ADecemberRun_AsksForTheConversion_WithoutATick()
     {
         var newRunId = Guid.NewGuid();
         StubTwoActiveEmployees();
@@ -346,13 +350,34 @@ public class PayrollRunsTests : BunitContext
         cut.Find("#periodStart").Input("2026-12-16");
         cut.Find("#periodEnd").Input("2026-12-31");
         cut.Find("#payDate").Input("2027-01-05");
-        cut.Find("[data-leave-conversion]").Click();
         Button(cut, "Create").Click();
 
         cut.WaitForAssertion(() => CurrentUri.Should().Be($"http://localhost/payroll-runs/{newRunId}"));
         var body = System.Text.Json.JsonDocument.Parse(_api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)]!).RootElement;
         body.GetProperty("periodEnd").GetString().Should().Be("2026-12-31");
         body.GetProperty("includeLeaveConversion").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public void ADecemberRun_Unticked_DoesNotConvert_AndTheUntickStays()
+    {
+        StubTwoActiveEmployees();
+        _api.On(HttpMethod.Post, "/api/payroll-runs", HttpStatusCode.Created, $$"""{"id":"{{Guid.NewGuid()}}","runNumber":"PR-2026-0024"}""");
+        var cut = RenderWithCreateDialogOpen();
+
+        cut.Find("#periodStart").Input("2026-12-01");
+        cut.Find("#periodEnd").Input("2026-12-15");
+        cut.Find("[data-leave-conversion]").Click();
+        // Another December end, then out of December and back: the user's untick stands.
+        cut.Find("#periodEnd").Input("2026-12-31");
+        cut.Find("#periodEnd").Input("2026-11-30");
+        cut.Find("#periodEnd").Input("2026-12-15");
+        cut.Find("[data-leave-conversion]").HasAttribute("aria-checked").Should().BeFalse();
+        Button(cut, "Create").Click();
+
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Post));
+        var body = System.Text.Json.JsonDocument.Parse(_api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)]!).RootElement;
+        body.GetProperty("includeLeaveConversion").GetBoolean().Should().BeFalse();
     }
 
     [Fact]
@@ -366,7 +391,7 @@ public class PayrollRunsTests : BunitContext
 
         cut.Find("#periodStart").Input("2026-11-16");
         cut.Find("#periodEnd").Input("2026-12-31");
-        cut.Find("[data-leave-conversion]").Click();
+        cut.Find("[data-leave-conversion]").HasAttribute("aria-checked").Should().BeTrue();
         cut.Find("#periodEnd").Input("2026-11-30");
         Button(cut, "Create").Click();
 
@@ -386,7 +411,6 @@ public class PayrollRunsTests : BunitContext
 
         cut.Find("#periodStart").Input("2026-12-16");
         cut.Find("#periodEnd").Input("2026-12-31");
-        cut.Find("[data-leave-conversion]").Click();
         Button(cut, "Create").Click();
 
         cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should()
@@ -486,7 +510,7 @@ public class PayrollRunsTests : BunitContext
         cut.Find("#periodStart").Input("2026-12-01");
         cut.Find("#periodEnd").Input("2026-12-15");
         cut.Find("[data-thirteenth-month]").Click();
-        cut.Find("[data-leave-conversion]").Click();
+        cut.Find("[data-leave-conversion]").HasAttribute("aria-checked").Should().BeTrue();
         Button(cut, "Create").Click();
 
         cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Post));
