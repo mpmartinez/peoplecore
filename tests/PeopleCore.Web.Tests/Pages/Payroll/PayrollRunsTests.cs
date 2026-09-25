@@ -28,12 +28,14 @@ public class PayrollRunsTests : BunitContext
 
     private string CurrentUri => Services.GetRequiredService<NavigationManager>().Uri;
 
-    private static string RunSummary(Guid id, string runNumber, string status, int employees, string runType = "Regular") =>
+    private static string RunSummary(Guid id, string runNumber, string status, int employees, string runType = "Regular",
+        bool includesLeaveConversion = false) =>
         $$"""
         {"id":"{{id}}","runNumber":"{{runNumber}}","periodLabel":"Sep 1-15, 2026","periodStart":"2026-09-01",
          "periodEnd":"2026-09-15","payDate":"2026-09-20","frequency":"SemiMonthly","status":"{{status}}",
          "employeeCount":{{employees}},"totalGrossPay":0,"totalNetPay":0,"employeesMissingAttendance":0,
-         "createdAt":"2026-09-01T00:00:00Z","runType":"{{runType}}"}
+         "createdAt":"2026-09-01T00:00:00Z","runType":"{{runType}}",
+         "includesLeaveConversion":{{(includesLeaveConversion ? "true" : "false")}}}
         """;
 
     private static string Runs(params string[] runs) => RunsPage(1, 1, runs);
@@ -211,7 +213,8 @@ public class PayrollRunsTests : BunitContext
 
         cut.Markup.Should().Contain("Maria Santos").And.Contain("Jose Reyes").And.NotContain("Former Staff");
         // Blazor renders a true bool attribute as a bare aria-checked and drops a false one entirely.
-        cut.FindAll("[role=checkbox]").Should().HaveCount(2).And.OnlyContain(c => c.HasAttribute("aria-checked"));
+        // The employee checklist only: a December period end also offers the leave-conversion box.
+        cut.FindAll("[role=checkbox]:not([data-leave-conversion])").Should().HaveCount(2).And.OnlyContain(c => c.HasAttribute("aria-checked"));
         cut.Markup.Should().Contain("2 selected of 2 active employees");
     }
 
@@ -275,7 +278,7 @@ public class PayrollRunsTests : BunitContext
         // server derives from attendance and unpay overtime and holiday premiums.
         var body = _api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)];
         body.Should().Be(
-            $$"""{"periodStart":"2026-09-01","periodEnd":"2026-09-15","payDate":"2026-09-20","frequency":"SemiMonthly","employees":[{"employeeId":"{{MariaId}}"}]}""");
+            $$"""{"periodStart":"2026-09-01","periodEnd":"2026-09-15","payDate":"2026-09-20","frequency":"SemiMonthly","employees":[{"employeeId":"{{MariaId}}"}],"includeLeaveConversion":false}""");
     }
 
     [Fact]
@@ -293,6 +296,102 @@ public class PayrollRunsTests : BunitContext
             cut.Find("[role=alert]").TextContent.Should().Contain("A payroll run already exists for this period."));
         CurrentUri.Should().Be(before);
         Button(cut, "Create").HasAttribute("disabled").Should().BeFalse("the user has to be able to fix and retry");
+    }
+
+    // ---------- Year-end leave conversion ----------
+
+    [Fact]
+    public void AFlaggedRun_CarriesALeaveConversionBadge_AndOthersDoNot()
+    {
+        _api.On(HttpMethod.Get, RunsPath, HttpStatusCode.OK,
+            Runs(RunSummary(Guid.NewGuid(), "PR-2026-0024", "Draft", 12, includesLeaveConversion: true),
+                 RunSummary(Guid.NewGuid(), "PR-2026-0023", "Paid", 12)));
+
+        var cut = RenderPage();
+
+        var rows = cut.FindAll("tbody tr");
+        rows[0].QuerySelector("[data-leave-conversion-badge]")!.TextContent.Trim().Should().Be("Leave conversion");
+        rows[1].QuerySelector("[data-leave-conversion-badge]").Should().BeNull();
+    }
+
+    [Fact]
+    public void TheConvertUnusedLeaveBox_IsOfferedOnlyWhileThePeriodEndsInDecember()
+    {
+        StubTwoActiveEmployees();
+        var cut = RenderWithCreateDialogOpen();
+
+        cut.Find("#periodStart").Input("2026-09-01");
+        cut.Find("#periodEnd").Input("2026-09-15");
+        cut.FindAll("[data-leave-conversion]").Should().BeEmpty();
+
+        cut.Find("#periodStart").Input("2026-12-16");
+        cut.Find("#periodEnd").Input("2026-12-31");
+        var box = cut.Find("[data-leave-conversion]");
+        box.ParentElement!.TextContent.Should().Contain("Convert unused leave");
+        box.HasAttribute("aria-checked").Should().BeFalse("it starts unticked");
+
+        cut.Find("#periodEnd").Input("2027-01-15");
+        cut.FindAll("[data-leave-conversion]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ADecemberRunWithTheBoxTicked_AsksForTheConversion()
+    {
+        var newRunId = Guid.NewGuid();
+        StubTwoActiveEmployees();
+        _api.On(HttpMethod.Post, "/api/payroll-runs", HttpStatusCode.Created, $$"""{"id":"{{newRunId}}","runNumber":"PR-2026-0024"}""");
+        var cut = RenderWithCreateDialogOpen();
+
+        cut.Find("#periodStart").Input("2026-12-16");
+        cut.Find("#periodEnd").Input("2026-12-31");
+        cut.Find("#payDate").Input("2027-01-05");
+        cut.Find("[data-leave-conversion]").Click();
+        Button(cut, "Create").Click();
+
+        cut.WaitForAssertion(() => CurrentUri.Should().Be($"http://localhost/payroll-runs/{newRunId}"));
+        var body = System.Text.Json.JsonDocument.Parse(_api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)]!).RootElement;
+        body.GetProperty("periodEnd").GetString().Should().Be("2026-12-31");
+        body.GetProperty("includeLeaveConversion").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public void ATickedBox_IsNotSent_OnceThePeriodEndMovesOutOfDecember()
+    {
+        // The box is hidden then, so nothing on screen says the run would convert - and the API
+        // would refuse it anyway.
+        StubTwoActiveEmployees();
+        _api.On(HttpMethod.Post, "/api/payroll-runs", HttpStatusCode.Created, $$"""{"id":"{{Guid.NewGuid()}}","runNumber":"PR-2026-0022"}""");
+        var cut = RenderWithCreateDialogOpen();
+
+        cut.Find("#periodStart").Input("2026-11-16");
+        cut.Find("#periodEnd").Input("2026-12-31");
+        cut.Find("[data-leave-conversion]").Click();
+        cut.Find("#periodEnd").Input("2026-11-30");
+        Button(cut, "Create").Click();
+
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Post));
+        var body = System.Text.Json.JsonDocument.Parse(_api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)]!).RootElement;
+        body.GetProperty("includeLeaveConversion").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
+    public void ARefusedConversion_ShowsTheApisReason_AndKeepsTheDialogOpen()
+    {
+        StubTwoActiveEmployees();
+        _api.On(HttpMethod.Post, "/api/payroll-runs", HttpStatusCode.BadRequest,
+            """{"title":"Business rule violation","status":400,"detail":"Maria Santos's leave for 2026 was already converted in PR-2026-0023."}""");
+        var cut = RenderWithCreateDialogOpen();
+        var before = CurrentUri;
+
+        cut.Find("#periodStart").Input("2026-12-16");
+        cut.Find("#periodEnd").Input("2026-12-31");
+        cut.Find("[data-leave-conversion]").Click();
+        Button(cut, "Create").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should()
+            .Contain("Maria Santos's leave for 2026 was already converted in PR-2026-0023."));
+        CurrentUri.Should().Be(before);
+        cut.Find("[data-leave-conversion]").HasAttribute("aria-checked").Should().BeTrue("the tick stays for a retry");
     }
 
     private static HttpResponseMessage Json(string json) =>

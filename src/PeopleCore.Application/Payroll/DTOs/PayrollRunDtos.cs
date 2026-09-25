@@ -82,9 +82,11 @@ public record PayrollRunEmployeeDto(
     decimal WithholdingTax,
     decimal LoanDeductions,
     decimal OtherDeductions,
-    // Final-pay earnings, zero on a regular run. FinalPayNonTaxable is the part of the three
-    // non-taxable outright (LeaveConversionNonTaxable plus exempt separation/retirement pay); the
-    // leave beyond de minimis is other benefits, exempt with the 13th month up to the year's 90,000.
+    // Final-pay earnings. A regular run has only the leave conversion, and only when it converts
+    // unused year-end leave (IncludesLeaveConversion); separation and retirement pay are final pay's
+    // alone. FinalPayNonTaxable is the part of the three non-taxable outright
+    // (LeaveConversionNonTaxable plus exempt separation/retirement pay); the leave beyond de minimis
+    // is other benefits, exempt with the 13th month up to the year's 90,000.
     decimal LeaveConversionPay = 0m,
     decimal LeaveConversionNonTaxable = 0m,
     decimal SeparationPay = 0m,

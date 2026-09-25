@@ -638,6 +638,13 @@ public class ApiClient
     public Task<PayrollRunDto?> RemovePayrollRunEmployeeAsync(Guid runId, Guid employeeId)
         => SendJsonAsync<PayrollRunDto>(HttpMethod.Delete, $"api/payroll-runs/{runId}/employees/{employeeId}");
 
+    /// <summary>
+    /// Turns a regular December run's year-end leave conversion on or off. The API recomputes the
+    /// run, which comes back in Draft; a refusal throws with the API's reason.
+    /// </summary>
+    public Task<PayrollRunDto?> SetPayrollRunLeaveConversionAsync(Guid runId, bool include)
+        => SendJsonAsync<PayrollRunDto>(HttpMethod.Put, $"api/payroll-runs/{runId}/leave-conversion", new { include });
+
     // Employee Compensation
     //
     // A 404 here means the employee simply has no compensation row yet - PUT creates one, so the
@@ -1017,7 +1024,8 @@ public record LeaveTypeDto(
     LeaveEntitlementKind EntitlementKind, bool CountsCalendarDays,
     decimal? DaysPerEvent, int? MinServiceMonths,
     bool RequiresMarried, bool RequiresSoloParentId,
-    int? MaxEvents, bool IsConfidential, bool IsMaternity);
+    int? MaxEvents, bool IsConfidential, bool IsMaternity,
+    bool ConvertsAtYearEnd);
 
 // The API's copy gives the later members defaults; this one doesn't, so every caller has to say
 // what it sends rather than reset a setting by leaving it out.
@@ -1029,7 +1037,7 @@ public record CreateLeaveTypeDto(
     bool IsActive, LeaveEntitlementKind EntitlementKind,
     bool CountsCalendarDays, decimal? DaysPerEvent, int? MinServiceMonths,
     bool RequiresMarried, bool RequiresSoloParentId, int? MaxEvents,
-    bool IsConfidential, bool IsMaternity);
+    bool IsConfidential, bool IsMaternity, bool ConvertsAtYearEnd);
 
 public record StatutoryLeaveResultDto(IReadOnlyList<string> Added, IReadOnlyList<string> Skipped);
 
@@ -1111,9 +1119,11 @@ public record PayrollRunEmployeeDto(
     decimal WithholdingTax,
     decimal LoanDeductions,
     decimal OtherDeductions,
-    // Final-pay earnings, zero on a regular run; FinalPayNonTaxable is the part of all three
-    // non-taxable outright (LeaveConversionNonTaxable plus exempt separation/retirement pay); the
-    // leave beyond de minimis is other benefits, exempt with the 13th month up to the year's 90,000.
+    // Final-pay earnings. A regular run has only the leave conversion, and only when it converts
+    // unused year-end leave (IncludesLeaveConversion); separation and retirement pay are final pay's
+    // alone. FinalPayNonTaxable is the part of all three non-taxable outright
+    // (LeaveConversionNonTaxable plus exempt separation/retirement pay); the leave beyond de minimis
+    // is other benefits, exempt with the 13th month up to the year's 90,000.
     decimal LeaveConversionPay = 0m,
     decimal LeaveConversionNonTaxable = 0m,
     decimal SeparationPay = 0m,
@@ -1138,7 +1148,9 @@ public record PayrollRunDto(
     int EmployeesMissingAttendance,
     IReadOnlyList<PayrollRunEmployeeDto> Employees,
     // "Regular" or "FinalPay".
-    string RunType = "Regular");
+    string RunType = "Regular",
+    // A regular December run that pays out unused year-end leave in cash.
+    bool IncludesLeaveConversion = false);
 
 public record PayrollRunSummaryDto(
     Guid Id,
@@ -1154,7 +1166,8 @@ public record PayrollRunSummaryDto(
     decimal TotalNetPay,
     int EmployeesMissingAttendance,
     DateTime CreatedAt,
-    string RunType = "Regular");
+    string RunType = "Regular",
+    bool IncludesLeaveConversion = false);
 
 public record EmployeeCompensationDto(
     Guid Id,

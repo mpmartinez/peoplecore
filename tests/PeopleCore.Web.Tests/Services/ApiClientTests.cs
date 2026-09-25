@@ -170,6 +170,69 @@ public class ApiClientTests
         error.Should().BeNull();
     }
 
+    private static string RunWithLeaveConversion(Guid runId, bool includes) =>
+        $$"""
+        {"id":"{{runId}}","runNumber":"PR-2026-0024","periodLabel":"Dec 16-31, 2026","periodStart":"2026-12-16",
+         "periodEnd":"2026-12-31","payDate":"2027-01-05","frequency":"SemiMonthly","status":"Draft",
+         "employeeCount":0,"totalGrossPay":0,"totalDeductions":0,"totalNetPay":0,"createdAt":"2026-12-01T00:00:00Z",
+         "attendancePeriodId":null,"employeesMissingAttendance":0,"employees":[],"runType":"Regular",
+         "includesLeaveConversion":{{(includes ? "true" : "false")}}}
+        """;
+
+    [Fact]
+    public async Task GetPayrollRun_ReadsWhetherItConvertsLeave()
+    {
+        var runId = Guid.NewGuid();
+        _api.On(HttpMethod.Get, $"/api/payroll-runs/{runId}", HttpStatusCode.OK, RunWithLeaveConversion(runId, true));
+
+        var run = await CreateClient().GetPayrollRunAsync(runId);
+
+        run!.IncludesLeaveConversion.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetPayrollRuns_ReadsWhichRunsConvertLeave()
+    {
+        _api.On(HttpMethod.Get, "/api/payroll-runs?page=1&pageSize=20", HttpStatusCode.OK,
+            $$"""
+            {"items":[{"id":"{{Guid.NewGuid()}}","runNumber":"PR-2026-0024","periodLabel":"Dec 16-31, 2026",
+              "periodStart":"2026-12-16","periodEnd":"2026-12-31","payDate":"2027-01-05","frequency":"SemiMonthly",
+              "status":"Draft","employeeCount":0,"totalGrossPay":0,"totalNetPay":0,"employeesMissingAttendance":0,
+              "createdAt":"2026-12-01T00:00:00Z","runType":"Regular","includesLeaveConversion":true}],
+             "totalCount":1,"page":1,"pageSize":20,"totalPages":1}
+            """);
+
+        var runs = await CreateClient().GetPayrollRunsAsync();
+
+        runs!.Items.Single().IncludesLeaveConversion.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(true, """{"include":true}""")]
+    [InlineData(false, """{"include":false}""")]
+    public async Task SetPayrollRunLeaveConversion_PutsTheChoice_AndReadsTheRunBack(bool include, string body)
+    {
+        var runId = Guid.NewGuid();
+        _api.On(HttpMethod.Put, $"/api/payroll-runs/{runId}/leave-conversion", HttpStatusCode.OK, RunWithLeaveConversion(runId, include));
+
+        var run = await CreateClient().SetPayrollRunLeaveConversionAsync(runId, include);
+
+        run!.IncludesLeaveConversion.Should().Be(include);
+        _api.RequestBodies.Single().Should().Be(body);
+    }
+
+    [Fact]
+    public async Task SetPayrollRunLeaveConversion_ThrowsTheApisReason_WhenRefused()
+    {
+        var runId = Guid.NewGuid();
+        _api.On(HttpMethod.Put, $"/api/payroll-runs/{runId}/leave-conversion", HttpStatusCode.BadRequest,
+            """{"title":"Business rule violation","status":400,"detail":"Year-end leave conversion goes on a December payroll."}""");
+
+        var act = () => CreateClient().SetPayrollRunLeaveConversionAsync(runId, true);
+
+        await act.Should().ThrowAsync<HttpRequestException>().WithMessage("Year-end leave conversion goes on a December payroll.");
+    }
+
     [Fact]
     public async Task GetPayslip_ReturnsThePdfBytes_OnSuccess()
     {

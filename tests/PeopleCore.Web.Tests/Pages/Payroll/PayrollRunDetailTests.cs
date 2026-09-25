@@ -32,13 +32,23 @@ public class PayrollRunDetailTests : BunitContext
     private static readonly Guid JoseId = Guid.Parse("0c6f9a3e-8b2d-4f71-a5c4-3e9d1b7f2a60");
 
     private static string RunJson(string status, bool withEmployee = true, int missingAttendance = 0,
-        string runType = "Regular", string? employees = null, decimal totalDeductions = 0m) =>
+        string runType = "Regular", string? employees = null, decimal totalDeductions = 0m,
+        string periodEnd = "2026-09-15", bool includesLeaveConversion = false) =>
         $$"""
         {"id":"{{RunId}}","runNumber":"PR-2026-0017","periodLabel":"Sep 1-15, 2026","periodStart":"2026-09-01",
-         "periodEnd":"2026-09-15","payDate":"2026-09-20","frequency":"SemiMonthly","status":"{{status}}",
+         "periodEnd":"{{periodEnd}}","payDate":"2026-09-20","frequency":"SemiMonthly","status":"{{status}}",
          "employeeCount":1,"totalGrossPay":0,"totalDeductions":{{totalDeductions}},"totalNetPay":0,"createdAt":"2026-09-01T00:00:00Z",
          "employeesMissingAttendance":{{missingAttendance}},"runType":"{{runType}}",
-         "employees":[{{employees ?? (withEmployee ? EmployeeLine : "")}}]}
+         "employees":[{{employees ?? (withEmployee ? EmployeeLine : "")}}],
+         "includesLeaveConversion":{{(includesLeaveConversion ? "true" : "false")}}}
+        """;
+
+    private const string December = "2026-12-31";
+
+    private static string YearEndLine =>
+        $$"""
+        {"id":"{{Guid.NewGuid()}}","employeeId":"{{MariaId}}","employeeName":"Maria Santos","employeeNumber":"EMP-0042",
+         "grossPay":40100,"netPay":36000,"leaveConversionPay":3600,"leaveConversionNonTaxable":3600,"finalPayNonTaxable":3600}
         """;
 
     private static string EmployeeLine =>
@@ -511,6 +521,208 @@ public class PayrollRunDetailTests : BunitContext
             .Contain("A paid payroll run can't be changed."));
         cut.FindAll("[data-confirm-remove]").Should().BeEmpty();
         cut.FindAll("tbody tr").Should().HaveCount(2);
+    }
+
+    // ---------- Year-end leave conversion ----------
+
+    private string LeaveConversionPath => $"{RunPath}/leave-conversion";
+
+    private static IElement? LeaveConversionToggle(IRenderedComponent<PayrollRunDetail> cut) =>
+        cut.FindAll("[data-leave-conversion-toggle]").SingleOrDefault();
+
+    private static IElement ConfirmButton(IRenderedComponent<PayrollRunDetail> cut) =>
+        cut.Find("[data-confirm-leave-conversion]").QuerySelectorAll("button").Last();
+
+    [Fact]
+    public void AFlaggedRun_ShowsTheYearEndBadge_AndEachEmployeesLeaveConversion()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK,
+            RunJson("Draft", periodEnd: December, includesLeaveConversion: true, employees: YearEndLine));
+
+        var cut = RenderPage();
+
+        cut.Find("[data-leave-conversion-badge]").TextContent.Trim().Should().Be("Year-end leave conversion");
+        var headers = cut.FindAll("thead th").Select(h => h.TextContent.Trim()).ToList();
+        headers.Should().Contain("Leave conversion");
+        // Not a final pay: none of its other columns.
+        headers.Should().NotContain(["Separation Pay", "Retirement Pay", "Non-taxable (de minimis + separation/retirement)"]);
+        cut.Find("[data-leave-conversion]").TextContent.Should().Contain("3,600.00");
+        cut.FindAll("[data-final-pay-badge]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AnUnflaggedDecemberRun_HasNoLeaveConversionBadgeOrColumn()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", periodEnd: December));
+
+        var cut = RenderPage();
+
+        cut.FindAll("[data-leave-conversion-badge]").Should().BeEmpty();
+        cut.FindAll("thead th").Select(h => h.TextContent.Trim()).Should().NotContain("Leave conversion");
+        cut.FindAll("[data-leave-conversion]").Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("Regular", "Draft", December, false, "Convert unused leave")]
+    [InlineData("Regular", "ForApproval", December, false, "Convert unused leave")]
+    [InlineData("Regular", "Approved", December, true, "Stop converting unused leave")]
+    [InlineData("Regular", "Draft", December, true, "Stop converting unused leave")]
+    [InlineData("Regular", "Paid", December, true, null)]
+    [InlineData("Regular", "Draft", "2026-11-30", false, null)]
+    [InlineData("FinalPay", "Draft", December, false, null)]
+    public void TheConversionToggle_IsOfferedOnRegularDecemberRunsThatArentPaid(
+        string runType, string status, string periodEnd, bool flagged, string? expected)
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK,
+            RunJson(status, runType: runType, periodEnd: periodEnd, includesLeaveConversion: flagged));
+
+        var cut = RenderPage();
+
+        if (expected is null) LeaveConversionToggle(cut).Should().BeNull();
+        else LeaveConversionToggle(cut)!.TextContent.Trim().Should().Be(expected);
+    }
+
+    [Fact]
+    public void TurningTheConversionOn_AsksFirst_ThenPutsIt_AndReloadsTheRun()
+    {
+        var flagged = false;
+        _api.On(HttpMethod.Get, RunPath, () => Json(RunJson("Draft", periodEnd: December, includesLeaveConversion: flagged,
+                employees: flagged ? YearEndLine : EmployeeLine)))
+            .On(HttpMethod.Put, LeaveConversionPath, () =>
+            {
+                flagged = true;
+                return Json(RunJson("Draft", periodEnd: December, includesLeaveConversion: true, employees: YearEndLine));
+            });
+        var cut = RenderPage();
+
+        LeaveConversionToggle(cut)!.Click();
+
+        var dialog = cut.WaitForElement("[data-confirm-leave-conversion]");
+        dialog.TextContent.Should().Contain("Convert unused leave").And.NotContain("approval again");
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Put);
+
+        ConfirmButton(cut).Click();
+
+        cut.WaitForAssertion(() => cut.Find("[data-leave-conversion-badge]").TextContent.Trim().Should().Be("Year-end leave conversion"));
+        var put = _api.Requests.FindIndex(r => r.Method == HttpMethod.Put);
+        _api.Requests[put].RequestUri!.AbsolutePath.Should().Be(LeaveConversionPath);
+        _api.RequestBodies[put].Should().Be("""{"include":true}""");
+        _api.Requests.Count(r => r.Method == HttpMethod.Get).Should().Be(2, "the run is reloaded after the change");
+        cut.FindAll("[data-confirm-leave-conversion]").Should().BeEmpty();
+        LeaveConversionToggle(cut)!.TextContent.Trim().Should().Be("Stop converting unused leave");
+        cut.Find("[data-leave-conversion]").TextContent.Should().Contain("3,600.00");
+    }
+
+    [Theory]
+    [InlineData("Approved")]
+    [InlineData("ForApproval")]
+    public void TurningTheConversionOff_OnARunAwaitingOrPastApproval_WarnsItGoesBackToDraftForApprovalAgain(string status)
+    {
+        var current = status;
+        _api.On(HttpMethod.Get, RunPath, () => Json(RunJson(current, periodEnd: December, includesLeaveConversion: current != "Draft",
+                employees: YearEndLine)))
+            .On(HttpMethod.Put, LeaveConversionPath, () =>
+            {
+                current = "Draft";
+                return Json(RunJson("Draft", periodEnd: December));
+            });
+        var cut = RenderPage();
+
+        LeaveConversionToggle(cut)!.Click();
+
+        var dialog = cut.WaitForElement("[data-confirm-leave-conversion]");
+        dialog.TextContent.Should().Contain("Stop converting unused leave")
+            .And.Contain("goes back to Draft").And.Contain("approval again");
+
+        ConfirmButton(cut).Click();
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain(">Draft<"));
+        _api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Put)].Should().Be("""{"include":false}""");
+        cut.FindAll("[data-leave-conversion-badge]").Should().BeEmpty();
+        LeaveConversionToggle(cut)!.TextContent.Trim().Should().Be("Convert unused leave");
+    }
+
+    [Fact]
+    public void CancellingTheConversionChange_SendsNothing()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", periodEnd: December));
+        var cut = RenderPage();
+
+        LeaveConversionToggle(cut)!.Click();
+        cut.WaitForElement("[data-confirm-leave-conversion]").QuerySelectorAll("button").First().Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[data-confirm-leave-conversion]").Should().BeEmpty());
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Put);
+    }
+
+    [Theory]
+    [InlineData("A paid payroll run can't be changed.")]
+    [InlineData("Year-end leave conversion goes on a December payroll.")]
+    [InlineData("A final pay's leave conversion can't be changed here.")]
+    [InlineData("This payroll already converts unused leave.")]
+    [InlineData("This payroll already doesn't convert unused leave.")]
+    [InlineData("Maria Santos's leave for 2026 was already converted in PR-2026-0023.")]
+    public void ARefusedConversionChange_ShowsTheApisReason(string reason)
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", periodEnd: December))
+            .On(HttpMethod.Put, LeaveConversionPath, HttpStatusCode.BadRequest,
+                System.Text.Json.JsonSerializer.Serialize(new { title = "Business rule violation", status = 400, detail = reason }));
+        var cut = RenderPage();
+
+        LeaveConversionToggle(cut)!.Click();
+        cut.WaitForElement("[data-confirm-leave-conversion]");
+        ConfirmButton(cut).Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain(reason));
+        cut.FindAll("[data-confirm-leave-conversion]").Should().BeEmpty();
+        LeaveConversionToggle(cut)!.HasAttribute("disabled").Should().BeFalse("the user can try again");
+    }
+
+    [Fact]
+    public void WhileTheConversionChangeIsInFlight_TheRunsActionsAreDisabled_AndASecondConfirmSendsNothing()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", periodEnd: December));
+        var gate = _api.OnGated(HttpMethod.Put, LeaveConversionPath);
+        var cut = RenderPage();
+
+        LeaveConversionToggle(cut)!.Click();
+        cut.WaitForElement("[data-confirm-leave-conversion]");
+        ConfirmButton(cut).Click();
+
+        cut.WaitForAssertion(() => LeaveConversionToggle(cut)!.HasAttribute("disabled").Should().BeTrue());
+        Button(cut, "Compute").HasAttribute("disabled").Should().BeTrue();
+        Button(cut, "Approve").HasAttribute("disabled").Should().BeTrue();
+
+        ConfirmButton(cut).Click();
+        _api.Requests.Count(r => r.Method == HttpMethod.Put).Should().Be(1);
+
+        gate.SetResult(Json(RunJson("Draft", periodEnd: December, includesLeaveConversion: true)));
+        cut.WaitForAssertion(() => LeaveConversionToggle(cut)!.HasAttribute("disabled").Should().BeFalse());
+    }
+
+    [Fact]
+    public void AnApprovedFlaggedRun_CanBeRecomputed_AfterAskingFirst()
+    {
+        // The API recomputes an Approved run that converts leave (and sends it back to Draft): it's
+        // where an approval or Mark Paid refused with "recompute it before paying" leads.
+        var status = "Approved";
+        _api.On(HttpMethod.Get, RunPath, () => Json(RunJson(status, periodEnd: December, includesLeaveConversion: true, employees: YearEndLine)))
+            .On(HttpMethod.Put, $"{RunPath}/compute", () =>
+            {
+                status = "Draft";
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            });
+        var cut = RenderPage();
+
+        ActionButtons(cut).Should().Equal("Compute", "Mark Paid");
+        Button(cut, "Compute").Click();
+
+        var dialog = cut.WaitForElement("[data-confirm-compute]");
+        dialog.TextContent.Should().Contain("goes back to Draft").And.Contain("approval again").And.NotContain("final pay");
+        dialog.QuerySelectorAll("button").Last().Click();
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain(">Draft<"));
+        ActionButtons(cut).Should().Equal("Compute", "Approve");
     }
 
     private static HttpResponseMessage Json(string json) =>
