@@ -1,5 +1,6 @@
 @page "/my-leave"
 @attribute [Authorize]
+@using System.Globalization
 @inject ApiClient Api
 @inject AuthenticationStateProvider AuthStateProvider
 
@@ -74,22 +75,49 @@ else
             {
                 <Alert Variant="success" Class="mb-3">@_successMsg</Alert>
             }
+            @if (_uploadWarning is not null)
+            {
+                <Alert Variant="warning" Class="mb-3" data-upload-warning>@_uploadWarning</Alert>
+            }
             @if (_error is not null)
             {
                 <Alert Variant="destructive" Class="mb-3">@_error</Alert>
             }
             <div class="space-y-3">
                 <FormField LabelText="Leave Type" Id="leaveType">
-                    <Select TValue="string" Id="leaveType" @bind-Value="_leaveTypeId" Placeholder="-- Select leave type --">
-                        @if (_balances is not null)
+                    <Select TValue="string" Id="leaveType" Value="@_leaveTypeId" ValueChanged="OnTypeChanged" Placeholder="-- Select leave type --">
+                        @if (_options is not null)
                         {
-                            @foreach (var b in _balances)
+                            @foreach (var o in _options)
                             {
-                                <option value="@b.LeaveTypeId">@b.LeaveTypeName (@b.RemainingDays days left)</option>
+                                <option value="@o.LeaveTypeId">@o.Name</option>
                             }
                         }
                     </Select>
                 </FormField>
+                @if (Chosen is { } chosen)
+                {
+                    <p class="text-sm text-muted-foreground" data-leave-limit>@LimitText(chosen)</p>
+
+                    @if (chosen.IsMaternity)
+                    {
+                        <FormField LabelText="Case" Id="maternityCase">
+                            <Select TValue="MaternityCase" Id="maternityCase" Value="@_maternityCase"
+                                    ValueChanged="@(v => _maternityCase = v)" data-maternity-case>
+                                <option value="@MaternityCase.LiveBirth">Live birth</option>
+                                <option value="@MaternityCase.MiscarriageOrEmergencyTermination">Miscarriage or emergency termination</option>
+                            </Select>
+                        </FormField>
+                        @if (_maternityCase == MaternityCase.LiveBirth)
+                        {
+                            <FormField LabelText="Days given to the father" Id="fatherDays"
+                                       Description="@($"Up to {LeaveFiling.MaxDaysAllocatedToFather} of your days can go to the child's father.")">
+                                <Input TValue="int" Id="fatherDays" Type="number" Min="0" Max="@LeaveFiling.MaxDaysAllocatedToFather.ToString(CultureInfo.InvariantCulture)"
+                                       Value="@_fatherDays" ValueChanged="@(v => _fatherDays = v)" data-father-days />
+                            </FormField>
+                        }
+                    }
+                }
                 <div class="grid grid-cols-2 gap-3">
                     <FormField LabelText="From" Id="leaveFrom">
                         <Input TValue="DateTime" Id="leaveFrom" Type="date" @bind-Value="_startDate" />
@@ -101,7 +129,19 @@ else
                 <FormField LabelText="Reason" Id="leaveReason" Description="Optional.">
                     <Textarea TValue="string" Id="leaveReason" Rows="2" Value="@_reason" ValueChanged="@(v => _reason = string.IsNullOrWhiteSpace(v) ? null : v)" />
                 </FormField>
-                <Button Variant="primary" Class="w-full" OnClick="SubmitLeave" Loading="@_submitting">Submit Request</Button>
+                @if (Chosen?.RequiresDocument == true)
+                {
+                    <FormField LabelText="Supporting document" Id="leaveDocument" Required="true"
+                               Description="A PDF, JPG or PNG of at most 10 MB.">
+                        <InputFile id="leaveDocument" OnChange="OnDocumentChosen" accept="@LeaveFiling.AcceptedExtensions" required
+                                   disabled="@_submitting" class="text-sm" data-leave-document />
+                        @if (_document is not null)
+                        {
+                            <p class="mt-1 text-sm text-muted-foreground" data-chosen-document>Attached: @_document.FileName</p>
+                        }
+                    </FormField>
+                }
+                <Button Variant="primary" Class="w-full" OnClick="SubmitLeave" Loading="@_submitting" Disabled="@(!CanSubmit)">Submit Request</Button>
             </div>
         </CardContent>
     </Card>
@@ -112,6 +152,14 @@ else
         <CardTitle>Leave History</CardTitle>
     </CardHeader>
     <CardContent Class="p-0">
+        @if (_documentMessage is not null)
+        {
+            <div class="p-4 pb-0"><Alert Variant="success" data-document-message>@_documentMessage</Alert></div>
+        }
+        @if (_documentError is not null)
+        {
+            <div class="p-4 pb-0"><Alert Variant="destructive" data-document-error>@_documentError</Alert></div>
+        }
         @if (_requests is null)
         {
             <div class="p-6 text-center text-muted-foreground text-sm">Leave history is unavailable.</div>
@@ -130,6 +178,7 @@ else
                         <TableHead Class="px-4">To</TableHead>
                         <TableHead Class="px-4 text-right">Days</TableHead>
                         <TableHead Class="px-4">Status</TableHead>
+                        <TableHead Class="px-4">Document</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -143,6 +192,24 @@ else
                             <TableCell Class="px-4 py-3">
                                 <Badge Variant="@LeaveStatusVariant(r.Status)">@r.Status</Badge>
                             </TableCell>
+                            <TableCell Class="px-4 py-3">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    @if (r.HasDocument)
+                                    {
+                                        <span class="text-xs text-muted-foreground">@r.DocumentFileName</span>
+                                    }
+                                    @if (CanAttach(r))
+                                    {
+                                        var request = r;
+                                        <label class="inline-flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium hover:bg-accent">
+                                            <i class="bi bi-paperclip"></i>
+                                            <span>@(request.HasDocument ? "Replace document" : "Attach document")</span>
+                                            <InputFile OnChange="@(e => AttachDocument(request, e))" accept="@LeaveFiling.AcceptedExtensions"
+                                                       class="hidden" disabled="@(_attaching is not null)" data-attach-document="@request.Id" />
+                                        </label>
+                                    }
+                                </div>
+                            </TableCell>
                         </TableRow>
                     }
                 </TableBody>
@@ -155,16 +222,39 @@ else
 @code {
     private IReadOnlyList<LeaveBalanceDto>? _balances;
     private PagedResult<LeaveRequestDto>? _requests;
+    private IReadOnlyList<LeaveFilingOptionDto>? _options;
     private Guid _employeeId;
     private string _leaveTypeId = string.Empty;
+    private MaternityCase _maternityCase = MaternityCase.LiveBirth;
+    private int _fatherDays;
     private DateTime _startDate = DateTime.Today;
     private DateTime _endDate = DateTime.Today;
     private string? _reason;
+    private ChosenDocument? _document;
     private string? _successMsg;
+    private string? _uploadWarning;
     private string? _error;
     private bool _submitting;
     private bool _initialized;
     private string? _loadError;
+
+    // Documents attached to a request already filed, from the history.
+    private Guid? _attaching;
+    private string? _documentMessage;
+    private string? _documentError;
+
+    // Filing and attaching both reload everything, and the answers can arrive out of order: only
+    // the latest load may set what the page shows. Likewise only the latest file picked is kept.
+    private int _load;
+    private int _documentPick;
+
+    private sealed record ChosenDocument(string FileName, string ContentType, byte[] Content);
+
+    private LeaveFilingOptionDto? Chosen =>
+        _options?.FirstOrDefault(o => o.LeaveTypeId.ToString() == _leaveTypeId);
+
+    // A type that needs a document can't be filed without one; everything else is checked on submit.
+    private bool CanSubmit => !(Chosen?.RequiresDocument == true && _document is null);
 
     protected override async Task OnInitializedAsync()
     {
@@ -183,47 +273,225 @@ else
 
     private async Task LoadAll()
     {
+        var load = ++_load;
         _loadError = null;
-        await Task.WhenAll(LoadBalances(), LoadRequests());
+        await Task.WhenAll(LoadBalances(load), LoadRequests(load), LoadOptions(load));
     }
 
-    private async Task LoadBalances()
+    private async Task LoadBalances(int load)
     {
-        try { _balances = await Api.GetLeaveBalancesAsync(_employeeId); }
-        catch (Exception ex) { _balances = null; _loadError = ex.Message; }
+        try
+        {
+            var balances = await Api.GetLeaveBalancesAsync(_employeeId);
+            if (load == _load) _balances = balances;
+        }
+        catch (Exception ex)
+        {
+            if (load != _load) return;
+            _balances = null;
+            _loadError = ex.Message;
+        }
     }
 
-    private async Task LoadRequests()
+    private async Task LoadRequests(int load)
     {
-        try { _requests = await Api.GetLeaveRequestsAsync(_employeeId, page: 1, pageSize: 20); }
-        catch (Exception ex) { _requests = null; _loadError = ex.Message; }
+        try
+        {
+            var requests = await Api.GetLeaveRequestsAsync(_employeeId, page: 1, pageSize: 20);
+            if (load == _load) _requests = requests;
+        }
+        catch (Exception ex)
+        {
+            if (load != _load) return;
+            _requests = null;
+            _loadError = ex.Message;
+        }
+    }
+
+    // What the employee may file today. A type they have a balance for may no longer be one of
+    // them, and a statutory type may have no balance row at all, so the picker comes from here.
+    private async Task LoadOptions(int load)
+    {
+        try
+        {
+            var options = await Api.GetLeaveFilingOptionsAsync();
+            if (load == _load) _options = options;
+        }
+        catch (Exception ex)
+        {
+            if (load != _load) return;
+            _options = null;
+            _loadError = ex.Message;
+        }
+    }
+
+    private void OnTypeChanged(string leaveTypeId)
+    {
+        _leaveTypeId = leaveTypeId;
+        _maternityCase = MaternityCase.LiveBirth;
+        _fatherDays = 0;
+    }
+
+    private static string Days(decimal days) => days.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private string LimitText(LeaveFilingOptionDto option)
+    {
+        if (option.IsMaternity)
+        {
+            var limit = LeaveFiling.MaternityLimit(option.DaysPerEvent ?? 0m, option.HasSoloParentBonus, _maternityCase, _fatherDays);
+            return $"Up to {Days(limit)} days";
+        }
+
+        if (option.Kind == LeaveEntitlementKind.PerEvent)
+        {
+            var text = $"Up to {Days(option.DaysPerEvent ?? 0m)} days each time";
+            return option.MaxEvents is { } max ? $"{text} ({option.EventsUsed} of {max} used)" : text;
+        }
+
+        return $"{Days(option.DaysLeftThisYear ?? 0m)} days left this year";
+    }
+
+    private async Task OnDocumentChosen(InputFileChangeEventArgs e)
+    {
+        var pick = ++_documentPick;
+        _error = null;
+        _document = null;
+
+        var document = await ReadDocument(e.File);
+        if (pick != _documentPick) return;
+        if (document.Refusal is not null) { _error = document.Refusal; return; }
+        _document = document.Chosen;
+    }
+
+    /// <summary>
+    /// The file as it will be uploaded, or why it can't be. Checked here because the API cuts off an
+    /// upload over its cap mid-send, which a browser reports as a network error, not the reason.
+    /// </summary>
+    private static async Task<(ChosenDocument? Chosen, string? Refusal)> ReadDocument(IBrowserFile file)
+    {
+        var contentType = LeaveFiling.DocumentContentType(file.Name, file.Size);
+        if (contentType is null) return (null, LeaveFiling.FileRefusal);
+
+        try
+        {
+            await using var stream = file.OpenReadStream(LeaveFiling.MaxDocumentBytes);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            return (new ChosenDocument(file.Name, contentType, buffer.ToArray()), null);
+        }
+        catch (Exception ex)
+        {
+            return (null, ex.Message);
+        }
     }
 
     private async Task SubmitLeave()
     {
-        _submitting = true;
+        if (_submitting) return;
+
         _error = null;
         _successMsg = null;
+        _uploadWarning = null;
+
+        var option = Chosen;
+        if (option is null)
+        { _error = "Please select a leave type."; return; }
+        if (_endDate < _startDate)
+        { _error = "The end date cannot be before the start date."; return; }
+
+        var liveBirth = option.IsMaternity && _maternityCase == MaternityCase.LiveBirth;
+        if (liveBirth && _fatherDays is < 0 or > LeaveFiling.MaxDaysAllocatedToFather)
+        { _error = LeaveFiling.FatherDaysRefusal; return; }
+
+        var document = option.RequiresDocument ? _document : null;
+        if (option.RequiresDocument && document is null)
+        { _error = "Attach the supporting document."; return; }
+
+        var request = new CreateLeaveRequestDto(
+            _employeeId, option.LeaveTypeId,
+            DateOnly.FromDateTime(_startDate), DateOnly.FromDateTime(_endDate), _reason,
+            option.IsMaternity ? _maternityCase : null,
+            liveBirth ? _fatherDays : 0);
+
+        _submitting = true;
+        string? uploadFailure = null;
         try
         {
-            if (string.IsNullOrEmpty(_leaveTypeId))
-            { _error = "Please select a leave type."; return; }
-            if (_endDate < _startDate)
-            { _error = "The end date cannot be before the start date."; return; }
+            LeaveRequestDto? filed;
+            try { filed = await Api.CreateLeaveRequestAsync(request); }
+            catch (Exception ex) { _error = ex.Message; return; }
 
-            await Api.CreateLeaveRequestAsync(new
+            // Filed either way from here: a document that doesn't upload can be attached again
+            // from the request in the history.
+            if (document is not null)
             {
-                employeeId = _employeeId,
-                leaveTypeId = Guid.Parse(_leaveTypeId),
-                startDate = DateOnly.FromDateTime(_startDate),
-                endDate = DateOnly.FromDateTime(_endDate),
-                reason = _reason
-            });
-            _successMsg = "Leave request submitted successfully.";
-            await LoadAll();
+                if (filed is null) uploadFailure = "the new request wasn't returned";
+                else
+                {
+                    try { await Api.UploadLeaveDocumentAsync(filed.Id, document.Content, document.FileName, document.ContentType); }
+                    catch (Exception ex) { uploadFailure = ex.Message; }
+                }
+            }
         }
-        catch (Exception ex) { _error = ex.Message; }
-        finally { _submitting = false; }
+        finally
+        {
+            _submitting = false;
+        }
+
+        if (uploadFailure is null)
+            _successMsg = "Leave request submitted successfully.";
+        else
+            _uploadWarning = $"Your request was filed, but the document didn't upload: {uploadFailure.TrimEnd('.')}. Attach it again from the request.";
+
+        ResetForm();
+        await LoadAll();
+    }
+
+    private void ResetForm()
+    {
+        _leaveTypeId = string.Empty;
+        _maternityCase = MaternityCase.LiveBirth;
+        _fatherDays = 0;
+        _reason = null;
+        _document = null;
+        _documentPick++;
+    }
+
+    // A pending request of a type that needs a document can have one attached, or replaced, until
+    // it is decided. The type's rule comes from the filing options.
+    private bool CanAttach(LeaveRequestDto request) =>
+        request.Status == "Pending"
+        && _options?.FirstOrDefault(o => o.LeaveTypeId == request.LeaveTypeId)?.RequiresDocument == true;
+
+    private async Task AttachDocument(LeaveRequestDto request, InputFileChangeEventArgs e)
+    {
+        if (_attaching is not null) return;
+
+        _documentMessage = null;
+        _documentError = null;
+        _attaching = request.Id;
+        try
+        {
+            var (document, refusal) = await ReadDocument(e.File);
+            if (document is null) { _documentError = refusal; return; }
+
+            try
+            {
+                await Api.UploadLeaveDocumentAsync(request.Id, document.Content, document.FileName, document.ContentType);
+                _documentMessage = $"{document.FileName} is attached to your {request.LeaveTypeName} request.";
+            }
+            catch (Exception ex)
+            {
+                _documentError = ex.Message;
+                return;
+            }
+        }
+        finally
+        {
+            _attaching = null;
+        }
+
+        await LoadAll();
     }
 
     private static string LeaveStatusVariant(string s) => s switch

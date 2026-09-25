@@ -177,7 +177,8 @@ public class EmployeeService : IEmployeeService
         e.TeamId,
         e.EmploymentStatus, e.EmploymentType, e.HireDate, e.RegularizationDate,
         e.IsActive, e.Is13thMonthEligible, e.SeparationDate,
-        e.SoloParentIdNumber, e.SoloParentIdValidUntil);
+        e.SoloParentIdNumber, e.SoloParentIdValidUntil,
+        e.PersonalEmail, e.Address);
 
     /// <summary>The column's length (EmployeeConfiguration); refused here rather than failing the save.</summary>
     private const int SoloParentIdNumberMaxLength = 50;

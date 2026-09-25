@@ -2,6 +2,7 @@
 @attribute [RequirePermission(Permissions.ApprovalsTeam, Permissions.ApprovalsAll)]
 @inject ApiClient Api
 @inject AuthenticationStateProvider AuthStateProvider
+@inject IJSRuntime JS
 
 <PageTitle>Leave Approvals</PageTitle>
 
@@ -53,7 +54,24 @@
                     {
                         <TableRow>
                             <TableCell Class="px-4 py-3 font-medium">@r.EmployeeName</TableCell>
-                            <TableCell Class="px-4 py-3">@r.LeaveTypeName</TableCell>
+                            <TableCell Class="px-4 py-3">
+                                <div>@r.LeaveTypeName</div>
+                                @if (r.MaternityCase is { } maternityCase)
+                                {
+                                    <div class="text-xs text-muted-foreground" data-maternity>@MaternityText(maternityCase, r.DaysAllocatedToFather)</div>
+                                }
+                                @if (!r.IsMasked && r.HasDocument)
+                                {
+                                    var request = r;
+                                    <button type="button" class="mt-1 text-xs font-medium text-primary underline-offset-4 hover:underline disabled:opacity-50"
+                                            disabled="@(_openingDocument == request.Id)"
+                                            @onclick="() => ViewDocument(request.Id)" data-view-document="@request.Id">View document</button>
+                                }
+                                else if (NeedsDocument(r))
+                                {
+                                    <div class="mt-1"><Badge Variant="warning" data-no-document>No document attached</Badge></div>
+                                }
+                            </TableCell>
                             <TableCell Class="px-4 py-3">@r.StartDate</TableCell>
                             <TableCell Class="px-4 py-3">@r.EndDate</TableCell>
                             <TableCell Class="px-4 py-3">@r.TotalDays</TableCell>
@@ -103,8 +121,25 @@
     // they can succeed.
     private Guid? _currentEmployeeId;
 
+    // A confidential request reaches anyone without approvals.all masked, and the API refuses them a
+    // decision on it. The queue leaves such requests out; this keeps the buttons off if one gets through.
     private bool CanDecide(LeaveRequestDto request)
-        => _currentEmployeeId is { } me && request.EmployeeId != me;
+        => _currentEmployeeId is { } me && request.EmployeeId != me && !request.IsMasked;
+
+    // Which types need a supporting document before approval. Only the warnings need it, so a
+    // failure to load leaves them off rather than the queue.
+    private HashSet<Guid> _typesNeedingDocument = [];
+    private Guid? _openingDocument;
+
+    private bool NeedsDocument(LeaveRequestDto request)
+        => !request.IsMasked && !request.HasDocument && _typesNeedingDocument.Contains(request.LeaveTypeId);
+
+    private static string MaternityText(MaternityCase maternityCase, int fatherDays) => maternityCase switch
+    {
+        MaternityCase.LiveBirth when fatherDays > 0 => $"Live birth, {fatherDays} {(fatherDays == 1 ? "day" : "days")} to the father",
+        MaternityCase.LiveBirth => "Live birth",
+        _ => "Miscarriage or emergency termination",
+    };
 
     private string EmptyText => _statusFilter == ""
         ? "No leave requests."
@@ -114,7 +149,42 @@
     {
         var auth = await AuthStateProvider.GetAuthenticationStateAsync();
         if (Guid.TryParse(auth.User.FindFirst("employee_id")?.Value, out var id)) _currentEmployeeId = id;
-        await LoadRequests();
+        await Task.WhenAll(LoadRequests(), LoadLeaveTypes());
+    }
+
+    private async Task LoadLeaveTypes()
+    {
+        try
+        {
+            var types = await Api.GetLeaveTypesAsync() ?? [];
+            _typesNeedingDocument = types.Where(t => t.RequiresDocument).Select(t => t.Id).ToHashSet();
+        }
+        catch
+        {
+            _typesNeedingDocument = [];
+        }
+    }
+
+    // The link expires after 300 seconds, so it is fetched on each click and opened straight away.
+    private async Task ViewDocument(Guid requestId)
+    {
+        if (_openingDocument is not null) return;
+
+        _openingDocument = requestId;
+        try
+        {
+            var url = await Api.GetLeaveDocumentUrlAsync(requestId);
+            if (url is not null) await JS.InvokeVoidAsync("open", url, "_blank");
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _openingDocument = null;
+        }
     }
 
     private async Task LoadRequests()

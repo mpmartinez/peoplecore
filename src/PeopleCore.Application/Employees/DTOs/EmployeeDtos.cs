@@ -34,7 +34,11 @@ public record EmployeeDto(
     // The solo parent ID (RA 11861). One valid on a date opens Solo Parent Leave and adds 15 days
     // to a live-birth maternity leave. Personal: the directory entry does not carry it.
     string? SoloParentIdNumber = null,
-    DateOnly? SoloParentIdValidUntil = null);
+    DateOnly? SoloParentIdValidUntil = null,
+    // Only an update sets these. They are here so the form that edits an employee can send them
+    // back unchanged: an update replaces every field, and one left out is cleared.
+    string? PersonalEmail = null,
+    string? Address = null);
 
 /// <summary>
 /// One row of the company directory, which every signed-in user may list. Deliberately a subset of

@@ -52,6 +52,25 @@ public class EmployeeServiceTests
     }
 
     [Fact]
+    public async Task GetByIdAsync_CarriesThePersonalEmailAndAddress_SoAFullUpdateCanSendThemBack()
+    {
+        // An update replaces every field, so the form that edits an employee has to send back the
+        // personal email and address it didn't touch. It can only do that if the record has them.
+        var employee = new Employee
+        {
+            Id = Guid.NewGuid(), EmployeeNumber = "EMP-001", FirstName = "Juan", LastName = "dela Cruz",
+            WorkEmail = "juan@company.com", IsActive = true,
+            PersonalEmail = "juan@home.test", Address = "12 Mabini Street, Quezon City"
+        };
+        _repo.Setup(r => r.GetByIdAsync(employee.Id, It.IsAny<CancellationToken>())).ReturnsAsync(employee);
+
+        var dto = await _sut.GetByIdAsync(employee.Id);
+
+        dto.PersonalEmail.Should().Be("juan@home.test");
+        dto.Address.Should().Be("12 Mabini Street, Quezon City");
+    }
+
+    [Fact]
     public async Task CreateAsync_WhenEmployeeNumberAlreadyExists_ThrowsDomainException()
     {
         _repo.Setup(r => r.EmployeeNumberExistsAsync("EMP-001", It.IsAny<CancellationToken>())).ReturnsAsync(true);
