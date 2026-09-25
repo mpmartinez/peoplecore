@@ -173,7 +173,7 @@ All paid.
 
 | Code | Name | Kind | Limit | Days | Rules |
 |---|---|---|---|---|---|
-| SIL | Service Incentive Leave | Accrued | Annual policy of 5 days from 12 months' service | Working | Convertible to cash; counts as vacation for de minimis |
+| SIL | Service Incentive Leave | Accrued | Monthly policy of 5 days a year from 12 months' service, credited on a cumulative rounding (0.42, 0.41, 0.42, ... adding up to exactly 5) | Working | Convertible to cash; counts as vacation for de minimis |
 | ML | Maternity Leave | PerEvent, IsMaternity | 105 (120 solo parent), 60 miscarriage | Calendar | Female; document required |
 | AML | Maternity Leave Allocated to Father | PerEvent | 7 | Calendar | Male; document required |
 | PL | Paternity Leave | PerEvent | 7, at most 4 events | Working | Male; married; document required |
@@ -216,6 +216,16 @@ The seeder presses "Add Philippine statutory leave" (through the API) after crea
 - The 30-day unpaid maternity extension.
 - A scheduled carry-over job.
 - Linking the father's AML request to the mother's ML request.
+
+## Known limitations
+
+- Unused SIL isn't converted to cash at year-end yet. Labor Code Art. 95 makes it commutable;
+  the Leave Types page says so on SIL's row and form, and conversion is left to a later plan.
+- Event limits count requests, not deliveries. Paternity Leave's "at most 4" counts approved
+  requests of the type, so one delivery filed as two requests uses two of the four.
+- The mask still identifies VAWC. A confidential request shown to someone without
+  `approvals.all` reads "Leave", but while VAWC is the only confidential type, "Leave" can only
+  mean VAWC to anyone who knows the set.
 
 ## Testing
 
