@@ -12,8 +12,8 @@ namespace PeopleCore.Application.Leave.Services;
 /// A calendar-day type (<see cref="LeaveType.CountsCalendarDays"/>) counts every date from start
 /// to end - holidays included. Every other type counts only the dates the employee's shift
 /// schedules: <see cref="ShiftScheduleResolver.Resolve"/> not null and not a rest day, with
-/// Monday-to-Friday counted where there is no assignment to answer for the date at all. A
-/// scheduled date is still skipped when <see cref="IHolidayService.IsHolidayAsync"/> finds a
+/// Monday-to-Friday counted where there is no assignment to answer for the date at all. Either
+/// way, a working date is still skipped when <see cref="IHolidayService.IsHolidayAsync"/> finds a
 /// holiday there.
 /// </para>
 /// </summary>
@@ -53,22 +53,13 @@ public sealed class LeaveDayCounter : ILeaveDayCounter
             var assignment = ShiftScheduleResolver.PickAssignment(assignments, date);
             var schedule = ShiftScheduleResolver.Resolve(assignment, date);
 
-            bool counted;
-            if (schedule is null)
-            {
-                // No basis to say the date is a rest day - fall back to the plain working week.
-                counted = date.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday);
-            }
-            else if (schedule.IsRestDay)
-            {
-                counted = false;
-            }
-            else
-            {
-                counted = await _holidays.IsHolidayAsync(date, ct) is null;
-            }
+            // No schedule means no basis to say the date is a rest day - fall back to the plain
+            // working week. Either way, a holiday on a working day is not a leave day.
+            var isWorkingDay = schedule is null
+                ? date.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday)
+                : !schedule.IsRestDay;
 
-            if (counted)
+            if (isWorkingDay && await _holidays.IsHolidayAsync(date, ct) is null)
                 counts[date.Year] = counts.GetValueOrDefault(date.Year) + 1m;
         }
 

@@ -142,6 +142,25 @@ public class LeaveDayCounterTests
     }
 
     [Fact]
+    public async Task CountByYearAsync_NoAssignment_SkipsHolidaysInTheMondayToFridayFallback()
+    {
+        var employeeId = Guid.NewGuid();
+        // Monday 2025-12-22 through Friday 2025-12-26, no assignment. Dec 24 and 25 are holidays,
+        // so 22, 23 and 26 count.
+        var start = new DateOnly(2025, 12, 22);
+        var end = new DateOnly(2025, 12, 26);
+
+        _holidays.Setup(h => h.IsHolidayAsync(new DateOnly(2025, 12, 24), It.IsAny<CancellationToken>()))
+                 .ReturnsAsync(HolidayType.SpecialNonWorking);
+        _holidays.Setup(h => h.IsHolidayAsync(new DateOnly(2025, 12, 25), It.IsAny<CancellationToken>()))
+                 .ReturnsAsync(HolidayType.RegularHoliday);
+
+        var result = await _sut.CountByYearAsync(employeeId, WorkingDayType(), start, end);
+
+        result.Should().BeEquivalentTo(new Dictionary<int, decimal> { [2025] = 3m });
+    }
+
+    [Fact]
     public async Task CountByYearAsync_OnlyRestDays_GivesZeroForTheStartYear()
     {
         var employeeId = Guid.NewGuid();
