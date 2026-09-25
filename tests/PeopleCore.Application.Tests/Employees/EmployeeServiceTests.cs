@@ -52,6 +52,25 @@ public class EmployeeServiceTests
     }
 
     [Fact]
+    public async Task GetByIdAsync_CarriesThePersonalEmailAndAddress_SoAFullUpdateCanSendThemBack()
+    {
+        // An update replaces every field, so the form that edits an employee has to send back the
+        // personal email and address it didn't touch. It can only do that if the record has them.
+        var employee = new Employee
+        {
+            Id = Guid.NewGuid(), EmployeeNumber = "EMP-001", FirstName = "Juan", LastName = "dela Cruz",
+            WorkEmail = "juan@company.com", IsActive = true,
+            PersonalEmail = "juan@home.test", Address = "12 Mabini Street, Quezon City"
+        };
+        _repo.Setup(r => r.GetByIdAsync(employee.Id, It.IsAny<CancellationToken>())).ReturnsAsync(employee);
+
+        var dto = await _sut.GetByIdAsync(employee.Id);
+
+        dto.PersonalEmail.Should().Be("juan@home.test");
+        dto.Address.Should().Be("12 Mabini Street, Quezon City");
+    }
+
+    [Fact]
     public async Task CreateAsync_WhenEmployeeNumberAlreadyExists_ThrowsDomainException()
     {
         _repo.Setup(r => r.EmployeeNumberExistsAsync("EMP-001", It.IsAny<CancellationToken>())).ReturnsAsync(true);
@@ -136,5 +155,181 @@ public class EmployeeServiceTests
         result.FirstName.Should().Be("Juan");
         result.EmploymentStatus.Should().Be(EmploymentStatus.Probationary);
         result.IsActive.Should().BeTrue();
+    }
+
+    // ── Civil status ─────────────────────────────────────────────────────────
+
+    private static CreateEmployeeDto NewEmployee(string? civilStatus) => new(
+        "EMP-010", "Jose", null, "Rizal", new DateOnly(1990, 1, 1), Gender.Male, "jose@company.com", null,
+        null, null, null, EmploymentStatus.Regular, EmploymentType.Regular, new DateOnly(2024, 1, 1),
+        CivilStatus: civilStatus);
+
+    [Fact]
+    public async Task CreateAsync_SavesAndReturnsTheCivilStatus()
+    {
+        // Paternity leave needs a married employee, so the status has to be settable from the start.
+        Employee? saved = null;
+        _repo.Setup(r => r.EmployeeNumberExistsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        _repo.Setup(r => r.AddAsync(It.IsAny<Employee>(), It.IsAny<CancellationToken>()))
+             .Callback((Employee e, CancellationToken _) => saved = e)
+             .ReturnsAsync((Employee e, CancellationToken _) => e);
+
+        var result = await _sut.CreateAsync(NewEmployee("Married"));
+
+        saved!.CivilStatus.Should().Be(CivilStatus.Married);
+        result.CivilStatus.Should().Be(CivilStatus.Married);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Engaged")]
+    [InlineData("7")]
+    public async Task CreateAsync_WithoutARecognisedCivilStatus_KeepsTheDefault(string? civilStatus)
+    {
+        Employee? saved = null;
+        _repo.Setup(r => r.EmployeeNumberExistsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        _repo.Setup(r => r.AddAsync(It.IsAny<Employee>(), It.IsAny<CancellationToken>()))
+             .Callback((Employee e, CancellationToken _) => saved = e)
+             .ReturnsAsync((Employee e, CancellationToken _) => e);
+
+        await _sut.CreateAsync(NewEmployee(civilStatus));
+
+        saved!.CivilStatus.Should().Be(CivilStatus.Single);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ChangesTheCivilStatus()
+    {
+        var employee = new Employee
+        {
+            Id = Guid.NewGuid(), EmployeeNumber = "EMP-011", FirstName = "Jose", LastName = "Rizal",
+            WorkEmail = "jose@company.com", IsActive = true, CivilStatus = CivilStatus.Single
+        };
+        _repo.Setup(r => r.GetByIdAsync(employee.Id, It.IsAny<CancellationToken>())).ReturnsAsync(employee);
+
+        var result = await _sut.UpdateAsync(employee.Id, new UpdateEmployeeDto(
+            "Jose", null, "Rizal", "married", null, null, null, null, null, null, null,
+            EmploymentStatus.Regular, null, true));
+
+        employee.CivilStatus.Should().Be(CivilStatus.Married);
+        result.CivilStatus.Should().Be(CivilStatus.Married);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_AnUndefinedNumericCivilStatus_LeavesItAsItWas()
+    {
+        var employee = new Employee
+        {
+            Id = Guid.NewGuid(), EmployeeNumber = "EMP-012", FirstName = "Jose", LastName = "Rizal",
+            WorkEmail = "jose@company.com", IsActive = true, CivilStatus = CivilStatus.Widowed
+        };
+        _repo.Setup(r => r.GetByIdAsync(employee.Id, It.IsAny<CancellationToken>())).ReturnsAsync(employee);
+
+        await _sut.UpdateAsync(employee.Id, new UpdateEmployeeDto(
+            "Jose", null, "Rizal", "7", null, null, null, null, null, null, null,
+            EmploymentStatus.Regular, null, true));
+
+        employee.CivilStatus.Should().Be(CivilStatus.Widowed);
+    }
+
+    // ── Solo parent ID ───────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task CreateAsync_SavesAndReturnsTheSoloParentId_Trimmed()
+    {
+        _repo.Setup(r => r.EmployeeNumberExistsAsync("EMP-002", It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        Employee? saved = null;
+        _repo.Setup(r => r.AddAsync(It.IsAny<Employee>(), It.IsAny<CancellationToken>()))
+             .Callback((Employee e, CancellationToken _) => saved = e)
+             .ReturnsAsync((Employee e, CancellationToken _) => e);
+        var dto = new CreateEmployeeDto("EMP-002", "Maria", null, "Santos",
+            new DateOnly(1990, 1, 1), Gender.Female, "maria@company.com", null,
+            null, null, null, EmploymentStatus.Regular, EmploymentType.Regular,
+            new DateOnly(2024, 1, 1),
+            SoloParentIdNumber: "  SP-12345  ", SoloParentIdValidUntil: new DateOnly(2027, 6, 30));
+
+        var result = await _sut.CreateAsync(dto);
+
+        saved!.SoloParentIdNumber.Should().Be("SP-12345");
+        saved.SoloParentIdValidUntil.Should().Be(new DateOnly(2027, 6, 30));
+        result.SoloParentIdNumber.Should().Be("SP-12345");
+        result.SoloParentIdValidUntil.Should().Be(new DateOnly(2027, 6, 30));
+    }
+
+    [Fact]
+    public async Task CreateAsync_BlankSoloParentId_IsStoredAsNull()
+    {
+        _repo.Setup(r => r.EmployeeNumberExistsAsync("EMP-003", It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        _repo.Setup(r => r.AddAsync(It.IsAny<Employee>(), It.IsAny<CancellationToken>()))
+             .ReturnsAsync((Employee e, CancellationToken _) => e);
+        var dto = new CreateEmployeeDto("EMP-003", "Maria", null, "Santos",
+            new DateOnly(1990, 1, 1), Gender.Female, "maria@company.com", null,
+            null, null, null, EmploymentStatus.Regular, EmploymentType.Regular,
+            new DateOnly(2024, 1, 1), SoloParentIdNumber: "   ");
+
+        var result = await _sut.CreateAsync(dto);
+
+        result.SoloParentIdNumber.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_SavesAndReturnsTheSoloParentId()
+    {
+        var employee = new Employee
+        {
+            Id = Guid.NewGuid(), EmployeeNumber = "EMP-004", FirstName = "Maria", LastName = "Santos",
+            WorkEmail = "maria@company.com", IsActive = true
+        };
+        _repo.Setup(r => r.GetByIdAsync(employee.Id, It.IsAny<CancellationToken>())).ReturnsAsync(employee);
+
+        var result = await _sut.UpdateAsync(employee.Id, new UpdateEmployeeDto(
+            "Maria", null, "Santos", null, null, null, null, null, null, null, null,
+            EmploymentStatus.Regular, null, true,
+            SoloParentIdNumber: " SP-777 ", SoloParentIdValidUntil: new DateOnly(2027, 1, 31)));
+
+        employee.SoloParentIdNumber.Should().Be("SP-777");
+        employee.SoloParentIdValidUntil.Should().Be(new DateOnly(2027, 1, 31));
+        result.SoloParentIdNumber.Should().Be("SP-777");
+        result.SoloParentIdValidUntil.Should().Be(new DateOnly(2027, 1, 31));
+        _repo.Verify(r => r.UpdateAsync(employee, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_SoloParentIdLongerThanTheColumn_IsRefusedBeforeSaving()
+    {
+        var employee = new Employee
+        {
+            Id = Guid.NewGuid(), EmployeeNumber = "EMP-006", FirstName = "Maria", LastName = "Santos",
+            WorkEmail = "maria@company.com", IsActive = true
+        };
+        _repo.Setup(r => r.GetByIdAsync(employee.Id, It.IsAny<CancellationToken>())).ReturnsAsync(employee);
+
+        var act = () => _sut.UpdateAsync(employee.Id, new UpdateEmployeeDto(
+            "Maria", null, "Santos", null, null, null, null, null, null, null, null,
+            EmploymentStatus.Regular, null, true, SoloParentIdNumber: new string('9', 51)));
+
+        await act.Should().ThrowAsync<DomainException>()
+                 .WithMessage("The solo parent ID number can't be longer than 50 characters.");
+        _repo.Verify(r => r.UpdateAsync(It.IsAny<Employee>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_EmptySoloParentId_ClearsIt()
+    {
+        var employee = new Employee
+        {
+            Id = Guid.NewGuid(), EmployeeNumber = "EMP-005", FirstName = "Maria", LastName = "Santos",
+            WorkEmail = "maria@company.com", IsActive = true,
+            SoloParentIdNumber = "SP-1", SoloParentIdValidUntil = new DateOnly(2027, 1, 1)
+        };
+        _repo.Setup(r => r.GetByIdAsync(employee.Id, It.IsAny<CancellationToken>())).ReturnsAsync(employee);
+
+        var result = await _sut.UpdateAsync(employee.Id, new UpdateEmployeeDto(
+            "Maria", null, "Santos", null, null, null, null, null, null, null, null,
+            EmploymentStatus.Regular, null, true, SoloParentIdNumber: "", SoloParentIdValidUntil: null));
+
+        employee.SoloParentIdNumber.Should().BeNull();
+        employee.SoloParentIdValidUntil.Should().BeNull();
+        result.SoloParentIdNumber.Should().BeNull();
     }
 }

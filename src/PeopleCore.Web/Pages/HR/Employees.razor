@@ -98,6 +98,7 @@
                                     }
                                 }
                                 <PermissionView AnyOf="@(new[] { Permissions.EmployeesManage })">
+                                    <Button Variant="ghost" Size="sm" OnClick="() => OpenEditForm(emp)" data-edit-employee="@emp.Id">Edit</Button>
                                     @if (emp.IsActive)
                                     {
                                         <Button Variant="ghost" Size="sm" OnClick="() => GoToRecordSeparation(emp.Id)" data-record-separation="@emp.Id">Record separation</Button>
@@ -121,9 +122,9 @@
 </Card>
 
 <Sheet IsOpen="@_showForm"
-       IsOpenChanged="@(v => _showForm = v)"
-       Title="Add Employee"
-       Description="Fill in the employee details below."
+       IsOpenChanged="@(v => { if (v) _showForm = true; else CloseForm(); })"
+       Title="@(_editing is null ? "Add Employee" : "Edit Employee")"
+       Description="@(_editing is null ? "Fill in the employee details below." : $"{_editing.FullName} ({_editing.EmployeeNumber})")"
        Side="right">
     <ChildContent>
         @if (_formError is not null)
@@ -135,7 +136,22 @@
             <Alert Variant="destructive" Class="mb-4">Departments could not be loaded: @_departmentsError</Alert>
         }
 
+        @if (_editing is not null && _record is null)
+        {
+            @if (_recordError is not null)
+            {
+                <Alert Variant="destructive" Class="mb-4">Their record could not be loaded: @_recordError</Alert>
+            }
+            else
+            {
+                <div class="p-6 flex justify-center"><Spinner /></div>
+            }
+        }
+        else
+        {
         <div class="grid grid-cols-2 gap-4">
+            @if (_editing is null)
+            {
             <div class="col-span-2">
                 <FormField LabelText="Employee Number *" Id="empNumber" Class="mb-4">
                     <Input TValue="string" Value="@_form.EmployeeNumber"
@@ -144,6 +160,7 @@
                            Type="text" />
                 </FormField>
             </div>
+            }
             <div>
                 <FormField LabelText="First Name *" Id="firstName" Class="mb-4">
                     <Input TValue="string" Value="@_form.FirstName"
@@ -165,6 +182,8 @@
                            Type="text" />
                 </FormField>
             </div>
+            @if (_editing is null)
+            {
             <div>
                 <FormField LabelText="Date of Birth" Id="dob" Required="true" Class="mb-4">
                     <Input TValue="DateOnly" Id="dob" Type="date" @bind-Value="_form.DateOfBirth" />
@@ -183,6 +202,17 @@
                     <Input TValue="string" Value="@_form.WorkEmail"
                            ValueChanged="@(v => _form.WorkEmail = v)"
                            Type="email" />
+                </FormField>
+            </div>
+            }
+            <div class="col-span-2">
+                <FormField LabelText="Civil status" Id="civilStatus" Class="mb-4">
+                    <Select TValue="string" Id="civilStatus" @bind-Value="_form.CivilStatus">
+                        @foreach (var status in CivilStatuses)
+                        {
+                            <option value="@status">@status</option>
+                        }
+                    </Select>
                 </FormField>
             </div>
             <div class="col-span-2">
@@ -223,6 +253,8 @@
                     </Select>
                 </FormField>
             </div>
+            @if (_editing is null)
+            {
             <div>
                 <FormField LabelText="Employment Type" Id="empType" Required="true" Class="mb-4">
                     <Select TValue="string" Id="empType" @bind-Value="_form.EmploymentType" Placeholder="Select...">
@@ -239,11 +271,27 @@
                     <Input TValue="DateOnly" Id="hireDate" Type="date" @bind-Value="_form.HireDate" />
                 </FormField>
             </div>
+            }
+            <div>
+                <FormField LabelText="Solo parent ID number" Id="soloParentIdNumber" Class="mb-4">
+                    <Input TValue="string" Id="soloParentIdNumber" Value="@_form.SoloParentIdNumber"
+                           ValueChanged="@(v => _form.SoloParentIdNumber = v)" Type="text" MaxLength="50" />
+                </FormField>
+            </div>
+            <div>
+                <FormField LabelText="Solo parent ID valid until" Id="soloParentIdValidUntil" Class="mb-4">
+                    <Input TValue="DateOnly?" Id="soloParentIdValidUntil" Type="date" @bind-Value="_form.SoloParentIdValidUntil" />
+                </FormField>
+            </div>
+            <p class="col-span-2 -mt-2 mb-2 text-xs text-muted-foreground">
+                A valid solo parent ID opens Solo Parent Leave and adds 15 days to maternity leave for a live birth.
+            </p>
         </div>
+        }
     </ChildContent>
     <FooterContent>
         <Button Variant="outline" Size="sm" OnClick="CloseForm">Cancel</Button>
-        <Button Variant="primary" Size="sm" OnClick="SubmitForm" Loading="@_saving">Save Employee</Button>
+        <Button Variant="primary" Size="sm" OnClick="SubmitForm" Loading="@_saving" Disabled="@(_editing is not null && _record is null)">Save Employee</Button>
     </FooterContent>
 </Sheet>
 
@@ -300,6 +348,14 @@
     private bool _saving;
     private string? _formError;
     private EmployeeFormModel _form = new();
+    // The employee being edited, and their full record once loaded. An update replaces every field,
+    // so the fields the form doesn't show are sent back from the record; without it there is no save.
+    private EmployeeListDto? _editing;
+    private EmployeeDto? _record;
+    private string? _recordError;
+    // Counts each opening of the form, so a record or a save answered after the form moved on
+    // doesn't land on the form now shown.
+    private int _formSession;
     private Dictionary<Guid, EmployeeLinkDto>? _links;
     private string? _linksError;
     private EmployeeListDto? _createLoginFor;
@@ -398,13 +454,61 @@
 
     private void OpenAddForm()
     {
+        _formSession++;
+        _editing = null;
+        _record = null;
+        _recordError = null;
         _form = new EmployeeFormModel();
         _positions = [];
         _formError = null;
         _showForm = true;
     }
 
-    private void CloseForm() => _showForm = false;
+    private async Task OpenEditForm(EmployeeListDto employee)
+    {
+        var session = ++_formSession;
+        _editing = employee;
+        _record = null;
+        _recordError = null;
+        _form = new EmployeeFormModel();
+        _positions = [];
+        _formError = null;
+        _showForm = true;
+
+        EmployeeDto? record;
+        try
+        {
+            record = await Api.GetEmployeeRecordAsync(employee.Id);
+        }
+        catch (Exception ex)
+        {
+            if (session == _formSession) _recordError = ex.Message;
+            return;
+        }
+        if (session != _formSession) return;
+        if (record is null) { _recordError = "The record could not be found."; return; }
+
+        _record = record;
+        _form = EmployeeFormModel.From(record);
+        if (record.DepartmentId is { } departmentId)
+        {
+            try
+            {
+                var positions = await Api.GetPositionsAsync(departmentId, pageSize: 100);
+                if (session == _formSession) _positions = positions?.Items.ToList() ?? [];
+            }
+            catch (Exception ex)
+            {
+                if (session == _formSession) _formError = $"Positions could not be loaded: {ex.Message}";
+            }
+        }
+    }
+
+    private void CloseForm()
+    {
+        _formSession++;
+        _showForm = false;
+    }
 
     private void GoToCompensation(Guid employeeId) => Nav.NavigateTo($"/employees/{employeeId}/compensation");
 
@@ -449,26 +553,36 @@
         }
     }
 
+    // The answer lands only on the form, and the department, it was asked for: the form may have
+    // closed or reopened meanwhile, or another department been picked.
     private async Task OnDepartmentChanged()
     {
         _form.PositionId = null;
         _positions = [];
-        if (_form.DepartmentId.HasValue)
+        if (_form.DepartmentId is not { } departmentId) return;
+
+        var session = _formSession;
+        bool Current() => session == _formSession && _form.DepartmentId == departmentId;
+        try
         {
-            try
-            {
-                var result = await Api.GetPositionsAsync(_form.DepartmentId, pageSize: 100);
-                _positions = result?.Items.ToList() ?? [];
-            }
-            catch (Exception ex)
-            {
-                _formError = $"Positions could not be loaded: {ex.Message}";
-            }
+            var result = await Api.GetPositionsAsync(departmentId, pageSize: 100);
+            if (Current()) _positions = result?.Items.ToList() ?? [];
+        }
+        catch (Exception ex)
+        {
+            if (Current()) _formError = $"Positions could not be loaded: {ex.Message}";
         }
     }
 
     private async Task SubmitForm()
     {
+        if (_saving) return;
+        if (_editing is not null)
+        {
+            await SubmitEdit();
+            return;
+        }
+
         _formError = null;
         if (string.IsNullOrWhiteSpace(_form.EmployeeNumber) ||
             string.IsNullOrWhiteSpace(_form.FirstName) ||
@@ -485,22 +599,12 @@
         _saving = true;
         try
         {
-            await Api.CreateEmployeeAsync(new
-            {
-                employeeNumber = _form.EmployeeNumber,
-                firstName = _form.FirstName,
-                middleName = _form.MiddleName,
-                lastName = _form.LastName,
-                dateOfBirth = _form.DateOfBirth.ToString("yyyy-MM-dd"),
-                gender = _form.Gender,
-                workEmail = _form.WorkEmail,
-                mobileNumber = _form.MobileNumber,
-                departmentId = _form.DepartmentId,
-                positionId = _form.PositionId,
-                employmentStatus = _form.EmploymentStatus,
-                employmentType = _form.EmploymentType,
-                hireDate = _form.HireDate.ToString("yyyy-MM-dd")
-            });
+            await Api.CreateEmployeeAsync(new CreateEmployeeDto(
+                _form.EmployeeNumber, _form.FirstName, Blank(_form.MiddleName), _form.LastName,
+                _form.DateOfBirth, _form.Gender, _form.WorkEmail, Blank(_form.MobileNumber),
+                _form.DepartmentId, _form.PositionId, ReportingManagerId: null,
+                _form.EmploymentStatus, _form.EmploymentType, _form.HireDate,
+                Blank(_form.SoloParentIdNumber), _form.SoloParentIdValidUntil, _form.CivilStatus));
         }
         catch (Exception ex)
         {
@@ -519,6 +623,52 @@
         await LoadEmployees();
     }
 
+    private async Task SubmitEdit()
+    {
+        if (_editing is not { } editing || _record is not { } record) return;
+
+        _formError = null;
+        if (string.IsNullOrWhiteSpace(_form.FirstName) ||
+            string.IsNullOrWhiteSpace(_form.LastName) ||
+            string.IsNullOrWhiteSpace(_form.EmploymentStatus))
+        {
+            _formError = "Please fill in all required fields.";
+            return;
+        }
+
+        // Everything the form doesn't show goes back as it was loaded.
+        var request = new UpdateEmployeeDto(
+            _form.FirstName, Blank(_form.MiddleName), _form.LastName, _form.CivilStatus,
+            record.PersonalEmail, Blank(_form.MobileNumber), record.Address,
+            _form.DepartmentId, _form.PositionId, record.TeamId, record.ReportingManagerId,
+            _form.EmploymentStatus, record.RegularizationDate, record.Is13thMonthEligible,
+            Blank(_form.SoloParentIdNumber), _form.SoloParentIdValidUntil);
+
+        var session = _formSession;
+        _saving = true;
+        try
+        {
+            await Api.UpdateEmployeeAsync(editing.Id, request);
+        }
+        catch (Exception ex)
+        {
+            if (session == _formSession) _formError = $"Failed to save employee. {ex.Message}";
+            return;
+        }
+        finally
+        {
+            _saving = false;
+        }
+
+        if (session == _formSession) CloseForm();
+        await LoadEmployees();
+    }
+
+    private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    // The names of M2NET.Core.Enums.CivilStatus, in its order. Each reads well as its own label.
+    private static readonly string[] CivilStatuses = ["Single", "Married", "Widowed", "Divorced", "Separated"];
+
     private class EmployeeFormModel
     {
         public string EmployeeNumber { get; set; } = "";
@@ -527,6 +677,8 @@
         public string LastName { get; set; } = "";
         public DateOnly DateOfBirth { get; set; } = new DateOnly(1990, 1, 1);
         public string Gender { get; set; } = "";
+        // Single until chosen otherwise, as the API stores a new employee who has none.
+        public string CivilStatus { get; set; } = "Single";
         public string WorkEmail { get; set; } = "";
         public string? MobileNumber { get; set; }
         public Guid? DepartmentId { get; set; }
@@ -534,6 +686,28 @@
         public string EmploymentStatus { get; set; } = "";
         public string EmploymentType { get; set; } = "";
         public DateOnly HireDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+        public string? SoloParentIdNumber { get; set; }
+        public DateOnly? SoloParentIdValidUntil { get; set; }
+
+        public static EmployeeFormModel From(EmployeeDto e) => new()
+        {
+            EmployeeNumber = e.EmployeeNumber,
+            FirstName = e.FirstName,
+            MiddleName = e.MiddleName,
+            LastName = e.LastName,
+            DateOfBirth = e.DateOfBirth,
+            Gender = e.Gender,
+            CivilStatus = e.CivilStatus ?? "Single",
+            WorkEmail = e.WorkEmail,
+            MobileNumber = e.MobileNumber,
+            DepartmentId = e.DepartmentId,
+            PositionId = e.PositionId,
+            EmploymentStatus = e.EmploymentStatus,
+            EmploymentType = e.EmploymentType,
+            HireDate = e.HireDate,
+            SoloParentIdNumber = e.SoloParentIdNumber,
+            SoloParentIdValidUntil = e.SoloParentIdValidUntil,
+        };
     }
 
     private class CoeFormModel

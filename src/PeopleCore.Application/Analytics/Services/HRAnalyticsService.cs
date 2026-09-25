@@ -130,7 +130,7 @@ public class HRAnalyticsService : IHRAnalyticsService
     }
 
     public async Task<AnalyticsResponse<LeaveUtilization>> GetLeaveUtilizationAsync(
-        DateOnly from, DateOnly to, Guid? departmentId = null, CancellationToken ct = default)
+        DateOnly from, DateOnly to, Guid? departmentId = null, bool showConfidentialTypes = false, CancellationToken ct = default)
     {
         var balances = new List<Domain.Entities.Leave.LeaveBalance>();
         for (int year = from.Year; year <= to.Year; year++)
@@ -140,6 +140,10 @@ public class HRAnalyticsService : IHRAnalyticsService
         }
 
         var filtered = balances.AsEnumerable();
+        // Even a day count by confidential type can point at a person, more so within one
+        // department. Fail closed: a balance whose type did not load might be one.
+        if (!showConfidentialTypes)
+            filtered = filtered.Where(b => b.LeaveType is { IsConfidential: false });
         if (departmentId.HasValue)
             filtered = filtered.Where(b => b.Employee?.DepartmentId == departmentId.Value);
 

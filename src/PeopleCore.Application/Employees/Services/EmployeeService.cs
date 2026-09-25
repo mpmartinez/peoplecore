@@ -54,8 +54,12 @@ public class EmployeeService : IEmployeeService
             EmploymentType = dto.EmploymentType,
             HireDate = dto.HireDate,
             IsActive = true,
-            Is13thMonthEligible = true
+            Is13thMonthEligible = true,
+            SoloParentIdNumber = CleanIdNumber(dto.SoloParentIdNumber),
+            SoloParentIdValidUntil = dto.SoloParentIdValidUntil
         };
+        if (ParseCivilStatus(dto.CivilStatus) is { } civilStatus)
+            employee.CivilStatus = civilStatus;
 
         var created = await _repo.AddAsync(employee, ct);
         return ToDto(created);
@@ -69,7 +73,7 @@ public class EmployeeService : IEmployeeService
         employee.FirstName = dto.FirstName;
         employee.MiddleName = dto.MiddleName;
         employee.LastName = dto.LastName;
-        if (dto.CivilStatus is not null && Enum.TryParse<CivilStatus>(dto.CivilStatus, true, out var cs))
+        if (ParseCivilStatus(dto.CivilStatus) is { } cs)
             employee.CivilStatus = cs;
         employee.PersonalEmail = dto.PersonalEmail;
         employee.MobileNumber = dto.MobileNumber;
@@ -81,6 +85,8 @@ public class EmployeeService : IEmployeeService
         employee.EmploymentStatus = dto.EmploymentStatus;
         employee.RegularizationDate = dto.RegularizationDate;
         employee.Is13thMonthEligible = dto.Is13thMonthEligible;
+        employee.SoloParentIdNumber = CleanIdNumber(dto.SoloParentIdNumber);
+        employee.SoloParentIdValidUntil = dto.SoloParentIdValidUntil;
         employee.UpdatedAt = DateTime.UtcNow;
 
         await _repo.UpdateAsync(employee, ct);
@@ -172,5 +178,32 @@ public class EmployeeService : IEmployeeService
         e.ReportingManagerId, e.ReportingManager?.FullName,
         e.TeamId,
         e.EmploymentStatus, e.EmploymentType, e.HireDate, e.RegularizationDate,
-        e.IsActive, e.Is13thMonthEligible, e.SeparationDate);
+        e.IsActive, e.Is13thMonthEligible, e.SeparationDate,
+        e.SoloParentIdNumber, e.SoloParentIdValidUntil,
+        e.PersonalEmail, e.Address);
+
+    /// <summary>The column's length (EmployeeConfiguration); refused here rather than failing the save.</summary>
+    private const int SoloParentIdNumberMaxLength = 50;
+
+    /// <summary>The solo parent ID number trimmed, with a blank one as null (no ID).</summary>
+    private static string? CleanIdNumber(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var trimmed = value.Trim();
+        if (trimmed.Length > SoloParentIdNumberMaxLength)
+            throw new DomainException($"The solo parent ID number can't be longer than {SoloParentIdNumberMaxLength} characters.");
+        return trimmed;
+    }
+
+    /// <summary>
+    /// A civil status by name, ignoring case; null for a blank or unrecognised one, which leaves the
+    /// employee's as it is. A number is not a name: Enum.TryParse would take "7" as a value the enum
+    /// does not define.
+    /// </summary>
+    private static CivilStatus? ParseCivilStatus(string? value) =>
+        Enum.TryParse<CivilStatus>(value, ignoreCase: true, out var parsed) && Enum.IsDefined(parsed)
+            ? parsed
+            : null;
 }

@@ -4,6 +4,7 @@ using Microsoft.Extensions.Caching.Memory;
 using PeopleCore.API.Authorization;
 using PeopleCore.Application.Analytics.Interfaces;
 using PeopleCore.Application.Common.Authorization;
+using PeopleCore.Application.Common.Interfaces;
 
 namespace PeopleCore.API.Controllers.Analytics;
 
@@ -14,11 +15,13 @@ public class HRAnalyticsController : ControllerBase
 {
     private readonly IHRAnalyticsService _service;
     private readonly IMemoryCache _cache;
+    private readonly ICurrentUserService _currentUser;
 
-    public HRAnalyticsController(IHRAnalyticsService service, IMemoryCache cache)
+    public HRAnalyticsController(IHRAnalyticsService service, IMemoryCache cache, ICurrentUserService currentUser)
     {
         _service = service;
         _cache = cache;
+        _currentUser = currentUser;
     }
 
     [HttpGet("headcount")]
@@ -63,15 +66,20 @@ public class HRAnalyticsController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// Confidential types (VAWC) are left out unless the caller also holds <c>approvals.all</c>.
+    /// The cache keeps the two answers apart.
+    /// </summary>
     [HttpGet("leave-utilization")]
     public async Task<IActionResult> GetLeaveUtilization(
         [FromQuery] DateOnly from, [FromQuery] DateOnly to,
         [FromQuery] Guid? departmentId = null, CancellationToken ct = default)
     {
-        var key = $"analytics:hr:leave-utilization:{from}:{to}:{departmentId}";
+        var showConfidentialTypes = _currentUser.HasPermission(Permissions.ApprovalsAll);
+        var key = $"analytics:hr:leave-utilization:{from}:{to}:{departmentId}:{showConfidentialTypes}";
         if (!_cache.TryGetValue(key, out object? result))
         {
-            result = await _service.GetLeaveUtilizationAsync(from, to, departmentId, ct);
+            result = await _service.GetLeaveUtilizationAsync(from, to, departmentId, showConfidentialTypes, ct);
             _cache.Set(key, result, TimeSpan.FromMinutes(15));
         }
         return Ok(result);

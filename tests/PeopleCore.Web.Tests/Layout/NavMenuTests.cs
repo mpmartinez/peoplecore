@@ -57,7 +57,7 @@ public class NavMenuTests : BunitContext
     {
         var cut = RenderAs("Admin");
 
-        cut.FindAll("a[href]").Should().HaveCount(25);
+        cut.FindAll("a[href]").Should().HaveCount(26);
         Links(cut).Should().OnlyHaveUniqueItems();
     }
 
@@ -96,6 +96,25 @@ public class NavMenuTests : BunitContext
     public void TheCompanyPage_IsListedOnlyForThoseWhoManageSettings(string role, bool listed)
     {
         Links(RenderAs(role)).Contains("/admin/company").Should().Be(listed);
+    }
+
+    [Theory]
+    [InlineData("Admin", true)]
+    [InlineData("HRManager", true)]
+    [InlineData("Manager", false)]
+    [InlineData("PayrollService", false)]
+    public void TheLeaveTypesPage_IsListedOnlyForThoseWhoManageLeave(string role, bool listed)
+    {
+        Links(RenderAs(role)).Contains("/leave-types").Should().Be(listed);
+    }
+
+    [Fact]
+    public void ManagingLeave_IsEnoughOnItsOwn_ToSeeTheLeaveTypesLink()
+    {
+        _auth.SetAuthorized("someone@company.test");
+        _auth.SetClaims([new Claim(Permissions.ClaimType, Permissions.LeaveManage)]);
+
+        Links(Render<NavMenu>()).Should().Contain("/leave-types");
     }
 
     [Fact]

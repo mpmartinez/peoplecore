@@ -5,6 +5,7 @@ using PeopleCore.API.Authorization;
 using PeopleCore.Application.Analytics.DTOs;
 using PeopleCore.Application.Analytics.Interfaces;
 using PeopleCore.Application.Common.Authorization;
+using PeopleCore.Application.Common.Interfaces;
 
 namespace PeopleCore.API.Controllers.Analytics;
 
@@ -15,11 +16,13 @@ public class ExecutiveAnalyticsController : ControllerBase
 {
     private readonly IExecutiveAnalyticsService _service;
     private readonly IMemoryCache _cache;
+    private readonly ICurrentUserService _currentUser;
 
-    public ExecutiveAnalyticsController(IExecutiveAnalyticsService service, IMemoryCache cache)
+    public ExecutiveAnalyticsController(IExecutiveAnalyticsService service, IMemoryCache cache, ICurrentUserService currentUser)
     {
         _service = service;
         _cache = cache;
+        _currentUser = currentUser;
     }
 
     [HttpGet("workforce-summary")]
@@ -67,15 +70,20 @@ public class ExecutiveAnalyticsController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// Confidential types (VAWC) are left out, total included, unless the caller also holds
+    /// <c>approvals.all</c>. The cache keeps the two answers apart.
+    /// </summary>
     [HttpGet("leave-summary")]
     public async Task<IActionResult> GetLeaveSummary(
         [FromQuery] DateOnly from, [FromQuery] DateOnly to,
         CancellationToken ct = default)
     {
-        var key = $"analytics:executive:leave-summary:{from}:{to}";
+        var showConfidentialTypes = _currentUser.HasPermission(Permissions.ApprovalsAll);
+        var key = $"analytics:executive:leave-summary:{from}:{to}:{showConfidentialTypes}";
         if (!_cache.TryGetValue(key, out object? result))
         {
-            var data = await _service.GetLeaveSummaryAsync(from, to, ct);
+            var data = await _service.GetLeaveSummaryAsync(from, to, showConfidentialTypes, ct);
             result = Wrap(from, to, data);
             _cache.Set(key, result, TimeSpan.FromMinutes(15));
         }

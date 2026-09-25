@@ -67,8 +67,8 @@ public class TeamScopingRepositoryTests : DatabaseTestBase
         await Context.SaveChangesAsync();
         var sut = new LeaveRequestRepository(NewContext());
 
-        var (team, teamTotal) = await sut.GetPagedAsync(null, _manager.Id, null, 1, 20);
-        var (all, allTotal) = await sut.GetPagedAsync(null, null, null, 1, 20);
+        var (team, teamTotal) = await sut.GetPagedAsync(null, _manager.Id, null, 1, 20, excludeConfidential: false);
+        var (all, allTotal) = await sut.GetPagedAsync(null, null, null, 1, 20, excludeConfidential: false);
 
         team.Select(r => r.EmployeeId).Should().Equal(_report.Id);
         teamTotal.Should().Be(1, "the count drives the pager, so it must be narrowed too");

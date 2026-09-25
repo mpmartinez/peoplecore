@@ -5,30 +5,55 @@ using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Leave.DTOs;
 using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Application.Leave.Services;
+using PeopleCore.Application.Tests.Common;
 using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Leave;
 using M2NET.Core.Enums;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
+using PeopleCore.Domain.Interfaces;
 using Xunit;
 
 namespace PeopleCore.Application.Tests.Leave;
 
+/// <summary>
+/// Filing, approving and cancelling leave under the statutory rules. Days are counted by the real
+/// <see cref="LeaveDayCounter"/> over a shift repository with no assignments, so non-calendar types
+/// fall back to Monday-Friday, and no date is a holiday unless a test says so.
+/// </summary>
 public class LeaveRequestServiceTests
 {
     private readonly Mock<ILeaveRequestRepository> _leaveRepo = new();
     private readonly Mock<ILeaveBalanceRepository> _balanceRepo = new();
     private readonly Mock<IHolidayService> _holidayService = new();
+    private readonly Mock<IShiftAssignmentRepository> _shiftRepo = new();
     private readonly Mock<IEmployeeRepository> _employeeRepo = new();
     private readonly Mock<ILeaveTypeRepository> _leaveTypeRepo = new();
+
+    // 10:00 on Sep 24, 2026 in Manila.
+    private readonly FixedClock _clock = new("2026-09-24T02:00:00Z");
     private readonly LeaveRequestService _sut;
 
     public LeaveRequestServiceTests()
     {
-        _sut = new LeaveRequestService(_leaveRepo.Object, _balanceRepo.Object, _holidayService.Object, _employeeRepo.Object, _leaveTypeRepo.Object);
+        _shiftRepo.Setup(r => r.GetActiveForPeriodAsync(
+                      It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                  .ReturnsAsync([]);
+        _holidayService.Setup(h => h.IsHolidayAsync(It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                       .ReturnsAsync((HolidayType?)null);
+        _leaveRepo.Setup(r => r.GetPendingAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
+                  .ReturnsAsync([]);
+        _leaveRepo.Setup(r => r.AddAsync(It.IsAny<LeaveRequest>(), It.IsAny<CancellationToken>()))
+                  .ReturnsAsync((LeaveRequest l, CancellationToken _) => l);
+
+        var counter = new LeaveDayCounter(_shiftRepo.Object, _holidayService.Object);
+        _sut = new LeaveRequestService(_leaveRepo.Object, _balanceRepo.Object, counter, _employeeRepo.Object, _leaveTypeRepo.Object, _clock);
     }
 
-    private static Employee MakeEmployee(Gender gender = Gender.Male) => new()
+    private static Employee MakeEmployee(
+        Gender gender = Gender.Male,
+        CivilStatus civilStatus = CivilStatus.Single,
+        DateOnly? hireDate = null) => new()
     {
         Id = Guid.NewGuid(),
         EmployeeNumber = "EMP-001",
@@ -36,9 +61,10 @@ public class LeaveRequestServiceTests
         LastName = "dela Cruz",
         DateOfBirth = new DateOnly(1990, 1, 1),
         Gender = gender,
+        CivilStatus = civilStatus,
         WorkEmail = "juan@test.com",
         EmploymentType = EmploymentType.Regular,
-        HireDate = new DateOnly(2020, 1, 1),
+        HireDate = hireDate ?? new DateOnly(2020, 1, 1),
         IsActive = true
     };
 
@@ -52,31 +78,68 @@ public class LeaveRequestServiceTests
         GenderRestriction = genderRestriction
     };
 
-    private static LeaveBalance MakeBalance(Guid employeeId, Guid leaveTypeId, decimal remaining = 10) => new()
+    private static LeaveType Paternity() => new()
     {
-        Id = Guid.NewGuid(),
-        EmployeeId = employeeId,
-        LeaveTypeId = leaveTypeId,
-        Year = DateTime.UtcNow.Year,
-        TotalDays = remaining,
-        UsedDays = 0
+        Id = Guid.NewGuid(), Name = "Paternity Leave", Code = "PL",
+        EntitlementKind = LeaveEntitlementKind.PerEvent, DaysPerEvent = 7, MaxEvents = 4,
+        GenderRestriction = "Male", RequiresMarried = true, RequiresDocument = true
     };
+
+    private static LeaveType Maternity() => new()
+    {
+        Id = Guid.NewGuid(), Name = "Maternity Leave", Code = "ML",
+        EntitlementKind = LeaveEntitlementKind.PerEvent, DaysPerEvent = 105, CountsCalendarDays = true,
+        IsMaternity = true, GenderRestriction = "Female", RequiresDocument = true
+    };
+
+    private static LeaveType SoloParent() => new()
+    {
+        Id = Guid.NewGuid(), Name = "Solo Parent Leave", Code = "SPL",
+        EntitlementKind = LeaveEntitlementKind.YearlyAllowance, MaxDaysPerYear = 7,
+        RequiresSoloParentId = true, MinServiceMonths = 6
+    };
+
+    private void Known(Employee emp, LeaveType lt)
+    {
+        _employeeRepo.Setup(r => r.GetByIdAsync(emp.Id, It.IsAny<CancellationToken>())).ReturnsAsync(emp);
+        _leaveTypeRepo.Setup(r => r.GetByIdAsync(lt.Id, It.IsAny<CancellationToken>())).ReturnsAsync(lt);
+    }
+
+    private LeaveBalance HasBalance(Employee emp, LeaveType lt, int year, decimal total, decimal used = 0)
+    {
+        var balance = new LeaveBalance
+        {
+            EmployeeId = emp.Id, LeaveTypeId = lt.Id, Year = year, TotalDays = total, UsedDays = used
+        };
+        _balanceRepo.Setup(r => r.GetByEmployeeAndTypeAsync(emp.Id, lt.Id, year, It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(balance);
+        return balance;
+    }
+
+    private LeaveRequest Stored(Employee emp, LeaveType lt, DateOnly start, DateOnly end,
+        LeaveStatus status = LeaveStatus.Pending, decimal totalDays = 0, decimal daysInStartYear = 0)
+    {
+        var request = new LeaveRequest
+        {
+            Id = Guid.NewGuid(), EmployeeId = emp.Id, LeaveTypeId = lt.Id,
+            StartDate = start, EndDate = end, TotalDays = totalDays, DaysInStartYear = daysInStartYear,
+            Status = status
+        };
+        _leaveRepo.Setup(r => r.GetByIdAsync(request.Id, It.IsAny<CancellationToken>())).ReturnsAsync(request);
+        return request;
+    }
+
+    // ── Existing behaviour ───────────────────────────────────────────────────
 
     [Fact]
     public async Task ApproveAsync_RecordsTheApproverItIsGiven()
     {
         var emp = MakeEmployee();
         var lt = MakeLeaveType();
+        Known(emp, lt);
         var approverId = Guid.NewGuid();
-        var request = new LeaveRequest
-        {
-            Id = Guid.NewGuid(), EmployeeId = emp.Id, LeaveTypeId = lt.Id,
-            StartDate = new DateOnly(2026, 10, 5), EndDate = new DateOnly(2026, 10, 6),
-            TotalDays = 2, Status = LeaveStatus.Pending
-        };
-        _leaveRepo.Setup(r => r.GetByIdAsync(request.Id, default)).ReturnsAsync(request);
-        _balanceRepo.Setup(r => r.GetByEmployeeAndTypeAsync(emp.Id, lt.Id, 2026, default))
-            .ReturnsAsync(MakeBalance(emp.Id, lt.Id));
+        var request = Stored(emp, lt, new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 6), totalDays: 2, daysInStartYear: 2);
+        HasBalance(emp, lt, 2026, 10);
 
         var result = await _sut.ApproveAsync(request.Id, approverId);
 
@@ -91,15 +154,9 @@ public class LeaveRequestServiceTests
         // your own leave: somebody else has to.
         var emp = MakeEmployee();
         var lt = MakeLeaveType();
-        var request = new LeaveRequest
-        {
-            Id = Guid.NewGuid(), EmployeeId = emp.Id, LeaveTypeId = lt.Id,
-            StartDate = new DateOnly(2026, 10, 5), EndDate = new DateOnly(2026, 10, 6),
-            TotalDays = 2, Status = LeaveStatus.Pending
-        };
-        _leaveRepo.Setup(r => r.GetByIdAsync(request.Id, default)).ReturnsAsync(request);
-        _balanceRepo.Setup(r => r.GetByEmployeeAndTypeAsync(emp.Id, lt.Id, 2026, default))
-            .ReturnsAsync(MakeBalance(emp.Id, lt.Id));
+        Known(emp, lt);
+        var request = Stored(emp, lt, new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 6), totalDays: 2, daysInStartYear: 2);
+        HasBalance(emp, lt, 2026, 10);
 
         var act = () => _sut.ApproveAsync(request.Id, emp.Id);
 
@@ -154,14 +211,8 @@ public class LeaveRequestServiceTests
     {
         var emp = MakeEmployee();
         var lt = MakeLeaveType();
-        var balance = MakeBalance(emp.Id, lt.Id, remaining: 2);
-        balance.LeaveType = lt;
-
-        _employeeRepo.Setup(r => r.GetByIdAsync(emp.Id, default)).ReturnsAsync(emp);
-        _leaveTypeRepo.Setup(r => r.GetByIdAsync(lt.Id, default)).ReturnsAsync(lt);
-        _balanceRepo.Setup(r => r.GetByEmployeeAndTypeAsync(emp.Id, lt.Id, It.IsAny<int>(), default)).ReturnsAsync(balance);
-        _holidayService.Setup(h => h.IsHolidayAsync(It.IsAny<DateOnly>(), default)).ReturnsAsync((HolidayType?)null);
-        _leaveRepo.Setup(r => r.HasOverlapAsync(emp.Id, It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), null, default)).ReturnsAsync(false);
+        Known(emp, lt);
+        HasBalance(emp, lt, 2025, total: 2);
 
         // Mon-Fri = 5 working days, but balance only has 2
         var dto = new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 14), null);
@@ -169,7 +220,7 @@ public class LeaveRequestServiceTests
         var act = () => _sut.CreateAsync(dto);
 
         await act.Should().ThrowAsync<DomainException>()
-                 .WithMessage("*insufficient leave balance*");
+                 .WithMessage("You have 2 days of Vacation Leave left for 2025.");
     }
 
     [Fact]
@@ -177,21 +228,17 @@ public class LeaveRequestServiceTests
     {
         var emp = MakeEmployee();
         var lt = MakeLeaveType();
-        var balance = MakeBalance(emp.Id, lt.Id, remaining: 15);
-        balance.LeaveType = lt;
-
-        _employeeRepo.Setup(r => r.GetByIdAsync(emp.Id, default)).ReturnsAsync(emp);
-        _leaveTypeRepo.Setup(r => r.GetByIdAsync(lt.Id, default)).ReturnsAsync(lt);
-        _balanceRepo.Setup(r => r.GetByEmployeeAndTypeAsync(emp.Id, lt.Id, It.IsAny<int>(), default)).ReturnsAsync(balance);
-        _holidayService.Setup(h => h.IsHolidayAsync(It.IsAny<DateOnly>(), default)).ReturnsAsync((HolidayType?)null);
-        _leaveRepo.Setup(r => r.HasOverlapAsync(emp.Id, It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), null, default)).ReturnsAsync(true);
+        Known(emp, lt);
+        HasBalance(emp, lt, 2025, total: 15);
+        _leaveRepo.Setup(r => r.HasOverlapAsync(emp.Id, It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), null, It.IsAny<CancellationToken>()))
+                  .ReturnsAsync(true);
 
         var dto = new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), null);
 
         var act = () => _sut.CreateAsync(dto);
 
         await act.Should().ThrowAsync<DomainException>()
-                 .WithMessage("*overlapping leave request*");
+                 .WithMessage("Employee has an overlapping leave request for these dates.");
     }
 
     [Fact]
@@ -199,42 +246,901 @@ public class LeaveRequestServiceTests
     {
         var emp = MakeEmployee(gender: Gender.Male);
         var lt = MakeLeaveType(genderRestriction: "Female");
-        var balance = MakeBalance(emp.Id, lt.Id);
-        balance.LeaveType = lt;
-
-        _employeeRepo.Setup(r => r.GetByIdAsync(emp.Id, default)).ReturnsAsync(emp);
-        _leaveTypeRepo.Setup(r => r.GetByIdAsync(lt.Id, default)).ReturnsAsync(lt);
-        _balanceRepo.Setup(r => r.GetByEmployeeAndTypeAsync(emp.Id, lt.Id, It.IsAny<int>(), default)).ReturnsAsync(balance);
+        Known(emp, lt);
+        HasBalance(emp, lt, 2025, total: 10);
 
         var dto = new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), null);
 
         var act = () => _sut.CreateAsync(dto);
 
         await act.Should().ThrowAsync<DomainException>()
-                 .WithMessage("*not eligible*");
+                 .WithMessage("Employee is not eligible for this leave type.");
     }
 
     [Fact]
     public async Task CreateAsync_ExcludesWeekendsFromTotalDays()
     {
-        // Mon 2025-03-10 to Fri 2025-03-14 = 5 working days
+        // Mon 2025-03-10 to Sun 2025-03-16 = 5 working days (no shift assignment: Monday-Friday)
         var emp = MakeEmployee();
         var lt = MakeLeaveType();
-        var balance = MakeBalance(emp.Id, lt.Id, remaining: 15);
-        balance.LeaveType = lt;
+        Known(emp, lt);
+        HasBalance(emp, lt, 2025, total: 15);
 
-        _employeeRepo.Setup(r => r.GetByIdAsync(emp.Id, default)).ReturnsAsync(emp);
-        _leaveTypeRepo.Setup(r => r.GetByIdAsync(lt.Id, default)).ReturnsAsync(lt);
-        _balanceRepo.Setup(r => r.GetByEmployeeAndTypeAsync(emp.Id, lt.Id, It.IsAny<int>(), default)).ReturnsAsync(balance);
-        _holidayService.Setup(h => h.IsHolidayAsync(It.IsAny<DateOnly>(), default)).ReturnsAsync((HolidayType?)null);
-        _leaveRepo.Setup(r => r.HasOverlapAsync(emp.Id, It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), null, default)).ReturnsAsync(false);
-        _leaveRepo.Setup(r => r.AddAsync(It.IsAny<LeaveRequest>(), default))
-                  .ReturnsAsync((LeaveRequest l, CancellationToken _) => l);
-
-        var dto = new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 14), null);
+        var dto = new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 16), null);
 
         var result = await _sut.CreateAsync(dto);
 
         result.TotalDays.Should().Be(5);
+    }
+
+    // ── Each check surfaced through Create ───────────────────────────────────
+
+    [Fact]
+    public async Task CreateAsync_InactiveType_IsRefused()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        lt.IsActive = false;
+        Known(emp, lt);
+        HasBalance(emp, lt, 2025, total: 15);
+
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 10), null));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Vacation Leave is no longer available.");
+        _leaveRepo.Verify(r => r.AddAsync(It.IsAny<LeaveRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateAsync_NotEnoughService_IsRefused()
+    {
+        var emp = MakeEmployee(hireDate: new DateOnly(2025, 1, 15));
+        var lt = SoloParent();
+        lt.RequiresSoloParentId = false;
+        Known(emp, lt);
+
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 10), null));
+
+        await act.Should().ThrowAsync<DomainException>()
+                 .WithMessage("Solo Parent Leave needs 6 months of service; you'll qualify on Jul 15, 2025.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_NotMarried_IsRefused()
+    {
+        var emp = MakeEmployee(civilStatus: CivilStatus.Single);
+        var lt = Paternity();
+        Known(emp, lt);
+
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 10), null));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Paternity Leave is for married employees.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_NoSoloParentId_IsRefused()
+    {
+        var emp = MakeEmployee();
+        var lt = SoloParent();
+        Known(emp, lt);
+
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 10), null));
+
+        await act.Should().ThrowAsync<DomainException>()
+                 .WithMessage("Solo Parent Leave needs a valid solo parent ID on your record; ask HR to add it.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_MaternityCaseMissing_IsRefused()
+    {
+        var emp = MakeEmployee(gender: Gender.Female);
+        var lt = Maternity();
+        Known(emp, lt);
+
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 1), new DateOnly(2025, 3, 10), null));
+
+        await act.Should().ThrowAsync<DomainException>()
+                 .WithMessage("Choose whether this is a live birth or a miscarriage or emergency termination.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_FatherAllocationOverSeven_IsRefused()
+    {
+        var emp = MakeEmployee(gender: Gender.Female);
+        var lt = Maternity();
+        Known(emp, lt);
+
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 1), new DateOnly(2025, 3, 10), null,
+            MaternityCase.LiveBirth, DaysAllocatedToFather: 8));
+
+        await act.Should().ThrowAsync<DomainException>()
+                 .WithMessage("Up to 7 days can be allocated to the father, for a live birth only.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_SpanningThreeYears_IsRefused()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 12, 29), new DateOnly(2027, 1, 4), null));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("A leave request can't span more than two years.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_OnlyWeekendDays_IsRefused()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        HasBalance(emp, lt, 2025, total: 15);
+
+        // Sat 2025-03-15 to Sun 2025-03-16
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 15), new DateOnly(2025, 3, 16), null));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("There are no working days in that range.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_OverThePerEventLimit_IsRefused()
+    {
+        var emp = MakeEmployee(civilStatus: CivilStatus.Married);
+        var lt = Paternity();
+        Known(emp, lt);
+
+        // Mon 2025-03-10 to Wed 2025-03-19 = 8 working days
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 19), null));
+
+        await act.Should().ThrowAsync<DomainException>()
+                 .WithMessage("Paternity Leave is up to 7 days each time; this request is 8.");
+    }
+
+    // ── Pending holds ────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task CreateAsync_PendingRequestsHoldTheirDays()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        HasBalance(emp, lt, 2025, total: 5);
+        var pending = new LeaveRequest
+        {
+            EmployeeId = emp.Id, LeaveTypeId = lt.Id, Status = LeaveStatus.Pending,
+            StartDate = new DateOnly(2025, 3, 3), EndDate = new DateOnly(2025, 3, 5), TotalDays = 3, DaysInStartYear = 3
+        };
+        _leaveRepo.Setup(r => r.GetPendingAsync(emp.Id, lt.Id, null, It.IsAny<CancellationToken>())).ReturnsAsync([pending]);
+
+        // Mon-Wed = 3 days, but 5 - 3 held = 2 available
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), null));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("You have 2 days of Vacation Leave left for 2025.");
+    }
+
+    [Fact]
+    public async Task ApproveAsync_ExcludesTheRequestItselfFromPendingHolds()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        HasBalance(emp, lt, 2025, total: 3);
+        var request = Stored(emp, lt, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), totalDays: 3, daysInStartYear: 3);
+        // Only the request itself is pending - asked for with excludeId = its own id, which returns nothing.
+        _leaveRepo.Setup(r => r.GetPendingAsync(emp.Id, lt.Id, null, It.IsAny<CancellationToken>())).ReturnsAsync([request]);
+
+        var result = await _sut.ApproveAsync(request.Id, Guid.NewGuid());
+
+        result.Status.Should().Be(LeaveStatus.Approved);
+        _leaveRepo.Verify(r => r.GetPendingAsync(emp.Id, lt.Id, request.Id, It.IsAny<CancellationToken>()), Times.Once);
+        _leaveRepo.Verify(r => r.HasOverlapAsync(emp.Id, request.StartDate, request.EndDate, request.Id, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── Yearly allowance ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task CreateAsync_YearlyAllowance_CreatesTheYearsBalanceOnFirstFiling()
+    {
+        var emp = MakeEmployee();
+        emp.SoloParentIdNumber = "SP-1";
+        emp.SoloParentIdValidUntil = new DateOnly(2030, 1, 1);
+        var lt = SoloParent();
+        Known(emp, lt);
+
+        var result = await _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), null));
+
+        result.TotalDays.Should().Be(3);
+        _balanceRepo.Verify(r => r.AddNewAsync(It.Is<LeaveBalance>(b =>
+            b.EmployeeId == emp.Id && b.LeaveTypeId == lt.Id && b.Year == 2025 && b.TotalDays == 7 && b.UsedDays == 0),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateAsync_YearlyAllowance_WithNoBalance_CountsTheFullAllowance()
+    {
+        var emp = MakeEmployee();
+        emp.SoloParentIdNumber = "SP-1";
+        emp.SoloParentIdValidUntil = new DateOnly(2030, 1, 1);
+        var lt = SoloParent();
+        Known(emp, lt);
+
+        // Mon 2025-03-10 to Wed 2025-03-19 = 8 working days, one more than the allowance of 7
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 19), null));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("You have 7 days of Solo Parent Leave left for 2025.");
+        _balanceRepo.Verify(r => r.AddNewAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateAsync_YearlyAllowance_WithAnExistingBalance_AddsNoRow()
+    {
+        var emp = MakeEmployee();
+        emp.SoloParentIdNumber = "SP-1";
+        emp.SoloParentIdValidUntil = new DateOnly(2030, 1, 1);
+        var lt = SoloParent();
+        Known(emp, lt);
+        HasBalance(emp, lt, 2025, total: 7, used: 2);
+
+        await _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), null));
+
+        _balanceRepo.Verify(r => r.AddNewAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── Per event ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task PerEvent_FilingAndApproving_TouchesNoBalance()
+    {
+        var emp = MakeEmployee(civilStatus: CivilStatus.Married);
+        var lt = Paternity();
+        Known(emp, lt);
+
+        var created = await _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 18), null));
+        created.TotalDays.Should().Be(7);
+
+        var request = Stored(emp, lt, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 18), totalDays: 7, daysInStartYear: 7);
+        request.DocumentStorageKey = "leave-requests/x/y.pdf";
+        var approved = await _sut.ApproveAsync(request.Id, Guid.NewGuid());
+
+        approved.Status.Should().Be(LeaveStatus.Approved);
+        _balanceRepo.Verify(r => r.GetByEmployeeAndTypeAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _balanceRepo.Verify(r => r.AddNewAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()), Times.Never);
+        _balanceRepo.Verify(r => r.UpdateAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task PerEvent_FourthApprovedEvent_BlocksTheFifth()
+    {
+        var emp = MakeEmployee(civilStatus: CivilStatus.Married);
+        var lt = Paternity();
+        Known(emp, lt);
+        _leaveRepo.Setup(r => r.CountApprovedAsync(emp.Id, lt.Id, It.IsAny<CancellationToken>())).ReturnsAsync(4);
+
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), null));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("You've used Paternity Leave 4 times, the most allowed.");
+    }
+
+    [Fact]
+    public async Task PerEvent_ThirdApprovedEvent_StillAllowsTheFourth()
+    {
+        var emp = MakeEmployee(civilStatus: CivilStatus.Married);
+        var lt = Paternity();
+        Known(emp, lt);
+        _leaveRepo.Setup(r => r.CountApprovedAsync(emp.Id, lt.Id, It.IsAny<CancellationToken>())).ReturnsAsync(3);
+
+        var result = await _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), null));
+
+        result.Status.Should().Be(LeaveStatus.Pending);
+    }
+
+    // ── Two years ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task TwoYearAccrued_FilingSplitsTheDays_ApprovalChargesBothYears_CancelRefundsBoth()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        var balance2025 = HasBalance(emp, lt, 2025, total: 10);
+        var balance2026 = HasBalance(emp, lt, 2026, total: 10);
+        LeaveRequest? saved = null;
+        _leaveRepo.Setup(r => r.AddAsync(It.IsAny<LeaveRequest>(), It.IsAny<CancellationToken>()))
+                  .Callback((LeaveRequest l, CancellationToken _) => saved = l)
+                  .ReturnsAsync((LeaveRequest l, CancellationToken _) => l);
+
+        // Mon 2025-12-29 .. Wed 2025-12-31 = 3 days; Thu 2026-01-01 .. Fri 2026-01-02 = 2 days
+        await _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 12, 29), new DateOnly(2026, 1, 2), null));
+
+        saved!.TotalDays.Should().Be(5);
+        saved.DaysInStartYear.Should().Be(3);
+
+        _leaveRepo.Setup(r => r.GetByIdAsync(saved.Id, It.IsAny<CancellationToken>())).ReturnsAsync(saved);
+        await _sut.ApproveAsync(saved.Id, Guid.NewGuid());
+
+        balance2025.UsedDays.Should().Be(3);
+        balance2026.UsedDays.Should().Be(2);
+
+        await _sut.CancelAsync(saved.Id, emp.Id);
+
+        saved.Status.Should().Be(LeaveStatus.Cancelled);
+        balance2025.UsedDays.Should().Be(0);
+        balance2026.UsedDays.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ApproveAsync_SetsTotalDaysAndDaysInStartYearFromTheRecount()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        HasBalance(emp, lt, 2025, total: 10);
+        var request = Stored(emp, lt, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 11), totalDays: 9, daysInStartYear: 9);
+
+        var result = await _sut.ApproveAsync(request.Id, Guid.NewGuid());
+
+        result.TotalDays.Should().Be(2);
+        request.DaysInStartYear.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ApproveAsync_AccruedYearWithNoBalanceRow_IsRefused()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        var request = Stored(emp, lt, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 11), totalDays: 2, daysInStartYear: 2);
+
+        var act = () => _sut.ApproveAsync(request.Id, Guid.NewGuid());
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("You have 0 days of Vacation Leave left for 2025.");
+        request.Status.Should().Be(LeaveStatus.Pending);
+    }
+
+    // ── Approval re-checks ───────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ApproveAsync_TypeDeactivatedAfterFiling_IsRefused()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        var balance = HasBalance(emp, lt, 2025, total: 10);
+        var request = Stored(emp, lt, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 11), totalDays: 2, daysInStartYear: 2);
+        lt.IsActive = false;
+
+        var act = () => _sut.ApproveAsync(request.Id, Guid.NewGuid());
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Vacation Leave is no longer available.");
+        request.Status.Should().Be(LeaveStatus.Pending);
+        balance.UsedDays.Should().Be(0);
+    }
+
+    // ── Maternity ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Maternity_WithASoloParentId_Allows120CalendarDays()
+    {
+        var emp = MakeEmployee(gender: Gender.Female);
+        emp.SoloParentIdNumber = "SP-9";
+        emp.SoloParentIdValidUntil = new DateOnly(2030, 1, 1);
+        var lt = Maternity();
+        Known(emp, lt);
+        var start = new DateOnly(2025, 3, 1);
+
+        var result = await _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, start, start.AddDays(119), null, MaternityCase.LiveBirth));
+
+        result.TotalDays.Should().Be(120);
+        result.MaternityCase.Should().Be(MaternityCase.LiveBirth);
+    }
+
+    [Fact]
+    public async Task Maternity_WithoutASoloParentId_120DaysIsRefused()
+    {
+        var emp = MakeEmployee(gender: Gender.Female);
+        var lt = Maternity();
+        Known(emp, lt);
+        var start = new DateOnly(2025, 3, 1);
+
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, start, start.AddDays(119), null, MaternityCase.LiveBirth));
+
+        await act.Should().ThrowAsync<DomainException>()
+                 .WithMessage("Maternity leave for a live birth is up to 105 days; this request is 120.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_NonMaternityType_ClearsMaternityFields()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        HasBalance(emp, lt, 2025, total: 10);
+
+        var result = await _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 10), null,
+            MaternityCase.LiveBirth, DaysAllocatedToFather: 5));
+
+        result.MaternityCase.Should().BeNull();
+        result.DaysAllocatedToFather.Should().Be(0);
+    }
+
+    // ── Documents ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ApproveAsync_DocumentRequired_WithoutADocument_IsRefused_AndWithOne_Approves()
+    {
+        var emp = MakeEmployee(civilStatus: CivilStatus.Married);
+        var lt = Paternity();
+        Known(emp, lt);
+        var request = Stored(emp, lt, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), totalDays: 3, daysInStartYear: 3);
+
+        var act = () => _sut.ApproveAsync(request.Id, Guid.NewGuid());
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Paternity Leave needs a supporting document.");
+        request.Status.Should().Be(LeaveStatus.Pending);
+
+        request.DocumentStorageKey = "leave-requests/r/d.pdf";
+        request.DocumentFileName = "marriage-certificate.pdf";
+        var result = await _sut.ApproveAsync(request.Id, Guid.NewGuid());
+
+        result.Status.Should().Be(LeaveStatus.Approved);
+        result.HasDocument.Should().BeTrue();
+        result.DocumentFileName.Should().Be("marriage-certificate.pdf");
+    }
+
+    [Fact]
+    public async Task GetByIdAsync_MapsTheNewFields()
+    {
+        var emp = MakeEmployee(gender: Gender.Female);
+        var lt = Maternity();
+        var request = Stored(emp, lt, new DateOnly(2025, 3, 1), new DateOnly(2025, 6, 13), totalDays: 105, daysInStartYear: 105);
+        request.MaternityCase = MaternityCase.LiveBirth;
+        request.DaysAllocatedToFather = 7;
+
+        var result = await _sut.GetByIdAsync(request.Id);
+
+        result.MaternityCase.Should().Be(MaternityCase.LiveBirth);
+        result.DaysAllocatedToFather.Should().Be(7);
+        result.HasDocument.Should().BeFalse();
+        result.DocumentFileName.Should().BeNull();
+    }
+
+    // ── Review fixes ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Maternity_NegativeFatherAllocation_IsRefused()
+    {
+        // -15 would otherwise lift the live-birth limit to 120 days without a solo parent ID.
+        var emp = MakeEmployee(gender: Gender.Female);
+        var lt = Maternity();
+        Known(emp, lt);
+        var start = new DateOnly(2025, 3, 1);
+
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, start, start.AddDays(119), null,
+            MaternityCase.LiveBirth, DaysAllocatedToFather: -15));
+
+        await act.Should().ThrowAsync<DomainException>()
+                 .WithMessage("Up to 7 days can be allocated to the father, for a live birth only.");
+        _leaveRepo.Verify(r => r.AddAsync(It.IsAny<LeaveRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateAsync_ThreeYearRange_IsRefusedWithoutCountingTheDays()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        var counter = new Mock<ILeaveDayCounter>();
+        var sut = new LeaveRequestService(_leaveRepo.Object, _balanceRepo.Object, counter.Object, _employeeRepo.Object, _leaveTypeRepo.Object, _clock);
+
+        var act = () => sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(9999, 12, 31), null));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("A leave request can't span more than two years.");
+        counter.Verify(c => c.CountByYearAsync(It.IsAny<Guid>(), It.IsAny<LeaveType>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateAsync_OverlapAndInsufficientBalance_ReportsTheOverlap()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        HasBalance(emp, lt, 2025, total: 1);
+        _leaveRepo.Setup(r => r.HasOverlapAsync(emp.Id, It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), null, It.IsAny<CancellationToken>()))
+                  .ReturnsAsync(true);
+
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 14), null));
+
+        await act.Should().ThrowAsync<DomainException>()
+                 .WithMessage("Employee has an overlapping leave request for these dates.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_InactiveTypeAndOverlap_ReportsInactive()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        lt.IsActive = false;
+        Known(emp, lt);
+        HasBalance(emp, lt, 2025, total: 10);
+        _leaveRepo.Setup(r => r.HasOverlapAsync(emp.Id, It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), null, It.IsAny<CancellationToken>()))
+                  .ReturnsAsync(true);
+
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 11), null));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Vacation Leave is no longer available.");
+    }
+
+    [Theory]
+    [InlineData(2025, 3, 10, "You have 1 days of Vacation Leave left for 2025.")] // 4 - 3 held in 2025
+    [InlineData(2026, 3, 9, "You have 1 days of Vacation Leave left for 2026.")]  // 3 - 2 held in 2026
+    public async Task CreateAsync_APendingHoldSpanningTwoYears_IsChargedToBothYears(int year, int month, int day, string message)
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        HasBalance(emp, lt, 2025, total: 4);
+        HasBalance(emp, lt, 2026, total: 3);
+        var pending = new LeaveRequest
+        {
+            EmployeeId = emp.Id, LeaveTypeId = lt.Id, Status = LeaveStatus.Pending,
+            StartDate = new DateOnly(2025, 12, 29), EndDate = new DateOnly(2026, 1, 2), TotalDays = 5, DaysInStartYear = 3
+        };
+        _leaveRepo.Setup(r => r.GetPendingAsync(emp.Id, lt.Id, null, It.IsAny<CancellationToken>())).ReturnsAsync([pending]);
+
+        // A Monday and Tuesday: 2 days, one more than the year has left after the hold.
+        var start = new DateOnly(year, month, day);
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, start, start.AddDays(1), null));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(message);
+    }
+
+    [Fact]
+    public async Task ApproveAsync_YearlyAllowance_ChargesUsedDays()
+    {
+        var emp = MakeEmployee();
+        emp.SoloParentIdNumber = "SP-1";
+        emp.SoloParentIdValidUntil = new DateOnly(2030, 1, 1);
+        var lt = SoloParent();
+        Known(emp, lt);
+        var balance = HasBalance(emp, lt, 2025, total: 7);
+        var request = Stored(emp, lt, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), totalDays: 3, daysInStartYear: 3);
+
+        await _sut.ApproveAsync(request.Id, Guid.NewGuid());
+
+        balance.UsedDays.Should().Be(3);
+        _balanceRepo.Verify(r => r.UpdateAsync(balance, It.IsAny<CancellationToken>()), Times.Once);
+        _balanceRepo.Verify(r => r.AddNewAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ApproveAsync_BalanceDroppedSinceFiling_IsRefused()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        var balance = HasBalance(emp, lt, 2025, total: 10);
+        LeaveRequest? saved = null;
+        _leaveRepo.Setup(r => r.AddAsync(It.IsAny<LeaveRequest>(), It.IsAny<CancellationToken>()))
+                  .Callback((LeaveRequest l, CancellationToken _) => saved = l)
+                  .ReturnsAsync((LeaveRequest l, CancellationToken _) => l);
+        await _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), null));
+        _leaveRepo.Setup(r => r.GetByIdAsync(saved!.Id, It.IsAny<CancellationToken>())).ReturnsAsync(saved);
+
+        balance.UsedDays = 9; // other leave approved in between
+
+        var act = () => _sut.ApproveAsync(saved!.Id, Guid.NewGuid());
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("You have 1 days of Vacation Leave left for 2025.");
+        saved!.Status.Should().Be(LeaveStatus.Pending);
+        balance.UsedDays.Should().Be(9);
+    }
+
+    [Fact]
+    public async Task CreateAsync_YearlyAllowance_ConcurrentFilingAddedTheRow_IsRefusedAndNothingIsSaved()
+    {
+        var emp = MakeEmployee();
+        emp.SoloParentIdNumber = "SP-1";
+        emp.SoloParentIdValidUntil = new DateOnly(2030, 1, 1);
+        var lt = SoloParent();
+        Known(emp, lt);
+        _balanceRepo.Setup(r => r.AddNewAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()))
+                    .ThrowsAsync(new DomainException("Your leave is being filed already; try again in a moment."));
+
+        var act = () => _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2025, 3, 10), new DateOnly(2025, 3, 12), null));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Your leave is being filed already; try again in a moment.");
+        _leaveRepo.Verify(r => r.AddAsync(It.IsAny<LeaveRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ---- confidential types ----------------------------------------------------------------
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetAllAsync_PassesTheConfidentialExclusionToTheQuery(bool excludeConfidential)
+    {
+        var managerId = Guid.NewGuid();
+        _leaveRepo.Setup(r => r.GetPagedAsync(null, managerId, "Pending", 1, 20, excludeConfidential, It.IsAny<CancellationToken>()))
+                  .ReturnsAsync(([], 0));
+
+        await _sut.GetAllAsync(null, managerId, "Pending", 1, 20, excludeConfidential);
+
+        _leaveRepo.Verify(r => r.GetPagedAsync(null, managerId, "Pending", 1, 20, excludeConfidential, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetByIdAsync_CarriesTheTypesConfidentialFlag(bool isConfidential)
+    {
+        var request = new LeaveRequest
+        {
+            EmployeeId = Guid.NewGuid(), LeaveTypeId = Guid.NewGuid(),
+            LeaveType = new LeaveType { Name = "VAWC Leave", Code = "VAWC", IsConfidential = isConfidential },
+            StartDate = new DateOnly(2026, 10, 5), EndDate = new DateOnly(2026, 10, 5), TotalDays = 1
+        };
+        _leaveRepo.Setup(r => r.GetByIdAsync(request.Id, It.IsAny<CancellationToken>())).ReturnsAsync(request);
+
+        var dto = await _sut.GetByIdAsync(request.Id);
+
+        dto.IsConfidential.Should().Be(isConfidential);
+        dto.LeaveTypeName.Should().Be("VAWC Leave");
+    }
+
+    [Fact]
+    public async Task ARequestWhoseTypeDidNotLoad_IsTreatedAsConfidential()
+    {
+        // Fail closed: "not confidential" would show a VAWC request to a manager.
+        var request = new LeaveRequest
+        {
+            EmployeeId = Guid.NewGuid(), LeaveTypeId = Guid.NewGuid(),
+            StartDate = new DateOnly(2026, 10, 5), EndDate = new DateOnly(2026, 10, 5), TotalDays = 1
+        };
+        _leaveRepo.Setup(r => r.GetByIdAsync(request.Id, It.IsAny<CancellationToken>())).ReturnsAsync(request);
+
+        var dto = await _sut.GetByIdAsync(request.Id);
+
+        dto.IsConfidential.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateAsync_SaysWhetherTheTypeIsConfidential_FromTheTypeItFiledAgainst(bool isConfidential)
+    {
+        // The saved request comes back without its navigation loaded; the type it was filed
+        // against is known, so the answer does not have to fall back to "confidential".
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        lt.IsConfidential = isConfidential;
+        Known(emp, lt);
+        HasBalance(emp, lt, 2026, total: 15);
+
+        var result = await _sut.CreateAsync(new CreateLeaveRequestDto(emp.Id, lt.Id, new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 6), null));
+
+        result.IsConfidential.Should().Be(isConfidential);
+        result.LeaveTypeName.Should().Be("Vacation Leave");
+    }
+
+    [Fact]
+    public async Task ApproveAsync_SaysWhetherTheTypeIsConfidential_FromTheTypeItChecked()
+    {
+        var emp = MakeEmployee();
+        var lt = MakeLeaveType();
+        Known(emp, lt);
+        var request = Stored(emp, lt, new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 6), totalDays: 2, daysInStartYear: 2);
+        HasBalance(emp, lt, 2026, 10);
+
+        var result = await _sut.ApproveAsync(request.Id, Guid.NewGuid());
+
+        result.IsConfidential.Should().BeFalse();
+    }
+
+    // ── Filing options ───────────────────────────────────────────────────────
+
+    private static LeaveType AllocatedToFather() => new()
+    {
+        Id = Guid.NewGuid(), Name = "Maternity Leave Allocated to Father", Code = "AML",
+        EntitlementKind = LeaveEntitlementKind.PerEvent, DaysPerEvent = 7, CountsCalendarDays = true,
+        GenderRestriction = "Male", RequiresDocument = true
+    };
+
+    private static LeaveType SpecialLeaveForWomen() => new()
+    {
+        Id = Guid.NewGuid(), Name = "Special Leave for Women (Magna Carta)", Code = "SLW",
+        EntitlementKind = LeaveEntitlementKind.PerEvent, DaysPerEvent = 60, CountsCalendarDays = true,
+        GenderRestriction = "Female", MinServiceMonths = 6, RequiresDocument = true
+    };
+
+    /// <summary>The site's leave types, and the employee's balance rows for 2026.</summary>
+    private void Offers(Employee emp, IReadOnlyList<LeaveType> types, params LeaveBalance[] balances)
+    {
+        _employeeRepo.Setup(r => r.GetByIdAsync(emp.Id, It.IsAny<CancellationToken>())).ReturnsAsync(emp);
+        _leaveTypeRepo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(types);
+        _balanceRepo.Setup(r => r.GetByEmployeeAsync(emp.Id, 2026, It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(balances);
+    }
+
+    private static LeaveBalance Balance(Employee emp, LeaveType lt, decimal total, decimal used = 0) => new()
+    {
+        EmployeeId = emp.Id, LeaveTypeId = lt.Id, LeaveType = lt, Year = 2026, TotalDays = total, UsedDays = used
+    };
+
+    private static LeaveRequest Pending(Employee emp, LeaveType lt, DateOnly start, DateOnly end, decimal total, decimal inStartYear) => new()
+    {
+        EmployeeId = emp.Id, LeaveTypeId = lt.Id, Status = LeaveStatus.Pending,
+        StartDate = start, EndDate = end, TotalDays = total, DaysInStartYear = inStartYear
+    };
+
+    [Fact]
+    public async Task FilingOptions_FemaleWithoutSoloParentId_GetsMaternityWithoutTheBonus_AndNoSoloParentLeave()
+    {
+        var emp = MakeEmployee(gender: Gender.Female);
+        var ml = Maternity();
+        Offers(emp, [ml, SoloParent(), Paternity(), AllocatedToFather()]);
+
+        var options = await _sut.GetFilingOptionsAsync(emp.Id);
+
+        options.Should().ContainSingle().Which.Should().Be(new LeaveFilingOptionDto(
+            ml.Id, "Maternity Leave", "ML", LeaveEntitlementKind.PerEvent,
+            CountsCalendarDays: true, RequiresDocument: true, IsMaternity: true,
+            DaysLeftThisYear: null, DaysPerEvent: 105, MaxEvents: null, EventsUsed: 0,
+            HasSoloParentBonus: false));
+    }
+
+    [Fact]
+    public async Task FilingOptions_FemaleWithAValidSoloParentId_GetsTheBonus_AndSoloParentLeave()
+    {
+        var emp = MakeEmployee(gender: Gender.Female);
+        emp.SoloParentIdNumber = "SP-1";
+        emp.SoloParentIdValidUntil = new DateOnly(2026, 9, 24);
+        Offers(emp, [Maternity(), SoloParent()]);
+
+        var options = await _sut.GetFilingOptionsAsync(emp.Id);
+
+        options.Select(o => o.Code).Should().Equal("ML", "SPL");
+        options[0].HasSoloParentBonus.Should().BeTrue();
+        options[1].HasSoloParentBonus.Should().BeFalse();
+        options[1].DaysLeftThisYear.Should().Be(7, "a YearlyAllowance type with no row yet offers its whole allowance");
+    }
+
+    [Fact]
+    public async Task FilingOptions_ReadTodayAsThePhilippineDate()
+    {
+        // 01:00 on Sep 24 in Manila is still Sep 23 in UTC: an ID valid until Sep 23 has expired.
+        _clock.Now = new DateTimeOffset(2026, 9, 23, 17, 0, 0, TimeSpan.Zero);
+        var emp = MakeEmployee(gender: Gender.Female);
+        emp.SoloParentIdNumber = "SP-1";
+        emp.SoloParentIdValidUntil = new DateOnly(2026, 9, 23);
+        Offers(emp, [Maternity(), SoloParent()]);
+
+        var options = await _sut.GetFilingOptionsAsync(emp.Id);
+
+        options.Should().ContainSingle().Which.HasSoloParentBonus.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task FilingOptions_MarriedMale_GetsPaternityAndTheFathersAllocation()
+    {
+        var emp = MakeEmployee(gender: Gender.Male, civilStatus: CivilStatus.Married);
+        Offers(emp, [Maternity(), Paternity(), AllocatedToFather(), SpecialLeaveForWomen()]);
+
+        var options = await _sut.GetFilingOptionsAsync(emp.Id);
+
+        options.Select(o => o.Code).Should().Equal("AML", "PL");
+    }
+
+    [Fact]
+    public async Task FilingOptions_UnmarriedMale_GetsTheFathersAllocationButNotPaternity()
+    {
+        var emp = MakeEmployee(gender: Gender.Male, civilStatus: CivilStatus.Single);
+        Offers(emp, [Paternity(), AllocatedToFather()]);
+
+        var options = await _sut.GetFilingOptionsAsync(emp.Id);
+
+        options.Select(o => o.Code).Should().Equal("AML");
+    }
+
+    [Fact]
+    public async Task FilingOptions_ThreeMonthsOfService_LeavesOutSoloParentAndSpecialLeaveForWomen()
+    {
+        var emp = MakeEmployee(gender: Gender.Female, hireDate: new DateOnly(2026, 6, 24));
+        emp.SoloParentIdNumber = "SP-1";
+        emp.SoloParentIdValidUntil = new DateOnly(2027, 12, 31);
+        Offers(emp, [Maternity(), SoloParent(), SpecialLeaveForWomen()]);
+
+        var options = await _sut.GetFilingOptionsAsync(emp.Id);
+
+        options.Select(o => o.Code).Should().Equal("ML");
+    }
+
+    [Fact]
+    public async Task FilingOptions_AccruedTypeWithoutABalanceThisYear_IsHidden()
+    {
+        var emp = MakeEmployee();
+        var vl = MakeLeaveType();
+        var sl = new LeaveType { Id = Guid.NewGuid(), Name = "Sick Leave", Code = "SL", MaxDaysPerYear = 15 };
+        Offers(emp, [vl, sl], Balance(emp, sl, total: 15, used: 4));
+
+        var options = await _sut.GetFilingOptionsAsync(emp.Id);
+
+        var option = options.Should().ContainSingle().Subject;
+        option.Code.Should().Be("SL");
+        option.DaysLeftThisYear.Should().Be(11);
+        option.DaysPerEvent.Should().BeNull();
+        option.MaxEvents.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task FilingOptions_InactiveTypes_AreLeftOut_AndTheRestSortedByName()
+    {
+        var emp = MakeEmployee();
+        var vl = MakeLeaveType();
+        var sl = new LeaveType { Id = Guid.NewGuid(), Name = "Sick Leave", Code = "SL", MaxDaysPerYear = 15 };
+        var el = new LeaveType { Id = Guid.NewGuid(), Name = "Emergency Leave", Code = "EL", MaxDaysPerYear = 3, IsActive = false };
+        var bl = new LeaveType
+        {
+            Id = Guid.NewGuid(), Name = "Birthday Leave", Code = "BL",
+            EntitlementKind = LeaveEntitlementKind.YearlyAllowance, MaxDaysPerYear = 1
+        };
+        Offers(emp, [vl, sl, el, bl], Balance(emp, vl, 15), Balance(emp, sl, 15), Balance(emp, el, 3));
+
+        var options = await _sut.GetFilingOptionsAsync(emp.Id);
+
+        options.Select(o => o.Code).Should().Equal("BL", "SL", "VL");
+    }
+
+    [Fact]
+    public async Task FilingOptions_DaysLeft_AreNetOfPendingHoldsThisYear()
+    {
+        var emp = MakeEmployee(gender: Gender.Female);
+        emp.SoloParentIdNumber = "SP-1";
+        emp.SoloParentIdValidUntil = new DateOnly(2027, 12, 31);
+        var vl = MakeLeaveType();
+        var spl = SoloParent();
+        Offers(emp, [vl, spl], Balance(emp, vl, total: 15, used: 3));
+
+        // VL: 2 days pending in 2026, and a Dec-Jan request holding 1 day in 2026 and 2 in 2027.
+        _leaveRepo.Setup(r => r.GetPendingAsync(emp.Id, vl.Id, null, It.IsAny<CancellationToken>()))
+                  .ReturnsAsync([
+                      Pending(emp, vl, new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 6), total: 2, inStartYear: 2),
+                      Pending(emp, vl, new DateOnly(2026, 12, 31), new DateOnly(2027, 1, 4), total: 3, inStartYear: 1)
+                  ]);
+        // SPL has no row yet: the 7-day allowance less 2 pending.
+        _leaveRepo.Setup(r => r.GetPendingAsync(emp.Id, spl.Id, null, It.IsAny<CancellationToken>()))
+                  .ReturnsAsync([
+                      Pending(emp, spl, new DateOnly(2026, 11, 2), new DateOnly(2026, 11, 3), total: 2, inStartYear: 2)
+                  ]);
+
+        var options = await _sut.GetFilingOptionsAsync(emp.Id);
+
+        options.Single(o => o.Code == "VL").DaysLeftThisYear.Should().Be(9);
+        options.Single(o => o.Code == "SPL").DaysLeftThisYear.Should().Be(5);
+    }
+
+    [Fact]
+    public async Task FilingOptions_PerEventTypes_CarryTheApprovedEventCount()
+    {
+        var emp = MakeEmployee(gender: Gender.Male, civilStatus: CivilStatus.Married);
+        var pl = Paternity();
+        Offers(emp, [pl]);
+        _leaveRepo.Setup(r => r.CountApprovedAsync(emp.Id, pl.Id, It.IsAny<CancellationToken>())).ReturnsAsync(2);
+
+        var options = await _sut.GetFilingOptionsAsync(emp.Id);
+
+        var option = options.Should().ContainSingle().Subject;
+        option.EventsUsed.Should().Be(2);
+        option.MaxEvents.Should().Be(4);
+        option.DaysPerEvent.Should().Be(7);
+        option.DaysLeftThisYear.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task FilingOptions_UnknownEmployee_Throws()
+    {
+        var act = () => _sut.GetFilingOptionsAsync(Guid.NewGuid());
+
+        await act.Should().ThrowAsync<KeyNotFoundException>();
     }
 }

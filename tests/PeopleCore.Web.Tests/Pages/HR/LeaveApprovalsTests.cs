@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using AngleSharp.Dom;
 using Bunit;
 using Bunit.TestDoubles;
@@ -15,6 +16,10 @@ namespace PeopleCore.Web.Tests.Pages.HR;
 public class LeaveApprovalsTests : BunitContext
 {
     private const string RequestsPath = "/api/leave-requests?page=1&pageSize=50";
+    private const string TypesPath = "/api/leave-types";
+    private static readonly Guid VacationTypeId = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000001");
+    private static readonly Guid SoloParentTypeId = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002");
+    private static readonly Guid MaternityTypeId = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000003");
     private static readonly Guid PendingId = Guid.Parse("5a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d");
     private static readonly Guid ApprovedId = Guid.Parse("6b2c3d4e-5f6a-4b7c-9d8e-0f1a2b3c4d5e");
 
@@ -38,8 +43,36 @@ public class LeaveApprovalsTests : BunitContext
         _auth = AddAuthorization();
         _auth.SetAuthorized("manager@company.test");
 
-        _api.On(HttpMethod.Get, RequestsPath, () => _loadFailure is null ? Json(_requests) : ServerError(_loadFailure));
+        _api.On(HttpMethod.Get, RequestsPath, () => _loadFailure is null ? Json(_requests) : ServerError(_loadFailure))
+            .On(HttpMethod.Get, TypesPath, () => Json($"[{LeaveType(VacationTypeId, "Vacation Leave", requiresDocument: false)},"
+                + $"{LeaveType(SoloParentTypeId, "Solo Parent Leave", requiresDocument: true)},"
+                + $"{LeaveType(MaternityTypeId, "Maternity Leave", requiresDocument: true, isMaternity: true)}]"));
     }
+
+    /// <summary>A LeaveTypeDto as the API sends it, with only what this page reads set.</summary>
+    private static string LeaveType(Guid id, string name, bool requiresDocument, bool isMaternity = false) =>
+        JsonSerializer.Serialize(new
+        {
+            id, name, code = name[..2].ToUpperInvariant(), maxDaysPerYear = 0m, isPaid = true, isCarryOver = false,
+            carryOverMaxDays = (decimal?)null, genderRestriction = (string?)null, requiresDocument, isActive = true,
+            isConvertibleToCash = false, countsAsVacationForDeMinimis = false,
+            entitlementKind = isMaternity ? "PerEvent" : "Accrued", countsCalendarDays = isMaternity,
+            daysPerEvent = isMaternity ? 105m : (decimal?)null, minServiceMonths = (int?)null, requiresMarried = false,
+            requiresSoloParentId = false, maxEvents = (int?)null, isConfidential = false, isMaternity,
+        });
+
+    /// <summary>A LeaveRequestDto as the API sends it: every field, in the record's order.</summary>
+    private static string FullRequest(Guid id, string employee, string status, Guid typeId, string typeName,
+        string? maternityCase = null, int fatherDays = 0, bool hasDocument = false, string? fileName = null,
+        string? reason = "Family event") =>
+        JsonSerializer.Serialize(new
+        {
+            id, employeeId = Guid.NewGuid(), employeeName = employee, leaveTypeId = typeId, leaveTypeName = typeName,
+            startDate = "2026-10-05", endDate = "2026-10-07", totalDays = 3m, reason, status,
+            approvedBy = (Guid?)null, approvedAt = (DateTime?)null, rejectionReason = (string?)null,
+            createdAt = new DateTime(2026, 9, 20, 1, 0, 0, DateTimeKind.Utc),
+            maternityCase, daysAllocatedToFather = fatherDays, hasDocument, documentFileName = fileName, isConfidential = false,
+        });
 
     private static HttpResponseMessage Json(string json) =>
         new(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
@@ -57,7 +90,7 @@ public class LeaveApprovalsTests : BunitContext
 
     private static string Request(Guid id, string employee, string status, string? reason, Guid? employeeId = null) =>
         $$"""
-        {"id":"{{id}}","employeeId":"{{employeeId ?? Guid.NewGuid()}}","employeeName":"{{employee}}","leaveTypeName":"Vacation Leave",
+        {"id":"{{id}}","employeeId":"{{employeeId ?? Guid.NewGuid()}}","employeeName":"{{employee}}","leaveTypeId":"{{VacationTypeId}}","leaveTypeName":"Vacation Leave",
          "startDate":"2026-10-05","endDate":"2026-10-07","totalDays":3,"status":"{{status}}",
          "reason":{{(reason is null ? "null" : $"\"{reason}\"")}}}
         """;
@@ -86,7 +119,8 @@ public class LeaveApprovalsTests : BunitContext
     private int PutIndex => _api.Requests.FindIndex(r => r.Method == HttpMethod.Put);
 
     private List<string> ListRequests =>
-        _api.Requests.Where(r => r.Method == HttpMethod.Get).Select(r => r.RequestUri!.PathAndQuery).ToList();
+        _api.Requests.Where(r => r.Method == HttpMethod.Get && r.RequestUri!.PathAndQuery.StartsWith("/api/leave-requests?"))
+            .Select(r => r.RequestUri!.PathAndQuery).ToList();
 
     private static IElement StatusFilter(IRenderedComponent<LeaveApprovals> cut) => cut.Find("select");
 
@@ -292,7 +326,7 @@ public class LeaveApprovalsTests : BunitContext
         _api.Requests.Where(r => r.Method == HttpMethod.Put).Should().ContainSingle()
             .Which.RequestUri!.PathAndQuery.Should().Be($"/api/leave-requests/{PendingId}/approve");
         _api.RequestBodies[PutIndex].Should().Be("{}");
-        _api.Requests.Count(r => r.Method == HttpMethod.Get).Should().Be(2);
+        ListRequests.Should().HaveCount(2);
         cut.FindAll("[role=alert]").Should().BeEmpty();
     }
 
@@ -330,10 +364,179 @@ public class LeaveApprovalsTests : BunitContext
         cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Trim()
             .Should().Be("Insufficient leave balance. Available: 1, Requested: 3."));
         ButtonsIn(RowFor(cut, "Maria Santos")).Should().Equal("Approve", "Reject");
-        _api.Requests.Count(r => r.Method == HttpMethod.Get).Should().Be(1, "nothing changed, so there is nothing to reload");
+        ListRequests.Should().ContainSingle("nothing changed, so there is nothing to reload");
 
         ButtonIn(RowFor(cut, "Maria Santos"), "Reject").Click();
 
         cut.WaitForAssertion(() => cut.FindAll("[role=alert]").Should().BeEmpty());
+    }
+
+    [Fact]
+    public void AMaternityRequest_ShowsItsCase_AndTheDaysGivenToTheFather()
+    {
+        var liveBirthId = Guid.NewGuid();
+        var miscarriageId = Guid.NewGuid();
+        _requests = Paged(
+            FullRequest(liveBirthId, "Maria Santos", "Pending", MaternityTypeId, "Maternity Leave", "LiveBirth", fatherDays: 7, hasDocument: true),
+            FullRequest(miscarriageId, "Ana Reyes", "Pending", MaternityTypeId, "Maternity Leave", "MiscarriageOrEmergencyTermination", hasDocument: true),
+            FullRequest(Guid.NewGuid(), "Jose Rizal", "Pending", VacationTypeId, "Vacation Leave"));
+
+        var cut = RenderPage();
+
+        RowFor(cut, "Maria Santos").QuerySelector("[data-maternity]")!.TextContent.Trim()
+            .Should().Be("Live birth, 7 days to the father");
+        RowFor(cut, "Ana Reyes").QuerySelector("[data-maternity]")!.TextContent.Trim()
+            .Should().Be("Miscarriage or emergency termination");
+        RowFor(cut, "Jose Rizal").QuerySelector("[data-maternity]").Should().BeNull();
+    }
+
+    [Fact]
+    public void ALiveBirthWithNoDaysGivenToTheFather_SaysOnlyTheCase()
+    {
+        _requests = Paged(FullRequest(PendingId, "Maria Santos", "Pending", MaternityTypeId, "Maternity Leave", "LiveBirth", hasDocument: true));
+
+        var cut = RenderPage();
+
+        RowFor(cut, "Maria Santos").QuerySelector("[data-maternity]")!.TextContent.Trim().Should().Be("Live birth");
+    }
+
+    [Fact]
+    public void AnAttachedDocument_CanBeOpened_ThroughAFreshLink()
+    {
+        const string url = "https://files.test/leave-requests/doc.pdf?X-Amz-Signature=abc";
+        _requests = Paged(
+            FullRequest(PendingId, "Maria Santos", "Pending", SoloParentTypeId, "Solo Parent Leave", hasDocument: true, fileName: "id.pdf"),
+            FullRequest(ApprovedId, "Jose Rizal", "Pending", VacationTypeId, "Vacation Leave"));
+        _api.On(HttpMethod.Get, $"/api/leave-requests/{PendingId}/document", HttpStatusCode.OK, $$"""{"url":"{{url}}"}""");
+        JSInterop.Setup<object?>("open", url, "_blank", "noopener,noreferrer").SetResult(new object());
+        var cut = RenderPage();
+
+        RowFor(cut, "Jose Rizal").QuerySelector("[data-view-document]").Should().BeNull("there is nothing attached to open");
+        RowFor(cut, "Maria Santos").QuerySelector("[data-view-document]")!.Click();
+
+        // Opened without handing the document's tab a way back to this page, or the page's address.
+        cut.WaitForAssertion(() => JSInterop.VerifyInvoke("open").Arguments.Should().Equal(url, "_blank", "noopener,noreferrer"));
+        _api.Requests.Should().Contain(r => r.RequestUri!.PathAndQuery == $"/api/leave-requests/{PendingId}/document");
+        cut.FindAll("[data-document-link]").Should().BeEmpty("the document opened");
+    }
+
+    [Fact]
+    public void ADocumentTheBrowserWouldNotOpen_IsOfferedAsALink()
+    {
+        const string url = "https://files.test/leave-requests/doc.pdf?X-Amz-Signature=abc";
+        _requests = Paged(FullRequest(PendingId, "Maria Santos", "Pending", SoloParentTypeId, "Solo Parent Leave", hasDocument: true, fileName: "id.pdf"));
+        _api.On(HttpMethod.Get, $"/api/leave-requests/{PendingId}/document", HttpStatusCode.OK, $$"""{"url":"{{url}}"}""");
+        JSInterop.Setup<object?>("open", url, "_blank", "noopener,noreferrer").SetResult(null);
+        var cut = RenderPage();
+
+        RowFor(cut, "Maria Santos").QuerySelector("[data-view-document]")!.Click();
+
+        var link = cut.WaitForElement("[data-document-link]");
+        link.GetAttribute("href").Should().Be(url);
+        link.GetAttribute("target").Should().Be("_blank");
+        link.GetAttribute("rel").Should().Be("noopener noreferrer");
+        link.ParentElement!.TextContent.Should().Contain("works for 5 minutes");
+    }
+
+    [Fact]
+    public void ADocumentLinkThatDoesNotComeBack_SaysSo_AndOpensNothing()
+    {
+        _requests = Paged(FullRequest(PendingId, "Maria Santos", "Pending", SoloParentTypeId, "Solo Parent Leave", hasDocument: true, fileName: "id.pdf"));
+        _api.On(HttpMethod.Get, $"/api/leave-requests/{PendingId}/document", HttpStatusCode.OK, """{"url":null}""");
+        var cut = RenderPage();
+
+        RowFor(cut, "Maria Santos").QuerySelector("[data-view-document]")!.Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Trim()
+            .Should().Be("The document's link didn't come back. Try again."));
+        JSInterop.Invocations.Should().NotContain(i => i.Identifier == "open");
+        cut.FindAll("[data-document-link]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AMaskedRequest_DoesNotShowAMaternityCase()
+    {
+        // The API clears the case when it masks; were one to arrive anyway, it would name the leave.
+        _requests = Paged(FullRequest(PendingId, "Maria Santos", "Pending", Guid.Empty, "Leave", "LiveBirth", fatherDays: 3, reason: null));
+
+        var cut = RenderPage();
+
+        RowFor(cut, "Maria Santos").QuerySelector("[data-maternity]").Should().BeNull();
+    }
+
+    [Fact]
+    public void ADocumentThatCannotBeOpened_SaysWhy()
+    {
+        _requests = Paged(FullRequest(PendingId, "Maria Santos", "Pending", SoloParentTypeId, "Solo Parent Leave", hasDocument: true, fileName: "id.pdf"));
+        _api.On(HttpMethod.Get, $"/api/leave-requests/{PendingId}/document", HttpStatusCode.NotFound,
+            """{"detail":"This leave request has no document."}""");
+        var cut = RenderPage();
+
+        RowFor(cut, "Maria Santos").QuerySelector("[data-view-document]")!.Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Trim().Should().Be("This leave request has no document."));
+    }
+
+    [Fact]
+    public void ATypeThatNeedsADocument_WithNoneAttached_IsFlagged()
+    {
+        _requests = Paged(
+            FullRequest(PendingId, "Maria Santos", "Pending", SoloParentTypeId, "Solo Parent Leave"),
+            FullRequest(ApprovedId, "Jose Rizal", "Pending", SoloParentTypeId, "Solo Parent Leave", hasDocument: true, fileName: "id.pdf"),
+            FullRequest(Guid.NewGuid(), "Ana Reyes", "Pending", VacationTypeId, "Vacation Leave"));
+
+        var cut = RenderPage();
+
+        cut.WaitForAssertion(() => RowFor(cut, "Maria Santos").QuerySelector("[data-no-document]").Should().NotBeNull());
+        var warning = RowFor(cut, "Maria Santos").QuerySelector("[data-no-document]")!;
+        warning.TextContent.Trim().Should().Be("No document attached");
+        warning.ClassList.Should().Contain("bg-warning");
+        RowFor(cut, "Jose Rizal").QuerySelector("[data-no-document]").Should().BeNull();
+        RowFor(cut, "Ana Reyes").QuerySelector("[data-no-document]").Should().BeNull("vacation leave needs no document");
+    }
+
+    [Fact]
+    public void AConfidentialRequestMaskedFromTheViewer_CannotBeDecidedOrOpened()
+    {
+        // The API masks a confidential type for anyone but the employee and approvals.all, and
+        // refuses them a decision. Such a request shouldn't reach the queue; if it does, nothing is offered.
+        _requests = Paged(
+            FullRequest(PendingId, "Maria Santos", "Pending", Guid.Empty, "Leave", reason: null),
+            FullRequest(ApprovedId, "Jose Rizal", "Pending", VacationTypeId, "Vacation Leave"));
+
+        var cut = RenderPage();
+
+        var masked = RowFor(cut, "Maria Santos");
+        ButtonsIn(masked).Should().BeEmpty();
+        masked.QuerySelector("[data-view-document]").Should().BeNull();
+        masked.QuerySelector("[data-no-document]").Should().BeNull();
+        ButtonsIn(RowFor(cut, "Jose Rizal")).Should().Equal("Approve", "Reject");
+    }
+
+    [Fact]
+    public void ARefusalFromTheApprovalRecheck_ShowsTheApisReason()
+    {
+        _requests = Paged(FullRequest(PendingId, "Maria Santos", "Pending", SoloParentTypeId, "Solo Parent Leave"));
+        _api.On(HttpMethod.Put, $"/api/leave-requests/{PendingId}/approve", HttpStatusCode.BadRequest,
+            """{"title":"Business Rule Violation","detail":"Solo Parent Leave needs a supporting document.","status":400}""");
+        var cut = RenderPage();
+
+        ButtonIn(RowFor(cut, "Maria Santos"), "Approve").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Trim().Should().Be("Solo Parent Leave needs a supporting document."));
+    }
+
+    [Fact]
+    public void LeaveTypesThatFailToLoad_StillLeaveTheQueueUsable()
+    {
+        var api = new StubHttpHandler();
+        Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(api)));
+        api.On(HttpMethod.Get, RequestsPath, () => Json(Paged(FullRequest(PendingId, "Maria Santos", "Pending", SoloParentTypeId, "Solo Parent Leave"))))
+            .On(HttpMethod.Get, TypesPath, () => ServerError("Leave types are unavailable."));
+
+        var cut = RenderPage();
+
+        ButtonsIn(RowFor(cut, "Maria Santos")).Should().Equal("Approve", "Reject");
+        cut.FindAll("[role=alert]").Should().BeEmpty();
     }
 }

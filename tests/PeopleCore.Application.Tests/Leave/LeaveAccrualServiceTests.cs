@@ -1,10 +1,12 @@
 using FluentAssertions;
+using M2NET.Core.Enums;
 using Moq;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Application.Leave.Services;
 using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Leave;
+using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Interfaces;
 using Xunit;
 
@@ -22,8 +24,9 @@ public class LeaveAccrualServiceTests
         _sut = new LeaveAccrualService(_accrualRepo.Object, _balanceRepo.Object, _employeeRepo.Object);
     }
 
-    private static Employee MakeEmployee(DateOnly hireDate, DateOnly? separationDate = null) => new()
+    private static Employee MakeEmployee(DateOnly hireDate, DateOnly? separationDate = null, Gender gender = Gender.Male) => new()
     {
+        Gender = gender,
         Id = Guid.NewGuid(),
         EmployeeNumber = "EMP-001",
         FirstName = "Juan",
@@ -40,9 +43,12 @@ public class LeaveAccrualServiceTests
         int tenureMin,
         int? tenureMax,
         decimal daysPerYear,
-        bool isActive = true) => new()
+        bool isActive = true,
+        LeaveType? type = null) => new()
     {
         LeaveTypeId = leaveTypeId,
+        // The repository loads each policy with its type; an ordinary type is active and accrued.
+        LeaveType = type ?? new LeaveType { Id = leaveTypeId, Name = "Vacation Leave", Code = "VL" },
         TenureMonthsMin = tenureMin,
         TenureMonthsMax = tenureMax,
         DaysPerYear = daysPerYear,
@@ -157,5 +163,163 @@ public class LeaveAccrualServiceTests
         _accrualRepo.Verify(
             r => r.AddTransactionAsync(It.IsAny<LeaveAccrualTransaction>(), default),
             Times.Never);
+    }
+
+    // ---- which types accrue ----------------------------------------------------------------
+
+    /// <summary>One employee 14 months in, and one policy for the given type; returns the employee.</summary>
+    private Employee OnePolicyFor(LeaveType type, Gender gender = Gender.Male)
+    {
+        var employee = MakeEmployee(new DateOnly(2025, 1, 1), gender: gender);
+        _employeeRepo.Setup(r => r.GetAllAsync(default))
+            .ReturnsAsync(new List<Employee> { employee }.AsReadOnly());
+        _accrualRepo.Setup(r => r.GetAllActivePoliciesAsync(default))
+            .ReturnsAsync(new List<LeaveAccrualPolicy> { MakePolicy(type.Id, 0, null, 12m, type: type) }.AsReadOnly());
+        _accrualRepo.Setup(r => r.TransactionExistsAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), 2026, 3, default))
+            .ReturnsAsync(false);
+        return employee;
+    }
+
+    private void VerifyNothingAccrued()
+    {
+        _accrualRepo.Verify(r => r.AddTransactionAsync(It.IsAny<LeaveAccrualTransaction>(), default), Times.Never);
+        _balanceRepo.Verify(r => r.AddAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()), Times.Never);
+        _balanceRepo.Verify(r => r.UpdateAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RunAccruals_SkipsAYearlyAllowanceType()
+    {
+        // A yearly allowance's balance is created when the employee first files in the year;
+        // accruing on top of it would grant the allowance twice.
+        OnePolicyFor(new LeaveType
+        {
+            Name = "Solo Parent Leave", Code = "SPL", MaxDaysPerYear = 7m,
+            EntitlementKind = LeaveEntitlementKind.YearlyAllowance,
+        });
+
+        await _sut.RunAccrualsAsync(2026, 3);
+
+        VerifyNothingAccrued();
+    }
+
+    [Fact]
+    public async Task RunAccruals_SkipsAPerEventType()
+    {
+        OnePolicyFor(new LeaveType
+        {
+            Name = "Paternity Leave", Code = "PL", DaysPerEvent = 7m,
+            EntitlementKind = LeaveEntitlementKind.PerEvent,
+        });
+
+        await _sut.RunAccrualsAsync(2026, 3);
+
+        VerifyNothingAccrued();
+    }
+
+    [Fact]
+    public async Task RunAccruals_SkipsAnInactiveType()
+    {
+        OnePolicyFor(new LeaveType { Name = "Vacation Leave", Code = "VL", MaxDaysPerYear = 15m, IsActive = false });
+
+        await _sut.RunAccrualsAsync(2026, 3);
+
+        VerifyNothingAccrued();
+    }
+
+    [Fact]
+    public async Task RunAccruals_SkipsAFemaleType_ForAMaleEmployee()
+    {
+        OnePolicyFor(new LeaveType { Name = "Women's Leave", Code = "WL", MaxDaysPerYear = 12m, GenderRestriction = "Female" },
+            Gender.Male);
+
+        await _sut.RunAccrualsAsync(2026, 3);
+
+        VerifyNothingAccrued();
+    }
+
+    [Fact]
+    public async Task RunAccruals_AccruesAFemaleType_ForAFemaleEmployee()
+    {
+        var type = new LeaveType { Name = "Women's Leave", Code = "WL", MaxDaysPerYear = 12m, GenderRestriction = "Female" };
+        var employee = OnePolicyFor(type, Gender.Female);
+
+        await _sut.RunAccrualsAsync(2026, 3);
+
+        _accrualRepo.Verify(r => r.AddTransactionAsync(
+            It.Is<LeaveAccrualTransaction>(t => t.EmployeeId == employee.Id && t.LeaveTypeId == type.Id && t.DaysAccrued == 1m),
+            default), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task RunAccruals_TreatsABlankGenderRestriction_AsAnyGender(string blank)
+    {
+        // Saving a type stores a blank restriction as null; a row saved before that still accrues.
+        var type = new LeaveType { Name = "Vacation Leave", Code = "VL", MaxDaysPerYear = 12m, GenderRestriction = blank };
+        var employee = OnePolicyFor(type, Gender.Male);
+
+        await _sut.RunAccrualsAsync(2026, 3);
+
+        _accrualRepo.Verify(r => r.AddTransactionAsync(
+            It.Is<LeaveAccrualTransaction>(t => t.EmployeeId == employee.Id && t.LeaveTypeId == type.Id),
+            default), Times.Once);
+    }
+
+    // ---- monthly amounts -------------------------------------------------------------------
+
+    /// <summary>Runs all twelve months of 2026 for one employee well past the policy's minimum tenure; returns each month's amount.</summary>
+    private async Task<List<decimal>> AYearOfMonthlyAccrual(decimal daysPerYear)
+    {
+        var type = new LeaveType { Name = "Service Incentive Leave", Code = "SIL", MaxDaysPerYear = daysPerYear };
+        var employee = MakeEmployee(new DateOnly(2020, 1, 1));
+        _employeeRepo.Setup(r => r.GetAllAsync(default)).ReturnsAsync(new List<Employee> { employee }.AsReadOnly());
+        _accrualRepo.Setup(r => r.GetAllActivePoliciesAsync(default))
+            .ReturnsAsync(new List<LeaveAccrualPolicy> { MakePolicy(type.Id, 12, null, daysPerYear, type: type) }.AsReadOnly());
+        _accrualRepo.Setup(r => r.TransactionExistsAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<int>(), default))
+            .ReturnsAsync(false);
+        var amounts = new List<decimal>();
+        _accrualRepo.Setup(r => r.AddTransactionAsync(It.IsAny<LeaveAccrualTransaction>(), default))
+            .Callback((LeaveAccrualTransaction t, CancellationToken _) => amounts.Add(t.DaysAccrued));
+
+        for (var month = 1; month <= 12; month++)
+            await _sut.RunAccrualsAsync(2026, month);
+
+        return amounts;
+    }
+
+    [Fact]
+    public async Task MonthlyAccrual_OfFiveDays_TotalsExactlyFive_InTwoDecimalAmounts()
+    {
+        // 5/12 is 0.41666...; stored at two decimals (numeric(5,2)) as 0.42 a month it would
+        // total 5.04. Rounding the running total instead keeps the year at exactly 5.
+        var amounts = await AYearOfMonthlyAccrual(5m);
+
+        amounts.Should().HaveCount(12);
+        amounts.Sum().Should().Be(5.00m);
+        amounts.Should().OnlyContain(a => a == Math.Round(a, 2) && (a == 0.41m || a == 0.42m));
+        amounts.Should().Equal(0.42m, 0.41m, 0.42m, 0.42m, 0.41m, 0.42m, 0.42m, 0.41m, 0.42m, 0.42m, 0.41m, 0.42m);
+    }
+
+    [Fact]
+    public async Task MonthlyAccrual_ThatDividesEvenlyByTwelve_IsTheSameEveryMonth()
+    {
+        var amounts = await AYearOfMonthlyAccrual(15m);
+
+        amounts.Should().HaveCount(12).And.OnlyContain(a => a == 1.25m);
+        amounts.Sum().Should().Be(15m);
+    }
+
+    [Theory]
+    [InlineData(7)]
+    [InlineData(10)]
+    [InlineData(13.5)]
+    public async Task MonthlyAccrual_AlwaysTotalsTheYearsDays(double daysPerYear)
+    {
+        var amounts = await AYearOfMonthlyAccrual((decimal)daysPerYear);
+
+        amounts.Sum().Should().Be((decimal)daysPerYear);
+        amounts.Should().OnlyContain(a => a == Math.Round(a, 2));
     }
 }

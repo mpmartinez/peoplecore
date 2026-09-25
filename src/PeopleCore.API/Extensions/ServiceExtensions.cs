@@ -177,7 +177,9 @@ public static class ServiceExtensions
         services.AddScoped<ILeaveRequestRepository, LeaveRequestRepository>();
         services.AddScoped<ILeaveBalanceRepository, LeaveBalanceRepository>();
         services.AddScoped<ILeaveTypeService, LeaveTypeService>();
+        services.AddScoped<ILeaveDayCounter, LeaveDayCounter>();
         services.AddScoped<ILeaveRequestService, LeaveRequestService>();
+        services.AddScoped<ILeaveDocumentService, LeaveDocumentService>();
         services.AddScoped<ILeaveBalanceService, LeaveBalanceService>();
         services.AddScoped<ILeaveAccrualRepository, LeaveAccrualRepository>();
         services.AddScoped<ILeaveAccrualService, LeaveAccrualService>();

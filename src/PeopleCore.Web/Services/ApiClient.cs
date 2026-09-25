@@ -168,12 +168,16 @@ public class ApiClient
     public async Task<EmployeeListDto?> GetEmployeeAsync(Guid id)
         => await GetJsonAsync<EmployeeListDto>($"api/employees/{id}");
 
-    public async Task<EmployeeListDto?> CreateEmployeeAsync(object dto)
-    {
-        var response = await _http.PostAsJsonAsync("api/employees", dto);
-        await EnsureSuccessAsync(response);
-        return await response.Content.ReadFromJsonAsync<EmployeeListDto>(JsonOptions);
-    }
+    /// <summary>The full record, as the employee form needs it to send an update back whole.</summary>
+    public Task<EmployeeDto?> GetEmployeeRecordAsync(Guid id)
+        => GetJsonAsync<EmployeeDto>($"api/employees/{id}");
+
+    public Task<EmployeeListDto?> CreateEmployeeAsync(CreateEmployeeDto request)
+        => SendJsonAsync<EmployeeListDto>(HttpMethod.Post, "api/employees", request);
+
+    /// <summary>A full replacement: every field of <paramref name="request"/> is saved, and a null clears.</summary>
+    public Task<EmployeeDto?> UpdateEmployeeAsync(Guid id, UpdateEmployeeDto request)
+        => SendJsonAsync<EmployeeDto>(HttpMethod.Put, $"api/employees/{id}", request);
 
     /// <summary>A Certificate of Employment for a current or former employee, as a ready-to-save PDF.</summary>
     public async Task<byte[]> GetCoeAsync(Guid employeeId, CoeRequest request)
@@ -241,12 +245,81 @@ public class ApiClient
         return await GetJsonAsync<PagedResult<LeaveRequestDto>>(query);
     }
 
-    public async Task<LeaveRequestDto?> CreateLeaveRequestAsync(object dto)
+    // Through SendJsonAsync, so the maternity case goes out as its name, as the API reads it.
+    public Task<LeaveRequestDto?> CreateLeaveRequestAsync(CreateLeaveRequestDto request)
+        => SendJsonAsync<LeaveRequestDto>(HttpMethod.Post, "api/leave-requests", request);
+
+    /// <summary>The leave types the signed-in employee may file today, with what each has left.</summary>
+    public async Task<IReadOnlyList<LeaveFilingOptionDto>?> GetLeaveFilingOptionsAsync()
+        => await GetJsonAsync<List<LeaveFilingOptionDto>>("api/leave-requests/options");
+
+    /// <summary>
+    /// Attaches (or replaces) a pending request's supporting document. A failure with no response
+    /// is the connection: the page refuses a file over 10 MB before sending it, so it isn't the
+    /// API cutting off an oversized body.
+    /// </summary>
+    public async Task<LeaveRequestDto?> UploadLeaveDocumentAsync(Guid requestId, byte[] content, string fileName, string contentType)
     {
-        var response = await _http.PostAsJsonAsync("api/leave-requests", dto);
+        using var form = new MultipartFormDataContent();
+        var file = new ByteArrayContent(content);
+        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+        form.Add(file, "file", fileName);
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await _http.PutAsync($"api/leave-requests/{requestId}/document", form);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is null)
+        {
+            throw new HttpRequestException(LeaveFiling.UploadNotSent, ex);
+        }
+
         await EnsureSuccessAsync(response);
         return await response.Content.ReadFromJsonAsync<LeaveRequestDto>(JsonOptions);
     }
+
+    /// <summary>A link to the request's document that works for 300 seconds, so open it straight away.</summary>
+    public async Task<string?> GetLeaveDocumentUrlAsync(Guid requestId)
+        => (await GetJsonAsync<LeaveDocumentLinkDto>($"api/leave-requests/{requestId}/document"))?.Url;
+
+    // Leave types (reading: anyone signed in; changing: leave.manage). Inactive types are listed too.
+    public async Task<IReadOnlyList<LeaveTypeDto>?> GetLeaveTypesAsync()
+        => await GetJsonAsync<List<LeaveTypeDto>>("api/leave-types");
+
+    public Task<LeaveTypeDto?> CreateLeaveTypeAsync(CreateLeaveTypeDto request)
+        => SendJsonAsync<LeaveTypeDto>(HttpMethod.Post, "api/leave-types", request);
+
+    /// <summary>A full replacement: a setting left at its default here is reset on the server.</summary>
+    public Task<LeaveTypeDto?> UpdateLeaveTypeAsync(Guid id, CreateLeaveTypeDto request)
+        => SendJsonAsync<LeaveTypeDto>(HttpMethod.Put, $"api/leave-types/{id}", request);
+
+    /// <summary>Refused, with the API's reason, once the type has been used.</summary>
+    public async Task DeleteLeaveTypeAsync(Guid id)
+        => await EnsureSuccessAsync(await _http.DeleteAsync($"api/leave-types/{id}"));
+
+    /// <summary>Creates the Philippine statutory types the site doesn't have yet, matched by code.</summary>
+    public Task<StatutoryLeaveResultDto?> AddStatutoryLeaveTypesAsync()
+        => SendJsonAsync<StatutoryLeaveResultDto>(HttpMethod.Post, "api/leave-types/statutory");
+
+    // Leave accrual policies (leave.manage). Update and delete answer 204 with no body.
+    public async Task<IReadOnlyList<LeaveAccrualPolicyDto>?> GetAccrualPoliciesAsync(Guid leaveTypeId)
+        => await GetJsonAsync<List<LeaveAccrualPolicyDto>>($"api/leave-accrual-policies?leaveTypeId={leaveTypeId}");
+
+    public Task<LeaveAccrualPolicyDto?> CreateAccrualPolicyAsync(CreateLeaveAccrualPolicyRequest request)
+        => SendJsonAsync<LeaveAccrualPolicyDto>(HttpMethod.Post, "api/leave-accrual-policies", request);
+
+    public async Task UpdateAccrualPolicyAsync(Guid id, CreateLeaveAccrualPolicyRequest request)
+    {
+        using var message = new HttpRequestMessage(HttpMethod.Put, $"api/leave-accrual-policies/{id}")
+        {
+            Content = JsonContent.Create(request, options: JsonOptions)
+        };
+        await EnsureSuccessAsync(await _http.SendAsync(message));
+    }
+
+    public async Task DeleteAccrualPolicyAsync(Guid id)
+        => await EnsureSuccessAsync(await _http.DeleteAsync($"api/leave-accrual-policies/{id}"));
 
     // Attendance import
     /// <summary>What importing this file would do, without saving anything.</summary>
@@ -754,6 +827,35 @@ public record PagedResult<T>(IReadOnlyList<T> Items, int TotalCount, int Page, i
 public record EmployeeListDto(Guid Id, string EmployeeNumber, string FirstName, string LastName, string FullName, string WorkEmail, string? DepartmentName, string? PositionTitle, string EmploymentStatus, bool IsActive,
     DateOnly? SeparationDate = null);
 
+// Employee records - copies of PeopleCore.Application.Employees.DTOs records, field by field and in
+// the same order. The enums (gender, civil status, employment status and type) travel as their
+// names and are kept as strings here. An update replaces every field, so the form sends back what
+// it doesn't show from the record it loaded; these copies have no defaults, so every caller says
+// what it sends.
+public record EmployeeDto(
+    Guid Id, string EmployeeNumber, string FirstName, string? MiddleName, string LastName, string FullName,
+    DateOnly DateOfBirth, string Gender, string? CivilStatus, string WorkEmail, string? MobileNumber,
+    Guid? DepartmentId, string? DepartmentName, Guid? PositionId, string? PositionTitle,
+    Guid? ReportingManagerId, string? ReportingManagerName, Guid? TeamId,
+    string EmploymentStatus, string EmploymentType, DateOnly HireDate, DateOnly? RegularizationDate,
+    bool IsActive, bool Is13thMonthEligible, DateOnly? SeparationDate,
+    string? SoloParentIdNumber, DateOnly? SoloParentIdValidUntil,
+    string? PersonalEmail, string? Address);
+
+public record CreateEmployeeDto(
+    string EmployeeNumber, string FirstName, string? MiddleName, string LastName,
+    DateOnly DateOfBirth, string Gender, string WorkEmail, string? MobileNumber,
+    Guid? DepartmentId, Guid? PositionId, Guid? ReportingManagerId,
+    string EmploymentStatus, string EmploymentType, DateOnly HireDate,
+    string? SoloParentIdNumber, DateOnly? SoloParentIdValidUntil, string? CivilStatus);
+
+public record UpdateEmployeeDto(
+    string FirstName, string? MiddleName, string LastName, string? CivilStatus,
+    string? PersonalEmail, string? MobileNumber, string? Address,
+    Guid? DepartmentId, Guid? PositionId, Guid? TeamId, Guid? ReportingManagerId,
+    string EmploymentStatus, DateOnly? RegularizationDate, bool Is13thMonthEligible,
+    string? SoloParentIdNumber, DateOnly? SoloParentIdValidUntil);
+
 // Certificate of Employment - mirrors PeopleCore.Application.Employees.Coe.CoeRequest.
 public record CoeRequest(string? Purpose, string? SignatoryName, string? SignatoryTitle, bool IncludeSalary);
 
@@ -855,8 +957,91 @@ public record FinalPaySummaryDto(
     IReadOnlyList<string> OutstandingClearance);
 public record ClearItemRequest(string? Note);
 public record AddClearanceItemRequest(string Name);
-public record LeaveBalanceDto(Guid Id, Guid EmployeeId, string EmployeeName, Guid LeaveTypeId, string LeaveTypeName, int Year, decimal TotalDays, decimal UsedDays, decimal CarriedOverDays, decimal RemainingDays);
-public record LeaveRequestDto(Guid Id, Guid EmployeeId, string EmployeeName, string LeaveTypeName, string StartDate, string EndDate, decimal TotalDays, string Status, string? Reason);
+// Leave balances and requests - copies of PeopleCore.Application.Leave.DTOs records, field by field
+// and in the same order. The dates stay as the API writes them (yyyy-MM-dd), and the status as its
+// name, since the pages show and compare them as they are; the maternity case is an enum, which
+// JsonOptions reads and writes by name.
+public record LeaveBalanceDto(Guid Id, Guid EmployeeId, string EmployeeName, Guid LeaveTypeId, string LeaveTypeName, int Year, decimal TotalDays, decimal UsedDays, decimal CarriedOverDays, decimal RemainingDays,
+    bool IsConfidential);
+
+/// <summary>
+/// A request someone other than the employee and approvals.all sees masked when it is confidential:
+/// <see cref="LeaveTypeId"/> is <see cref="Guid.Empty"/>, the type reads "Leave", and there is no
+/// reason and no document (<see cref="IsMasked"/>).
+/// </summary>
+public record LeaveRequestDto(
+    Guid Id, Guid EmployeeId, string EmployeeName,
+    Guid LeaveTypeId, string LeaveTypeName,
+    string StartDate, string EndDate,
+    decimal TotalDays, string? Reason,
+    string Status, Guid? ApprovedBy, DateTime? ApprovedAt,
+    string? RejectionReason, DateTime CreatedAt,
+    MaternityCase? MaternityCase, int DaysAllocatedToFather,
+    bool HasDocument, string? DocumentFileName,
+    bool IsConfidential)
+{
+    public bool IsMasked => LeaveTypeId == Guid.Empty;
+}
+
+public enum MaternityCase { LiveBirth, MiscarriageOrEmergencyTermination }
+
+// No defaults, unlike the API's copy: every caller says what it sends for the maternity case.
+public record CreateLeaveRequestDto(
+    Guid EmployeeId, Guid LeaveTypeId,
+    DateOnly StartDate, DateOnly EndDate, string? Reason,
+    MaternityCase? MaternityCase, int DaysAllocatedToFather);
+
+public record LeaveFilingOptionDto(
+    Guid LeaveTypeId, string Name, string Code, LeaveEntitlementKind Kind,
+    bool CountsCalendarDays, bool RequiresDocument, bool IsMaternity,
+    decimal? DaysLeftThisYear,
+    decimal? DaysPerEvent,
+    int? MaxEvents, int EventsUsed,
+    bool HasSoloParentBonus);
+
+public record LeaveDocumentLinkDto(string Url);
+
+// Leave types and their accrual policies. Copies of PeopleCore.Application.Leave.DTOs records,
+// field by field and in the same order: a field named differently here deserialises silently to
+// its default, and on an update (a full replacement) resets the setting on the server. The enums
+// travel as their names, as the API's JsonStringEnumConverter writes and reads them.
+public enum LeaveEntitlementKind { Accrued, YearlyAllowance, PerEvent }
+public enum AccrualFrequency { Monthly, Annual }
+
+public record LeaveTypeDto(
+    Guid Id, string Name, string Code,
+    decimal MaxDaysPerYear, bool IsPaid, bool IsCarryOver,
+    decimal? CarryOverMaxDays, string? GenderRestriction,
+    bool RequiresDocument, bool IsActive,
+    bool IsConvertibleToCash, bool CountsAsVacationForDeMinimis,
+    LeaveEntitlementKind EntitlementKind, bool CountsCalendarDays,
+    decimal? DaysPerEvent, int? MinServiceMonths,
+    bool RequiresMarried, bool RequiresSoloParentId,
+    int? MaxEvents, bool IsConfidential, bool IsMaternity);
+
+// The API's copy gives the later members defaults; this one doesn't, so every caller has to say
+// what it sends rather than reset a setting by leaving it out.
+public record CreateLeaveTypeDto(
+    string Name, string Code, decimal MaxDaysPerYear,
+    bool IsPaid, bool IsCarryOver, decimal? CarryOverMaxDays,
+    string? GenderRestriction, bool RequiresDocument,
+    bool IsConvertibleToCash, bool CountsAsVacationForDeMinimis,
+    bool IsActive, LeaveEntitlementKind EntitlementKind,
+    bool CountsCalendarDays, decimal? DaysPerEvent, int? MinServiceMonths,
+    bool RequiresMarried, bool RequiresSoloParentId, int? MaxEvents,
+    bool IsConfidential, bool IsMaternity);
+
+public record StatutoryLeaveResultDto(IReadOnlyList<string> Added, IReadOnlyList<string> Skipped);
+
+// AccrualFrequency comes back as a string here (the API writes it with ToString()) but goes out as the enum.
+public record LeaveAccrualPolicyDto(
+    Guid Id, Guid LeaveTypeId, string LeaveTypeName,
+    int TenureMonthsMin, int? TenureMonthsMax, decimal DaysPerYear,
+    string AccrualFrequency, bool IsActive);
+
+public record CreateLeaveAccrualPolicyRequest(
+    Guid LeaveTypeId, int TenureMonthsMin, int? TenureMonthsMax,
+    decimal DaysPerYear, AccrualFrequency AccrualFrequency);
 public record AttendanceImportEmployeeDto(Guid Id, string EmployeeNumber, string FullName, string? BiometricId, bool IsActive);
 public record UnmatchedDeviceIdDto(string DeviceId, int Punches);
 public record AttendanceImportPreviewDto(string Layout, int Punches, int MatchedPeople, DateOnly? From, DateOnly? To,

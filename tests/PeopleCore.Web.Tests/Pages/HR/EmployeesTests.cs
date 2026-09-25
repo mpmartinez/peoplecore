@@ -286,11 +286,14 @@ public class EmployeesTests : BunitContext
         cut.Find("#department").Change(FinanceId.ToString());
         cut.WaitForAssertion(() => cut.FindAll("#position option").Should().HaveCount(2));
         cut.Find("#position").Change(AccountantId.ToString());
+        cut.Find("#soloParentIdNumber").Input("SP-2026-0001");
+        cut.Find("#soloParentIdValidUntil").Input("2027-06-30");
+        cut.Find("#civilStatus").Change("Married");
         ButtonNamed(cut, "Save Employee").Click();
 
         cut.WaitForAssertion(() => cut.FindAll("button").Should().NotContain(b => b.TextContent.Trim() == "Save Employee"));
         _api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)].Should().Be(
-            $$"""{"employeeNumber":"EMP-0100","firstName":"Ana","middleName":null,"lastName":"Reyes","dateOfBirth":"1992-03-14","gender":"Female","workEmail":"ana@company.test","mobileNumber":"09171234567","departmentId":"{{FinanceId}}","positionId":"{{AccountantId}}","employmentStatus":"Probationary","employmentType":"Regular","hireDate":"2026-09-01"}""");
+            $$"""{"employeeNumber":"EMP-0100","firstName":"Ana","middleName":null,"lastName":"Reyes","dateOfBirth":"1992-03-14","gender":"Female","workEmail":"ana@company.test","mobileNumber":"09171234567","departmentId":"{{FinanceId}}","positionId":"{{AccountantId}}","reportingManagerId":null,"employmentStatus":"Probationary","employmentType":"Regular","hireDate":"2026-09-01","soloParentIdNumber":"SP-2026-0001","soloParentIdValidUntil":"2027-06-30","civilStatus":"Married"}""");
         EmployeeListRequests.Last().Should().Be(FirstPagePath, "the new employee has to be findable, not hidden on the page the user was on");
         cut.WaitForAssertion(() => Rows(cut).Should().ContainSingle().Which[0].Should().Be("EMP-0001"));
     }
@@ -612,6 +615,275 @@ public class EmployeesTests : BunitContext
 
         cut.WaitForElement("[data-coe-error]").TextContent.Should().Contain("no salary on record");
         cut.FindAll("[data-coe-dialog]").Should().ContainSingle("the dialog stays open so the fields survive the failure");
+    }
+
+    // ---- Solo parent ID, and editing an employee ----
+
+    private static readonly Guid TeamId = Guid.Parse("d4e5f6a7-b8c9-4d0e-8f1a-3b4c5d6e7f80");
+
+    /// <summary>An EmployeeDto as GET api/employees/{id} sends it: every field, in the record's order.</summary>
+    private static string FullRecord(Guid id, string? soloParentIdNumber = "SP-0042", string? soloParentIdValidUntil = "2027-01-31") =>
+        JsonSerializer.Serialize(new
+        {
+            id, employeeNumber = "EMP-0042", firstName = "Maria", middleName = "Luna", lastName = "Santos",
+            fullName = "Maria Luna Santos", dateOfBirth = "1990-05-01", gender = "Female", civilStatus = "Married",
+            workEmail = "maria@company.test", mobileNumber = "09171234567",
+            departmentId = FinanceId, departmentName = "Finance", positionId = AccountantId, positionTitle = "Accountant",
+            reportingManagerId = JuanId, reportingManagerName = "Juan Cruz", teamId = TeamId,
+            employmentStatus = "Regular", employmentType = "Regular", hireDate = "2020-02-03", regularizationDate = "2020-08-03",
+            isActive = true, is13thMonthEligible = true, separationDate = (string?)null,
+            soloParentIdNumber, soloParentIdValidUntil,
+            personalEmail = "maria@home.test", address = "12 Mabini Street, Quezon City",
+        });
+
+    private string? BodyOfPut(Guid id) =>
+        _api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Put && r.RequestUri!.AbsolutePath == $"/api/employees/{id}")];
+
+    private IRenderedComponent<Employees> OpenEdit(string? record = null)
+    {
+        _api.On(HttpMethod.Get, $"/api/employees/{MariaId}", HttpStatusCode.OK, record ?? FullRecord(MariaId));
+        var cut = RenderPage(Paged(1, Employee("EMP-0042", "Maria Santos", id: MariaId)));
+        cut.Find($"[data-edit-employee='{MariaId}']").Click();
+        cut.WaitForAssertion(() => cut.Find("#soloParentIdNumber"));
+        return cut;
+    }
+
+    [Fact]
+    public void TheAddForm_AsksForTheSoloParentId_AndSendsNullsWhenLeftBlank()
+    {
+        _api.On(HttpMethod.Post, "/api/employees", HttpStatusCode.Created, Employee("EMP-0100", "Ana Reyes"));
+        var cut = RenderPage(Paged(1));
+        OpenForm(cut);
+
+        cut.Find("label[for=soloParentIdNumber]").TextContent.Trim().Should().Be("Solo parent ID number");
+        cut.Find("label[for=soloParentIdValidUntil]").TextContent.Trim().Should().Be("Solo parent ID valid until");
+        FillRequiredFields(cut);
+        ButtonNamed(cut, "Save Employee").Click();
+
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Post));
+        var body = BodyOf(HttpMethod.Post, "/api/employees");
+        body.GetProperty("soloParentIdNumber").ValueKind.Should().Be(JsonValueKind.Null);
+        body.GetProperty("soloParentIdValidUntil").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public void TheAddForm_OffersEveryCivilStatus_StartingAtSingle()
+    {
+        // Paternity leave is only for a married employee, so the status has to be settable here.
+        _api.On(HttpMethod.Post, "/api/employees", HttpStatusCode.Created, Employee("EMP-0100", "Ana Reyes"));
+        var cut = RenderPage(Paged(1));
+        OpenForm(cut);
+
+        cut.Find("label[for=civilStatus]").TextContent.Trim().Should().Be("Civil status");
+        cut.FindAll("#civilStatus option").Select(o => (o.GetAttribute("value"), o.TextContent.Trim())).Should().Equal(
+            ("Single", "Single"), ("Married", "Married"), ("Widowed", "Widowed"), ("Divorced", "Divorced"), ("Separated", "Separated"));
+        cut.Find("#civilStatus").GetAttribute("value").Should().Be("Single");
+        FillRequiredFields(cut);
+        ButtonNamed(cut, "Save Employee").Click();
+
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Post));
+        BodyOf(HttpMethod.Post, "/api/employees").GetProperty("civilStatus").GetString().Should().Be("Single");
+    }
+
+    [Fact]
+    public void Edit_ShowsTheCivilStatus_AndSendsAChangedOne()
+    {
+        var cut = OpenEdit();
+        _api.On(HttpMethod.Put, $"/api/employees/{MariaId}", HttpStatusCode.OK, FullRecord(MariaId));
+
+        cut.Find("#civilStatus").GetAttribute("value").Should().Be("Married");
+        cut.Find("#civilStatus").Change("Widowed");
+        ButtonNamed(cut, "Save Employee").Click();
+
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Put));
+        BodyOf(HttpMethod.Put, $"/api/employees/{MariaId}").GetProperty("civilStatus").GetString().Should().Be("Widowed");
+    }
+
+    [Fact]
+    public void Edit_IsOfferedOnlyToThoseWhoManageEmployees()
+    {
+        _auth.SetClaims([new Claim(Permissions.ClaimType, Permissions.EmployeesViewAll)]);
+
+        var cut = RenderPage(Paged(1, Employee("EMP-1", "Maria Santos", id: MariaId)));
+
+        cut.FindAll("[data-edit-employee]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Edit_OpensTheFullRecord_WithTheSoloParentIdFilledIn()
+    {
+        var cut = OpenEdit();
+
+        cut.Markup.Should().Contain("Edit Employee");
+        FieldLabelled(cut, "firstName").GetAttribute("value").Should().Be("Maria");
+        FieldLabelled(cut, "middleName").GetAttribute("value").Should().Be("Luna");
+        cut.Find("#soloParentIdNumber").GetAttribute("value").Should().Be("SP-0042");
+        cut.Find("#soloParentIdValidUntil").GetAttribute("value").Should().Be("2027-01-31");
+        cut.Find("#empStatus").GetAttribute("value").Should().Be("Regular");
+        cut.FindAll("label[for=empNumber]").Should().BeEmpty("an update can't change the employee number");
+    }
+
+    [Fact]
+    public void SavingAnEdit_SendsTheWholeRecord_KeepingWhatTheFormDoesNotShow()
+    {
+        // An update replaces every field: anything left out is cleared on the server.
+        var cut = OpenEdit();
+        _api.On(HttpMethod.Put, $"/api/employees/{MariaId}", HttpStatusCode.OK, FullRecord(MariaId, "SP-9999", "2028-02-29"));
+
+        cut.Find("#soloParentIdNumber").Input("SP-9999");
+        cut.Find("#soloParentIdValidUntil").Input("2028-02-29");
+        ButtonNamed(cut, "Save Employee").Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("button").Should().NotContain(b => b.TextContent.Trim() == "Save Employee"));
+        BodyOfPut(MariaId).Should().Be(
+            $$"""{"firstName":"Maria","middleName":"Luna","lastName":"Santos","civilStatus":"Married","personalEmail":"maria@home.test","mobileNumber":"09171234567","address":"12 Mabini Street, Quezon City","departmentId":"{{FinanceId}}","positionId":"{{AccountantId}}","teamId":"{{TeamId}}","reportingManagerId":"{{JuanId}}","employmentStatus":"Regular","regularizationDate":"2020-08-03","is13thMonthEligible":true,"soloParentIdNumber":"SP-9999","soloParentIdValidUntil":"2028-02-29"}""");
+        EmployeeListRequests.Should().HaveCount(2, "the list reloads after the save");
+    }
+
+    [Fact]
+    public void AnEditThatDoesNotTouchTheSoloParentId_SendsItBackUnchanged()
+    {
+        var cut = OpenEdit();
+        _api.On(HttpMethod.Put, $"/api/employees/{MariaId}", HttpStatusCode.OK, FullRecord(MariaId));
+
+        FieldLabelled(cut, "mobileNumber").Input("09998887777");
+        ButtonNamed(cut, "Save Employee").Click();
+
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Put));
+        var body = BodyOf(HttpMethod.Put, $"/api/employees/{MariaId}");
+        body.GetProperty("mobileNumber").GetString().Should().Be("09998887777");
+        body.GetProperty("soloParentIdNumber").GetString().Should().Be("SP-0042");
+        body.GetProperty("soloParentIdValidUntil").GetString().Should().Be("2027-01-31");
+    }
+
+    [Fact]
+    public void ClearingTheSoloParentId_SendsNulls()
+    {
+        var cut = OpenEdit();
+        _api.On(HttpMethod.Put, $"/api/employees/{MariaId}", HttpStatusCode.OK, FullRecord(MariaId, null, null));
+
+        cut.Find("#soloParentIdNumber").Input("   ");
+        cut.Find("#soloParentIdValidUntil").Input("");
+        ButtonNamed(cut, "Save Employee").Click();
+
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Put));
+        var body = BodyOf(HttpMethod.Put, $"/api/employees/{MariaId}");
+        body.GetProperty("soloParentIdNumber").ValueKind.Should().Be(JsonValueKind.Null);
+        body.GetProperty("soloParentIdValidUntil").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public void ARejectedEdit_ShowsTheApisReason_AndKeepsTheFormOpen()
+    {
+        var cut = OpenEdit();
+        _api.On(HttpMethod.Put, $"/api/employees/{MariaId}", HttpStatusCode.BadRequest,
+            """{"detail":"The solo parent ID number can't be longer than 50 characters."}""");
+
+        cut.Find("#soloParentIdNumber").Input(new string('9', 51));
+        ButtonNamed(cut, "Save Employee").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent
+            .Should().Contain("Failed to save employee. The solo parent ID number can't be longer than 50 characters."));
+        ButtonNamed(cut, "Save Employee").HasAttribute("disabled").Should().BeFalse();
+    }
+
+    [Fact]
+    public void ARecordThatFailsToLoad_CannotBeSaved()
+    {
+        // Saving without the record would send blanks for everything the form doesn't show.
+        _api.On(HttpMethod.Get, $"/api/employees/{MariaId}", () => ServerError("The employee record is unavailable."));
+        var cut = RenderPage(Paged(1, Employee("EMP-0042", "Maria Santos", id: MariaId)));
+
+        cut.Find($"[data-edit-employee='{MariaId}']").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("The employee record is unavailable."));
+        ButtonNamed(cut, "Save Employee").HasAttribute("disabled").Should().BeTrue();
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Put);
+    }
+
+    [Fact]
+    public void AddingAfterEditing_StartsBlank_AndCreatesRatherThanUpdates()
+    {
+        var cut = OpenEdit();
+        ButtonNamed(cut, "Cancel").Click();
+
+        OpenForm(cut);
+
+        cut.Markup.Should().Contain("Add Employee");
+        FieldLabelled(cut, "firstName").GetAttribute("value").Should().BeEmpty();
+        cut.Find("#soloParentIdNumber").GetAttribute("value").Should().BeEmpty();
+        cut.FindAll("label[for=empNumber]").Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task ARecordThatArrivesAfterTheFormMovedOn_IsIgnored()
+    {
+        var gate = _api.OnGated(HttpMethod.Get, $"/api/employees/{MariaId}");
+        var cut = RenderPage(Paged(1, Employee("EMP-0042", "Maria Santos", id: MariaId)));
+        cut.Find($"[data-edit-employee='{MariaId}']").Click();
+        ButtonNamed(cut, "Cancel").Click();
+        OpenForm(cut);
+
+        gate.SetResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(FullRecord(MariaId), Encoding.UTF8, "application/json")
+        });
+        await Task.Delay(50);
+
+        cut.Markup.Should().Contain("Add Employee");
+        FieldLabelled(cut, "firstName").GetAttribute("value").Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task PositionsAnsweredAfterTheFormWasReopened_DoNotLandOnTheNewForm()
+    {
+        var api = FreshApi();
+        api.On(HttpMethod.Get, FirstPagePath, HttpStatusCode.OK, Paged(1))
+            .On(HttpMethod.Get, "/api/departments?page=1&pageSize=100", HttpStatusCode.OK, Paged(1, Department(FinanceId, "Finance")))
+            .On(HttpMethod.Get, "/api/users/employee-links", HttpStatusCode.OK, "[]");
+        var gate = api.OnGated(HttpMethod.Get, $"/api/positions?page=1&pageSize=100&departmentId={FinanceId}");
+        var cut = Render<Employees>();
+        cut.WaitForAssertion(() => cut.FindAll(".animate-spin").Should().BeEmpty());
+        OpenForm(cut);
+        cut.Find("#department").Change(FinanceId.ToString());
+        ButtonNamed(cut, "Cancel").Click();
+        OpenForm(cut);
+
+        gate.SetResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(Paged(1, Position(AccountantId, FinanceId, "Accountant")), Encoding.UTF8, "application/json")
+        });
+        await Task.Delay(100); // let the late answer land, if it is going to
+
+        cut.FindAll("#position option").Select(o => o.TextContent).Should().Equal("None");
+        cut.FindAll("[role=alert]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AnEarlierDepartmentsPositions_AnsweredLate_DoNotReplaceTheLaterOnes()
+    {
+        var api = FreshApi();
+        api.On(HttpMethod.Get, FirstPagePath, HttpStatusCode.OK, Paged(1))
+            .On(HttpMethod.Get, "/api/departments?page=1&pageSize=100", HttpStatusCode.OK,
+                Paged(1, Department(FinanceId, "Finance"), Department(LegalId, "Legal")))
+            .On(HttpMethod.Get, "/api/users/employee-links", HttpStatusCode.OK, "[]")
+            .On(HttpMethod.Get, $"/api/positions?page=1&pageSize=100&departmentId={LegalId}", HttpStatusCode.OK,
+                Paged(1, Position(CounselId, LegalId, "Counsel")));
+        var financeGate = api.OnGated(HttpMethod.Get, $"/api/positions?page=1&pageSize=100&departmentId={FinanceId}");
+        var cut = Render<Employees>();
+        cut.WaitForAssertion(() => cut.FindAll(".animate-spin").Should().BeEmpty());
+        OpenForm(cut);
+        cut.Find("#department").Change(FinanceId.ToString());
+        cut.Find("#department").Change(LegalId.ToString());
+        cut.WaitForAssertion(() => cut.FindAll("#position option").Select(o => o.TextContent).Should().Equal("None", "Counsel"));
+
+        financeGate.SetResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(Paged(1, Position(AccountantId, FinanceId, "Accountant")), Encoding.UTF8, "application/json")
+        });
+        await Task.Delay(100); // let the late answer land, if it is going to
+
+        cut.FindAll("#position option").Select(o => o.TextContent).Should().Equal("None", "Counsel");
     }
 
     private JsonElement BodyOf(HttpMethod method, string path)

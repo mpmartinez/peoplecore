@@ -3,6 +3,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 using PeopleCore.API.Controllers.Leave;
+using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Leave.DTOs;
 using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Application.Tests.Common;
@@ -28,12 +29,19 @@ public class LeaveControllerAuthorizationTests
     private readonly Mock<ILeaveTypeService> _types = new();
     private readonly Mock<ILeaveRequestService> _requests = new();
     private readonly Mock<ILeaveBalanceService> _balances = new();
+    private readonly Mock<ILeaveDocumentService> _documents = new();
     private readonly SignedInCaller _caller = new();
     private readonly LeaveController _sut;
 
     public LeaveControllerAuthorizationTests()
     {
-        _sut = new LeaveController(_types.Object, _requests.Object, _balances.Object, _caller.CurrentUser.Object, _caller.Access);
+        _requests.Setup(s => s.GetAllAsync(It.IsAny<Guid?>(), It.IsAny<Guid?>(), It.IsAny<string?>(),
+                      It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                 .ReturnsAsync(PagedResult<LeaveRequestDto>.Create([], 0, 1, 20));
+        _balances.Setup(s => s.GetByEmployeeAsync(It.IsAny<Guid>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()))
+                 .ReturnsAsync([]);
+        _sut = new LeaveController(
+            _types.Object, _requests.Object, _balances.Object, _documents.Object, _caller.CurrentUser.Object, _caller.Access);
     }
 
     private void SignInAs(Guid? employeeId, params string[] roles) => _caller.As(employeeId, roles);
@@ -50,7 +58,8 @@ public class LeaveControllerAuthorizationTests
     private static LeaveRequestDto RequestOf(Guid employeeId) => new(
         RequestId, employeeId, "Maria Santos", LeaveTypeId, "Vacation Leave",
         new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 6), 2, "Family trip",
-        LeaveStatus.Pending, null, null, null, DateTime.UtcNow);
+        LeaveStatus.Pending, null, null, null, DateTime.UtcNow,
+        null, 0, false, null, false);
 
     private static CreateLeaveRequestDto NewRequestFor(Guid employeeId) =>
         new(employeeId, LeaveTypeId, new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 6), "Family trip");
@@ -63,7 +72,7 @@ public class LeaveControllerAuthorizationTests
         var result = await _sut.GetAll(Caller, "Pending", 1, 20, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
-        _requests.Verify(s => s.GetAllAsync(Caller, null, "Pending", 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+        _requests.Verify(s => s.GetAllAsync(Caller, null, "Pending", 1, 20, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -83,7 +92,7 @@ public class LeaveControllerAuthorizationTests
         var result = await _sut.GetAll(DirectReport, null, 1, 20, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
-        _requests.Verify(s => s.GetAllAsync(DirectReport, null, null, 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+        _requests.Verify(s => s.GetAllAsync(DirectReport, null, null, 1, 20, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -140,7 +149,7 @@ public class LeaveControllerAuthorizationTests
         var result = await _sut.GetAll(null, "Pending", 1, 20, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
-        _requests.Verify(s => s.GetAllAsync(null, null, "Pending", 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+        _requests.Verify(s => s.GetAllAsync(null, null, "Pending", 1, 20, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -152,7 +161,7 @@ public class LeaveControllerAuthorizationTests
         var result = await _sut.GetAll(null, "Pending", 1, 20, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>();
-        _requests.Verify(s => s.GetAllAsync(null, Caller, "Pending", 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+        _requests.Verify(s => s.GetAllAsync(null, Caller, "Pending", 1, 20, true, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -520,6 +529,70 @@ public class LeaveControllerAuthorizationTests
 
         result.Should().BeOfType<ForbidResult>();
         VerifyNoServiceReached();
+    }
+
+    // ---- GET api/leave-requests/options ---------------------------------------------------
+
+    [Fact]
+    public async Task GetFilingOptions_ReturnsTheCallersOwnOptions()
+    {
+        IReadOnlyList<LeaveFilingOptionDto> options = [];
+        _requests.Setup(s => s.GetFilingOptionsAsync(Caller, It.IsAny<CancellationToken>())).ReturnsAsync(options);
+
+        var result = await _sut.GetFilingOptions(CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>().Which.Value.Should().BeSameAs(options);
+    }
+
+    [Fact]
+    public async Task GetFilingOptions_ForACallerWithNoEmployeeIdClaim_ReturnsForbid()
+    {
+        SignInAs(null, "Admin");
+
+        var result = await _sut.GetFilingOptions(CancellationToken.None);
+
+        result.Should().BeOfType<ForbidResult>();
+        VerifyNoServiceReached();
+    }
+
+    [Fact]
+    public void GetFilingOptions_IsAGetToLeaveRequestsOptions_TakingNoEmployeeId()
+    {
+        var action = typeof(LeaveController).GetMethod(nameof(LeaveController.GetFilingOptions))!;
+        action.GetCustomAttribute<HttpGetAttribute>()!.Template.Should().Be("leave-requests/options");
+        action.GetParameters().Select(p => p.Name).Should().BeEquivalentTo(["ct"]);
+    }
+
+    [Fact]
+    public void LeaveRequestsOptions_CannotBeTakenForARequestId()
+    {
+        // GET leave-requests/{id} would otherwise also match "options"; the :guid constraint on
+        // every id segment is what keeps the two routes apart.
+        var idTemplates = typeof(LeaveController)
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .SelectMany(m => m.GetCustomAttributes<Microsoft.AspNetCore.Mvc.Routing.HttpMethodAttribute>())
+            .Select(a => a.Template)
+            .Where(t => t is not null && t.StartsWith("leave-requests/{"))
+            .ToList();
+
+        idTemplates.Should().NotBeEmpty().And.OnlyContain(t => t!.StartsWith("leave-requests/{id:guid}"));
+        Guid.TryParse("options", out _).Should().BeFalse();
+    }
+
+    // ---- POST api/leave-types/statutory ---------------------------------------------------
+
+    [Fact]
+    public async Task AddStatutoryLeaveTypes_IsAPostToLeaveTypesStatutory_ReturningWhatWasAddedAndSkipped()
+    {
+        // leave.manage is pinned by PermissionEquivalenceTests.
+        var action = typeof(LeaveController).GetMethod(nameof(LeaveController.AddStatutoryLeaveTypes))!;
+        action.GetCustomAttribute<HttpPostAttribute>()!.Template.Should().Be("leave-types/statutory");
+        var outcome = new StatutoryLeaveResultDto(["ML"], ["SIL"]);
+        _types.Setup(s => s.AddStatutoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(outcome);
+
+        var result = await _sut.AddStatutoryLeaveTypes(CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>().Which.Value.Should().BeSameAs(outcome);
     }
 
     [Fact]

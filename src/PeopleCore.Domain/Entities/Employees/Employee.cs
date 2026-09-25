@@ -37,6 +37,10 @@ public class Employee : M2NET.Core.Entities.Employee, IAuditableEntity
     public string? RdoCode { get; set; }
     public string? ZipCode { get; set; }
 
+    /// <summary>DSWD/LGU-issued Solo Parent ID number, for Solo Parent Leave and the maternity extra days.</summary>
+    public string? SoloParentIdNumber { get; set; }
+    public DateOnly? SoloParentIdValidUntil { get; set; }
+
     // Navigation properties (DepartmentId/PositionId FKs come from M2NET.Core base)
     public Department? Department { get; set; }    // nav for DepartmentId
     public Position? Position { get; set; }        // nav for PositionId
@@ -57,4 +61,8 @@ public class Employee : M2NET.Core.Entities.Employee, IAuditableEntity
 
     public string FullName => string.Join(" ", new[] { FirstName, MiddleName, LastName }
         .Where(s => !string.IsNullOrWhiteSpace(s)));
+
+    /// <summary>Whether this employee has a solo parent ID on file that is unexpired on the given date.</summary>
+    public bool HasValidSoloParentId(DateOnly on) =>
+        !string.IsNullOrWhiteSpace(SoloParentIdNumber) && SoloParentIdValidUntil is { } until && until >= on;
 }

@@ -1,5 +1,6 @@
 using PeopleCore.Application.Leave.DTOs;
 using PeopleCore.Application.Leave.Interfaces;
+using PeopleCore.Domain.Enums;
 
 namespace PeopleCore.Application.Leave.Services;
 
@@ -22,7 +23,10 @@ public class LeaveBalanceService : ILeaveBalanceService
     public async Task CarryOverAsync(int fromYear, int toYear, CancellationToken ct = default)
     {
         var balances = await _repo.GetByYearAsync(fromYear, ct);
-        foreach (var balance in balances.Where(b => b.LeaveType?.IsCarryOver == true))
+        // Only an accrued type carries over; a flag left on another kind from before validation
+        // refused it is ignored.
+        foreach (var balance in balances.Where(b =>
+                     b.LeaveType is { IsCarryOver: true, EntitlementKind: LeaveEntitlementKind.Accrued }))
         {
             var remaining = balance.RemainingDays;
             if (remaining <= 0) continue;
@@ -57,5 +61,7 @@ public class LeaveBalanceService : ILeaveBalanceService
     private static LeaveBalanceDto ToDto(Domain.Entities.Leave.LeaveBalance b) => new(
         b.Id, b.EmployeeId, b.Employee?.FullName ?? string.Empty,
         b.LeaveTypeId, b.LeaveType?.Name ?? string.Empty,
-        b.Year, b.TotalDays, b.UsedDays, b.CarriedOverDays, b.RemainingDays);
+        b.Year, b.TotalDays, b.UsedDays, b.CarriedOverDays, b.RemainingDays,
+        // Fail closed: a balance whose type did not load is treated as confidential.
+        b.LeaveType?.IsConfidential ?? true);
 }

@@ -728,6 +728,15 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .HasColumnType("date")
                         .HasColumnName("separation_date");
 
+                    b.Property<string>("SoloParentIdNumber")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("solo_parent_id_number");
+
+                    b.Property<DateOnly?>("SoloParentIdValidUntil")
+                        .HasColumnType("date")
+                        .HasColumnName("solo_parent_id_valid_until");
+
                     b.Property<string>("Suffix")
                         .HasColumnType("text")
                         .HasColumnName("suffix");
@@ -1253,6 +1262,46 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("created_by");
 
+                    b.Property<int>("DaysAllocatedToFather")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("days_allocated_to_father");
+
+                    b.Property<decimal>("DaysInStartYear")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(6, 2)
+                        .HasColumnType("numeric(6,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("days_in_start_year");
+
+                    b.Property<string>("DocumentContentType")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("document_content_type");
+
+                    b.Property<string>("DocumentFileName")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("document_file_name");
+
+                    b.Property<long?>("DocumentSizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("document_size_bytes");
+
+                    b.Property<string>("DocumentStorageKey")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("document_storage_key");
+
+                    b.Property<DateTime?>("DocumentUploadedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("document_uploaded_at");
+
+                    b.Property<Guid?>("DocumentUploadedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("document_uploaded_by");
+
                     b.Property<Guid>("EmployeeId")
                         .HasColumnType("uuid")
                         .HasColumnName("employee_id");
@@ -1264,6 +1313,11 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("LeaveTypeId")
                         .HasColumnType("uuid")
                         .HasColumnName("leave_type_id");
+
+                    b.Property<string>("MaternityCase")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("maternity_case");
 
                     b.Property<string>("Reason")
                         .HasColumnType("text")
@@ -1334,6 +1388,12 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(true)
                         .HasColumnName("counts_as_vacation_for_de_minimis");
 
+                    b.Property<bool>("CountsCalendarDays")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("counts_calendar_days");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -1341,6 +1401,19 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("CreatedBy")
                         .HasColumnType("uuid")
                         .HasColumnName("created_by");
+
+                    b.Property<decimal?>("DaysPerEvent")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)")
+                        .HasColumnName("days_per_event");
+
+                    b.Property<string>("EntitlementKind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasDefaultValue("Accrued")
+                        .HasColumnName("entitlement_kind");
 
                     b.Property<string>("GenderRestriction")
                         .HasColumnType("text")
@@ -1354,11 +1427,23 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_carry_over");
 
+                    b.Property<bool>("IsConfidential")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_confidential");
+
                     b.Property<bool>("IsConvertibleToCash")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
                         .HasDefaultValue(false)
                         .HasColumnName("is_convertible_to_cash");
+
+                    b.Property<bool>("IsMaternity")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_maternity");
 
                     b.Property<bool>("IsPaid")
                         .HasColumnType("boolean")
@@ -1369,6 +1454,14 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(5,2)")
                         .HasColumnName("max_days_per_year");
 
+                    b.Property<int?>("MaxEvents")
+                        .HasColumnType("integer")
+                        .HasColumnName("max_events");
+
+                    b.Property<int?>("MinServiceMonths")
+                        .HasColumnType("integer")
+                        .HasColumnName("min_service_months");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -1378,6 +1471,18 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.Property<bool>("RequiresDocument")
                         .HasColumnType("boolean")
                         .HasColumnName("requires_document");
+
+                    b.Property<bool>("RequiresMarried")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("requires_married");
+
+                    b.Property<bool>("RequiresSoloParentId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("requires_solo_parent_id");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -3518,7 +3623,7 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.HasOne("PeopleCore.Domain.Entities.Leave.LeaveType", "LeaveType")
                         .WithMany()
                         .HasForeignKey("LeaveTypeId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_leave_balances_leave_types_leave_type_id");
 
@@ -3545,7 +3650,7 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.HasOne("PeopleCore.Domain.Entities.Leave.LeaveType", "LeaveType")
                         .WithMany()
                         .HasForeignKey("LeaveTypeId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_leave_requests_leave_types_leave_type_id");
 

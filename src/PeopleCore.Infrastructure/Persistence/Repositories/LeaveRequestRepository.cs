@@ -10,8 +10,19 @@ public class LeaveRequestRepository : Repository<LeaveRequest>, ILeaveRequestRep
 {
     public LeaveRequestRepository(AppDbContext context) : base(context) { }
 
+    /// <summary>
+    /// With the employee and the type, so the DTO carries the type's name and whether it is
+    /// confidential - which decides who may see, decide or open the request.
+    /// </summary>
+    public override async Task<LeaveRequest?> GetByIdAsync(Guid id, CancellationToken ct = default)
+        => await Context.LeaveRequests
+            .Include(r => r.Employee)
+            .Include(r => r.LeaveType)
+            .FirstOrDefaultAsync(r => r.Id == id, ct);
+
     public async Task<(IReadOnlyList<LeaveRequest> Items, int TotalCount)> GetPagedAsync(
-        Guid? employeeId, Guid? reportingManagerId, string? status, int page, int pageSize, CancellationToken ct = default)
+        Guid? employeeId, Guid? reportingManagerId, string? status, int page, int pageSize,
+        bool excludeConfidential, CancellationToken ct = default)
     {
         var query = Context.LeaveRequests
             .Include(r => r.Employee)
@@ -19,6 +30,7 @@ public class LeaveRequestRepository : Repository<LeaveRequest>, ILeaveRequestRep
             .AsQueryable();
         if (employeeId.HasValue) query = query.Where(r => r.EmployeeId == employeeId.Value);
         if (reportingManagerId.HasValue) query = query.Where(r => r.Employee.ReportingManagerId == reportingManagerId.Value);
+        if (excludeConfidential) query = query.Where(r => !r.LeaveType.IsConfidential);
         if (!string.IsNullOrEmpty(status) && Enum.TryParse<LeaveStatus>(status, true, out var statusEnum))
             query = query.Where(r => r.Status == statusEnum);
         query = query.OrderByDescending(r => r.StartDate);
@@ -52,4 +64,21 @@ public class LeaveRequestRepository : Repository<LeaveRequest>, ILeaveRequestRep
             .Include(r => r.LeaveType)
             .Where(r => r.Status == LeaveStatus.Approved && r.StartDate <= to && r.EndDate >= from)
             .ToListAsync(ct);
+
+    public async Task<IReadOnlyList<LeaveRequest>> GetPendingAsync(
+        Guid employeeId, Guid leaveTypeId, Guid? excludeId, CancellationToken ct = default)
+    {
+        var query = Context.LeaveRequests
+            .Where(r => r.EmployeeId == employeeId &&
+                        r.LeaveTypeId == leaveTypeId &&
+                        r.Status == LeaveStatus.Pending);
+        if (excludeId.HasValue) query = query.Where(r => r.Id != excludeId.Value);
+        return await query.ToListAsync(ct);
+    }
+
+    public async Task<int> CountApprovedAsync(Guid employeeId, Guid leaveTypeId, CancellationToken ct = default)
+        => await Context.LeaveRequests.CountAsync(r =>
+            r.EmployeeId == employeeId &&
+            r.LeaveTypeId == leaveTypeId &&
+            r.Status == LeaveStatus.Approved, ct);
 }

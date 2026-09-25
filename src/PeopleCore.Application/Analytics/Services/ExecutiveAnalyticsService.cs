@@ -116,9 +116,12 @@ public class ExecutiveAnalyticsService : IExecutiveAnalyticsService
     }
 
     public async Task<LeaveSummary> GetLeaveSummaryAsync(
-        DateOnly from, DateOnly to, CancellationToken ct = default)
+        DateOnly from, DateOnly to, bool showConfidentialTypes = false, CancellationToken ct = default)
     {
-        var leaveResponse = await _hrAnalytics.GetLeaveUtilizationAsync(from, to, ct: ct);
+        // The total is summed from the rows, so it leaves out what they leave out - otherwise the
+        // difference would give the confidential days away.
+        var leaveResponse = await _hrAnalytics.GetLeaveUtilizationAsync(
+            from, to, showConfidentialTypes: showConfidentialTypes, ct: ct);
         var byType = leaveResponse.Data;
 
         var totalDaysConsumed = byType.Sum(l => l.TotalUsed);

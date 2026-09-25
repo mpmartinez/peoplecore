@@ -86,22 +86,27 @@ public class PayrollExportService : IPayrollExportService
     }
 
     public async Task<IReadOnlyList<PayrollLeaveDeductionDto>> GetApprovedLeavesAsync(
-        DateOnly from, DateOnly to, CancellationToken ct = default)
+        DateOnly from, DateOnly to, bool showConfidentialTypes, CancellationToken ct = default)
     {
         var leaves = await _leaveRepo.GetApprovedByPeriodAsync(from, to, ct);
 
-        return leaves.Select(l => new PayrollLeaveDeductionDto(
+        return leaves.Select(l =>
+        {
+            // Fail closed: a leave whose type did not load might be confidential.
+            var hidden = (l.LeaveType?.IsConfidential ?? true) && !showConfidentialTypes;
+            return new PayrollLeaveDeductionDto(
             LeaveRequestId: l.Id,
             EmployeeId: l.EmployeeId,
             EmployeeNumber: l.Employee?.EmployeeNumber ?? string.Empty,
             FullName: l.Employee?.FullName ?? string.Empty,
-            LeaveTypeCode: l.LeaveType?.Code ?? string.Empty,
-            LeaveTypeName: l.LeaveType?.Name ?? string.Empty,
+            LeaveTypeCode: hidden ? string.Empty : l.LeaveType?.Code ?? string.Empty,
+            LeaveTypeName: hidden ? "Leave" : l.LeaveType?.Name ?? string.Empty,
             IsPaid: l.LeaveType?.IsPaid ?? false,
             StartDate: l.StartDate,
             EndDate: l.EndDate,
             TotalDays: l.TotalDays,
-            ApprovedAt: l.ApprovedAt!.Value))
+            ApprovedAt: l.ApprovedAt!.Value);
+        })
         .ToList();
     }
 

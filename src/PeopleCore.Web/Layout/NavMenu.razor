@@ -55,6 +55,10 @@
             new("/attendance-records", "Attendance Records", "bi-calendar-week"),
             new("/attendance-import", "Import Attendance", "bi-upload")
         ]),
+        new("Leave", [Permissions.LeaveManage],
+        [
+            new("/leave-types", "Leave Types", "bi-calendar2-range")
+        ]),
         new("Management", [Permissions.ApprovalsTeam, Permissions.ApprovalsAll],
         [
             new("/leave-approvals", "Leave Approvals", "bi-check-square"),

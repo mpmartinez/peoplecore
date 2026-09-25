@@ -116,6 +116,21 @@ public class PermissionEquivalenceTests
         ["AttendanceCorrectionsController.Approve"] = [Permissions.ApprovalsTeam, Permissions.ApprovalsAll],
         ["AttendanceCorrectionsController.Reject"] = [Permissions.ApprovalsTeam, Permissions.ApprovalsAll],
 
+        // A leave request's document: uploading is self-service (the service refuses anyone but the
+        // request's owner), and who may open it is checked inside the action - the owner,
+        // approvals.all, or a team approver managing the employee on a non-confidential type
+        // (LeaveControllerConfidentialTests).
+        ["LeaveController.UploadDocument"] = [],
+        ["LeaveController.GetDocument"] = [],
+
+        // GET api/leave-requests/options - what the caller may file. Self-service: the employee is
+        // the one in the caller's employee_id claim (LeaveControllerAuthorizationTests).
+        ["LeaveController.GetFilingOptions"] = [],
+
+        // POST api/leave-types/statutory adds the Philippine statutory leave types a site lacks;
+        // it manages leave types, like creating one.
+        ["LeaveController.AddStatutoryLeaveTypes"] = [Permissions.LeaveManage],
+
         ["GovernmentReportsController.Get"] = [Permissions.PayrollManage],
 
         ["Bir2316Controller.GetInputs"] = [Permissions.PayrollManage],

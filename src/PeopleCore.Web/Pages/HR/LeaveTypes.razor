@@ -1,0 +1,793 @@
+@page "/leave-types"
+@attribute [RequirePermission(Permissions.LeaveManage)]
+@using System.Globalization
+@inject ApiClient Api
+
+@*
+    The site's leave types: how each is counted (accrued, a yearly allowance, or so many days per
+    event), who may file it, and how it's paid. An accrued type's days come from its accrual rules,
+    edited here too. "Add Philippine statutory leave" creates whichever of the statutory types the
+    site doesn't have yet (matched by code) and leaves the rest alone.
+
+    Saving a type is a full replacement on the API, so the form always sends every setting, including
+    those it hides for the chosen kind. A type that has been used can't be deleted; the API says so,
+    and the way out is to untick Active.
+*@
+
+<PageTitle>Leave Types</PageTitle>
+
+<PageHeader Title="Leave Types" Section="Leave" Description="The kinds of leave employees can file, how many days each allows, and who may file it.">
+    <Actions>
+        <Button Variant="outline" OnClick="AddStatutory" Loading="@_addingStatutory" data-add-statutory>
+            <i class="bi bi-flag mr-1"></i> Add Philippine statutory leave
+        </Button>
+        <Button Variant="primary" OnClick="OpenNew" data-new-leave-type>
+            <i class="bi bi-plus-lg mr-1"></i> New leave type
+        </Button>
+    </Actions>
+</PageHeader>
+
+@if (_statutoryResult is { } result)
+{
+    <Alert Variant="success" Class="mb-4" data-statutory-result>
+        <p>Added: @Codes(result.Added)</p>
+        <p>Skipped: @Codes(result.Skipped)</p>
+        @if (result.Skipped.Count > 0)
+        {
+            <p class="text-muted-foreground">Skipped types were already here, and were left as they are.</p>
+        }
+    </Alert>
+}
+
+@if (_actionError is not null)
+{
+    <Alert Variant="destructive" Class="mb-4" data-action-error>@_actionError</Alert>
+}
+
+<Card>
+    <CardContent Class="p-0">
+        @if (_loadError is not null)
+        {
+            <div class="p-4"><Alert Variant="destructive" data-load-error>@_loadError</Alert></div>
+        }
+        else if (_types is null)
+        {
+            <div class="p-6 flex justify-center"><Spinner /></div>
+        }
+        else if (_types.Count == 0)
+        {
+            <div class="p-6 text-center text-muted-foreground text-sm">No leave types yet. Add the Philippine statutory set, or a type of your own.</div>
+        }
+        else
+        {
+            <div data-leave-types>
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead Class="px-4">Leave type</TableHead>
+                            <TableHead Class="px-4">Kind</TableHead>
+                            <TableHead Class="px-4">Limit</TableHead>
+                            <TableHead Class="px-4">Days counted</TableHead>
+                            <TableHead Class="px-4">Rules</TableHead>
+                            <TableHead Class="px-4">Status</TableHead>
+                            <TableHead Class="px-4">Actions</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        @foreach (var type in _types)
+                        {
+                            <TableRow data-leave-type="@type.Code">
+                                <TableCell Class="px-4 py-3">
+                                    <div class="font-medium">@type.Name</div>
+                                    <div class="text-xs text-muted-foreground">@type.Code</div>
+                                    @if (type.IsMaternity)
+                                    {
+                                        <p class="mt-1 text-xs text-muted-foreground max-w-xs" data-maternity-note>@MaternityNote</p>
+                                    }
+                                    @if (IsSil(type.Code))
+                                    {
+                                        <p class="mt-1 text-xs text-warning max-w-xs" data-sil-note>@SilNote</p>
+                                    }
+                                </TableCell>
+                                <TableCell Class="px-4 py-3" data-kind>@KindLabel(type.EntitlementKind)</TableCell>
+                                <TableCell Class="px-4 py-3" data-limit>@LimitOf(type)</TableCell>
+                                <TableCell Class="px-4 py-3" data-days>@(type.CountsCalendarDays ? "Calendar days" : "Working days")</TableCell>
+                                <TableCell Class="px-4 py-3 text-muted-foreground" data-rules>@RulesOf(type)</TableCell>
+                                <TableCell Class="px-4 py-3" data-status>
+                                    <Badge Variant="@(type.IsActive ? "success" : "secondary")">@(type.IsActive ? "Active" : "Inactive")</Badge>
+                                </TableCell>
+                                <TableCell Class="px-4 py-3">
+                                    <div class="flex gap-1">
+                                        <Button Variant="ghost" Size="sm" OnClick="() => OpenEdit(type)">Edit</Button>
+                                        <Button Variant="ghost" Size="sm" OnClick="() => AskToDelete(type)">Delete</Button>
+                                    </div>
+                                </TableCell>
+                            </TableRow>
+                        }
+                    </TableBody>
+                </Table>
+            </div>
+        }
+    </CardContent>
+</Card>
+
+<Dialog IsOpen="@_formOpen" OnClose="CloseForm" Size="lg" CloseOnOverlayClick="false"
+        Title="@(_editing is null ? "New leave type" : $"Edit {_editing.Name}")"
+        Description="Every setting is saved together."
+        data-leave-type-dialog>
+    <ChildContent>
+        <form id="leave-type-form" class="space-y-6" data-leave-type-form @onsubmit="Save" @onsubmit:preventDefault>
+            @if (_formError is not null)
+            {
+                <Alert Variant="destructive" data-leave-type-error>@_formError</Alert>
+            }
+
+            <div class="grid gap-4 sm:grid-cols-2">
+                <FormField LabelText="Name" Id="lt-name" Required="true">
+                    <Input TValue="string" Id="lt-name" @bind-Value="_form.Name" MaxLength="100" />
+                </FormField>
+                <FormField LabelText="Code" Id="lt-code" Required="true" Description="Short, such as VL or SIL.">
+                    <Input TValue="string" Id="lt-code" @bind-Value="_form.Code" MaxLength="20" />
+                </FormField>
+            </div>
+            @if (IsSil(_form.Code))
+            {
+                <p class="-mt-4 text-xs text-warning" data-sil-note>@SilNote</p>
+            }
+
+            <div class="space-y-4">
+                <FormField LabelText="Kind" Id="lt-kind" Description="@KindHelp(_form.Kind)">
+                    <Select TValue="LeaveEntitlementKind" Id="lt-kind" Value="@_form.Kind" ValueChanged="@(v => OnKindChanged(v))">
+                        @foreach (var kind in Enum.GetValues<LeaveEntitlementKind>())
+                        {
+                            <option value="@kind">@KindLabel(kind)</option>
+                        }
+                    </Select>
+                </FormField>
+                @if (_editing is { } saved && saved.EntitlementKind != _form.Kind)
+                {
+                    <p class="-mt-2 text-xs text-warning" data-kind-change-note>Existing balances and requests stay as they are.</p>
+                }
+
+                @if (_form.Kind == LeaveEntitlementKind.YearlyAllowance)
+                {
+                    <FormField LabelText="Days per year" Id="lt-max-days" Required="true">
+                        <Input TValue="decimal?" Id="lt-max-days" Type="number" Min="0" Step="0.5" @bind-Value="_form.MaxDaysPerYear" />
+                    </FormField>
+                }
+
+                @if (_form.Kind == LeaveEntitlementKind.PerEvent)
+                {
+                    <div class="grid gap-4 sm:grid-cols-2">
+                        <FormField LabelText="Days per event" Id="lt-days-per-event" Required="true"
+                                   Description="@(_form.IsMaternity ? "For a live birth; the solo parent days and the father's share are worked out from this." : null)">
+                            <Input TValue="decimal?" Id="lt-days-per-event" Type="number" Min="0" Step="0.5" @bind-Value="_form.DaysPerEvent" />
+                        </FormField>
+                        <FormField LabelText="Most times allowed" Id="lt-max-events" Description="Leave blank for no limit.">
+                            <Input TValue="int?" Id="lt-max-events" Type="number" Min="1" Step="1" @bind-Value="_form.MaxEvents" />
+                        </FormField>
+                    </div>
+                    <Checkbox @bind-Value="_form.IsMaternity" data-setting="maternity">This is the maternity leave type (RA 11210)</Checkbox>
+                    @if (_form.IsMaternity)
+                    {
+                        <p class="text-xs text-muted-foreground" data-maternity-note>@MaternityNote</p>
+                    }
+                }
+
+                <Checkbox @bind-Value="_form.CountsCalendarDays" data-setting="calendar-days">Count calendar days</Checkbox>
+                <p class="-mt-2 ml-6 text-xs text-muted-foreground">Every date from start to end counts, rest days and holidays included. Otherwise only the employee's working days count.</p>
+            </div>
+
+            <div class="space-y-3">
+                <h3 class="text-sm font-semibold">Who can file it</h3>
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <FormField LabelText="Gender" Id="lt-gender">
+                        <Select TValue="string" Id="lt-gender" @bind-Value="_form.Gender">
+                            <option value="">Any</option>
+                            <option value="Female">Female</option>
+                            <option value="Male">Male</option>
+                        </Select>
+                    </FormField>
+                    <FormField LabelText="Months of service first" Id="lt-min-service" Description="Leave blank if new hires can file it.">
+                        <Input TValue="int?" Id="lt-min-service" Type="number" Min="0" Step="1" @bind-Value="_form.MinServiceMonths" />
+                    </FormField>
+                </div>
+                <Checkbox @bind-Value="_form.RequiresMarried" data-setting="married">Married employees only</Checkbox>
+                <Checkbox @bind-Value="_form.RequiresSoloParentId" data-setting="solo-parent">Needs a valid solo parent ID on the employee's record</Checkbox>
+                <Checkbox @bind-Value="_form.RequiresDocument" data-setting="document">Needs a supporting document before approval</Checkbox>
+                <Checkbox @bind-Value="_form.IsConfidential" data-setting="confidential">Confidential: hidden from managers; only HR with approvals for everyone sees and decides it</Checkbox>
+            </div>
+
+            <div class="space-y-3">
+                <h3 class="text-sm font-semibold">Pay</h3>
+                <Checkbox @bind-Value="_form.IsPaid" data-setting="paid">Paid</Checkbox>
+                @* Only an accrued type has a yearly balance to carry; the API refuses it on any other kind. *@
+                @if (_form.Kind == LeaveEntitlementKind.Accrued)
+                {
+                    <Checkbox @bind-Value="_form.IsCarryOver" data-setting="carry-over">Unused days carry over to next year</Checkbox>
+                    @if (_form.IsCarryOver)
+                    {
+                        <FormField LabelText="Most days carried over" Id="lt-carry-over-max" Description="Leave blank for no limit." Class="ml-6">
+                            <Input TValue="decimal?" Id="lt-carry-over-max" Type="number" Min="0" Step="0.5" @bind-Value="_form.CarryOverMaxDays" />
+                        </FormField>
+                    }
+                }
+                <Checkbox @bind-Value="_form.IsConvertibleToCash" data-setting="convertible">Unused days are paid out in final pay</Checkbox>
+                @if (_form.IsConvertibleToCash)
+                {
+                    <Checkbox @bind-Value="_form.CountsAsVacationForDeMinimis" data-setting="de-minimis" Class="ml-6">Counts as vacation leave toward the 10-day de minimis limit</Checkbox>
+                }
+            </div>
+
+            <div class="space-y-1">
+                <Checkbox @bind-Value="_form.IsActive" data-setting="active">Active</Checkbox>
+                <p class="ml-6 text-xs text-muted-foreground">An inactive type can't be filed, and earns nothing. Untick this to retire a type that has been used.</p>
+            </div>
+        </form>
+
+        @if (_form.Kind == LeaveEntitlementKind.Accrued)
+        {
+            <section class="mt-6 space-y-3 border-t pt-4" data-accrual-policies>
+                <div>
+                    <h3 class="text-sm font-semibold">Accrual rules</h3>
+                    <p class="text-xs text-muted-foreground">The days this type earns each year, by length of service.</p>
+                </div>
+
+                @if (_editing is null)
+                {
+                    <p class="text-sm text-muted-foreground">Save the type first, then edit it to add its accrual rules.</p>
+                }
+                else if (_editing.EntitlementKind != LeaveEntitlementKind.Accrued)
+                {
+                    <p class="text-sm text-muted-foreground">Save the change of kind first, then edit the type again to add its accrual rules.</p>
+                }
+                else
+                {
+                    @if (_policyError is not null)
+                    {
+                        <Alert Variant="destructive" data-accrual-policy-error>@_policyError</Alert>
+                    }
+
+                    @if (_policies is null)
+                    {
+                        @if (_policyError is null)
+                        {
+                            <div class="flex justify-center p-2"><Spinner /></div>
+                        }
+                    }
+                    else if (_policies.Count == 0)
+                    {
+                        <p class="text-sm text-muted-foreground">No accrual rules yet, so this type earns no days.</p>
+                    }
+                    else
+                    {
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead Class="px-2">Service</TableHead>
+                                    <TableHead Class="px-2">Days</TableHead>
+                                    <TableHead Class="px-2">Credited</TableHead>
+                                    <TableHead Class="px-2">Status</TableHead>
+                                    <TableHead Class="px-2"></TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                @foreach (var policy in _policies)
+                                {
+                                    <TableRow data-accrual-policy="@policy.Id">
+                                        <TableCell Class="px-2 py-2">@TenureOf(policy)</TableCell>
+                                        <TableCell Class="px-2 py-2">@Days(policy.DaysPerYear) a year</TableCell>
+                                        <TableCell Class="px-2 py-2">@FrequencyLabel(policy.AccrualFrequency)</TableCell>
+                                        <TableCell Class="px-2 py-2">@(policy.IsActive ? "Active" : "Inactive")</TableCell>
+                                        <TableCell Class="px-2 py-2">
+                                            <div class="flex gap-1">
+                                                <Button Variant="ghost" Size="sm" OnClick="() => EditPolicy(policy)" data-edit-policy>Edit</Button>
+                                                <Button Variant="ghost" Size="sm" OnClick="() => _removingPolicy = policy" data-remove-policy>Remove</Button>
+                                            </div>
+                                        </TableCell>
+                                    </TableRow>
+                                }
+                            </TableBody>
+                        </Table>
+                    }
+
+                    @if (_policyForm is { } policyForm)
+                    {
+                        <div class="grid gap-3 rounded-md border p-3 sm:grid-cols-2" data-policy-editor>
+                            <FormField LabelText="From months of service" Id="ap-min">
+                                <Input TValue="int" Id="ap-min" Type="number" Min="0" Step="1" @bind-Value="policyForm.TenureMonthsMin" />
+                            </FormField>
+                            <FormField LabelText="Up to months of service" Id="ap-max" Description="Leave blank for no upper limit.">
+                                <Input TValue="int?" Id="ap-max" Type="number" Min="0" Step="1" @bind-Value="policyForm.TenureMonthsMax" />
+                            </FormField>
+                            <FormField LabelText="Days a year" Id="ap-days">
+                                <Input TValue="decimal" Id="ap-days" Type="number" Min="0" Step="0.5" @bind-Value="policyForm.DaysPerYear" />
+                            </FormField>
+                            <FormField LabelText="Credited" Id="ap-frequency">
+                                <Select TValue="AccrualFrequency" Id="ap-frequency" @bind-Value="policyForm.Frequency">
+                                    @foreach (var frequency in Enum.GetValues<AccrualFrequency>())
+                                    {
+                                        <option value="@frequency">@FrequencyLabel(frequency.ToString())</option>
+                                    }
+                                </Select>
+                            </FormField>
+                            <div class="flex justify-end gap-2 sm:col-span-2">
+                                <Button Variant="outline" Size="sm" OnClick="() => _policyForm = null" data-cancel-policy>Cancel</Button>
+                                <Button Variant="primary" Size="sm" OnClick="SavePolicy" Loading="@_policySaving" data-save-policy>Save rule</Button>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <Button Variant="outline" Size="sm" OnClick="AddPolicy" data-add-policy>
+                            <i class="bi bi-plus-lg mr-1"></i> Add rule
+                        </Button>
+                    }
+                }
+            </section>
+        }
+    </ChildContent>
+    <FooterContent>
+        <div class="mt-4 flex justify-end gap-2">
+            <Button Variant="outline" Size="sm" OnClick="CloseForm" Disabled="@_saving">Cancel</Button>
+            <Button Type="submit" Variant="primary" Size="sm" Loading="@_saving" form="leave-type-form" data-save-leave-type>Save</Button>
+        </div>
+    </FooterContent>
+</Dialog>
+
+<AlertDialog IsOpen="@(_deleting is not null)"
+             Title="@($"Delete {_deleting?.Name}?")"
+             Description="This can't be undone. A type that has already been used can't be deleted; make it inactive instead."
+             ConfirmText="Delete"
+             ConfirmVariant="destructive"
+             Loading="@_deleteBusy"
+             OnConfirm="DeleteConfirmed"
+             OnCancel="() => _deleting = null"
+             data-confirm-delete />
+
+<AlertDialog IsOpen="@(_removingPolicy is not null)"
+             Title="Remove this accrual rule?"
+             Description="Days it has already credited stay. From the next accrual run, nobody earns days under it."
+             ConfirmText="Remove"
+             ConfirmVariant="destructive"
+             Loading="@_policySaving"
+             OnConfirm="RemovePolicyConfirmed"
+             OnCancel="() => _removingPolicy = null"
+             data-confirm-remove-policy />
+
+@code {
+    private const string MaternityNote = "Paid through regular payroll for now; the SSS benefit split comes in a later release.";
+
+    // Art. 95 makes unused service incentive leave commutable to cash at the end of the year. The
+    // accrual engine credits it, but nothing converts what is left yet.
+    private const string SilNote = "Unused SIL must be converted to cash at year-end (Labor Code Art. 95); PeopleCore doesn't do this automatically yet.";
+
+    private static bool IsSil(string? code) => string.Equals(code?.Trim(), "SIL", StringComparison.OrdinalIgnoreCase);
+
+    private List<LeaveTypeDto>? _types;
+    private string? _loadError;
+    private string? _actionError;
+    private int _typesLoad;
+
+    private StatutoryLeaveResultDto? _statutoryResult;
+    private bool _addingStatutory;
+
+    private bool _formOpen;
+    private LeaveTypeDto? _editing;
+    private LeaveTypeForm _form = new();
+    private string? _formError;
+    private bool _saving;
+    // Counts each opening and closing of the form, so a save that finishes after the form has
+    // closed (the dialog's own close button still works mid-save) or moved on to another type
+    // knows its result isn't about the form now shown.
+    private int _formSession;
+
+    private List<LeaveAccrualPolicyDto>? _policies;
+    private string? _policyError;
+    private int _policiesLoad;
+    private PolicyForm? _policyForm;
+    private bool _policySaving;
+    private LeaveAccrualPolicyDto? _removingPolicy;
+
+    private LeaveTypeDto? _deleting;
+    private bool _deleteBusy;
+
+    protected override Task OnInitializedAsync() => LoadTypes();
+
+    // Several actions reload the list, and their answers can arrive out of order: only the latest
+    // load may set it.
+    private async Task LoadTypes()
+    {
+        var load = ++_typesLoad;
+        try
+        {
+            var types = await Api.GetLeaveTypesAsync() ?? [];
+            if (load != _typesLoad) return;
+            _types = types.ToList();
+            _loadError = null;
+        }
+        catch (Exception ex)
+        {
+            if (load != _typesLoad) return;
+            _loadError = ex.Message;
+        }
+    }
+
+    private async Task AddStatutory()
+    {
+        if (_addingStatutory) return;
+
+        _addingStatutory = true;
+        _actionError = null;
+        _statutoryResult = null;
+        try
+        {
+            _statutoryResult = await Api.AddStatutoryLeaveTypesAsync();
+        }
+        catch (Exception ex)
+        {
+            _actionError = ex.Message;
+            return;
+        }
+        finally
+        {
+            _addingStatutory = false;
+        }
+
+        await LoadTypes();
+    }
+
+    // ---- The type's form ----
+
+    private void OpenNew()
+    {
+        _editing = null;
+        _form = new LeaveTypeForm();
+        OpenForm();
+    }
+
+    private async Task OpenEdit(LeaveTypeDto type)
+    {
+        _editing = type;
+        _form = LeaveTypeForm.From(type);
+        OpenForm();
+        if (type.EntitlementKind == LeaveEntitlementKind.Accrued)
+            await LoadPolicies(type.Id);
+    }
+
+    private void OpenForm()
+    {
+        _formError = null;
+        _policies = null;
+        _policyError = null;
+        _policyForm = null;
+        _policiesLoad++;
+        _formSession++;
+        _formOpen = true;
+    }
+
+    private void CloseForm()
+    {
+        _formOpen = false;
+        _editing = null;
+        _policyForm = null;
+        // Any rules still loading were for the type just closed.
+        _policiesLoad++;
+        _formSession++;
+    }
+
+    // Rules are offered only for a type saved as Accrued (loaded when it's opened), so switching
+    // another type to Accrued can't add rules before that change is saved.
+    private void OnKindChanged(LeaveEntitlementKind kind) => _form.Kind = kind;
+
+    private async Task Save()
+    {
+        if (_saving) return;
+
+        _formError = null;
+        if (string.IsNullOrWhiteSpace(_form.Name) || string.IsNullOrWhiteSpace(_form.Code))
+        {
+            _formError = "Enter a name and a code.";
+            return;
+        }
+        // The API's own message for the same refusal.
+        if (_form.Kind == LeaveEntitlementKind.YearlyAllowance && _form.MaxDaysPerYear is not > 0m)
+        {
+            _formError = "Set the days per year.";
+            return;
+        }
+
+        var request = _form.ToRequest();
+        var editing = _editing;
+        var session = _formSession;
+        _saving = true;
+        try
+        {
+            if (editing is null) await Api.CreateLeaveTypeAsync(request);
+            else await Api.UpdateLeaveTypeAsync(editing.Id, request);
+        }
+        catch (Exception ex)
+        {
+            if (session == _formSession) _formError = ex.Message;
+            return;
+        }
+        finally
+        {
+            _saving = false;
+        }
+
+        // Saved either way, so the list reloads; but a form that now shows another type stays open.
+        if (session == _formSession) CloseForm();
+        await LoadTypes();
+    }
+
+    // ---- Accrual rules, for the accrued type being edited ----
+
+    // Guarded twice: a later load wins over an earlier one, and nothing lands once the dialog has
+    // moved on to another type (or closed).
+    private async Task LoadPolicies(Guid typeId)
+    {
+        if (_editing?.Id != typeId) return;
+
+        var load = ++_policiesLoad;
+        _policyError = null;
+        try
+        {
+            var policies = await Api.GetAccrualPoliciesAsync(typeId) ?? [];
+            if (load != _policiesLoad || _editing?.Id != typeId) return;
+            _policies = policies.ToList();
+        }
+        catch (Exception ex)
+        {
+            if (load != _policiesLoad || _editing?.Id != typeId) return;
+            _policyError = ex.Message;
+        }
+    }
+
+    private void AddPolicy()
+    {
+        _policyError = null;
+        _policyForm = new PolicyForm();
+    }
+
+    private void EditPolicy(LeaveAccrualPolicyDto policy)
+    {
+        _policyError = null;
+        _policyForm = PolicyForm.From(policy);
+    }
+
+    private async Task SavePolicy()
+    {
+        if (_policySaving || _editing is not { } type || _policyForm is not { } form) return;
+
+        _policySaving = true;
+        _policyError = null;
+        try
+        {
+            var request = new CreateLeaveAccrualPolicyRequest(type.Id, form.TenureMonthsMin, form.TenureMonthsMax, form.DaysPerYear, form.Frequency);
+            if (form.Id is { } id) await Api.UpdateAccrualPolicyAsync(id, request);
+            else await Api.CreateAccrualPolicyAsync(request);
+        }
+        catch (Exception ex)
+        {
+            if (_editing?.Id == type.Id) _policyError = ex.Message;
+            return;
+        }
+        finally
+        {
+            _policySaving = false;
+        }
+
+        if (_editing?.Id != type.Id) return;
+        _policyForm = null;
+        await LoadPolicies(type.Id);
+    }
+
+    // The API has no "inactive" switch for a rule, only delete; what it credited stays in the balances.
+    private async Task RemovePolicyConfirmed()
+    {
+        if (_policySaving || _removingPolicy is not { } policy || _editing is not { } type) return;
+
+        _policySaving = true;
+        _policyError = null;
+        try
+        {
+            await Api.DeleteAccrualPolicyAsync(policy.Id);
+        }
+        catch (Exception ex)
+        {
+            if (_editing?.Id == type.Id) _policyError = ex.Message;
+            return;
+        }
+        finally
+        {
+            _policySaving = false;
+            _removingPolicy = null;
+        }
+
+        if (_policyForm?.Id == policy.Id) _policyForm = null;
+        await LoadPolicies(type.Id);
+    }
+
+    // ---- Delete ----
+
+    private void AskToDelete(LeaveTypeDto type)
+    {
+        _actionError = null;
+        _deleting = type;
+    }
+
+    private async Task DeleteConfirmed()
+    {
+        if (_deleteBusy || _deleting is not { } type) return;
+
+        _deleteBusy = true;
+        _actionError = null;
+        try
+        {
+            await Api.DeleteLeaveTypeAsync(type.Id);
+        }
+        catch (Exception ex)
+        {
+            _actionError = ex.Message;
+            return;
+        }
+        finally
+        {
+            _deleteBusy = false;
+            _deleting = null;
+        }
+
+        await LoadTypes();
+    }
+
+    // ---- Words ----
+
+    private static string Number(decimal value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private static string Days(decimal value) => $"{Number(value)} {(value == 1m ? "day" : "days")}";
+
+    private static string Months(int value) => value == 1 ? "1 month" : $"{value} months";
+
+    private static string Codes(IReadOnlyList<string> codes) => codes.Count == 0 ? "none" : string.Join(", ", codes);
+
+    private static string KindLabel(LeaveEntitlementKind kind) => kind switch
+    {
+        LeaveEntitlementKind.Accrued => "Accrued",
+        LeaveEntitlementKind.YearlyAllowance => "Yearly allowance",
+        LeaveEntitlementKind.PerEvent => "Per event",
+        _ => kind.ToString(),
+    };
+
+    private static string KindHelp(LeaveEntitlementKind kind) => kind switch
+    {
+        LeaveEntitlementKind.Accrued => "Days are earned under the accrual rules below, by length of service.",
+        LeaveEntitlementKind.YearlyAllowance => "The same number of days every year, with nothing to accrue.",
+        LeaveEntitlementKind.PerEvent => "A set number of days each time it's filed, with no yearly balance.",
+        _ => "",
+    };
+
+    private static string LimitOf(LeaveTypeDto type) => type.EntitlementKind switch
+    {
+        LeaveEntitlementKind.PerEvent when type.IsMaternity => $"{Days(type.DaysPerEvent ?? 0m)} a birth",
+        LeaveEntitlementKind.PerEvent => $"{Days(type.DaysPerEvent ?? 0m)} each time"
+            + (type.MaxEvents is { } most ? $", up to {most} {(most == 1 ? "time" : "times")}" : ""),
+        // Nothing grants an accrued type days but its accrual rules, and the list doesn't load every
+        // type's rules (one request each) just to describe them; the form lists them.
+        LeaveEntitlementKind.Accrued => "Set by accrual rules",
+        _ => $"{Days(type.MaxDaysPerYear)} a year",
+    };
+
+    private static string RulesOf(LeaveTypeDto type)
+    {
+        var rules = new List<string>();
+        if (!string.IsNullOrWhiteSpace(type.GenderRestriction)) rules.Add(type.GenderRestriction.Trim());
+        if (type.RequiresMarried) rules.Add("Married");
+        if (type.RequiresSoloParentId) rules.Add("Solo parent ID");
+        if (type.MinServiceMonths is > 0 and var months) rules.Add(months == 1 ? "1 month's service" : $"{months} months' service");
+        if (type.RequiresDocument) rules.Add("Document");
+        if (type.IsConfidential) rules.Add("Confidential");
+        return rules.Count == 0 ? "None" : string.Join(" · ", rules);
+    }
+
+    private static string TenureOf(LeaveAccrualPolicyDto policy) => policy.TenureMonthsMax is { } max
+        ? $"{policy.TenureMonthsMin} to {Months(max)}"
+        : $"From {Months(policy.TenureMonthsMin)}";
+
+    private static string FrequencyLabel(string frequency) => frequency switch
+    {
+        nameof(AccrualFrequency.Monthly) => "Monthly",
+        nameof(AccrualFrequency.Annual) => "Once a year",
+        _ => frequency,
+    };
+
+    // ---- Form models ----
+
+    private sealed class LeaveTypeForm
+    {
+        public string Name { get; set; } = "";
+        public string Code { get; set; } = "";
+        public LeaveEntitlementKind Kind { get; set; } = LeaveEntitlementKind.Accrued;
+        // Nullable so a cleared field is blank rather than the last number typed.
+        public decimal? MaxDaysPerYear { get; set; }
+        public decimal? DaysPerEvent { get; set; }
+        public int? MaxEvents { get; set; }
+        public bool IsMaternity { get; set; }
+        public bool CountsCalendarDays { get; set; }
+        public string Gender { get; set; } = "";
+        public int? MinServiceMonths { get; set; }
+        public bool RequiresMarried { get; set; }
+        public bool RequiresSoloParentId { get; set; }
+        public bool RequiresDocument { get; set; }
+        public bool IsConfidential { get; set; }
+        public bool IsPaid { get; set; } = true;
+        public bool IsCarryOver { get; set; }
+        public decimal? CarryOverMaxDays { get; set; }
+        public bool IsConvertibleToCash { get; set; }
+        // The API's own default for a new type.
+        public bool CountsAsVacationForDeMinimis { get; set; } = true;
+        public bool IsActive { get; set; } = true;
+
+        public static LeaveTypeForm From(LeaveTypeDto t) => new()
+        {
+            Name = t.Name,
+            Code = t.Code,
+            Kind = t.EntitlementKind,
+            MaxDaysPerYear = t.MaxDaysPerYear,
+            DaysPerEvent = t.DaysPerEvent,
+            MaxEvents = t.MaxEvents,
+            IsMaternity = t.IsMaternity,
+            CountsCalendarDays = t.CountsCalendarDays,
+            Gender = t.GenderRestriction?.Trim() ?? "",
+            MinServiceMonths = t.MinServiceMonths,
+            RequiresMarried = t.RequiresMarried,
+            RequiresSoloParentId = t.RequiresSoloParentId,
+            RequiresDocument = t.RequiresDocument,
+            IsConfidential = t.IsConfidential,
+            IsPaid = t.IsPaid,
+            IsCarryOver = t.IsCarryOver,
+            CarryOverMaxDays = t.CarryOverMaxDays,
+            IsConvertibleToCash = t.IsConvertibleToCash,
+            CountsAsVacationForDeMinimis = t.CountsAsVacationForDeMinimis,
+            IsActive = t.IsActive,
+        };
+
+        // Every setting goes out, as the API replaces the whole type. The per-event figures and the
+        // maternity flag belong to a per-event type only, carry-over to an accrued type only, and a
+        // per-event type has no yearly figure, so a value left behind by an earlier kind isn't sent.
+        // An accrued type keeps whatever yearly figure it had, unshown: accrual doesn't use it, and a
+        // full replacement mustn't wipe it.
+        public CreateLeaveTypeDto ToRequest()
+        {
+            var perEvent = Kind == LeaveEntitlementKind.PerEvent;
+            var carryOver = Kind == LeaveEntitlementKind.Accrued && IsCarryOver;
+            return new CreateLeaveTypeDto(
+                Name.Trim(), Code.Trim(), perEvent ? 0m : MaxDaysPerYear ?? 0m,
+                IsPaid, carryOver, carryOver ? CarryOverMaxDays : null,
+                string.IsNullOrWhiteSpace(Gender) ? null : Gender, RequiresDocument,
+                IsConvertibleToCash, CountsAsVacationForDeMinimis,
+                IsActive, Kind,
+                CountsCalendarDays, perEvent ? DaysPerEvent : null, MinServiceMonths,
+                RequiresMarried, RequiresSoloParentId, perEvent ? MaxEvents : null,
+                IsConfidential, perEvent && IsMaternity);
+        }
+    }
+
+    private sealed class PolicyForm
+    {
+        public Guid? Id { get; set; }
+        public int TenureMonthsMin { get; set; }
+        public int? TenureMonthsMax { get; set; }
+        public decimal DaysPerYear { get; set; }
+        public AccrualFrequency Frequency { get; set; } = AccrualFrequency.Monthly;
+
+        public static PolicyForm From(LeaveAccrualPolicyDto p) => new()
+        {
+            Id = p.Id,
+            TenureMonthsMin = p.TenureMonthsMin,
+            TenureMonthsMax = p.TenureMonthsMax,
+            DaysPerYear = p.DaysPerYear,
+            Frequency = Enum.TryParse<AccrualFrequency>(p.AccrualFrequency, out var f) ? f : AccrualFrequency.Monthly,
+        };
+    }
+}

@@ -45,4 +45,36 @@ public static class ShiftScheduleResolver
 
         return null;
     }
+
+    /// <summary>
+    /// The assignment in force on <paramref name="date"/>: <c>EffectiveFrom &lt;= date</c> and
+    /// <c>EffectiveTo</c> null or <c>&gt;= date</c>, preferring the latest <c>EffectiveFrom</c> so
+    /// a re-assignment supersedes the one it replaced. When two candidates share the same latest
+    /// <c>EffectiveFrom</c> - the repository provides no tie-break and gives no ordering
+    /// guarantee - the one with the later <c>CreatedAt</c> wins, so the choice depends on which
+    /// row was created more recently rather than on repository/SQL row order.
+    /// <para>
+    /// Shared by every caller that loads <see cref="IShiftAssignmentRepository.GetActiveForPeriodAsync"/>
+    /// once for a period and then walks it day by day (payroll, leave day-counting), so the pick
+    /// logic lives in one place rather than being copied.
+    /// </para>
+    /// </summary>
+    internal static EmployeeShiftAssignment? PickAssignment(
+        IReadOnlyList<EmployeeShiftAssignment> candidates, DateOnly date)
+    {
+        EmployeeShiftAssignment? best = null;
+
+        foreach (var candidate in candidates)
+        {
+            if (candidate.EffectiveFrom > date) continue;
+            if (candidate.EffectiveTo is { } end && end < date) continue;
+
+            if (best is null
+                || candidate.EffectiveFrom > best.EffectiveFrom
+                || (candidate.EffectiveFrom == best.EffectiveFrom && candidate.CreatedAt > best.CreatedAt))
+                best = candidate;
+        }
+
+        return best;
+    }
 }

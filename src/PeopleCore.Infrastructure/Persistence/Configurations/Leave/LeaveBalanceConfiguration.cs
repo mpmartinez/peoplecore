@@ -14,6 +14,11 @@ public class LeaveBalanceConfiguration : IEntityTypeConfiguration<LeaveBalance>
         builder.Property(b => b.UsedDays).HasPrecision(5, 2);
         builder.Property(b => b.CarriedOverDays).HasPrecision(5, 2);
         builder.Ignore(b => b.RemainingDays);
+        // As for requests: a used type is retired, not deleted, and its balances never cascade away.
+        builder.HasOne(b => b.LeaveType)
+               .WithMany()
+               .HasForeignKey(b => b.LeaveTypeId)
+               .OnDelete(DeleteBehavior.Restrict);
         builder.ToTable("leave_balances");
     }
 }

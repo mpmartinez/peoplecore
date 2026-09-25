@@ -169,7 +169,7 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
 
             for (var date = from; date <= to; date = date.AddDays(1))
             {
-                var assignment = PickAssignment(employeeAssignments, date);
+                var assignment = ShiftScheduleResolver.PickAssignment(employeeAssignments, date);
                 var schedule = ShiftScheduleResolver.Resolve(assignment, date);
                 if (schedule is not null) anyDateScheduled = true;
 
@@ -310,31 +310,4 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
     private static bool IsSpecialDay(WorkDayType day) => day is WorkDayType.SpecialNonWorking
         or WorkDayType.SpecialNonWorkingOnRestDay or WorkDayType.DoubleSpecialNonWorking
         or WorkDayType.DoubleSpecialNonWorkingOnRestDay;
-
-    /// <summary>
-    /// The assignment in force on <paramref name="date"/>: <c>EffectiveFrom &lt;= date</c> and
-    /// <c>EffectiveTo</c> null or <c>&gt;= date</c>, preferring the latest <c>EffectiveFrom</c> so
-    /// a re-assignment supersedes the one it replaced. When two candidates share the same latest
-    /// <c>EffectiveFrom</c> - the repository provides no tie-break and gives no ordering
-    /// guarantee - the one with the later <c>CreatedAt</c> wins, so the choice depends on which
-    /// row was created more recently rather than on repository/SQL row order.
-    /// </summary>
-    private static EmployeeShiftAssignment? PickAssignment(
-        IReadOnlyList<EmployeeShiftAssignment> candidates, DateOnly date)
-    {
-        EmployeeShiftAssignment? best = null;
-
-        foreach (var candidate in candidates)
-        {
-            if (candidate.EffectiveFrom > date) continue;
-            if (candidate.EffectiveTo is { } end && end < date) continue;
-
-            if (best is null
-                || candidate.EffectiveFrom > best.EffectiveFrom
-                || (candidate.EffectiveFrom == best.EffectiveFrom && candidate.CreatedAt > best.CreatedAt))
-                best = candidate;
-        }
-
-        return best;
-    }
 }
