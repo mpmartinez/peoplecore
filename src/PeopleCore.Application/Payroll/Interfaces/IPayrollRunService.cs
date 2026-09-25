@@ -12,7 +12,9 @@ public interface IPayrollRunService
     /// Recomputes an existing, uncommitted run in place against current rates/settings - for
     /// when a statutory schedule is corrected after the run was first computed. Throws
     /// DomainException when the run is Approved or Paid: an approver has signed off on those
-    /// figures, or (for Paid) they have already been used to retire loan balances.
+    /// figures, or (for Paid) they have already been used to retire loan balances. Two kinds of
+    /// Approved run can still be recomputed, and go back to Draft: a final pay, and a regular run
+    /// with the year-end leave conversion, whose leave can change after approval.
     /// </summary>
     Task ComputeAsync(Guid runId, CancellationToken ct = default);
 
@@ -21,6 +23,8 @@ public interface IPayrollRunService
     /// paying: once approved, ComputeAsync refuses to run again (an approver has signed off on
     /// these numbers), and MarkPaidAsync goes on to retire loan balances against exactly what was
     /// approved. Valid from Draft, Processing or ForApproval; throws DomainException otherwise.
+    /// A run with the year-end leave conversion is refused while its leave no longer prices to
+    /// what it pays - the check Mark Paid makes - so it's recomputed first.
     /// </summary>
     Task ApproveAsync(Guid runId, CancellationToken ct = default);
 
@@ -39,6 +43,13 @@ public interface IPayrollRunService
     /// run's one employee can't be taken off.
     /// </summary>
     Task<PayrollRunDto> RemoveEmployeeAsync(Guid runId, Guid employeeId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Turns a regular run's year-end leave conversion on or off and recomputes the run; an
+    /// Approved or For-approval run goes back to Draft. Turning it on is allowed only when the
+    /// run's period ends in December. A Paid run, or a final pay, is refused. Returns the run.
+    /// </summary>
+    Task<PayrollRunDto> SetLeaveConversionAsync(Guid runId, bool include, CancellationToken ct = default);
 
     Task<PayrollRunDto?> GetAsync(Guid runId, CancellationToken ct = default);
 

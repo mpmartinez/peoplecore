@@ -30,6 +30,27 @@ public class PayrollRunsControllerTests
     }
 
     [Fact]
+    public void SetLeaveConversion_IsAPutOnTheRunsLeaveConversion()
+    {
+        typeof(PayrollRunsController).GetMethod(nameof(PayrollRunsController.SetLeaveConversion))!
+            .GetCustomAttribute<HttpPutAttribute>()!
+            .Template.Should().Be("{id:guid}/leave-conversion");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SetLeaveConversion_PassesTheChoiceOn_AndReturnsTheUpdatedRun(bool include)
+    {
+        _service.Setup(s => s.SetLeaveConversionAsync(RunId, include, It.IsAny<CancellationToken>())).ReturnsAsync(Run);
+
+        var result = await new PayrollRunsController(_service.Object)
+            .SetLeaveConversion(RunId, new SetLeaveConversionRequest(include), CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>().Which.Value.Should().Be(Run);
+    }
+
+    [Fact]
     public async Task RemoveEmployee_ReturnsTheUpdatedRun()
     {
         _service.Setup(s => s.RemoveEmployeeAsync(RunId, EmployeeId, It.IsAny<CancellationToken>())).ReturnsAsync(Run);

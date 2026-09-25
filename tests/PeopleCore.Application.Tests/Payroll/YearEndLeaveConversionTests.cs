@@ -9,8 +9,7 @@ using Xunit;
 namespace PeopleCore.Application.Tests.Payroll;
 
 /// <summary>
-/// YearEndLeaveConversion: an employee's convertible days for a year, and recording them paid
-/// out. Days = max(0, that year's balance less the employee's Pending holds of the type charged
+/// YearEndLeaveConversion: an employee's convertible days for a year. Days = max(0, that year's balance less the employee's Pending holds of the type charged
 /// to that year); only active ConvertsAtYearEnd types count, and only balances that come to more
 /// than 0 days are returned.
 /// </summary>
@@ -30,7 +29,7 @@ public class YearEndLeaveConversionTests
 
     public YearEndLeaveConversionTests()
     {
-        _sut = new YearEndLeaveConversion(_balances.Object, _requests.Object, _leaveTypes.Object, TimeProvider.System);
+        _sut = new YearEndLeaveConversion(_balances.Object, _requests.Object, _leaveTypes.Object);
     }
 
     private LeaveBalance Balance(LeaveType type, decimal remaining)
@@ -126,17 +125,5 @@ public class YearEndLeaveConversionTests
 
         result.Should().ContainSingle();
         result[0].Days.Should().Be(3m);   // 5 remaining - 2 held in 2026
-    }
-
-    [Fact]
-    public async Task RecordAsync_AddsTheDaysToUsedDays()
-    {
-        var balance = Balance(_sil, 5m);
-        IReadOnlyList<LeavePaidOut> paidOut = [new(balance, 3m)];
-
-        await _sut.RecordAsync(paidOut);
-
-        balance.UsedDays.Should().Be(3m);
-        _balances.Verify(b => b.UpdateAsync(balance, It.IsAny<CancellationToken>()), Times.Once);
     }
 }

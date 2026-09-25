@@ -124,6 +124,26 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
         return await Context.PayrollRuns.CountAsync(r => r.Status != PayrollRunStatus.Paid && r.PayDate >= first && r.PayDate < next, ct);
     }
 
+    public async Task SavePaidAsync(PayrollRun run, IReadOnlyCollection<EmployeeLoan> loans,
+        IReadOnlyCollection<Domain.Entities.Leave.LeaveBalance> leaveBalances, CancellationToken ct = default)
+    {
+        // Normally all three were loaded through this request's context and are tracked already;
+        // any that weren't are attached as existing rows to update. One SaveChanges is one
+        // transaction, so the run can't be Paid without its loans retired and its leave used.
+        Attach(run);
+        foreach (var loan in loans)
+            Attach(loan);
+        foreach (var balance in leaveBalances)
+            Attach(balance);
+        await Context.SaveChangesAsync(ct);
+    }
+
+    private void Attach<TEntity>(TEntity entity) where TEntity : class
+    {
+        if (Context.Entry(entity).State == EntityState.Detached)
+            Context.Set<TEntity>().Update(entity);
+    }
+
     public async Task<IReadOnlyList<LeaveConvertedInRun>> GetLeaveConversionsInYearAsync(
         int periodEndYear, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId, CancellationToken ct = default)
     {

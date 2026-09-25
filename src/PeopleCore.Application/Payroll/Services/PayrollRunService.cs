@@ -34,8 +34,8 @@ public class PayrollRunService : IPayrollRunService
     /// a final-pay run without it is refused.
     /// </param>
     /// <param name="yearEndLeave">
-    /// Works out and records each employee's year-end convertible leave, for a December run that
-    /// includes the conversion. Optional so callers that never see such a run needn't supply one;
+    /// Works out each employee's year-end convertible leave, for a December run that includes the
+    /// conversion. Optional so callers that never see such a run needn't supply one;
     /// computing or paying one without it is refused.
     /// </param>
     public PayrollRunService(
@@ -86,7 +86,8 @@ public class PayrollRunService : IPayrollRunService
             AttendancePeriodId = request.AttendancePeriodId,
             IncludesLeaveConversion = request.IncludeLeaveConversion
         };
-        EnsureLeaveConversionFits(run);
+        if (run.IncludesLeaveConversion)
+            EnsureLeaveConversionFits(run.RunType, run.PeriodEnd);
 
         // No snapshots to honour on a brand new run, so the attendance is derived.
         run.Employees = await ComputeEntriesAsync(run, request.Employees, snapshots: null, ct);
@@ -116,9 +117,13 @@ public class PayrollRunService : IPayrollRunService
         // the one exception to the first: it can be approved before clearance is complete, and
         // clearance is where deductions such as an unreturned laptop come up, so an approved
         // final pay can still be recomputed - and goes back to Draft below, to be approved again.
+        // A regular run that converts leave is the other: its leave can change after approval (a
+        // request filed, rejected or cancelled), Mark Paid then refuses it, and a recompute - back
+        // to Draft, to be approved again - is the way to pay it.
         if (run.RunType == PayrollRunType.FinalPay && run.Status == PayrollRunStatus.Paid)
             throw new DomainException("A paid final pay can't be recomputed.");
-        if (run.RunType != PayrollRunType.FinalPay && run.Status is PayrollRunStatus.Approved or PayrollRunStatus.Paid)
+        if (run.RunType != PayrollRunType.FinalPay
+            && (run.Status == PayrollRunStatus.Paid || (run.Status == PayrollRunStatus.Approved && !run.IncludesLeaveConversion)))
             throw new DomainException("Only draft or for-approval payroll runs can be recomputed.");
 
         if (run.Employees.Count == 0)
@@ -139,6 +144,39 @@ public class PayrollRunService : IPayrollRunService
             return;
         }
 
+        await RecomputeRegularAsync(run, ct);
+    }
+
+    public async Task<PayrollRunDto> SetLeaveConversionAsync(Guid runId, bool include, CancellationToken ct = default)
+    {
+        var run = await _runRepo.GetWithEntriesAsync(runId, ct)
+            ?? throw new KeyNotFoundException($"Payroll run {runId} not found.");
+
+        if (run.Status == PayrollRunStatus.Paid)
+            throw new DomainException("A paid payroll run can't be changed.");
+        // A final pay converts the employee's leave its own way, whichever way this was asked.
+        if (run.RunType != PayrollRunType.Regular)
+            throw new DomainException(LeaveConversionIsForDecember);
+        if (include)
+            EnsureLeaveConversionFits(run.RunType, run.PeriodEnd);
+
+        // The run's figures change with it, so it's recomputed - and, like any recompute, goes
+        // back to Draft: an approval or submission of the old figures no longer stands. A refused
+        // recompute (someone's leave already converted this year) saves nothing, the flag included.
+        run.IncludesLeaveConversion = include;
+        await RecomputeRegularAsync(run, ct);
+
+        var saved = await _runRepo.GetWithEntriesAsync(run.Id, ct)
+            ?? throw new InvalidOperationException($"Payroll run {run.Id} was not found immediately after being saved.");
+        return ToDto(saved);
+    }
+
+    /// <summary>
+    /// Recomputes a regular run in place from its stored inputs and sends it back to Draft.
+    /// Shared by ComputeAsync and SetLeaveConversionAsync.
+    /// </summary>
+    private async Task RecomputeRegularAsync(PayrollRun run, CancellationToken ct)
+    {
         await EnsureNoOneHasLeftAsync(run, ct);
 
         // Recompute against current rates/settings, but from the attendance SNAPSHOT taken when
@@ -173,7 +211,9 @@ public class PayrollRunService : IPayrollRunService
     /// paying. ComputeAsync refuses to run once a regular run is Approved, so approving it locks in
     /// its numbers against any further recompute, and MarkPaidAsync then retires loan balances
     /// against exactly what was approved here. A final pay can still be recomputed or changed once
-    /// approved, but that sends it back to Draft, so it is paid only as approved all the same.
+    /// approved, but that sends it back to Draft, so it is paid only as approved all the same - and
+    /// so can a regular run with the year-end leave conversion, whose leave can change after it's
+    /// approved.
     /// </summary>
     public async Task ApproveAsync(Guid runId, CancellationToken ct = default)
     {
@@ -185,6 +225,11 @@ public class PayrollRunService : IPayrollRunService
 
         if (run.RunType == PayrollRunType.Regular)
             await EnsureNoOneHasLeftAsync(run, ct);
+
+        // The check Mark Paid makes, made here too, so leave that changed since the run was
+        // computed is caught before anyone approves figures that can't be paid.
+        if (run.RunType == PayrollRunType.Regular && run.IncludesLeaveConversion)
+            await YearEndLeavePaidOutAsync(run, ct);
 
         run.Status = PayrollRunStatus.Approved;
         run.UpdatedAt = DateTime.UtcNow;
@@ -204,7 +249,6 @@ public class PayrollRunService : IPayrollRunService
         // that includes the year-end conversion: what each converted is checked against the
         // balances now, before anything changes, and recorded as used below.
         IReadOnlyList<LeavePaidOut> leavePaidOut = [];
-        IReadOnlyList<LeavePaidOut> yearEndPaidOut = [];
         if (run.RunType == PayrollRunType.FinalPay)
         {
             await EnsureClearanceCompleteAsync(run, ct);
@@ -216,7 +260,7 @@ public class PayrollRunService : IPayrollRunService
         {
             await EnsureNoOneHasLeftAsync(run, ct);
             if (run.IncludesLeaveConversion)
-                yearEndPaidOut = await YearEndLeavePaidOutAsync(run, ct);
+                leavePaidOut = await YearEndLeavePaidOutAsync(run, ct);
         }
 
         var loanIds = run.Employees
@@ -243,18 +287,14 @@ public class PayrollRunService : IPayrollRunService
                 loan.IsActive = false;
         }
 
+        var now = DateTime.UtcNow;
+        var balances = LeavePayout.Apply(leavePaidOut, now);
         run.Status = PayrollRunStatus.Paid;
-        run.UpdatedAt = DateTime.UtcNow;
+        run.UpdatedAt = now;
 
-        // The request's one DbContext saves the leave, the loans and the run's status together, on
-        // whichever of these saves comes first.
-        if (leavePaidOut.Count > 0)
-            await _finalPay!.RecordLeavePaidOutAsync(leavePaidOut, ct);
-        if (yearEndPaidOut.Count > 0)
-            await _yearEndLeave!.RecordAsync(yearEndPaidOut, ct);
-        if (loans.Count > 0)
-            await _loanRepo.UpdateRangeAsync(loans, ct);
-        await _runRepo.UpdateAsync(run, ct);
+        // The run's status, the loans and the leave balances go out in one save, so they commit
+        // together or not at all.
+        await _runRepo.SavePaidAsync(run, loans, balances, ct);
     }
 
     public async Task<PayrollRunDto> RemoveEmployeeAsync(Guid runId, Guid employeeId, CancellationToken ct = default)
@@ -334,19 +374,30 @@ public class PayrollRunService : IPayrollRunService
 
     /// <summary>
     /// The days a run with the year-end conversion paid out, re-worked out now for every entry
-    /// that converted any. They must still price, at the entry's own daily rate, to what the entry
-    /// pays: leave taken or granted since the run was computed would otherwise be recorded as paid
-    /// out when it wasn't, or paid out without being recorded. Changes nothing.
+    /// that converted any. They must still price - at the entry's own daily rate, with the pay
+    /// year's de minimis days left now - to what the entry pays, split as it splits it: leave filed,
+    /// rejected or cancelled since the run was computed would otherwise be recorded as paid out
+    /// when it wasn't, or paid out without being recorded; and a conversion paid earlier in the
+    /// year since then would move part of it from de minimis to taxable. Changes nothing.
     /// </summary>
     private async Task<IReadOnlyList<LeavePaidOut>> YearEndLeavePaidOutAsync(PayrollRun run, CancellationToken ct)
     {
+        var converting = run.Employees.Where(e => e.LeaveConversionPay > 0m).ToList();
+        if (converting.Count == 0)
+            return [];
+
         var yearEndLeave = YearEndLeave();
+        var earlierEntries = (await _runRepo.GetPaidRunsInYearAsync(run.PayDate.Year, ct) ?? [])
+            .Where(r => r.Id != run.Id)
+            .SelectMany(r => r.Employees)
+            .ToLookup(e => e.EmployeeId);
+
         var paidOut = new List<LeavePaidOut>();
-        foreach (var entry in run.Employees.Where(e => e.LeaveConversionPay > 0m))
+        foreach (var entry in converting)
         {
             var days = await yearEndLeave.DaysAsync(entry.EmployeeId, run.PeriodEnd.Year, ct);
-            var (deMinimis, otherBenefits) = LeavePayout.Price(days, entry.DailyRate);
-            if (deMinimis + otherBenefits != entry.LeaveConversionPay)
+            var deMinimisDaysLeft = LeavePayout.DeMinimisDaysLeft(earlierEntries[entry.EmployeeId]);
+            if (!LeavePayout.StillPrices(days, entry, deMinimisDaysLeft))
             {
                 var name = entry.Employee?.FullName
                     ?? (await _employeeRepo.GetByIdAsync(entry.EmployeeId, ct))?.FullName
@@ -362,14 +413,16 @@ public class PayrollRunService : IPayrollRunService
     private IYearEndLeaveConversion YearEndLeave() => _yearEndLeave ?? throw new InvalidOperationException(
         "PayrollRunService was built without an IYearEndLeaveConversion, so it can't convert year-end leave.");
 
+    private const string LeaveConversionIsForDecember = "Year-end leave conversion goes on a December payroll.";
+
     /// <summary>
     /// Year-end leave conversion goes only on a Regular run whose period ends in December - a
     /// final pay converts the employee's leave its own way.
     /// </summary>
-    private static void EnsureLeaveConversionFits(PayrollRun run)
+    private static void EnsureLeaveConversionFits(PayrollRunType runType, DateOnly periodEnd)
     {
-        if (run.IncludesLeaveConversion && (run.RunType != PayrollRunType.Regular || run.PeriodEnd.Month != 12))
-            throw new DomainException("Year-end leave conversion goes on a December payroll.");
+        if (runType != PayrollRunType.Regular || periodEnd.Month != 12)
+            throw new DomainException(LeaveConversionIsForDecember);
     }
 
     private Task EnsureNoOneHasLeftAsync(PayrollRun run, CancellationToken ct)
@@ -449,6 +502,9 @@ public class PayrollRunService : IPayrollRunService
         // Looked up only when someone in the run is receiving a 13th month or the run converts
         // leave, since nobody else's pay depends on it.
         var earlierInYear = new Dictionary<Guid, (decimal Basic, decimal ThirteenthMonth, decimal ExemptUsed)>();
+        // The ten de minimis leave days are the pay year's too: what those runs paid as de minimis
+        // leaves the rest (see LeavePayout.DeMinimisDaysLeft).
+        var deMinimisDaysLeft = new Dictionary<Guid, decimal>();
         var ineligible = new HashSet<Guid>();
         IReadOnlyList<Domain.Entities.Employees.Employee> people = [];
         if (employees.Any(e => e.IncludeThirteenthMonth) || run.IncludesLeaveConversion)
@@ -463,6 +519,12 @@ public class PayrollRunService : IPayrollRunService
                     g.Sum(e => e.RegularPay),
                     g.Sum(e => e.ThirteenthMonth),
                     g.Sum(e => e.ThirteenthMonthAndOtherBenefits)));
+            deMinimisDaysLeft = paidRuns
+                .Where(r => r.Id != run.Id)
+                .SelectMany(r => r.Employees)
+                .Where(e => employeeIds.Contains(e.EmployeeId))
+                .GroupBy(e => e.EmployeeId)
+                .ToDictionary(g => g.Key, g => LeavePayout.DeMinimisDaysLeft(g));
 
             people = await _employeeRepo.GetByIdsAsync(employeeIds, ct) ?? [];
             ineligible = people.Where(p => !p.Is13thMonthEligible).Select(p => p.Id).ToHashSet();
@@ -475,7 +537,7 @@ public class PayrollRunService : IPayrollRunService
         int conversionYear = run.PeriodEnd.Year;
         if (run.IncludesLeaveConversion)
         {
-            EnsureLeaveConversionFits(run);
+            EnsureLeaveConversionFits(run.RunType, run.PeriodEnd);
             yearEndLeave = YearEndLeave();
 
             var converted = await _runRepo.GetLeaveConversionsInYearAsync(conversionYear, employeeIds, run.Id, ct) ?? [];
@@ -516,7 +578,8 @@ public class PayrollRunService : IPayrollRunService
                 var days = await yearEndLeave.DaysAsync(employee.EmployeeId, conversionYear, ct);
                 if (days.Count > 0)
                 {
-                    var (deMinimis, otherBenefits) = LeavePayout.Price(days, dailyRate);
+                    var (deMinimis, otherBenefits) = LeavePayout.Price(days, dailyRate,
+                        deMinimisDaysLeft.GetValueOrDefault(employee.EmployeeId, FinalPayMath.DeMinimisVacationDays));
                     leaveConversion = new LeaveConversionInput(deMinimis, otherBenefits);
                 }
             }

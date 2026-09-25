@@ -40,7 +40,7 @@ public class YearEndLeaveConversionDbTests : DatabaseTestBase
         new EmployeeRepository(context), new SeparationRepository(context),
         NullLogger<PayrollRunService>.Instance, finalPay: null,
         yearEndLeave: new YearEndLeaveConversion(new LeaveBalanceRepository(context),
-            new LeaveRequestRepository(context), new LeaveTypeRepository(context), TimeProvider.System));
+            new LeaveRequestRepository(context), new LeaveTypeRepository(context)));
 
     /// <summary>After the year ends, so the November and December reports can be built.</summary>
     private sealed class JanuaryClock : TimeProvider
@@ -59,8 +59,8 @@ public class YearEndLeaveConversionDbTests : DatabaseTestBase
 
     private record Seeded(Employee Maria, LeaveBalance Sil, EmployeeLoan Loan);
 
-    /// <summary>Maria, 3 unused SIL days for 2026, an SSS loan, and a Paid November.</summary>
-    private async Task<Seeded> SeedAsync()
+    /// <summary>Maria, 3 unused SIL days for 2026 (unless told otherwise), an SSS loan, and a Paid November.</summary>
+    private async Task<Seeded> SeedAsync(decimal silTotal = 5m, decimal silUsed = 2m)
     {
         var maria = AnEmployee("Santos", "Maria");
         Context.Employees.Add(maria);
@@ -82,7 +82,7 @@ public class YearEndLeaveConversionDbTests : DatabaseTestBase
             ConvertsAtYearEnd = true, CountsAsVacationForDeMinimis = true,
         };
         Context.LeaveTypes.Add(sil);
-        var balance = new LeaveBalance { EmployeeId = maria.Id, LeaveTypeId = sil.Id, Year = 2026, TotalDays = 5m, UsedDays = 2m };
+        var balance = new LeaveBalance { EmployeeId = maria.Id, LeaveTypeId = sil.Id, Year = 2026, TotalDays = silTotal, UsedDays = silUsed };
         Context.LeaveBalances.Add(balance);
 
         var november = ARun("PAY-2026-022", new(2026, 11, 1), new(2026, 11, 30), new(2026, 11, 30));
@@ -104,15 +104,41 @@ public class YearEndLeaveConversionDbTests : DatabaseTestBase
         [new PayrollRunEmployeeInput(employeeId, IncludeThirteenthMonth: true)],
         IncludeLeaveConversion: true);
 
+    private async Task<Guid> CreateAsync(Guid employeeId)
+    {
+        await using var context = NewContext();
+        return (await PayrollRuns(context).CreateAsync(December(employeeId))).Id;
+    }
+
     private async Task<Guid> CreateAndApproveAsync(Guid employeeId)
     {
-        Guid runId;
-        await using (var context = NewContext())
-            runId = (await PayrollRuns(context).CreateAsync(December(employeeId))).Id;
-        await using (var context = NewContext())
-            await PayrollRuns(context).ApproveAsync(runId);
+        var runId = await CreateAsync(employeeId);
+        await StepAsync(s => s.ApproveAsync(runId));
         return runId;
     }
+
+    /// <summary>One request's worth of work, in its own context as a request would have.</summary>
+    private async Task StepAsync(Func<PayrollRunService, Task> step)
+    {
+        await using var context = NewContext();
+        await step(PayrollRuns(context));
+    }
+
+    /// <summary>Maria files a Pending request for one SIL day in December, which holds that day.</summary>
+    private async Task FileOneSilDayAsync(Seeded seeded)
+    {
+        await using var context = NewContext();
+        context.LeaveRequests.Add(new LeaveRequest
+        {
+            EmployeeId = seeded.Maria.Id, LeaveTypeId = seeded.Sil.LeaveTypeId,
+            StartDate = new DateOnly(2026, 12, 21), EndDate = new DateOnly(2026, 12, 21),
+            TotalDays = 1m, DaysInStartYear = 1m, Status = LeaveStatus.Pending,
+        });
+        await context.SaveChangesAsync();
+    }
+
+    private const string LeaveChanged =
+        "Maria Santos's convertible leave has changed since this payroll was computed; recompute it before paying.";
 
     [Fact]
     public async Task AFlaggedDecemberRun_WithThe13thMonth_IsPaid_AndIts2316And1601CReconcile()
@@ -187,27 +213,196 @@ public class YearEndLeaveConversionDbTests : DatabaseTestBase
         var seeded = await SeedAsync();
         var runId = await CreateAndApproveAsync(seeded.Maria.Id);
 
-        // A leave request approved after the run was computed uses one of the three days.
-        await using (var context = NewContext())
-        {
-            var balance = await context.LeaveBalances.FindAsync(seeded.Sil.Id);
-            balance!.UsedDays = 3m;
-            await context.SaveChangesAsync();
-        }
+        // A leave request filed after the run was approved holds one of the three days.
+        await FileOneSilDayAsync(seeded);
 
-        await using (var context = NewContext())
-        {
-            var act = () => PayrollRuns(context).MarkPaidAsync(runId);
-            await act.Should().ThrowAsync<DomainException>().WithMessage(
-                "Maria Santos's convertible leave has changed since this payroll was computed; recompute it before paying.");
-        }
+        var act = () => StepAsync(s => s.MarkPaidAsync(runId));
+        await act.Should().ThrowAsync<DomainException>().WithMessage(LeaveChanged);
 
         await using var reader = NewContext();
         (await new PayrollRunRepository(reader).GetWithEntriesAsync(runId))!.Status.Should().Be(PayrollRunStatus.Approved);
-        (await reader.LeaveBalances.FindAsync(seeded.Sil.Id))!.UsedDays.Should().Be(3m);
+        (await reader.LeaveBalances.FindAsync(seeded.Sil.Id))!.UsedDays.Should().Be(2m);
         var loan = (await reader.EmployeeLoans.FindAsync(seeded.Loan.Id))!;
         loan.RemainingBalance.Should().Be(3_000m);
         loan.IsActive.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ARequestFiledAfterCompute_IsCaughtAtApproval_AndARecomputeLetsTheRunBePaid()
+    {
+        var seeded = await SeedAsync();
+        var runId = await CreateAsync(seeded.Maria.Id);   // 3 SIL days: 3,600
+        await FileOneSilDayAsync(seeded);                   // now 2 are left to convert
+
+        var approve = () => StepAsync(s => s.ApproveAsync(runId));
+        await approve.Should().ThrowAsync<DomainException>().WithMessage(LeaveChanged);
+
+        await StepAsync(s => s.ComputeAsync(runId));
+        await StepAsync(s => s.ApproveAsync(runId));
+        await StepAsync(s => s.MarkPaidAsync(runId));
+
+        // Recomputed at 2 x 1,200 = 2,400, and paying used exactly those 2: 2 + 2 = 4 used, and
+        // the one day left is the one the request holds.
+        await using var reader = NewContext();
+        var run = (await new PayrollRunRepository(reader).GetWithEntriesAsync(runId))!;
+        run.Status.Should().Be(PayrollRunStatus.Paid);
+        run.Employees.Single().LeaveConversionPay.Should().Be(2_400m);
+        var sil = (await reader.LeaveBalances.FindAsync(seeded.Sil.Id))!;
+        sil.UsedDays.Should().Be(4m);
+        sil.RemainingDays.Should().Be(1m);
+    }
+
+    [Fact]
+    public async Task AnApprovedRunRefusedAtMarkPaid_IsRecomputedBackToDraft_ReapprovedAndPaid()
+    {
+        var seeded = await SeedAsync();
+        var runId = await CreateAndApproveAsync(seeded.Maria.Id);
+        await FileOneSilDayAsync(seeded);
+
+        var pay = () => StepAsync(s => s.MarkPaidAsync(runId));
+        await pay.Should().ThrowAsync<DomainException>().WithMessage(LeaveChanged);
+
+        // An approved regular run that converts leave can be recomputed; it goes back to Draft.
+        await StepAsync(s => s.ComputeAsync(runId));
+        await using (var reader = NewContext())
+        {
+            var recomputed = (await new PayrollRunRepository(reader).GetWithEntriesAsync(runId))!;
+            recomputed.Status.Should().Be(PayrollRunStatus.Draft);
+            recomputed.Employees.Single().LeaveConversionPay.Should().Be(2_400m);
+        }
+
+        await StepAsync(s => s.ApproveAsync(runId));
+        await StepAsync(s => s.MarkPaidAsync(runId));
+
+        await using var check = NewContext();
+        (await new PayrollRunRepository(check).GetWithEntriesAsync(runId))!.Status.Should().Be(PayrollRunStatus.Paid);
+        (await check.LeaveBalances.FindAsync(seeded.Sil.Id))!.UsedDays.Should().Be(4m);
+        (await check.EmployeeLoans.FindAsync(seeded.Loan.Id))!.RemainingBalance.Should().Be(2_000m);
+    }
+
+    [Fact]
+    public async Task TurningTheConversionOffAnAbandonedRun_LetsAnotherRunConvert()
+    {
+        var seeded = await SeedAsync();
+        var abandoned = await CreateAsync(seeded.Maria.Id);
+
+        PayrollRunDto turnedOff = null!;
+        await StepAsync(async s => turnedOff = await s.SetLeaveConversionAsync(abandoned, include: false));
+        turnedOff.IncludesLeaveConversion.Should().BeFalse();
+        turnedOff.Employees.Single().LeaveConversionPay.Should().Be(0m);
+        turnedOff.Employees.Single().EmployeeName.Should().Be("Maria Santos");
+
+        var replacement = await CreateAsync(seeded.Maria.Id);
+
+        await using var reader = NewContext();
+        (await new PayrollRunRepository(reader).GetWithEntriesAsync(abandoned))!.IncludesLeaveConversion.Should().BeFalse();
+        (await new PayrollRunRepository(reader).GetWithEntriesAsync(replacement))!
+            .Employees.Single().LeaveConversionPay.Should().Be(3_600m);
+    }
+
+    [Fact]
+    public async Task LeaveBeyondDeMinimis_OnARegularRun_ReconcilesThrough2316Items34And48_AndThe1601C13thMonthLine()
+    {
+        // 12 unused SIL days: the first 10 are de minimis (12,000), the other 2 other benefits
+        // (2,400). In May Maria was paid an 88,000 13th month advance, leaving 2,000 of the 90,000.
+        var seeded = await SeedAsync(silTotal: 12m, silUsed: 0m);
+        var may = ARun("PAY-2026-010", new(2026, 5, 1), new(2026, 5, 31), new(2026, 5, 31));
+        may.Frequency = PayFrequency.Monthly;
+        Context.PayrollRuns.Add(may);
+        var mayEntry = AnEntry(may.Id, seeded.Maria.Id, regularPay: 36_500m);
+        mayEntry.ThirteenthMonth = 88_000m;
+        mayEntry.SSSEmployee = 1_750m;
+        mayEntry.PhilHealthEmployee = 912.50m;
+        mayEntry.PagIbigEmployee = 200m;
+        mayEntry.WithholdingTax = 1_935.83m;
+        Context.PayrollRunEmployees.Add(mayEntry);
+        await Context.SaveChangesAsync();
+
+        var runId = await CreateAndApproveAsync(seeded.Maria.Id);
+        await StepAsync(s => s.MarkPaidAsync(runId));
+
+        await using var reader = NewContext();
+        // December: the 13th month due is (3 x 36,500) / 12 = 9,125 less the 88,000 paid: none.
+        // Of the 2,400 other benefits 2,000 is exempt and 400 taxed at the 20% margin (403,650 +
+        // 400 is still in that bracket): 80.00 on top of 1,935.83 = 2,015.83.
+        // Gross 36,500 + 14,400 = 50,900.
+        var entry = (await new PayrollRunRepository(reader).GetWithEntriesAsync(runId))!.Employees.Single();
+        entry.ThirteenthMonth.Should().Be(0m);
+        entry.LeaveConversionPay.Should().Be(14_400m);
+        entry.LeaveConversionNonTaxable.Should().Be(12_000m);
+        entry.LeaveConversionOtherBenefits.Should().Be(2_400m);
+        entry.WithholdingTax.Should().Be(2_015.83m);
+        entry.GrossPay.Should().Be(50_900m);
+
+        // 2316 over May, November and December:
+        //   Item 19 gross (36,500 + 88,000) + 36,500 + 50,900 = 211,900;
+        //   13th month and other benefits 88,000 + 2,400 = 90,400: Item 34 90,000, Item 48 400;
+        //   Item 35 de minimis 12,000; Item 36 shares 3 x 2,862.50 = 8,587.50;
+        //   Item 52 taxable 211,900 - 90,000 - 12,000 - 8,587.50 = 101,312.50
+        //     (= 3 x 33,637.50 + the 400 in Item 48);
+        //   Item 25A withheld 1,935.83 + 1,935.83 + 2,015.83 = 5,887.49.
+        var bir2316 = new Bir2316Service(new PayrollRunRepository(reader), new EmployeeRepository(reader),
+            new CompanyRepository(reader), new Bir2316InputsRepository(reader));
+        var cert = (await bir2316.BuildAsync(seeded.Maria.Id, 2026, new Bir2316ManualInputs()))!;
+        cert.Item19_GrossCompensation.Should().Be(211_900m);
+        cert.Item34_ThirteenthMonthAndBenefits.Should().Be(90_000m);
+        cert.Item48_TaxableThirteenthMonth.Should().Be(400m);
+        cert.Item35_DeMinimis.Should().Be(12_000m);
+        cert.Item52_TotalTaxableCompensation.Should().Be(101_312.50m);
+        cert.Item25A_PresentTaxWithheld.Should().Be(5_887.49m);
+
+        // The 1601-Cs: May's 13th month line is 88,000; December's is the 2,000 of the other
+        // benefits the exemption still covered, and its taxable 50,900 - 2,000 - 12,000 - 2,862.50
+        // = 34,037.50 carries the 400 past it.
+        var reports = new GovernmentReportService(new PayrollRunRepository(reader), new CompanyRepository(reader),
+            new PayrollSettingsRepository(reader), new JanuaryClock(), Mock.Of<IBir2316Service>(),
+            new EmployeeRepository(reader));
+        var months = new[]
+        {
+            await reports.BuildAsync("1601c", 2026, 5),
+            await reports.BuildAsync("1601c", 2026, 11),
+            await reports.BuildAsync("1601c", 2026, 12),
+        };
+        decimal Line(GovernmentReportDto report, string label) => report.Summary.Single(l => l.Label == label).Amount;
+        decimal Year(string label) => months.Sum(m => Line(m, label));
+
+        Line(months[2], "13th month pay and other benefits").Should().Be(2_000m);
+        Line(months[2], "De minimis benefits").Should().Be(12_000m);
+        Line(months[2], "Total taxable compensation").Should().Be(34_037.50m);
+
+        Year("Total amount of compensation").Should().Be(cert.Item19_GrossCompensation);
+        Year("13th month pay and other benefits").Should().Be(cert.Item34_ThirteenthMonthAndBenefits);
+        Year("De minimis benefits").Should().Be(cert.Item35_DeMinimis);
+        Year("Total taxable compensation").Should().Be(cert.Item52_TotalTaxableCompensation);
+        Year("Total taxes withheld").Should().Be(cert.Item25A_PresentTaxWithheld);
+    }
+
+    [Fact]
+    public async Task SavePaid_WritesTheRunTheLoansAndTheBalances_InOneSave()
+    {
+        var seeded = await SeedAsync();
+        var runId = await CreateAndApproveAsync(seeded.Maria.Id);
+
+        await using (var context = NewContext())
+        {
+            var runs = new PayrollRunRepository(context);
+            var run = (await runs.GetWithEntriesAsync(runId))!;
+            var loan = (await context.EmployeeLoans.FindAsync(seeded.Loan.Id))!;
+            var balance = (await context.LeaveBalances.FindAsync(seeded.Sil.Id))!;
+            run.Status = PayrollRunStatus.Paid;
+            loan.RemainingBalance = 2_000m;
+            balance.UsedDays = 5m;
+
+            var saves = 0;
+            context.SavedChanges += (_, _) => saves++;
+            await runs.SavePaidAsync(run, [loan], [balance]);
+            saves.Should().Be(1);
+        }
+
+        await using var reader = NewContext();
+        (await new PayrollRunRepository(reader).GetWithEntriesAsync(runId))!.Status.Should().Be(PayrollRunStatus.Paid);
+        (await reader.EmployeeLoans.FindAsync(seeded.Loan.Id))!.RemainingBalance.Should().Be(2_000m);
+        (await reader.LeaveBalances.FindAsync(seeded.Sil.Id))!.UsedDays.Should().Be(5m);
     }
 
     [Fact]

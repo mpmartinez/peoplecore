@@ -15,6 +15,9 @@ public record CreatePayrollRunRequest(
     Guid? AttendancePeriodId = null,
     bool IncludeLeaveConversion = false);
 
+/// <summary>Turns a run's year-end leave conversion on or off (PUT api/payroll-runs/{id}/leave-conversion).</summary>
+public record SetLeaveConversionRequest(bool Include);
+
 /// <summary>
 /// Per-employee inputs for a payroll run. Every quantity is a manual override: null means "use
 /// what the attendance bridge derived from punches, approved leave, approved overtime, the

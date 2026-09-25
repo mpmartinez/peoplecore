@@ -56,6 +56,15 @@ public class PayrollRunsController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>
+    /// Turns a regular run's year-end leave conversion on (December runs only) or off, and
+    /// recomputes it; an approved or submitted run goes back to Draft. Returns the updated run.
+    /// </summary>
+    [HttpPut("{id:guid}/leave-conversion")]
+    public async Task<IActionResult> SetLeaveConversion(Guid id, [FromBody] SetLeaveConversionRequest request,
+        CancellationToken ct = default)
+        => Ok(await _service.SetLeaveConversionAsync(id, request.Include, ct));
+
     /// <summary>Takes a separated employee off a regular run; the run goes back to Draft.</summary>
     [HttpDelete("{id:guid}/employees/{employeeId:guid}")]
     public async Task<IActionResult> RemoveEmployee(Guid id, Guid employeeId, CancellationToken ct = default)

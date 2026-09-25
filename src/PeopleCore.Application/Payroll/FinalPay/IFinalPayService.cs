@@ -31,14 +31,10 @@ public interface IFinalPayService
     /// <summary>
     /// The leave a final-pay run converted to cash: each balance it drew on and the days it paid
     /// out. Refused when the balances no longer price to the entry's leave conversion - leave was
-    /// taken or granted since the run was computed - so it's recomputed before it's paid.
-    /// Called by <c>PayrollRunService.MarkPaidAsync</c> before anything is changed.
+    /// taken or granted since the run was computed, or a conversion paid earlier in the pay year
+    /// used de minimis days - so it's recomputed before it's paid. Changes nothing: called by
+    /// <c>PayrollRunService.MarkPaidAsync</c> before anything is changed, which then records the
+    /// days as used (<see cref="LeavePayout.Apply"/>) in the same save as the run's status.
     /// </summary>
     Task<IReadOnlyList<LeavePaidOut>> LeavePaidOutAsync(PayrollRun run, CancellationToken ct = default);
-
-    /// <summary>
-    /// Records the paid-out days as used on their balances, so the year-end carry-over doesn't
-    /// carry them forward. Called by <c>PayrollRunService.MarkPaidAsync</c> as it pays the run.
-    /// </summary>
-    Task RecordLeavePaidOutAsync(IReadOnlyList<LeavePaidOut> paidOut, CancellationToken ct = default);
 }

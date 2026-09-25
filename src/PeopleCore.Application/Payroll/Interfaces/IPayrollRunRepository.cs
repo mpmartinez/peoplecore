@@ -169,6 +169,13 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     /// <paramref name="periodEndYear"/>, other than <paramref name="excludeRunId"/>. Final pays
     /// convert their own leave and don't count.
     /// </summary>
+    /// <summary>
+    /// Saves what marking a run Paid changed - the run's status, the loans it retired and the leave
+    /// balances it drew converted days from - in one save, so they commit together or not at all.
+    /// </summary>
+    Task SavePaidAsync(PayrollRun run, IReadOnlyCollection<EmployeeLoan> loans,
+        IReadOnlyCollection<Domain.Entities.Leave.LeaveBalance> leaveBalances, CancellationToken ct = default);
+
     Task<IReadOnlyList<LeaveConvertedInRun>> GetLeaveConversionsInYearAsync(
         int periodEndYear, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId, CancellationToken ct = default);
 }

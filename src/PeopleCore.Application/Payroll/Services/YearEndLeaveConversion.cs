@@ -5,17 +5,13 @@ namespace PeopleCore.Application.Payroll.Services;
 
 /// <summary>
 /// An employee's year-end convertible leave: each active <c>ConvertsAtYearEnd</c> type's unused
-/// days for the year, and the recording of those days as paid out. Shared by the December
-/// payroll's computation and its Mark Paid, the same way final pay computes and records its own
-/// leave conversion (through <see cref="LeavePayout"/>).
+/// days for the year. Shared by the December payroll's computation, its approval and its Mark
+/// Paid, which records the days as used through <see cref="LeavePayout.Apply"/>, as final pay does.
 /// </summary>
 public interface IYearEndLeaveConversion
 {
     /// <summary>Each year-end type's convertible days for the employee in the year.</summary>
     Task<IReadOnlyList<LeavePaidOut>> DaysAsync(Guid employeeId, int year, CancellationToken ct = default);
-
-    /// <summary>Adds the days to each balance's UsedDays.</summary>
-    Task RecordAsync(IReadOnlyList<LeavePaidOut> paidOut, CancellationToken ct = default);
 }
 
 /// <inheritdoc cref="IYearEndLeaveConversion"/>
@@ -24,18 +20,15 @@ public sealed class YearEndLeaveConversion : IYearEndLeaveConversion
     private readonly ILeaveBalanceRepository _balances;
     private readonly ILeaveRequestRepository _requests;
     private readonly ILeaveTypeRepository _leaveTypes;
-    private readonly TimeProvider _clock;
 
     public YearEndLeaveConversion(
         ILeaveBalanceRepository balances,
         ILeaveRequestRepository requests,
-        ILeaveTypeRepository leaveTypes,
-        TimeProvider clock)
+        ILeaveTypeRepository leaveTypes)
     {
         _balances = balances;
         _requests = requests;
         _leaveTypes = leaveTypes;
-        _clock = clock;
     }
 
     /// <summary>
@@ -75,7 +68,4 @@ public sealed class YearEndLeaveConversion : IYearEndLeaveConversion
 
         return result;
     }
-
-    public Task RecordAsync(IReadOnlyList<LeavePaidOut> paidOut, CancellationToken ct = default)
-        => LeavePayout.RecordAsync(paidOut, _balances, _clock.GetUtcNow().UtcDateTime, ct);
 }

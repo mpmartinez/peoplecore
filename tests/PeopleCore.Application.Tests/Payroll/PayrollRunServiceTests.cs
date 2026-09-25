@@ -1148,7 +1148,11 @@ public class PayrollRunServiceTests
         await _sut.MarkPaidAsync(run.Id);
 
         run.Status.Should().Be(PayrollRunStatus.Paid);
-        _finalPay.Verify(f => f.RecordLeavePaidOutAsync(paidOut, It.IsAny<CancellationToken>()), Times.Once);
+        balance.UsedDays.Should().Be(5m);
+        _runRepo.Verify(r => r.SavePaidAsync(run, It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
+            It.Is<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(b => b.Single() == balance),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -1162,9 +1166,9 @@ public class PayrollRunServiceTests
 
         await act.Should().ThrowAsync<DomainException>().WithMessage("*convertible leave has changed*");
         run.Status.Should().Be(PayrollRunStatus.Approved);
-        _finalPay.Verify(f => f.RecordLeavePaidOutAsync(It.IsAny<IReadOnlyList<LeavePaidOut>>(),
-                                                        It.IsAny<CancellationToken>()), Times.Never);
-        _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+        _runRepo.Verify(r => r.SavePaidAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
+                                              It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+                                              It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -1190,7 +1194,9 @@ public class PayrollRunServiceTests
         (await act.Should().ThrowAsync<DomainException>()).Which.Message
             .Should().Be("Clear Finance, HR exit interview before paying final pay.");
         run.Status.Should().Be(PayrollRunStatus.Approved);
-        _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+        _runRepo.Verify(r => r.SavePaidAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
+                                              It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+                                              It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -1201,7 +1207,8 @@ public class PayrollRunServiceTests
         await _sut.MarkPaidAsync(run.Id);
 
         run.Status.Should().Be(PayrollRunStatus.Paid);
-        _runRepo.Verify(r => r.UpdateAsync(run, It.IsAny<CancellationToken>()), Times.Once);
+        _runRepo.Verify(r => r.SavePaidAsync(run, It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
+            It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -1323,6 +1330,9 @@ public class PayrollRunServiceTests
         _runRepo.Verify(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyList<PayrollRunEmployee>>(),
                                                    It.IsAny<CancellationToken>()), Times.Never);
         _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+        _runRepo.Verify(r => r.SavePaidAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
+                                              It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+                                              It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]
@@ -1340,6 +1350,9 @@ public class PayrollRunServiceTests
         (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
             "Maria Santos's final pay has been started; the rest of their pay goes there. Take them off this payroll.");
         _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+        _runRepo.Verify(r => r.SavePaidAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
+                                              It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+                                              It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -1437,6 +1450,9 @@ public class PayrollRunServiceTests
             "Maria Santos's final pay has been started; the rest of their pay goes there. Take them off this payroll.");
         run.Status.Should().Be(step == "MarkPaid" ? PayrollRunStatus.Approved : PayrollRunStatus.Draft);
         _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+        _runRepo.Verify(r => r.SavePaidAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
+                                              It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+                                              It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -1838,19 +1854,26 @@ public class PayrollRunServiceTests
 
         await _sut.MarkPaidAsync(run.Id);
 
+        // The status, the loan and the balance's 3 more used days go out in one save.
         run.Status.Should().Be(PayrollRunStatus.Paid);
         loan.RemainingBalance.Should().Be(4_000m);
-        _yearEnd.Verify(y => y.RecordAsync(
-            It.Is<IReadOnlyList<LeavePaidOut>>(l => l.Count == 1 && l[0] == paidOut), It.IsAny<CancellationToken>()), Times.Once);
+        paidOut.Balance.UsedDays.Should().Be(3m);
+        _runRepo.Verify(r => r.SavePaidAsync(run,
+            It.Is<IReadOnlyCollection<EmployeeLoan>>(l => l.Single() == loan),
+            It.Is<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(b => b.Single() == paidOut.Balance),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+        _loanRepo.Verify(r => r.UpdateRangeAsync(It.IsAny<IEnumerable<EmployeeLoan>>(), It.IsAny<CancellationToken>()), Times.Never);
         _yearEnd.Verify(y => y.DaysAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task MarkPaidAsync_OnAFlaggedRun_WhoseLeaveChangedSinceCompute_IsRefused_AndChangesNothing()
     {
-        // A request approved after compute took one of the three days: 2 x 1,200 = 2,400, not 3,600.
+        // A leave request filed after compute holds one of the three days: 2 x 1,200 = 2,400, not 3,600.
         var (run, maria, loan) = ApprovedDecemberConversion();
-        ConvertibleDays(maria.Id, new LeavePaidOut(SilBalance(maria.Id, 3m), 2m));
+        var balance = SilBalance(maria.Id, 3m);
+        ConvertibleDays(maria.Id, new LeavePaidOut(balance, 2m));
 
         var act = () => _sut.MarkPaidAsync(run.Id);
 
@@ -1859,9 +1882,10 @@ public class PayrollRunServiceTests
         run.Status.Should().Be(PayrollRunStatus.Approved);
         loan.RemainingBalance.Should().Be(5_000m);
         loan.IsActive.Should().BeTrue();
-        _yearEnd.Verify(y => y.RecordAsync(It.IsAny<IReadOnlyList<LeavePaidOut>>(), It.IsAny<CancellationToken>()), Times.Never);
-        _loanRepo.Verify(r => r.UpdateRangeAsync(It.IsAny<IEnumerable<EmployeeLoan>>(), It.IsAny<CancellationToken>()), Times.Never);
-        _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+        balance.UsedDays.Should().Be(0m);
+        _runRepo.Verify(r => r.SavePaidAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
+                                              It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+                                              It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -1903,5 +1927,245 @@ public class PayrollRunServiceTests
 
         (await _sut.GetAsync(run.Id))!.IncludesLeaveConversion.Should().BeTrue();
         (await _sut.GetPagedAsync(1, 20)).Items.Single().IncludesLeaveConversion.Should().BeTrue();
+    }
+
+    // ------------------------------------------------------------------
+    // Year-end leave conversion: recovering a run whose leave changed, and turning it on or off
+    // ------------------------------------------------------------------
+
+    private void ConvertibleDaysIn(int year, Guid employeeId, params LeavePaidOut[] days)
+        => _yearEnd.Setup(y => y.DaysAsync(employeeId, year, It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(days);
+
+    /// <summary>A recompute's entries become the run's, as the repository leaves them.</summary>
+    private void RecomputesInPlace()
+        => _runRepo.Setup(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(),
+                    It.IsAny<IReadOnlyList<PayrollRunEmployee>>(), It.IsAny<CancellationToken>()))
+                .Callback<PayrollRun, IReadOnlyList<PayrollRunEmployee>, CancellationToken>(
+                    (run, entries, _) => run.Employees = entries.ToList())
+                .Returns(Task.CompletedTask);
+
+    /// <summary>An earlier Paid run of the pay year that paid Maria some leave as de minimis.</summary>
+    private static PayrollRun PaidConversion(Guid employeeId, DateOnly periodEnd, DateOnly payDate, decimal deMinimisDays)
+    {
+        var run = new PayrollRun
+        {
+            RunNumber = "PAY-EARLIER", PeriodStart = periodEnd.AddDays(-15), PeriodEnd = periodEnd, PayDate = payDate,
+            Status = PayrollRunStatus.Paid, IncludesLeaveConversion = true
+        };
+        run.Employees.Add(new PayrollRunEmployee
+        {
+            PayrollRunId = run.Id, EmployeeId = employeeId, DailyRate = 1_200m,
+            LeaveConversionPay = deMinimisDays * 1_200m, LeaveConversionNonTaxable = deMinimisDays * 1_200m
+        });
+        return run;
+    }
+
+    [Fact]
+    public async Task ComputeAsync_OnAnApprovedFlaggedRun_RecomputesIt_AndSendsItBackToDraft()
+    {
+        // The way back from a Mark Paid refused because the leave changed: recompute, approve again.
+        var (maria, savedRun) = MariaAt36500();
+        ConvertibleDays(maria.Id, new LeavePaidOut(SilBalance(maria.Id, 3m), 3m));
+        RecomputesInPlace();
+        await _sut.CreateAsync(DecemberRequest(maria.Id));
+        var run = savedRun()!;
+        run.Status = PayrollRunStatus.Approved;
+        // Since then, a request was filed for one of the three days.
+        ConvertibleDays(maria.Id, new LeavePaidOut(SilBalance(maria.Id, 3m), 2m));
+
+        await _sut.ComputeAsync(run.Id);
+
+        run.Status.Should().Be(PayrollRunStatus.Draft);
+        run.Employees.Single().LeaveConversionPay.Should().Be(2_400m);   // 2 x 1,200
+    }
+
+    [Fact]
+    public async Task ApproveAsync_OnAFlaggedRun_WhoseLeaveChangedSinceCompute_IsRefused()
+    {
+        var (run, maria, _) = ApprovedDecemberConversion();
+        run.Status = PayrollRunStatus.ForApproval;
+        ConvertibleDays(maria.Id, new LeavePaidOut(SilBalance(maria.Id, 3m), 2m));
+
+        var act = () => _sut.ApproveAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos's convertible leave has changed since this payroll was computed; recompute it before paying.");
+        run.Status.Should().Be(PayrollRunStatus.ForApproval);
+        _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ApproveAsync_OnAFlaggedRun_WhoseLeaveStillPrices_ApprovesIt()
+    {
+        var (run, maria, _) = ApprovedDecemberConversion();
+        run.Status = PayrollRunStatus.ForApproval;
+        ConvertibleDays(maria.Id, new LeavePaidOut(SilBalance(maria.Id, 3m), 3m));
+
+        await _sut.ApproveAsync(run.Id);
+
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_OnAFlaggedRun_WhoseDeMinimisSplitChanged_IsRefused_EvenAtTheSameTotal()
+    {
+        // The entry paid 3 days as 3,600 of de minimis. Since then another 2026 run was paid that
+        // used 8 of the year's 10 de minimis days, so the same 3 days now split 2 x 1,200 = 2,400
+        // de minimis and 1,200 other benefits - the same 3,600 in all, taxed differently.
+        var (run, maria, loan) = ApprovedDecemberConversion();
+        ConvertibleDays(maria.Id, new LeavePaidOut(SilBalance(maria.Id, 3m), 3m));
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>()))
+                .ReturnsAsync([PaidConversion(maria.Id, new DateOnly(2026, 12, 15), new DateOnly(2026, 12, 20), deMinimisDays: 8m)]);
+
+        var act = () => _sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos's convertible leave has changed since this payroll was computed; recompute it before paying.");
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+        loan.RemainingBalance.Should().Be(5_000m);
+    }
+
+    [Fact]
+    public async Task CreateAsync_TheTenDeMinimisDaysArePerTaxYear_SoASecondConversionPaidInTheSameYearGetsTheRest()
+    {
+        // The 2026 conversion was paid on 2027-01-05 (a Dec 16-31 run) and paid 6 days as de
+        // minimis - 7,200 at 1,200. December 2027's conversion is paid in the same tax year, 2027.
+        var (maria, savedRun) = MariaAt36500();
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2027, It.IsAny<CancellationToken>()))
+                .ReturnsAsync([PaidConversion(maria.Id, new DateOnly(2026, 12, 31), new DateOnly(2027, 1, 5), deMinimisDays: 6m)]);
+        ConvertibleDaysIn(2027, maria.Id, new LeavePaidOut(SilBalance(maria.Id, 5m), 5m));
+
+        await _sut.CreateAsync(DecemberRequest(maria.Id) with
+        {
+            PeriodStart = new DateOnly(2027, 12, 1), PeriodEnd = new DateOnly(2027, 12, 31), PayDate = new DateOnly(2027, 12, 29)
+        });
+
+        // 5 SIL days x 1,200 = 6,000. Only 10 - 6 = 4 days are left as de minimis: 4,800;
+        // the fifth day is other benefits: 1,200.
+        var entry = savedRun()!.Employees.Single();
+        entry.LeaveConversionPay.Should().Be(6_000m);
+        entry.LeaveConversionNonTaxable.Should().Be(4_800m);
+        entry.LeaveConversionOtherBenefits.Should().Be(1_200m);
+    }
+
+    [Fact]
+    public async Task CreateAsync_ADec16To31RunPaidInJanuary_ConvertsThePeriodsYear_ButReadsThePayYearsExemption()
+    {
+        // Period Dec 16-31, 2026, paid Jan 5, 2027: the leave converted is 2026's, and 2026's
+        // conversions are what the once-a-year check looks at; the 90,000 exemption and the ten
+        // de minimis days are the tax year's - the pay date's, 2027.
+        var (maria, savedRun) = MariaAt36500();
+        ConvertibleDays(maria.Id, new LeavePaidOut(SilBalance(maria.Id, 3m), 3m));
+
+        await _sut.CreateAsync(new CreatePayrollRunRequest(
+            new DateOnly(2026, 12, 16), new DateOnly(2026, 12, 31), new DateOnly(2027, 1, 5), PayFrequency.SemiMonthly,
+            [new PayrollRunEmployeeInput(maria.Id)], IncludeLeaveConversion: true));
+
+        savedRun()!.Employees.Single().LeaveConversionPay.Should().Be(3_600m);
+        _yearEnd.Verify(y => y.DaysAsync(maria.Id, 2026, It.IsAny<CancellationToken>()), Times.Once);
+        _runRepo.Verify(r => r.GetLeaveConversionsInYearAsync(2026, It.IsAny<IReadOnlyCollection<Guid>>(),
+            It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Once);
+        _runRepo.Verify(r => r.GetPaidRunsInYearAsync(2027, It.IsAny<CancellationToken>()), Times.Once);
+        _runRepo.Verify(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SetLeaveConversionAsync_TurningItOn_ForADecemberRun_RecomputesWithTheConversion()
+    {
+        var (maria, savedRun) = MariaAt36500();
+        ConvertibleDays(maria.Id, new LeavePaidOut(SilBalance(maria.Id, 3m), 3m));
+        RecomputesInPlace();
+        await _sut.CreateAsync(DecemberRequest(maria.Id) with { IncludeLeaveConversion = false });
+        var run = savedRun()!;
+
+        var dto = await _sut.SetLeaveConversionAsync(run.Id, include: true);
+
+        run.IncludesLeaveConversion.Should().BeTrue();
+        run.Employees.Single().LeaveConversionPay.Should().Be(3_600m);
+        dto.IncludesLeaveConversion.Should().BeTrue();
+        dto.Employees.Single().LeaveConversionPay.Should().Be(3_600m);
+        dto.Status.Should().Be(PayrollRunStatus.Draft);
+    }
+
+    [Theory]
+    [InlineData(PayrollRunStatus.Draft)]
+    [InlineData(PayrollRunStatus.ForApproval)]
+    [InlineData(PayrollRunStatus.Approved)]
+    public async Task SetLeaveConversionAsync_TurningItOff_RecomputesWithout_AndSendsTheRunBackToDraft(PayrollRunStatus status)
+    {
+        // An abandoned flagged run no longer holds its employees' conversion for the year.
+        var (maria, savedRun) = MariaAt36500();
+        ConvertibleDays(maria.Id, new LeavePaidOut(SilBalance(maria.Id, 3m), 3m));
+        RecomputesInPlace();
+        await _sut.CreateAsync(DecemberRequest(maria.Id));
+        var run = savedRun()!;
+        run.Status = status;
+
+        var dto = await _sut.SetLeaveConversionAsync(run.Id, include: false);
+
+        run.IncludesLeaveConversion.Should().BeFalse();
+        run.Status.Should().Be(PayrollRunStatus.Draft);
+        run.Employees.Single().LeaveConversionPay.Should().Be(0m);
+        dto.IncludesLeaveConversion.Should().BeFalse();
+        _yearEnd.Verify(y => y.DaysAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SetLeaveConversionAsync_TurningItOn_ForANovemberRun_IsRefused_AndChangesNothing()
+    {
+        var (maria, savedRun) = MariaAt36500();
+        await _sut.CreateAsync(DecemberRequest(maria.Id) with
+        {
+            PeriodStart = new DateOnly(2026, 11, 1), PeriodEnd = new DateOnly(2026, 11, 30),
+            PayDate = new DateOnly(2026, 11, 30), IncludeLeaveConversion = false
+        });
+        var run = savedRun()!;
+
+        var act = () => _sut.SetLeaveConversionAsync(run.Id, include: true);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message
+            .Should().Be("Year-end leave conversion goes on a December payroll.");
+        run.IncludesLeaveConversion.Should().BeFalse();
+        _runRepo.Verify(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyList<PayrollRunEmployee>>(),
+                                                   It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SetLeaveConversionAsync_OnAPaidRun_IsRefused(bool include)
+    {
+        var (run, _, _) = ApprovedDecemberConversion();
+        run.Status = PayrollRunStatus.Paid;
+
+        var act = () => _sut.SetLeaveConversionAsync(run.Id, include);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be("A paid payroll run can't be changed.");
+        run.IncludesLeaveConversion.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SetLeaveConversionAsync_OnAFinalPayRun_IsRefused(bool include)
+    {
+        var run = FinalPayRun(new DateOnly(2026, 12, 1), new DateOnly(2026, 12, 15));
+        run.Employees.Add(new PayrollRunEmployee { PayrollRunId = run.Id, EmployeeId = Guid.NewGuid() });
+        _runRepo.Setup(r => r.GetWithEntriesAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+
+        var act = () => _sut.SetLeaveConversionAsync(run.Id, include);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message
+            .Should().Be("Year-end leave conversion goes on a December payroll.");
+        _finalPay.Verify(f => f.RecomputeAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SetLeaveConversionAsync_WhenTheRunDoesNotExist_ThrowsKeyNotFound()
+    {
+        var act = () => _sut.SetLeaveConversionAsync(Guid.NewGuid(), include: true);
+
+        await act.Should().ThrowAsync<KeyNotFoundException>();
     }
 }
