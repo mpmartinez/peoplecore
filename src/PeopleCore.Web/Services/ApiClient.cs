@@ -634,6 +634,17 @@ public class ApiClient
         return (false, await ReadProblemDetailAsync(response));
     }
 
+    /// <summary>
+    /// Discards a regular run that isn't paid, with its entries. A refusal (a paid run, a final pay)
+    /// comes back as the API's reason.
+    /// </summary>
+    public async Task<(bool Ok, string? Error)> DiscardPayrollRunAsync(Guid id)
+    {
+        var response = await _http.DeleteAsync($"api/payroll-runs/{id}");
+        if (response.IsSuccessStatusCode) return (true, null);
+        return (false, await ReadProblemDetailAsync(response));
+    }
+
     /// <summary>Takes an employee off a regular run that isn't paid; the run comes back in Draft.</summary>
     public Task<PayrollRunDto?> RemovePayrollRunEmployeeAsync(Guid runId, Guid employeeId)
         => SendJsonAsync<PayrollRunDto>(HttpMethod.Delete, $"api/payroll-runs/{runId}/employees/{employeeId}");

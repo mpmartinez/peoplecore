@@ -12,11 +12,13 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     Task<PayrollRun?> GetWithEntriesAsync(Guid id, CancellationToken ct = default);
 
     /// <summary>
-    /// Regular runs already created for a period's year, for the next sequential PAY- run number.
-    /// Final-pay runs are numbered on their own sequence (<see cref="GetLastFinalPaySequenceAsync"/>)
-    /// and don't count here, so they leave no gaps in the PAY- numbers.
+    /// The highest sequence among the regular PAY-{<paramref name="year"/>}-nnn run numbers, or 0 if
+    /// there are none, for the next PAY- run number (the year is the period's, as the number is).
+    /// It is the highest number and not a count because a discarded run leaves a gap a count would
+    /// fill with a number still in use. Final-pay runs are numbered on their own sequence
+    /// (<see cref="GetLastFinalPaySequenceAsync"/>) and don't count here.
     /// </summary>
-    Task<int> CountForYearAsync(int year, CancellationToken ct = default);
+    Task<int> GetLastRegularSequenceAsync(int year, CancellationToken ct = default);
 
     /// <summary>
     /// The highest sequence among the FP-{<paramref name="payYear"/>}-nnn run numbers, or 0 if

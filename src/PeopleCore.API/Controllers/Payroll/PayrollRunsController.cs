@@ -74,6 +74,14 @@ public class PayrollRunsController : ControllerBase
         CancellationToken ct = default)
         => Ok(await _service.SetThirteenthMonthAsync(id, request.Include, ct));
 
+    /// <summary>Discards a regular run that was never paid, with its entries.</summary>
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Discard(Guid id, CancellationToken ct = default)
+    {
+        await _service.DiscardAsync(id, ct);
+        return NoContent();
+    }
+
     /// <summary>Takes a separated employee off a regular run; the run goes back to Draft.</summary>
     [HttpDelete("{id:guid}/employees/{employeeId:guid}")]
     public async Task<IActionResult> RemoveEmployee(Guid id, Guid employeeId, CancellationToken ct = default)

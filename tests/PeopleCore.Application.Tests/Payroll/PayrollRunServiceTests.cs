@@ -459,7 +459,9 @@ public class PayrollRunServiceTests
                        .ReturnsAsync([]);
         _loanRepo.Setup(r => r.GetByEmployeeIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
                  .ReturnsAsync([]);
-        _runRepo.Setup(r => r.CountForYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(4);
+        // One past the year's highest PAY- number, not its count: a discarded run leaves a gap
+        // that a count would fill with a number still in use.
+        _runRepo.Setup(r => r.GetLastRegularSequenceAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(4);
         _runRepo.Setup(r => r.AddWithEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
 
@@ -540,7 +542,7 @@ public class PayrollRunServiceTests
                        .ReturnsAsync([]);
         _loanRepo.Setup(r => r.GetByEmployeeIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
                  .ReturnsAsync([]);
-        _runRepo.Setup(r => r.CountForYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(0);
+        _runRepo.Setup(r => r.GetLastRegularSequenceAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(0);
 
         PayrollRun? saved = null;
         _runRepo.Setup(r => r.AddWithEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()))
@@ -1633,6 +1635,67 @@ public class PayrollRunServiceTests
         var act = () => _sut.RemoveEmployeeAsync(Guid.NewGuid(), Guid.NewGuid());
 
         await act.Should().ThrowAsync<KeyNotFoundException>();
+    }
+
+    // ------------------------------------------------------------------
+    // DiscardAsync - deleting a regular run that was never paid
+    // ------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(PayrollRunStatus.Draft)]
+    [InlineData(PayrollRunStatus.Processing)]
+    [InlineData(PayrollRunStatus.ForApproval)]
+    [InlineData(PayrollRunStatus.Approved)]
+    public async Task DiscardAsync_DeletesAnUnpaidRegularRun_AndChangesNothingElse(PayrollRunStatus status)
+    {
+        var (run, _) = RegularRunWithMaria(status);
+        run.Employees[0].LoanDeductionLines.Add(new PayrollLoanDeduction { EmployeeLoanId = Guid.NewGuid(), Amount = 500m });
+
+        await _sut.DiscardAsync(run.Id);
+
+        _runRepo.Verify(r => r.DeleteAsync(run, It.IsAny<CancellationToken>()), Times.Once);
+        _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+        _runRepo.Verify(r => r.SavePaidAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
+                                              It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+                                              It.IsAny<CancellationToken>()), Times.Never);
+        // Loans only change at Mark Paid, so a run that was never paid has nothing to give back.
+        _loanRepo.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task DiscardAsync_OnAPaidRun_IsRefused()
+    {
+        var (run, _) = RegularRunWithMaria(PayrollRunStatus.Paid);
+
+        var act = () => _sut.DiscardAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message
+            .Should().Be("A paid payroll run can't be discarded.");
+        _runRepo.Verify(r => r.DeleteAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(PayrollRunStatus.Draft)]
+    [InlineData(PayrollRunStatus.Approved)]
+    public async Task DiscardAsync_OnAFinalPay_IsRefused(PayrollRunStatus status)
+    {
+        var (run, _) = ApprovedFinalPay(Item("Finance", 1, cleared: false));
+        run.Status = status;
+
+        var act = () => _sut.DiscardAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message
+            .Should().Be("A final pay can't be discarded here.");
+        _runRepo.Verify(r => r.DeleteAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DiscardAsync_WhenTheRunDoesNotExist_ThrowsKeyNotFound()
+    {
+        var act = () => _sut.DiscardAsync(Guid.NewGuid());
+
+        await act.Should().ThrowAsync<KeyNotFoundException>();
+        _runRepo.Verify(r => r.DeleteAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ------------------------------------------------------------------

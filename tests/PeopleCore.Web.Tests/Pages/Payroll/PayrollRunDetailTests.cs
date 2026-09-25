@@ -1011,6 +1011,7 @@ public class PayrollRunDetailTests : BunitContext
         LeaveConversionToggle(cut)!.HasAttribute("disabled").Should().BeTrue();
         Button(cut, "Compute").HasAttribute("disabled").Should().BeTrue();
         Button(cut, "Approve").HasAttribute("disabled").Should().BeTrue();
+        DiscardButton(cut)!.HasAttribute("disabled").Should().BeTrue();
 
         ConfirmThirteenthMonthButton(cut).Click();
         _api.Requests.Count(r => r.Method == HttpMethod.Put).Should().Be(1);
@@ -1018,6 +1019,115 @@ public class PayrollRunDetailTests : BunitContext
         gate.SetResult(Json(RunJson("Draft", periodEnd: December, includesThirteenthMonth: true)));
         cut.WaitForAssertion(() => ThirteenthMonthToggle(cut)!.HasAttribute("disabled").Should().BeFalse());
         LeaveConversionToggle(cut)!.HasAttribute("disabled").Should().BeFalse();
+    }
+
+    // ---------- Discarding a run ----------
+
+    private static IElement? DiscardButton(IRenderedComponent<PayrollRunDetail> cut) =>
+        cut.FindAll("[data-discard-run]").SingleOrDefault();
+
+    private static IElement ConfirmDiscardButton(IRenderedComponent<PayrollRunDetail> cut) =>
+        cut.Find("[data-confirm-discard]").QuerySelectorAll("button").Last();
+
+    [Theory]
+    [InlineData("Regular", "Draft", true)]
+    [InlineData("Regular", "Processing", true)]
+    [InlineData("Regular", "ForApproval", true)]
+    [InlineData("Regular", "Approved", true)]
+    [InlineData("Regular", "Paid", false)]
+    [InlineData("FinalPay", "Draft", false)]
+    [InlineData("FinalPay", "Approved", false)]
+    public void DiscardIsOfferedOnRegularRunsThatArentPaid(string runType, string status, bool offered)
+    {
+        // The API refuses a paid run (it's part of the record) and a final pay (its separation links to it).
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson(status, runType: runType));
+
+        var cut = RenderPage();
+
+        if (offered)
+            DiscardButton(cut)!.TextContent.Trim().Should().Be("Discard payroll");
+        else
+            DiscardButton(cut).Should().BeNull();
+    }
+
+    [Fact]
+    public void Discarding_AsksFirst_ThenDeletesTheRun_AndGoesToTheRunsList()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Approved"))
+            .On(HttpMethod.Delete, RunPath, HttpStatusCode.NoContent);
+        var cut = RenderPage();
+
+        DiscardButton(cut)!.Click();
+
+        var dialog = cut.WaitForElement("[data-confirm-discard]");
+        dialog.QuerySelector("h2")!.TextContent.Trim().Should().Be("Discard PR-2026-0017?");
+        dialog.TextContent.Should().Contain("Its figures are deleted; nothing has been paid.");
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Delete);
+
+        ConfirmDiscardButton(cut).Click();
+
+        cut.WaitForAssertion(() => CurrentUri.Should().Be("http://localhost/payroll-runs"));
+        _api.Requests.Should().ContainSingle(r => r.Method == HttpMethod.Delete
+                                                 && r.RequestUri!.AbsolutePath == RunPath);
+    }
+
+    [Fact]
+    public void CancellingTheDiscard_SendsNothing_AndStaysOnTheRun()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft"));
+        var cut = RenderPage();
+        var before = CurrentUri;
+
+        DiscardButton(cut)!.Click();
+        cut.WaitForElement("[data-confirm-discard]").QuerySelectorAll("button").First().Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[data-confirm-discard]").Should().BeEmpty());
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Delete);
+        CurrentUri.Should().Be(before);
+    }
+
+    [Fact]
+    public void ARefusedDiscard_ShowsTheApisReason_AndStaysOnTheRun()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft"))
+            .On(HttpMethod.Delete, RunPath, HttpStatusCode.BadRequest,
+                """{"title":"Bad request","detail":"A paid payroll run can't be discarded.","status":400}""");
+        var cut = RenderPage();
+        var before = CurrentUri;
+
+        DiscardButton(cut)!.Click();
+        cut.WaitForElement("[data-confirm-discard]");
+        ConfirmDiscardButton(cut).Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should()
+            .Contain("A paid payroll run can't be discarded."));
+        cut.FindAll("[data-confirm-discard]").Should().BeEmpty();
+        CurrentUri.Should().Be(before);
+        DiscardButton(cut)!.HasAttribute("disabled").Should().BeFalse("the user can try again");
+    }
+
+    [Fact]
+    public void WhileTheRunIsBeingDiscarded_TheRunsActionsAreDisabled_AndASecondConfirmSendsNothing()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", periodEnd: December));
+        var gate = _api.OnGated(HttpMethod.Delete, RunPath);
+        var cut = RenderPage();
+
+        DiscardButton(cut)!.Click();
+        cut.WaitForElement("[data-confirm-discard]");
+        ConfirmDiscardButton(cut).Click();
+
+        cut.WaitForAssertion(() => DiscardButton(cut)!.HasAttribute("disabled").Should().BeTrue());
+        Button(cut, "Compute").HasAttribute("disabled").Should().BeTrue();
+        Button(cut, "Approve").HasAttribute("disabled").Should().BeTrue();
+        LeaveConversionToggle(cut)!.HasAttribute("disabled").Should().BeTrue();
+        ThirteenthMonthToggle(cut)!.HasAttribute("disabled").Should().BeTrue();
+
+        ConfirmDiscardButton(cut).Click();
+        _api.Requests.Count(r => r.Method == HttpMethod.Delete).Should().Be(1);
+
+        gate.SetResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        cut.WaitForAssertion(() => CurrentUri.Should().Be("http://localhost/payroll-runs"));
     }
 
     private static HttpResponseMessage Json(string json) =>

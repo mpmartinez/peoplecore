@@ -48,6 +48,14 @@ public interface IPayrollRunService
     Task<PayrollRunDto> RemoveEmployeeAsync(Guid runId, Guid employeeId, CancellationToken ct = default);
 
     /// <summary>
+    /// Deletes a regular run that isn't Paid, with its entries and everything hanging off them
+    /// (loan deduction lines, premium days) - a stale cutoff that would otherwise hold up the 13th
+    /// month for good. Nothing else changes: loans and leave only change at Mark Paid. A Paid run
+    /// or a final pay is refused; a missing run throws KeyNotFoundException.
+    /// </summary>
+    Task DiscardAsync(Guid runId, CancellationToken ct = default);
+
+    /// <summary>
     /// Turns a regular run's year-end leave conversion on or off and recomputes the run; an
     /// Approved or For-approval run goes back to Draft. Turning it on is allowed only when the
     /// run's period ends in December. A Paid run, a final pay, or a request that changes nothing

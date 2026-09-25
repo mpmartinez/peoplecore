@@ -79,8 +79,10 @@ public class PayrollRunService : IPayrollRunService
         await EnsureNoOneHasLeftAsync(request.Employees.Select(e => e.EmployeeId).ToList(),
             request.PeriodStart, request.PeriodEnd, ct);
 
+        // One past the year's highest PAY- number, not a count: a discarded run leaves a gap a
+        // count would fill with a number still in use.
         var year = request.PeriodStart.Year;
-        var sequence = await _runRepo.CountForYearAsync(year, ct) + 1;
+        var sequence = await _runRepo.GetLastRegularSequenceAsync(year, ct) + 1;
 
         var run = new PayrollRun
         {
@@ -386,6 +388,23 @@ public class PayrollRunService : IPayrollRunService
         await _runRepo.RemoveEntryAsync(run, entry, ct);
 
         return ToDto(run);
+    }
+
+    public async Task DiscardAsync(Guid runId, CancellationToken ct = default)
+    {
+        var run = await _runRepo.GetWithEntriesAsync(runId, ct)
+            ?? throw new KeyNotFoundException($"Payroll run {runId} not found.");
+
+        // A final pay belongs to its separation, which links to it.
+        if (run.RunType == PayrollRunType.FinalPay)
+            throw new DomainException("A final pay can't be discarded here.");
+        // A paid run has retired loan balances and drawn leave down; it's part of the record.
+        if (run.Status == PayrollRunStatus.Paid)
+            throw new DomainException("A paid payroll run can't be discarded.");
+
+        // Nothing but the run changes: loans and leave balances only move at Mark Paid, which this
+        // run never reached. Its entries, their loan deduction lines and premium days go with it.
+        await _runRepo.DeleteAsync(run, ct);
     }
 
     public async Task<PayrollRunDto?> GetAsync(Guid runId, CancellationToken ct = default)

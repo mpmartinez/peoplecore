@@ -21,17 +21,21 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
             .AsSplitQuery()
             .FirstOrDefaultAsync(r => r.Id == id, ct);
 
-    public async Task<int> CountForYearAsync(int year, CancellationToken ct = default)
-        => await Context.PayrollRuns.CountAsync(
-            r => r.RunType == PayrollRunType.Regular && r.PeriodStart.Year == year, ct);
+    public Task<int> GetLastRegularSequenceAsync(int year, CancellationToken ct = default)
+        => GetLastSequenceAsync(PayrollRunType.Regular, $"PAY-{year}-", ct);
 
-    public async Task<int> GetLastFinalPaySequenceAsync(int payYear, CancellationToken ct = default)
+    public Task<int> GetLastFinalPaySequenceAsync(int payYear, CancellationToken ct = default)
+        => GetLastSequenceAsync(PayrollRunType.FinalPay, $"FP-{payYear}-", ct);
+
+    /// <summary>
+    /// The highest numeric suffix among the run numbers of the type that start with the prefix, or
+    /// 0. Keyed on the number itself, as the unique index on RunNumber is: a year holds a few dozen
+    /// runs at most, so their suffixes are parsed here rather than in SQL.
+    /// </summary>
+    private async Task<int> GetLastSequenceAsync(PayrollRunType type, string prefix, CancellationToken ct)
     {
-        // Keyed on the number itself, as the unique index on RunNumber is: a year holds only a
-        // handful of final pays, so their suffixes are parsed here rather than in SQL.
-        var prefix = $"FP-{payYear}-";
         var numbers = await Context.PayrollRuns
-            .Where(r => r.RunType == PayrollRunType.FinalPay && r.RunNumber.StartsWith(prefix))
+            .Where(r => r.RunType == type && r.RunNumber.StartsWith(prefix))
             .Select(r => r.RunNumber)
             .ToListAsync(ct);
 

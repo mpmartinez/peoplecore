@@ -114,23 +114,26 @@ public class PayrollRunRepositoryQueryTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task CountForYear_CountsByPeriodStartNotPayDate()
+    public async Task GetLastRegularSequence_IsTheYearsHighestPayNumber_NotItsCount()
     {
-        // CountForYearAsync is deliberately different from the queries above: it numbers runs
-        // (PAY-{year}-{sequence}), which follows the period, not the pay date. Pinning the
-        // difference stops someone "fixing" the inconsistency and renumbering every run.
-        var straddling = ARun("PAY-2026-024", new(2026, 12, 26), new(2027, 1, 10), new(2027, 1, 10));
-        var ordinary = ARun("PAY-2026-001", new(2026, 1, 1), new(2026, 1, 15), new(2026, 1, 20));
+        // PAY-2026-002 was discarded, leaving 001, 003 and 1000: the next 2026 number must be
+        // 1001, where a count (3) would reissue 004... and eventually one in use. 999 sorts after
+        // 1000 as text, so the sequence is compared as a number, not a string. The number follows
+        // the period (PAY-2026-024 is paid in 2027), so it is read off the number itself.
+        var first = ARun("PAY-2026-001", new(2026, 1, 1), new(2026, 1, 15), new(2026, 1, 20));
+        var third = ARun("PAY-2026-003", new(2026, 2, 1), new(2026, 2, 15), new(2026, 2, 20));
+        var nineNineNine = ARun("PAY-2026-999", new(2026, 10, 1), new(2026, 10, 15), new(2026, 10, 20));
+        var thousandth = ARun("PAY-2026-1000", new(2026, 12, 26), new(2027, 1, 10), new(2027, 1, 10));
 
-        Context.PayrollRuns.AddRange(straddling, ordinary);
+        Context.PayrollRuns.AddRange(first, third, nineNineNine, thousandth);
         await Context.SaveChangesAsync();
 
-        (await Sut.CountForYearAsync(2026)).Should().Be(2);
-        (await Sut.CountForYearAsync(2027)).Should().Be(0);
+        (await Sut.GetLastRegularSequenceAsync(2026)).Should().Be(1000);
+        (await Sut.GetLastRegularSequenceAsync(2027)).Should().Be(0);
     }
 
     [Fact]
-    public async Task CountForYear_LeavesFinalPayRunsToTheirOwnSequence()
+    public async Task GetLastRegularSequence_LeavesFinalPayRunsToTheirOwnSequence()
     {
         // FP- runs are numbered by pay-date year on their own sequence; counting them here would
         // leave gaps in the PAY- numbers.
@@ -143,7 +146,7 @@ public class PayrollRunRepositoryQueryTests : DatabaseTestBase
         Context.PayrollRuns.AddRange(regular, finalPay, finalPayPaidNextYear);
         await Context.SaveChangesAsync();
 
-        (await Sut.CountForYearAsync(2026)).Should().Be(1);
+        (await Sut.GetLastRegularSequenceAsync(2026)).Should().Be(1);
         (await Sut.GetLastFinalPaySequenceAsync(2026)).Should().Be(1);
         (await Sut.GetLastFinalPaySequenceAsync(2027)).Should().Be(1);
     }

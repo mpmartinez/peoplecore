@@ -55,6 +55,10 @@
             {
                 <Button Variant="primary" OnClick="MarkPaid" Loading="@_markingPaid" Disabled="@Busy">Mark Paid</Button>
             }
+            @if (CanDiscard)
+            {
+                <Button Variant="outline" OnClick="AskToDiscard" Disabled="@Busy" data-discard-run>Discard payroll</Button>
+            }
             @if (_run.Employees.Any())
             {
                 <Button Variant="outline" OnClick="DownloadAll" Loading="@_downloadingAll" Disabled="@_downloadingAll">
@@ -248,6 +252,11 @@ else
              ConfirmText="@(_thirteenthMonthChange == true ? IncludeThirteenthMonthLabel : LeaveOutThirteenthMonthLabel)" ConfirmVariant="primary" CancelText="Leave it as it is"
              Loading="@_changingThirteenthMonth" OnConfirm="ChangeThirteenthMonth" OnCancel="@(() => _thirteenthMonthChange = null)" data-confirm-thirteenth-month />
 
+<AlertDialog IsOpen="@_confirmingDiscard" Title="@($"Discard {_run?.RunNumber}?")"
+             Description="Its figures are deleted; nothing has been paid."
+             ConfirmText="Discard payroll" ConfirmVariant="destructive" CancelText="Keep it"
+             Loading="@_discarding" OnConfirm="Discard" OnCancel="@(() => _confirmingDiscard = false)" data-confirm-discard />
+
 <AlertDialog IsOpen="@(_removingEmployee is not null)" Title="Remove from this run?"
              Description="@RemoveConfirmation()"
              ConfirmText="Remove" ConfirmVariant="destructive" CancelText="Keep them"
@@ -268,6 +277,8 @@ else
     private readonly HashSet<Guid> _downloadingEmployeeIds = new();
     private PayrollRunEmployeeDto? _removingEmployee;
     private bool _removing;
+    private bool _confirmingDiscard;
+    private bool _discarding;
     // The conversion setting being confirmed (true turns it on), or null while nothing is asked.
     private bool? _leaveConversionChange;
     private bool _changingLeaveConversion;
@@ -285,7 +296,7 @@ else
 
     // One run-level request at a time: each of these recomputes the run or moves it on.
     private bool Busy => _computing || _approving || _markingPaid || _changingLeaveConversion
-                         || _changingThirteenthMonth || _removing;
+                         || _changingThirteenthMonth || _removing || _discarding;
 
     // Shown whenever someone on the run is paid any 13th month - a final pay's included.
     private bool ShowsThirteenthMonth => _run?.Employees.Any(e => e.ThirteenthMonth > 0m) == true;
@@ -309,6 +320,10 @@ else
     // retired loan balances, and a run needs at least one employee - the API refuses all three,
     // so none offers Remove.
     private bool CanRemoveEmployees => _run is not null && !IsFinalPay && _run.Status != "Paid" && _run.Employees.Count > 1;
+
+    // The API discards only a regular run that isn't paid: a paid run is part of the record, and a
+    // final pay is linked from its separation.
+    private bool CanDiscard => _run is not null && !IsFinalPay && _run.Status != "Paid";
 
     // The API turns year-end leave conversion on or off only on a regular run that isn't paid, and
     // only for a December period end (no other month can carry it). A final pay converts leave
@@ -473,6 +488,40 @@ else
         {
             _removing = false;
             _removingEmployee = null;
+        }
+    }
+
+    private void AskToDiscard()
+    {
+        _actionError = null;
+        _confirmingDiscard = true;
+    }
+
+    // Nothing has been paid on a run that can be discarded, so there's nothing to undo but its
+    // figures; once it's gone there's no run to show, so the page goes back to the list.
+    private async Task Discard()
+    {
+        if (_discarding) return;
+        _actionError = null;
+        _discarding = true;
+        try
+        {
+            var (ok, error) = await Api.DiscardPayrollRunAsync(Id);
+            if (!ok)
+            {
+                _actionError = error ?? "Failed to discard payroll run. Please try again.";
+                return;
+            }
+            Nav.NavigateTo("/payroll-runs");
+        }
+        catch (Exception ex)
+        {
+            _actionError = ex.Message;
+        }
+        finally
+        {
+            _discarding = false;
+            _confirmingDiscard = false;
         }
     }
 

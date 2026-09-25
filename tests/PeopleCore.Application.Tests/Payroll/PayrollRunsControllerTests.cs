@@ -80,4 +80,21 @@ public class PayrollRunsControllerTests
 
         result.Should().BeOfType<OkObjectResult>().Which.Value.Should().Be(Run);
     }
+
+    [Fact]
+    public void Discard_IsADeleteOnTheRun()
+    {
+        typeof(PayrollRunsController).GetMethod(nameof(PayrollRunsController.Discard))!
+            .GetCustomAttribute<HttpDeleteAttribute>()!
+            .Template.Should().Be("{id:guid}");
+    }
+
+    [Fact]
+    public async Task Discard_DeletesTheRun_AndReturnsNoContent()
+    {
+        var result = await new PayrollRunsController(_service.Object).Discard(RunId, CancellationToken.None);
+
+        result.Should().BeOfType<NoContentResult>();
+        _service.Verify(s => s.DiscardAsync(RunId, It.IsAny<CancellationToken>()), Times.Once);
+    }
 }

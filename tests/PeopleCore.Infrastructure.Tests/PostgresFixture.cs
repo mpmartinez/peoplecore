@@ -67,7 +67,7 @@ public sealed class PostgresFixture : IAsyncLifetime
     }
 
     /// <summary>
-    /// Empties every mapped table. Isolation is not optional: CountForYearAsync and
+    /// Empties every mapped table. Isolation is not optional: GetLastRegularSequenceAsync and
     /// GetPaidRunsInYearAsync do not filter by employee, so rows left by one test would change
     /// another test's count - surfacing as an order-dependent flake rather than an honest failure.
     /// </summary>
