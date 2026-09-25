@@ -2146,19 +2146,44 @@ public class PayrollRunServiceTests
     }
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task SetLeaveConversionAsync_OnAFinalPayRun_IsRefused(bool include)
+    [InlineData(true, "Year-end leave conversion goes on a December payroll.")]
+    [InlineData(false, "A final pay's leave conversion can't be changed here.")]
+    public async Task SetLeaveConversionAsync_OnAFinalPayRun_IsRefused(bool include, string message)
     {
+        // Final pay converts its own leave: turning the year-end conversion on is the December
+        // rule's to refuse; turning it off isn't something this endpoint can do to a final pay.
         var run = FinalPayRun(new DateOnly(2026, 12, 1), new DateOnly(2026, 12, 15));
         run.Employees.Add(new PayrollRunEmployee { PayrollRunId = run.Id, EmployeeId = Guid.NewGuid() });
         _runRepo.Setup(r => r.GetWithEntriesAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
 
         var act = () => _sut.SetLeaveConversionAsync(run.Id, include);
 
-        (await act.Should().ThrowAsync<DomainException>()).Which.Message
-            .Should().Be("Year-end leave conversion goes on a December payroll.");
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(message);
+        run.Status.Should().Be(PayrollRunStatus.Draft);
         _finalPay.Verify(f => f.RecomputeAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+        _runRepo.Verify(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyList<PayrollRunEmployee>>(),
+                                                   It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(true, "This payroll already converts unused leave.")]
+    [InlineData(false, "This payroll already doesn't convert unused leave.")]
+    public async Task SetLeaveConversionAsync_ThatChangesNothing_IsRefused_SoItCantRecomputeAnApprovedRun(
+        bool include, string message)
+    {
+        // Without this, "turning off" the conversion on an approved run that never had it would
+        // recompute that run - which ComputeAsync refuses for an approved unflagged run.
+        var (run, _, _) = ApprovedDecemberConversion();
+        run.IncludesLeaveConversion = include;
+
+        var act = () => _sut.SetLeaveConversionAsync(run.Id, include);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(message);
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+        run.IncludesLeaveConversion.Should().Be(include);
+        _yearEnd.Verify(y => y.DaysAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _runRepo.Verify(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyList<PayrollRunEmployee>>(),
+                                                   It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

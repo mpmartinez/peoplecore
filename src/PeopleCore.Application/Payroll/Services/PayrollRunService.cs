@@ -154,9 +154,18 @@ public class PayrollRunService : IPayrollRunService
 
         if (run.Status == PayrollRunStatus.Paid)
             throw new DomainException("A paid payroll run can't be changed.");
-        // A final pay converts the employee's leave its own way, whichever way this was asked.
+        // A final pay converts the employee's leave its own way: turning the year-end conversion on
+        // is the December rule's to refuse, and there's nothing here to turn off.
         if (run.RunType != PayrollRunType.Regular)
-            throw new DomainException(LeaveConversionIsForDecember);
+            throw new DomainException(include
+                ? LeaveConversionIsForDecember
+                : "A final pay's leave conversion can't be changed here.");
+        // A request that changes nothing would still recompute the run - and so could recompute
+        // an approved run without the conversion, which ComputeAsync refuses.
+        if (include == run.IncludesLeaveConversion)
+            throw new DomainException(include
+                ? "This payroll already converts unused leave."
+                : "This payroll already doesn't convert unused leave.");
         if (include)
             EnsureLeaveConversionFits(run.RunType, run.PeriodEnd);
 

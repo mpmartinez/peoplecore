@@ -47,7 +47,8 @@ public interface IPayrollRunService
     /// <summary>
     /// Turns a regular run's year-end leave conversion on or off and recomputes the run; an
     /// Approved or For-approval run goes back to Draft. Turning it on is allowed only when the
-    /// run's period ends in December. A Paid run, or a final pay, is refused. Returns the run.
+    /// run's period ends in December. A Paid run, a final pay, or a request that changes nothing
+    /// is refused. Returns the run.
     /// </summary>
     Task<PayrollRunDto> SetLeaveConversionAsync(Guid runId, bool include, CancellationToken ct = default);
 

@@ -164,18 +164,18 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     Task<int> CountUnpaidRunsPaidInYearAsync(int year, CancellationToken ct = default);
 
     /// <summary>
-    /// Year-end leave conversions already on file for the employees: one per entry with
-    /// LeaveConversionPay above zero, on a Regular run - in any status - whose PeriodEnd falls in
-    /// <paramref name="periodEndYear"/>, other than <paramref name="excludeRunId"/>. Final pays
-    /// convert their own leave and don't count.
-    /// </summary>
-    /// <summary>
     /// Saves what marking a run Paid changed - the run's status, the loans it retired and the leave
     /// balances it drew converted days from - in one save, so they commit together or not at all.
     /// </summary>
     Task SavePaidAsync(PayrollRun run, IReadOnlyCollection<EmployeeLoan> loans,
         IReadOnlyCollection<Domain.Entities.Leave.LeaveBalance> leaveBalances, CancellationToken ct = default);
 
+    /// <summary>
+    /// Year-end leave conversions already on file for the employees: one per entry with
+    /// LeaveConversionPay above zero, on a Regular run - in any status - whose PeriodEnd falls in
+    /// <paramref name="periodEndYear"/>, other than <paramref name="excludeRunId"/>. Final pays
+    /// convert their own leave and don't count.
+    /// </summary>
     Task<IReadOnlyList<LeaveConvertedInRun>> GetLeaveConversionsInYearAsync(
         int periodEndYear, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId, CancellationToken ct = default);
 }
