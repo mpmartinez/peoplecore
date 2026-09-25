@@ -20,10 +20,4 @@ public class EmployeeLoanRepository : Repository<EmployeeLoan>, IEmployeeLoanRep
         => await Context.EmployeeLoans
             .Where(l => ids.Contains(l.Id))
             .ToListAsync(ct);
-
-    public async Task UpdateRangeAsync(IEnumerable<EmployeeLoan> loans, CancellationToken ct = default)
-    {
-        Context.EmployeeLoans.UpdateRange(loans);
-        await Context.SaveChangesAsync(ct);
-    }
 }

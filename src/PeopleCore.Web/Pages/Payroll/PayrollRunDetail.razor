@@ -613,7 +613,8 @@ else
     // Approve is offered for Draft, Processing and ForApproval - the statuses Compute is always
     // offered for - because PayrollRunService.ApproveAsync accepts exactly those and throws a
     // DomainException for Approved or Paid. Unlike Compute, it isn't offered on an Approved final
-    // pay or an Approved run converting year-end leave: that run is already approved.
+    // pay, or an Approved run converting year-end leave or including the 13th month: that run is
+    // already approved.
     private static bool CanApprove(string status) => status is "Draft" or "Processing" or "ForApproval";
 
     // Mark Paid is offered only when Approved: PayrollRunService.MarkPaidAsync throws a

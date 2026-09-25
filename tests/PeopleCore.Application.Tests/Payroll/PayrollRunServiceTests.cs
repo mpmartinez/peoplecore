@@ -1865,7 +1865,6 @@ public class PayrollRunServiceTests
             It.Is<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(b => b.Single() == paidOut.Balance),
             It.IsAny<CancellationToken>()), Times.Once);
         _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
-        _loanRepo.Verify(r => r.UpdateRangeAsync(It.IsAny<IEnumerable<EmployeeLoan>>(), It.IsAny<CancellationToken>()), Times.Never);
         _yearEnd.Verify(y => y.DaysAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 

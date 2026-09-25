@@ -61,13 +61,17 @@ public class PayrollRunEmployee : AuditableEntity
     /// </summary>
     public decimal? ThirteenthMonthPaidEarlierInYear { get; set; }
 
-    // Final-pay earnings - zero on a Regular run.
+    // Final-pay earnings. A Regular run's entries carry leave conversion too when the run
+    // includes the year-end conversion; separation and retirement pay are a final pay's only.
     /// <summary>
     /// Cash value of convertible leave balances: its de minimis part
     /// (<see cref="LeaveConversionNonTaxable"/>) plus the rest (<see cref="LeaveConversionOtherBenefits"/>).
     /// </summary>
     public decimal LeaveConversionPay { get; set; }
-    /// <summary>The de minimis (non-taxable) part of <see cref="LeaveConversionPay"/>: the first 10 vacation-type days.</summary>
+    /// <summary>
+    /// The de minimis (non-taxable) part of <see cref="LeaveConversionPay"/>: vacation-type days up
+    /// to the 10 a tax year allows, less those earlier conversions in the pay year used.
+    /// </summary>
     public decimal LeaveConversionNonTaxable { get; set; }
     public decimal SeparationPay { get; set; }
     public decimal RetirementPay { get; set; }

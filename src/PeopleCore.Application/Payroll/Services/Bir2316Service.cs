@@ -294,7 +294,8 @@ public class Bir2316Service : IBir2316Service
         decimal thirteenthMonthNonTaxable = Math.Min(thirteenthMonthAndOtherBenefits, StatutoryCaps.ThirteenthMonthExemption);
         decimal thirteenthMonthTaxable = Math.Max(0m, thirteenthMonthAndOtherBenefits - StatutoryCaps.ThirteenthMonthExemption);
 
-        // Final-pay earnings - zero on every entry for an employee who has never had a final run.
+        // Final-pay earnings - zero on every entry for an employee who has never had a final run,
+        // bar the leave a December run's year-end conversion paid.
         // FinalPayTaxable is the separation or retirement pay that isn't exempt; the leave beyond
         // de minimis is already in the 13th-month split above.
         decimal leaveConversionNonTaxable = entries.Sum(e => e.LeaveConversionNonTaxable);
@@ -344,9 +345,10 @@ public class Bir2316Service : IBir2316Service
             // Part IV-B Section A — non-taxable.
             Item33_HazardPayMwe = manual.Item33_HazardPayMwe,
             Item34_ThirteenthMonthAndBenefits = thirteenthMonthNonTaxable,
-            // LeaveConversionNonTaxable is the de minimis slice of final pay - the cash value of
-            // convertible leave, up to the statutory de minimis ceiling, that PayrollComputationService
-            // already excluded from the final run's withholding base. Item 35 is the form's de
+            // LeaveConversionNonTaxable is the de minimis slice of converted leave - a final pay's
+            // or a December run's year-end conversion: the cash value of convertible leave, up to
+            // the 10 vacation-type days a tax year allows, that PayrollComputationService already
+            // excluded from the run's withholding base. Item 35 is the form's de
             // minimis box, so it belongs there alongside whatever a human enters manually. The
             // leave beyond the ceiling is other benefits, in Item 34 (or 48) with the 13th month.
             Item35_DeMinimis = manual.Item35_DeMinimis + leaveConversionNonTaxable,

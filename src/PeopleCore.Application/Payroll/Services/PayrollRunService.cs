@@ -264,7 +264,8 @@ public class PayrollRunService : IPayrollRunService
     /// against exactly what was approved here. A final pay can still be recomputed or changed once
     /// approved, but that sends it back to Draft, so it is paid only as approved all the same - and
     /// so can a regular run with the year-end leave conversion, whose leave can change after it's
-    /// approved.
+    /// approved, and one that includes the 13th month, some of which another run can pay after
+    /// it's approved.
     /// </summary>
     public async Task ApproveAsync(Guid runId, CancellationToken ct = default)
     {
