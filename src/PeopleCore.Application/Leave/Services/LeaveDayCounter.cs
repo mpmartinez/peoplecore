@@ -2,6 +2,7 @@ using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Application.Scheduling.Services;
 using PeopleCore.Domain.Entities.Leave;
+using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Interfaces;
 
 namespace PeopleCore.Application.Leave.Services;
@@ -14,7 +15,7 @@ namespace PeopleCore.Application.Leave.Services;
 /// schedules: <see cref="ShiftScheduleResolver.Resolve"/> not null and not a rest day, with
 /// Monday-to-Friday counted where there is no assignment to answer for the date at all. Either
 /// way, a working date is still skipped when <see cref="IHolidayService.IsHolidayAsync"/> finds a
-/// holiday there.
+/// regular or special non-working holiday there; a special working day counts as usual.
 /// </para>
 /// </summary>
 public sealed class LeaveDayCounter : ILeaveDayCounter
@@ -59,10 +60,17 @@ public sealed class LeaveDayCounter : ILeaveDayCounter
                 ? date.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday)
                 : !schedule.IsRestDay;
 
-            if (isWorkingDay && await _holidays.IsHolidayAsync(date, ct) is null)
+            if (isWorkingDay && !IsDayOff(await _holidays.IsHolidayAsync(date, ct)))
                 counts[date.Year] = counts.GetValueOrDefault(date.Year) + 1m;
         }
 
         return counts;
     }
+
+    /// <summary>
+    /// A regular or special non-working holiday is a day off. A special working day is proclaimed
+    /// but is an ordinary working day - the same reading <c>PayrollAttendanceBridge</c> gives it.
+    /// </summary>
+    private static bool IsDayOff(HolidayType? holiday) =>
+        holiday is HolidayType.RegularHoliday or HolidayType.SpecialNonWorking;
 }

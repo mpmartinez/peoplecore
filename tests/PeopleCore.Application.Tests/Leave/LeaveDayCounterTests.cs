@@ -160,6 +160,44 @@ public class LeaveDayCounterTests
         result.Should().BeEquivalentTo(new Dictionary<int, decimal> { [2025] = 3m });
     }
 
+    [Theory]
+    [InlineData(HolidayType.RegularHoliday, 2)]
+    [InlineData(HolidayType.SpecialNonWorking, 2)]
+    [InlineData(HolidayType.SpecialWorking, 3)]
+    public async Task CountByYearAsync_OnlySkipsHolidaysThatAreNotWorkingDays(HolidayType type, int expected)
+    {
+        var employeeId = Guid.NewGuid();
+        // Monday 2026-03-02 through Wednesday 2026-03-04 on a Monday-to-Friday schedule.
+        var start = new DateOnly(2026, 3, 2);
+        var end = new DateOnly(2026, 3, 4);
+
+        _assignments.Setup(r => r.GetActiveForPeriodAsync(
+                        It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync([FixedAssignment(employeeId, start, WorkDays.MondayToFriday)]);
+        _holidays.Setup(h => h.IsHolidayAsync(new DateOnly(2026, 3, 3), It.IsAny<CancellationToken>()))
+                 .ReturnsAsync(type);
+
+        var result = await _sut.CountByYearAsync(employeeId, WorkingDayType(), start, end);
+
+        result.Should().BeEquivalentTo(new Dictionary<int, decimal> { [2026] = expected });
+    }
+
+    [Fact]
+    public async Task CountByYearAsync_NoAssignment_CountsASpecialWorkingDay()
+    {
+        var employeeId = Guid.NewGuid();
+        // Monday 2026-03-02 through Wednesday 2026-03-04, no assignment.
+        var start = new DateOnly(2026, 3, 2);
+        var end = new DateOnly(2026, 3, 4);
+
+        _holidays.Setup(h => h.IsHolidayAsync(new DateOnly(2026, 3, 3), It.IsAny<CancellationToken>()))
+                 .ReturnsAsync(HolidayType.SpecialWorking);
+
+        var result = await _sut.CountByYearAsync(employeeId, WorkingDayType(), start, end);
+
+        result.Should().BeEquivalentTo(new Dictionary<int, decimal> { [2026] = 3m });
+    }
+
     [Fact]
     public async Task CountByYearAsync_OnlyRestDays_GivesZeroForTheStartYear()
     {
