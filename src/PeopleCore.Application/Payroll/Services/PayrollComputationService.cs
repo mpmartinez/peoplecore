@@ -169,13 +169,35 @@ public class PayrollComputationService
     /// False for an employee HR has marked as not entitled; no 13th month is paid even when the
     /// run includes it.
     /// </param>
+    /// <param name="leaveConversion">
+    /// Unused leave converted to cash on a regular run (the year-end conversion). A final pay's
+    /// leave comes in <paramref name="finalPay"/> instead and takes the same path; passing both
+    /// throws.
+    /// </param>
+    /// <param name="otherBenefitsExemptUsedEarlierInYear">
+    /// How much of the 90,000 "13th month and other benefits" exemption the pay year's earlier Paid
+    /// runs have used - their 13th month plus their leave beyond de minimis. Zero falls back to
+    /// <paramref name="thirteenthMonthPaidEarlierInYear"/>, which is what callers that don't pass
+    /// it have always meant. It affects only the tax: the 13th month due still comes off
+    /// <paramref name="thirteenthMonthPaidEarlierInYear"/>.
+    /// </param>
     public PayrollRunEmployee Compute(EmployeeCompensation compensation, PayrollRun run, decimal daysWorked = 0,
         decimal overtimeHours = 0, decimal holidayDays = 0, bool includeThirteenthMonth = false,
         ContributionRates? rates = null, PayrollAttendanceInput? attendance = null,
         decimal? dailyRateFactor = null, decimal thirteenthMonthPaidEarlierInYear = 0m,
         decimal basicEarnedEarlierInYear = 0m, bool isThirteenthMonthEligible = true,
-        FinalPayExtras? finalPay = null)
+        FinalPayExtras? finalPay = null, LeaveConversionInput? leaveConversion = null,
+        decimal otherBenefitsExemptUsedEarlierInYear = 0m)
     {
+        // One leave-conversion path: a final pay's leave becomes the same input a year-end
+        // conversion passes, so the two are recorded and taxed identically.
+        if (finalPay is not null && leaveConversion is not null)
+            throw new ArgumentException(
+                "A final pay carries its leave conversion in its extras; don't pass a leave conversion as well.",
+                nameof(leaveConversion));
+        if (finalPay is not null)
+            leaveConversion = new LeaveConversionInput(finalPay.LeaveConversionNonTaxable, finalPay.LeaveConversionOtherBenefits);
+
         bool isSemiMonthly = compensation.PayFrequency == PayFrequency.SemiMonthly;
         decimal periodsPerMonth = isSemiMonthly ? 2m : 1m;
 
@@ -280,8 +302,8 @@ public class PayrollComputationService
             thirteenthMonth = Math.Max(0m, dueForYear - thirteenthMonthPaidEarlierInYear);
         }
 
-        // Final-pay earnings arrive already computed (see FinalPayMath). The non-taxable parts
-        // are recorded as-is. Separation or retirement pay that isn't exempt joins the
+        // Final-pay and leave-conversion earnings arrive already computed (see FinalPayMath). The
+        // non-taxable parts are recorded as-is. Separation or retirement pay that isn't exempt joins the
         // withholding base below exactly like a taxable allowance. The leave beyond de minimis is
         // "other benefits" instead: like the 13th month it stays out of the base and is taxed
         // only past the 90,000 exemption the two share (see ComputeThirteenthMonthTax). Neither
@@ -289,14 +311,18 @@ public class PayrollComputationService
         // salary regardless of what else is paid out.
         decimal leaveConversionPay = 0m, leaveConversionNonTaxable = 0m, separationPay = 0m, retirementPay = 0m;
         decimal finalPayNonTaxable = 0m, finalPayTaxable = 0m, leaveOtherBenefits = 0m;
+        if (leaveConversion is not null)
+        {
+            leaveConversionPay = Math.Round(leaveConversion.DeMinimis + leaveConversion.OtherBenefits, 2);
+            leaveConversionNonTaxable = leaveConversion.DeMinimis;
+            leaveOtherBenefits = leaveConversionPay - leaveConversionNonTaxable;
+            finalPayNonTaxable = leaveConversionNonTaxable;
+        }
         if (finalPay is not null)
         {
-            leaveConversionPay = Math.Round(finalPay.LeaveConversionNonTaxable + finalPay.LeaveConversionOtherBenefits, 2);
-            leaveConversionNonTaxable = finalPay.LeaveConversionNonTaxable;
-            leaveOtherBenefits = leaveConversionPay - leaveConversionNonTaxable;
             separationPay = finalPay.SeparationPay;
             retirementPay = finalPay.RetirementPay;
-            finalPayNonTaxable = leaveConversionNonTaxable + finalPay.SeparationAndRetirementNonTaxable;
+            finalPayNonTaxable += finalPay.SeparationAndRetirementNonTaxable;
             finalPayTaxable = separationPay + retirementPay - finalPay.SeparationAndRetirementNonTaxable;
         }
 
@@ -355,11 +381,16 @@ public class PayrollComputationService
         // A settled final-pay tax replaces both the per-period withholding and the 13th-month
         // excess tax below - it is the actual figure HR has already worked out, not an estimate
         // to be layered on top of one. The leave beyond de minimis is taxed with the 13th month:
-        // both are "13th month and other benefits", exempt together up to 90,000.
+        // both are "13th month and other benefits", exempt together up to 90,000 - so what the
+        // year's earlier runs used of it is their 13th month and other benefits both, when the
+        // caller has it; otherwise their 13th month alone.
+        decimal exemptUsedEarlierInYear = otherBenefitsExemptUsedEarlierInYear > 0m
+            ? otherBenefitsExemptUsedEarlierInYear
+            : thirteenthMonthPaidEarlierInYear;
         decimal withholdingTax = finalPay?.WithholdingTaxOverride ??
             (ComputeWithholdingTax(taxableForBIR, compensation.PayFrequency)
                 + ComputeThirteenthMonthTax(taxableForBIR, compensation.PayFrequency,
-                    thirteenthMonth + leaveOtherBenefits, thirteenthMonthPaidEarlierInYear));
+                    thirteenthMonth + leaveOtherBenefits, exemptUsedEarlierInYear));
 
         // Loan deductions. Each active loan contributes its per-period instalment, but never
         // more than is still owed - an employee must not be charged past the payoff - and only

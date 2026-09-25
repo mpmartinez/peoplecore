@@ -590,6 +590,43 @@ public class PayrollRunServiceTests
     }
 
     [Fact]
+    public async Task CreateAsync_TaxesThe13thMonthPastTheExemptionTheYearsOtherBenefitsAlsoUsed()
+    {
+        var employeeId = Guid.NewGuid();
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = employeeId, BasicSalary = 120_000m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "S"
+        };
+        var savedRun = SetupRoundTripRepositories(compensation);
+
+        // As above, 1,380,000 of basic and a 60,000 13th month advance earlier in the year - and
+        // this time 30,000 of leave converted past de minimis (other benefits) with it, so the
+        // year's earlier Paid runs have used 60,000 + 30,000 = 90,000: all of the exemption.
+        var earlier = new PayrollRun
+        {
+            RunNumber = "PAY-2026-000", Status = PayrollRunStatus.Paid, PayDate = new DateOnly(2026, 1, 5)
+        };
+        earlier.Employees.Add(new PayrollRunEmployee
+        {
+            EmployeeId = employeeId, RegularPay = 1_380_000m, ThirteenthMonth = 60_000m,
+            LeaveConversionPay = 40_000m, LeaveConversionNonTaxable = 10_000m
+        });
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>()))
+                .ReturnsAsync([earlier]);
+
+        await _sut.CreateAsync(With13thMonth(RoundTripRequest(employeeId)), CancellationToken.None);
+
+        // The 13th month due is still (1,380,000 + 60,000) / 12 = 120,000 less the 60,000 paid:
+        // 60,000. None of the exemption is left, so all 60,000 is taxed at the margin. Half-month
+        // base 60,000 - 875 SSS - 1,250 PhilHealth - 100 Pag-IBIG = 57,775, 1,386,600 a year;
+        // + 60,000 = 1,446,600, still in the 25% bracket: 60,000 x 25% = 15,000.
+        // 10,381.25 on the regular half-month + 15,000 = 25,381.25.
+        var entry = savedRun()!.Employees.Single();
+        entry.ThirteenthMonth.Should().Be(60_000m);
+        entry.WithholdingTax.Should().Be(25_381.25m);
+    }
+
+    [Fact]
     public async Task CreateAsync_PaysNo13thMonthToAnEmployeeMarkedIneligible()
     {
         var employeeId = Guid.NewGuid();

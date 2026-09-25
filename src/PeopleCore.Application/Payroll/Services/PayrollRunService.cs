@@ -388,11 +388,13 @@ public class PayrollRunService : IPayrollRunService
         // The 13th month is one twelfth of the basic earned in the pay year, less any part of it
         // already paid - which also uses up the 90,000 exemption first. Only Paid runs count,
         // keyed on PayDate - the same basis BIR Form 2316 totals the year on - and this run
-        // itself is never Paid while it can still be computed. Looked up only when someone in
-        // the run is receiving a 13th month, since nobody else's pay depends on it.
-        var earlierInYear = new Dictionary<Guid, (decimal Basic, decimal ThirteenthMonth)>();
+        // itself is never Paid while it can still be computed. The same runs give how much of the
+        // exemption is used: their 13th month and their leave beyond de minimis, which share it.
+        // Looked up only when someone in the run is receiving a 13th month or the run converts
+        // leave, since nobody else's pay depends on it.
+        var earlierInYear = new Dictionary<Guid, (decimal Basic, decimal ThirteenthMonth, decimal ExemptUsed)>();
         var ineligible = new HashSet<Guid>();
-        if (employees.Any(e => e.IncludeThirteenthMonth))
+        if (employees.Any(e => e.IncludeThirteenthMonth) || run.IncludesLeaveConversion)
         {
             var paidRuns = await _runRepo.GetPaidRunsInYearAsync(run.PayDate.Year, ct) ?? [];
             earlierInYear = paidRuns
@@ -400,7 +402,10 @@ public class PayrollRunService : IPayrollRunService
                 .SelectMany(r => r.Employees)
                 .Where(e => employeeIds.Contains(e.EmployeeId))
                 .GroupBy(e => e.EmployeeId)
-                .ToDictionary(g => g.Key, g => (g.Sum(e => e.RegularPay), g.Sum(e => e.ThirteenthMonth)));
+                .ToDictionary(g => g.Key, g => (
+                    g.Sum(e => e.RegularPay),
+                    g.Sum(e => e.ThirteenthMonth),
+                    g.Sum(e => e.ThirteenthMonthAndOtherBenefits)));
 
             var people = await _employeeRepo.GetByIdsAsync(employeeIds, ct) ?? [];
             ineligible = people.Where(p => !p.Is13thMonthEligible).Select(p => p.Id).ToHashSet();
@@ -436,7 +441,9 @@ public class PayrollRunService : IPayrollRunService
                 thirteenthMonthPaidEarlierInYear:
                     earlierInYear.GetValueOrDefault(employee.EmployeeId).ThirteenthMonth,
                 basicEarnedEarlierInYear: earlierInYear.GetValueOrDefault(employee.EmployeeId).Basic,
-                isThirteenthMonthEligible: !ineligible.Contains(employee.EmployeeId));
+                isThirteenthMonthEligible: !ineligible.Contains(employee.EmployeeId),
+                otherBenefitsExemptUsedEarlierInYear:
+                    earlierInYear.GetValueOrDefault(employee.EmployeeId).ExemptUsed);
 
             SnapshotAttendance(entry, attendance);
 
