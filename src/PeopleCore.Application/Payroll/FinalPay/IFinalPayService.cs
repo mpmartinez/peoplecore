@@ -1,4 +1,4 @@
-using PeopleCore.Domain.Entities.Leave;
+using PeopleCore.Application.Payroll.Services;
 using PeopleCore.Domain.Entities.Payroll;
 
 namespace PeopleCore.Application.Payroll.FinalPay;
@@ -42,6 +42,3 @@ public interface IFinalPayService
     /// </summary>
     Task RecordLeavePaidOutAsync(IReadOnlyList<LeavePaidOut> paidOut, CancellationToken ct = default);
 }
-
-/// <summary>A leave balance a final pay converted to cash, and the days it paid out.</summary>
-public sealed record LeavePaidOut(LeaveBalance Balance, decimal Days);

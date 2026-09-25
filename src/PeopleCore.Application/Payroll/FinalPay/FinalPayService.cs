@@ -273,8 +273,7 @@ public sealed class FinalPayService : IFinalPayService
         // They must still price, at the entry's own daily rate, to what the entry pays: leave taken
         // or granted since the run was computed would otherwise be recorded as paid out when it
         // wasn't, or paid out without being recorded.
-        var (deMinimis, otherBenefits) = FinalPayMath.LeaveConversion(
-            paidOut.Select(p => (p.Days, p.Balance.LeaveType.CountsAsVacationForDeMinimis)), entry.DailyRate);
+        var (deMinimis, otherBenefits) = LeavePayout.Price(paidOut, entry.DailyRate);
         if (deMinimis + otherBenefits != entry.LeaveConversionPay)
             throw new DomainException(
                 $"{separation.Employee.FullName}'s convertible leave has changed since the final pay was computed; recompute it before paying.");
@@ -283,18 +282,7 @@ public sealed class FinalPayService : IFinalPayService
     }
 
     public async Task RecordLeavePaidOutAsync(IReadOnlyList<LeavePaidOut> paidOut, CancellationToken ct = default)
-    {
-        // Recorded as used days - LeaveBalance has no field of its own for days converted to
-        // cash - so RemainingDays falls to what's left, and the year-end carry-over, which carries
-        // RemainingDays, doesn't carry the paid-out days forward.
-        var now = _clock.GetUtcNow().UtcDateTime;
-        foreach (var (balance, days) in paidOut)
-        {
-            balance.UsedDays += days;
-            balance.UpdatedAt = now;
-            await _leaveBalances.UpdateAsync(balance, ct);
-        }
-    }
+        => await LeavePayout.RecordAsync(paidOut, _leaveBalances, _clock.GetUtcNow().UtcDateTime, ct);
 
     // ── Inputs ───────────────────────────────────────────────────────────────
 

@@ -302,16 +302,9 @@ public class LeaveRequestService : ILeaveRequestService
     {
         var pending = await _leaveRepo.GetPendingAsync(employeeId, leaveTypeId, excludeId, ct);
         var held = new Dictionary<int, decimal>();
-        foreach (var (year, days) in pending.SelectMany(DaysChargedByYear))
+        foreach (var (year, days) in pending.SelectMany(LeaveCharging.DaysChargedByYear))
             held[year] = held.GetValueOrDefault(year) + days;
         return held;
-    }
-
-    /// <summary>A request's days by the year they are charged to: DaysInStartYear to the start year, the rest to the end year.</summary>
-    private static IEnumerable<(int Year, decimal Days)> DaysChargedByYear(LeaveRequest r)
-    {
-        yield return (r.StartDate.Year, r.DaysInStartYear);
-        yield return (r.EndDate.Year, r.TotalDays - r.DaysInStartYear);
     }
 
     public async Task<LeaveRequestDto> RejectAsync(Guid id, Guid rejecterId, RejectLeaveDto dto, CancellationToken ct = default)
@@ -355,7 +348,7 @@ public class LeaveRequestService : ILeaveRequestService
         {
             // Give each year back what it was charged. A PerEvent request was never charged and its
             // type has no balance rows, so nothing is found to refund.
-            var refunds = DaysChargedByYear(request)
+            var refunds = LeaveCharging.DaysChargedByYear(request)
                 .GroupBy(x => x.Year)
                 .Select(g => (Year: g.Key, Days: g.Sum(x => x.Days)))
                 .Where(x => x.Days != 0);

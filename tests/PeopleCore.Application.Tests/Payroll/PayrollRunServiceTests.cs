@@ -1140,7 +1140,7 @@ public class PayrollRunServiceTests
         // So a year-end carry-over doesn't carry the paid-out days forward.
         var (run, separation) = ApprovedFinalPay(Item("Finance", 1, cleared: true));
         var balance = new PeopleCore.Domain.Entities.Leave.LeaveBalance { EmployeeId = separation.EmployeeId, Year = 2026, TotalDays = 5m };
-        IReadOnlyList<PeopleCore.Application.Payroll.FinalPay.LeavePaidOut> paidOut = [new(balance, 5m)];
+        IReadOnlyList<LeavePaidOut> paidOut = [new(balance, 5m)];
         _finalPay.Setup(f => f.LeavePaidOutAsync(run, It.IsAny<CancellationToken>())).ReturnsAsync(paidOut);
 
         await _sut.MarkPaidAsync(run.Id);
@@ -1160,7 +1160,7 @@ public class PayrollRunServiceTests
 
         await act.Should().ThrowAsync<DomainException>().WithMessage("*convertible leave has changed*");
         run.Status.Should().Be(PayrollRunStatus.Approved);
-        _finalPay.Verify(f => f.RecordLeavePaidOutAsync(It.IsAny<IReadOnlyList<PeopleCore.Application.Payroll.FinalPay.LeavePaidOut>>(),
+        _finalPay.Verify(f => f.RecordLeavePaidOutAsync(It.IsAny<IReadOnlyList<LeavePaidOut>>(),
                                                         It.IsAny<CancellationToken>()), Times.Never);
         _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
     }
