@@ -157,6 +157,81 @@ public class EmployeeServiceTests
         result.IsActive.Should().BeTrue();
     }
 
+    // ── Civil status ─────────────────────────────────────────────────────────
+
+    private static CreateEmployeeDto NewEmployee(string? civilStatus) => new(
+        "EMP-010", "Jose", null, "Rizal", new DateOnly(1990, 1, 1), Gender.Male, "jose@company.com", null,
+        null, null, null, EmploymentStatus.Regular, EmploymentType.Regular, new DateOnly(2024, 1, 1),
+        CivilStatus: civilStatus);
+
+    [Fact]
+    public async Task CreateAsync_SavesAndReturnsTheCivilStatus()
+    {
+        // Paternity leave needs a married employee, so the status has to be settable from the start.
+        Employee? saved = null;
+        _repo.Setup(r => r.EmployeeNumberExistsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        _repo.Setup(r => r.AddAsync(It.IsAny<Employee>(), It.IsAny<CancellationToken>()))
+             .Callback((Employee e, CancellationToken _) => saved = e)
+             .ReturnsAsync((Employee e, CancellationToken _) => e);
+
+        var result = await _sut.CreateAsync(NewEmployee("Married"));
+
+        saved!.CivilStatus.Should().Be(CivilStatus.Married);
+        result.CivilStatus.Should().Be(CivilStatus.Married);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Engaged")]
+    [InlineData("7")]
+    public async Task CreateAsync_WithoutARecognisedCivilStatus_KeepsTheDefault(string? civilStatus)
+    {
+        Employee? saved = null;
+        _repo.Setup(r => r.EmployeeNumberExistsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        _repo.Setup(r => r.AddAsync(It.IsAny<Employee>(), It.IsAny<CancellationToken>()))
+             .Callback((Employee e, CancellationToken _) => saved = e)
+             .ReturnsAsync((Employee e, CancellationToken _) => e);
+
+        await _sut.CreateAsync(NewEmployee(civilStatus));
+
+        saved!.CivilStatus.Should().Be(CivilStatus.Single);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ChangesTheCivilStatus()
+    {
+        var employee = new Employee
+        {
+            Id = Guid.NewGuid(), EmployeeNumber = "EMP-011", FirstName = "Jose", LastName = "Rizal",
+            WorkEmail = "jose@company.com", IsActive = true, CivilStatus = CivilStatus.Single
+        };
+        _repo.Setup(r => r.GetByIdAsync(employee.Id, It.IsAny<CancellationToken>())).ReturnsAsync(employee);
+
+        var result = await _sut.UpdateAsync(employee.Id, new UpdateEmployeeDto(
+            "Jose", null, "Rizal", "married", null, null, null, null, null, null, null,
+            EmploymentStatus.Regular, null, true));
+
+        employee.CivilStatus.Should().Be(CivilStatus.Married);
+        result.CivilStatus.Should().Be(CivilStatus.Married);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_AnUndefinedNumericCivilStatus_LeavesItAsItWas()
+    {
+        var employee = new Employee
+        {
+            Id = Guid.NewGuid(), EmployeeNumber = "EMP-012", FirstName = "Jose", LastName = "Rizal",
+            WorkEmail = "jose@company.com", IsActive = true, CivilStatus = CivilStatus.Widowed
+        };
+        _repo.Setup(r => r.GetByIdAsync(employee.Id, It.IsAny<CancellationToken>())).ReturnsAsync(employee);
+
+        await _sut.UpdateAsync(employee.Id, new UpdateEmployeeDto(
+            "Jose", null, "Rizal", "7", null, null, null, null, null, null, null,
+            EmploymentStatus.Regular, null, true));
+
+        employee.CivilStatus.Should().Be(CivilStatus.Widowed);
+    }
+
     // ── Solo parent ID ───────────────────────────────────────────────────────
 
     [Fact]

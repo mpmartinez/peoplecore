@@ -288,11 +288,12 @@ public class EmployeesTests : BunitContext
         cut.Find("#position").Change(AccountantId.ToString());
         cut.Find("#soloParentIdNumber").Input("SP-2026-0001");
         cut.Find("#soloParentIdValidUntil").Input("2027-06-30");
+        cut.Find("#civilStatus").Change("Married");
         ButtonNamed(cut, "Save Employee").Click();
 
         cut.WaitForAssertion(() => cut.FindAll("button").Should().NotContain(b => b.TextContent.Trim() == "Save Employee"));
         _api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)].Should().Be(
-            $$"""{"employeeNumber":"EMP-0100","firstName":"Ana","middleName":null,"lastName":"Reyes","dateOfBirth":"1992-03-14","gender":"Female","workEmail":"ana@company.test","mobileNumber":"09171234567","departmentId":"{{FinanceId}}","positionId":"{{AccountantId}}","reportingManagerId":null,"employmentStatus":"Probationary","employmentType":"Regular","hireDate":"2026-09-01","soloParentIdNumber":"SP-2026-0001","soloParentIdValidUntil":"2027-06-30"}""");
+            $$"""{"employeeNumber":"EMP-0100","firstName":"Ana","middleName":null,"lastName":"Reyes","dateOfBirth":"1992-03-14","gender":"Female","workEmail":"ana@company.test","mobileNumber":"09171234567","departmentId":"{{FinanceId}}","positionId":"{{AccountantId}}","reportingManagerId":null,"employmentStatus":"Probationary","employmentType":"Regular","hireDate":"2026-09-01","soloParentIdNumber":"SP-2026-0001","soloParentIdValidUntil":"2027-06-30","civilStatus":"Married"}""");
         EmployeeListRequests.Last().Should().Be(FirstPagePath, "the new employee has to be findable, not hidden on the page the user was on");
         cut.WaitForAssertion(() => Rows(cut).Should().ContainSingle().Which[0].Should().Be("EMP-0001"));
     }
@@ -663,6 +664,39 @@ public class EmployeesTests : BunitContext
         var body = BodyOf(HttpMethod.Post, "/api/employees");
         body.GetProperty("soloParentIdNumber").ValueKind.Should().Be(JsonValueKind.Null);
         body.GetProperty("soloParentIdValidUntil").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public void TheAddForm_OffersEveryCivilStatus_StartingAtSingle()
+    {
+        // Paternity leave is only for a married employee, so the status has to be settable here.
+        _api.On(HttpMethod.Post, "/api/employees", HttpStatusCode.Created, Employee("EMP-0100", "Ana Reyes"));
+        var cut = RenderPage(Paged(1));
+        OpenForm(cut);
+
+        cut.Find("label[for=civilStatus]").TextContent.Trim().Should().Be("Civil status");
+        cut.FindAll("#civilStatus option").Select(o => (o.GetAttribute("value"), o.TextContent.Trim())).Should().Equal(
+            ("Single", "Single"), ("Married", "Married"), ("Widowed", "Widowed"), ("Divorced", "Divorced"), ("Separated", "Separated"));
+        cut.Find("#civilStatus").GetAttribute("value").Should().Be("Single");
+        FillRequiredFields(cut);
+        ButtonNamed(cut, "Save Employee").Click();
+
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Post));
+        BodyOf(HttpMethod.Post, "/api/employees").GetProperty("civilStatus").GetString().Should().Be("Single");
+    }
+
+    [Fact]
+    public void Edit_ShowsTheCivilStatus_AndSendsAChangedOne()
+    {
+        var cut = OpenEdit();
+        _api.On(HttpMethod.Put, $"/api/employees/{MariaId}", HttpStatusCode.OK, FullRecord(MariaId));
+
+        cut.Find("#civilStatus").GetAttribute("value").Should().Be("Married");
+        cut.Find("#civilStatus").Change("Widowed");
+        ButtonNamed(cut, "Save Employee").Click();
+
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Put));
+        BodyOf(HttpMethod.Put, $"/api/employees/{MariaId}").GetProperty("civilStatus").GetString().Should().Be("Widowed");
     }
 
     [Fact]

@@ -206,6 +206,16 @@
             </div>
             }
             <div class="col-span-2">
+                <FormField LabelText="Civil status" Id="civilStatus" Class="mb-4">
+                    <Select TValue="string" Id="civilStatus" @bind-Value="_form.CivilStatus">
+                        @foreach (var status in CivilStatuses)
+                        {
+                            <option value="@status">@status</option>
+                        }
+                    </Select>
+                </FormField>
+            </div>
+            <div class="col-span-2">
                 <FormField LabelText="Mobile Number" Id="mobileNumber" Class="mb-4">
                     <Input TValue="string" Value="@_form.MobileNumber"
                            ValueChanged="@(v => _form.MobileNumber = v)"
@@ -594,7 +604,7 @@
                 _form.DateOfBirth, _form.Gender, _form.WorkEmail, Blank(_form.MobileNumber),
                 _form.DepartmentId, _form.PositionId, ReportingManagerId: null,
                 _form.EmploymentStatus, _form.EmploymentType, _form.HireDate,
-                Blank(_form.SoloParentIdNumber), _form.SoloParentIdValidUntil));
+                Blank(_form.SoloParentIdNumber), _form.SoloParentIdValidUntil, _form.CivilStatus));
         }
         catch (Exception ex)
         {
@@ -628,7 +638,7 @@
 
         // Everything the form doesn't show goes back as it was loaded.
         var request = new UpdateEmployeeDto(
-            _form.FirstName, Blank(_form.MiddleName), _form.LastName, record.CivilStatus,
+            _form.FirstName, Blank(_form.MiddleName), _form.LastName, _form.CivilStatus,
             record.PersonalEmail, Blank(_form.MobileNumber), record.Address,
             _form.DepartmentId, _form.PositionId, record.TeamId, record.ReportingManagerId,
             _form.EmploymentStatus, record.RegularizationDate, record.Is13thMonthEligible,
@@ -656,6 +666,9 @@
 
     private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
+    // The names of M2NET.Core.Enums.CivilStatus, in its order. Each reads well as its own label.
+    private static readonly string[] CivilStatuses = ["Single", "Married", "Widowed", "Divorced", "Separated"];
+
     private class EmployeeFormModel
     {
         public string EmployeeNumber { get; set; } = "";
@@ -664,6 +677,8 @@
         public string LastName { get; set; } = "";
         public DateOnly DateOfBirth { get; set; } = new DateOnly(1990, 1, 1);
         public string Gender { get; set; } = "";
+        // Single until chosen otherwise, as the API stores a new employee who has none.
+        public string CivilStatus { get; set; } = "Single";
         public string WorkEmail { get; set; } = "";
         public string? MobileNumber { get; set; }
         public Guid? DepartmentId { get; set; }
@@ -682,6 +697,7 @@
             LastName = e.LastName,
             DateOfBirth = e.DateOfBirth,
             Gender = e.Gender,
+            CivilStatus = e.CivilStatus ?? "Single",
             WorkEmail = e.WorkEmail,
             MobileNumber = e.MobileNumber,
             DepartmentId = e.DepartmentId,

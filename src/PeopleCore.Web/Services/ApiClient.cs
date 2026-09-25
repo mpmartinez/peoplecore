@@ -847,7 +847,7 @@ public record CreateEmployeeDto(
     DateOnly DateOfBirth, string Gender, string WorkEmail, string? MobileNumber,
     Guid? DepartmentId, Guid? PositionId, Guid? ReportingManagerId,
     string EmploymentStatus, string EmploymentType, DateOnly HireDate,
-    string? SoloParentIdNumber, DateOnly? SoloParentIdValidUntil);
+    string? SoloParentIdNumber, DateOnly? SoloParentIdValidUntil, string? CivilStatus);
 
 public record UpdateEmployeeDto(
     string FirstName, string? MiddleName, string LastName, string? CivilStatus,

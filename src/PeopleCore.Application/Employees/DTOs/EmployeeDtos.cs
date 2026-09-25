@@ -83,7 +83,10 @@ public record CreateEmployeeDto(
     DateOnly HireDate,
     // The number is trimmed, and a blank one is stored as null.
     string? SoloParentIdNumber = null,
-    DateOnly? SoloParentIdValidUntil = null);
+    DateOnly? SoloParentIdValidUntil = null,
+    // The name of a CivilStatus, matched ignoring case, as UpdateEmployeeDto takes it. Left out or
+    // not recognised, the employee starts as Single.
+    string? CivilStatus = null);
 
 public record UpdateEmployeeDto(
     string FirstName,

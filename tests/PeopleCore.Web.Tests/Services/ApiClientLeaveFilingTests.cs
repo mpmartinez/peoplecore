@@ -214,12 +214,13 @@ public class ApiClientLeaveFilingTests
 
         await CreateClient().CreateEmployeeAsync(new CreateEmployeeDto(
             "EMP-0042", "Maria", null, "Santos", new DateOnly(1990, 5, 1), "Female", "maria@company.test", null,
-            null, null, null, "Probationary", "Regular", new DateOnly(2026, 9, 1), "SP-1", new DateOnly(2027, 1, 31)));
+            null, null, null, "Probationary", "Regular", new DateOnly(2026, 9, 1), "SP-1", new DateOnly(2027, 1, 31),
+            "Married"));
 
         PropertyNames(_api.RequestBodies.Single()!).Should().Equal(
             "employeeNumber", "firstName", "middleName", "lastName", "dateOfBirth", "gender", "workEmail", "mobileNumber",
             "departmentId", "positionId", "reportingManagerId", "employmentStatus", "employmentType", "hireDate",
-            "soloParentIdNumber", "soloParentIdValidUntil");
+            "soloParentIdNumber", "soloParentIdValidUntil", "civilStatus");
     }
 
     [Fact]

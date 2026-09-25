@@ -58,6 +58,8 @@ public class EmployeeService : IEmployeeService
             SoloParentIdNumber = CleanIdNumber(dto.SoloParentIdNumber),
             SoloParentIdValidUntil = dto.SoloParentIdValidUntil
         };
+        if (ParseCivilStatus(dto.CivilStatus) is { } civilStatus)
+            employee.CivilStatus = civilStatus;
 
         var created = await _repo.AddAsync(employee, ct);
         return ToDto(created);
@@ -71,7 +73,7 @@ public class EmployeeService : IEmployeeService
         employee.FirstName = dto.FirstName;
         employee.MiddleName = dto.MiddleName;
         employee.LastName = dto.LastName;
-        if (dto.CivilStatus is not null && Enum.TryParse<CivilStatus>(dto.CivilStatus, true, out var cs))
+        if (ParseCivilStatus(dto.CivilStatus) is { } cs)
             employee.CivilStatus = cs;
         employee.PersonalEmail = dto.PersonalEmail;
         employee.MobileNumber = dto.MobileNumber;
@@ -194,4 +196,14 @@ public class EmployeeService : IEmployeeService
             throw new DomainException($"The solo parent ID number can't be longer than {SoloParentIdNumberMaxLength} characters.");
         return trimmed;
     }
+
+    /// <summary>
+    /// A civil status by name, ignoring case; null for a blank or unrecognised one, which leaves the
+    /// employee's as it is. A number is not a name: Enum.TryParse would take "7" as a value the enum
+    /// does not define.
+    /// </summary>
+    private static CivilStatus? ParseCivilStatus(string? value) =>
+        Enum.TryParse<CivilStatus>(value, ignoreCase: true, out var parsed) && Enum.IsDefined(parsed)
+            ? parsed
+            : null;
 }
