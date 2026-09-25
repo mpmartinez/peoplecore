@@ -202,9 +202,10 @@
                 <h3 class="text-sm font-semibold">Pay</h3>
                 <Checkbox @bind-Value="_form.IsPaid" data-setting="paid">Paid</Checkbox>
                 @* Only an accrued type has a yearly balance to carry; the API refuses it on any other kind.
-                   Only a paid accrued or yearly-allowance type has days worth converting to cash at
-                   year-end. Unused days either carry over or convert, never both (the API refuses
-                   each of these), so each setting is hidden while the other is on. *@
+                   Only a paid accrued type has days worth converting to cash at year-end: a
+                   yearly-allowance type's balance only exists once the employee first files. Unused
+                   days either carry over or convert, never both (the API refuses each of these), so
+                   each setting is hidden while the other is on. *@
                 @if (_form.OffersCarryOver)
                 {
                     <Checkbox @bind-Value="_form.IsCarryOver" data-setting="carry-over">Unused days carry over to next year</Checkbox>
@@ -218,7 +219,7 @@
                 @if (_form.OffersYearEnd)
                 {
                     <Checkbox @bind-Value="_form.ConvertsAtYearEnd" data-converts-at-year-end>Converts to cash at year-end</Checkbox>
-                    <p class="-mt-2 ml-6 text-xs text-muted-foreground" data-converts-at-year-end-hint>Unused days are paid in cash on a December payroll with Convert unused leave ticked, when it's created or later on the payroll's page.</p>
+                    <p class="-mt-2 ml-6 text-xs text-muted-foreground" data-converts-at-year-end-hint>Unused accrued days are paid in cash on a December payroll with Convert unused leave ticked, when it's created or later on the payroll's page.</p>
                     @* A type saved carrying over (a SIL from before conversion existed can be both) loses
                        carry-over when saved converting. *@
                     @if (_editing is { IsCarryOver: true } && _form.Converts)
@@ -745,11 +746,11 @@
         public bool IsActive { get; set; } = true;
         public bool ConvertsAtYearEnd { get; set; }
 
-        // Year-end conversion is for a paid accrued or yearly-allowance type only, and carry-over for
-        // an accrued type only; carry-over gives way to conversion. A tick left on either from before
+        // Year-end conversion is for a paid accrued type only, and carry-over for an accrued type
+        // only; carry-over gives way to conversion. A tick left on either from before
         // the kind or pay changed, or before the other was ticked, is neither shown nor sent, so the
         // form can never hide both settings or send both.
-        public bool CanConvertAtYearEnd => Kind != LeaveEntitlementKind.PerEvent && IsPaid;
+        public bool CanConvertAtYearEnd => Kind == LeaveEntitlementKind.Accrued && IsPaid;
         public bool Converts => CanConvertAtYearEnd && ConvertsAtYearEnd;
         public bool OffersCarryOver => Kind == LeaveEntitlementKind.Accrued && !Converts;
         public bool CarriesOver => OffersCarryOver && IsCarryOver;

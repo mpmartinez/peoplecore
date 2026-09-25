@@ -99,20 +99,6 @@ public class LeaveTypeServiceTests
     }
 
     [Fact]
-    public async Task APaidYearlyAllowance_MayConvertAtYearEnd()
-    {
-        // It has a yearly balance too, so its unused days can be paid out like an accrued type's.
-        _repo.Setup(r => r.AddAsync(It.IsAny<LeaveType>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((LeaveType lt, CancellationToken _) => lt);
-
-        var dto = await _sut.CreateAsync(new CreateLeaveTypeDto(
-            "Birthday Leave", "BL", 1m, true, false, null, null, false,
-            EntitlementKind: LeaveEntitlementKind.YearlyAllowance, ConvertsAtYearEnd: true));
-
-        dto.ConvertsAtYearEnd.Should().BeTrue();
-    }
-
-    [Fact]
     public async Task Update_ChangesTheConvertsAtYearEndSetting()
     {
         var existing = new LeaveType { Name = "Service Incentive Leave", Code = "SIL", MaxDaysPerYear = 5m };
@@ -174,7 +160,7 @@ public class LeaveTypeServiceTests
     /// <summary>
     /// A per-event type with every setting moved off its default - bar carry-over, which only an
     /// accrued type may have (<see cref="AnAccruedType_StoresItsCarryOver"/>), and year-end
-    /// conversion, which only a paid accrued or yearly-allowance type may have
+    /// conversion, which only a paid accrued type may have
     /// (<see cref="Create_StoresAndReturnsTheConvertsAtYearEndSetting"/>).
     /// </summary>
     private static CreateLeaveTypeDto EverySetting() => new(
@@ -319,17 +305,21 @@ public class LeaveTypeServiceTests
         { new("Vacation Leave", "VL", 15m, true, IsCarryOver: true, CarryOverMaxDays: 5m, null, false,
               EntitlementKind: LeaveEntitlementKind.Accrued, ConvertsAtYearEnd: true),
           "A leave type can't both carry over and convert at year-end." },
-        // A per-event type has no yearly balance to convert, and an unpaid type's days are worth
-        // nothing in cash.
+        // A per-event type has no yearly balance to convert; a yearly-allowance type's balance only
+        // exists once the employee first files, so one who never filed would convert nothing; and
+        // an unpaid type's days are worth nothing in cash.
         { new("Paternity Leave", "PL", 0m, true, false, null, "Male", true,
               EntitlementKind: LeaveEntitlementKind.PerEvent, DaysPerEvent: 7m, ConvertsAtYearEnd: true),
-          "Only paid accrued or yearly-allowance leave can convert at year-end." },
+          "Only paid accrued leave can convert at year-end." },
+        { new("Birthday Leave", "BL", 1m, true, false, null, null, false,
+              EntitlementKind: LeaveEntitlementKind.YearlyAllowance, ConvertsAtYearEnd: true),
+          "Only paid accrued leave can convert at year-end." },
         { new("Leave Without Pay", "LWOP", 0m, IsPaid: false, false, null, null, false,
               EntitlementKind: LeaveEntitlementKind.Accrued, ConvertsAtYearEnd: true),
-          "Only paid accrued or yearly-allowance leave can convert at year-end." },
+          "Only paid accrued leave can convert at year-end." },
         { new("Unpaid Allowance", "UA", 5m, IsPaid: false, false, null, null, false,
               EntitlementKind: LeaveEntitlementKind.YearlyAllowance, ConvertsAtYearEnd: true),
-          "Only paid accrued or yearly-allowance leave can convert at year-end." },
+          "Only paid accrued leave can convert at year-end." },
     };
 
     [Theory]

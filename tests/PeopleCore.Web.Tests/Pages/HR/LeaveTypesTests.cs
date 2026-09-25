@@ -487,35 +487,34 @@ public class LeaveTypesTests : BunitContext
         var cut = RenderPage(Vl);
 
         await cut.Find("[data-new-leave-type]").ClickAsync(new MouseEventArgs());
-        await cut.Find("#lt-name").InputAsync(new ChangeEventArgs { Value = "Birthday Leave" });
-        await cut.Find("#lt-code").InputAsync(new ChangeEventArgs { Value = "BL" });
-        await cut.Find("#lt-kind").ChangeAsync(new ChangeEventArgs { Value = "YearlyAllowance" });
-        await cut.Find("#lt-max-days").InputAsync(new ChangeEventArgs { Value = "1" });
+        await cut.Find("#lt-name").InputAsync(new ChangeEventArgs { Value = "Earned Leave" });
+        await cut.Find("#lt-code").InputAsync(new ChangeEventArgs { Value = "EL" });
         await cut.Find("[data-converts-at-year-end]").ClickAsync(new MouseEventArgs());
         await cut.Find("form[data-leave-type-form]").SubmitAsync(EventArgs.Empty);
 
         cut.WaitForAssertion(() => cut.FindAll("form[data-leave-type-form]").Should().BeEmpty());
         var body = BodyOf(HttpMethod.Post, TypesPath);
         body.GetProperty("convertsAtYearEnd").GetBoolean().Should().BeTrue();
+        body.GetProperty("entitlementKind").GetString().Should().Be("Accrued");
         body.GetProperty("isCarryOver").GetBoolean().Should().BeFalse();
     }
 
     [Fact]
-    public async Task ACarryOverLeftTickedUnderAnotherKind_GivesWayToTheYearEndSetting()
+    public async Task ACarryOverTickedWhileConversionWasHidden_GivesWayToTheYearEndSetting()
     {
-        // Carry-over ticked on an accrued type, the kind switched away (carry-over hides and isn't
-        // sent), year-end ticked there, and the kind switched back: the form must not end up with
-        // both settings hidden, or send both.
+        // Year-end ticked, pay switched off (year-end hides and isn't sent, carry-over comes back),
+        // carry-over ticked there, and pay switched back on: the form must not end up with both
+        // settings hidden, or send both.
         _api.On(HttpMethod.Post, TypesPath, HttpStatusCode.Created, Sil);
         var cut = RenderPage(Vl);
 
         await cut.Find("[data-new-leave-type]").ClickAsync(new MouseEventArgs());
         await cut.Find("#lt-name").InputAsync(new ChangeEventArgs { Value = "Earned Leave" });
         await cut.Find("#lt-code").InputAsync(new ChangeEventArgs { Value = "EL" });
-        await cut.Find("[data-setting='carry-over']").ClickAsync(new MouseEventArgs());
-        await cut.Find("#lt-kind").ChangeAsync(new ChangeEventArgs { Value = "YearlyAllowance" });
         await cut.Find("[data-converts-at-year-end]").ClickAsync(new MouseEventArgs());
-        await cut.Find("#lt-kind").ChangeAsync(new ChangeEventArgs { Value = "Accrued" });
+        await cut.Find("[data-setting='paid']").ClickAsync(new MouseEventArgs());
+        await cut.Find("[data-setting='carry-over']").ClickAsync(new MouseEventArgs());
+        await cut.Find("[data-setting='paid']").ClickAsync(new MouseEventArgs());
 
         cut.Find("[data-converts-at-year-end]").HasAttribute("aria-checked").Should().BeTrue();
         cut.FindAll("[data-setting='carry-over']").Should().BeEmpty();
@@ -530,14 +529,15 @@ public class LeaveTypesTests : BunitContext
 
     [Theory]
     [InlineData("Accrued", true, true)]
-    [InlineData("YearlyAllowance", true, true)]
+    [InlineData("YearlyAllowance", true, false)]
     [InlineData("PerEvent", true, false)]
     [InlineData("Accrued", false, false)]
     [InlineData("YearlyAllowance", false, false)]
-    public async Task TheYearEndSetting_IsOfferedOnlyForPaidAccruedOrYearlyAllowanceTypes(string kind, bool paid, bool offered)
+    public async Task TheYearEndSetting_IsOfferedOnlyForPaidAccruedTypes(string kind, bool paid, bool offered)
     {
-        // A per-event type has no yearly balance to convert, and an unpaid type's days are worth
-        // nothing in cash; the API refuses both.
+        // A per-event type has no yearly balance to convert, a yearly-allowance type's balance only
+        // exists once the employee first files, and an unpaid type's days are worth nothing in
+        // cash; the API refuses all three.
         var cut = RenderPage(Vl);
 
         await cut.Find("[data-new-leave-type]").ClickAsync(new MouseEventArgs());
@@ -548,7 +548,8 @@ public class LeaveTypesTests : BunitContext
     }
 
     [Theory]
-    [InlineData("kind")]
+    [InlineData("per-event")]
+    [InlineData("yearly")]
     [InlineData("pay")]
     public async Task AYearEndTick_LeftOnATypeThatCanNoLongerConvert_IsNotSent(string change)
     {
@@ -559,10 +560,15 @@ public class LeaveTypesTests : BunitContext
         await cut.Find("#lt-name").InputAsync(new ChangeEventArgs { Value = "Some Leave" });
         await cut.Find("#lt-code").InputAsync(new ChangeEventArgs { Value = "SOME" });
         await cut.Find("[data-converts-at-year-end]").ClickAsync(new MouseEventArgs());
-        if (change == "kind")
+        if (change == "per-event")
         {
             await cut.Find("#lt-kind").ChangeAsync(new ChangeEventArgs { Value = "PerEvent" });
             await cut.Find("#lt-days-per-event").InputAsync(new ChangeEventArgs { Value = "3" });
+        }
+        else if (change == "yearly")
+        {
+            await cut.Find("#lt-kind").ChangeAsync(new ChangeEventArgs { Value = "YearlyAllowance" });
+            await cut.Find("#lt-max-days").InputAsync(new ChangeEventArgs { Value = "3" });
         }
         else
         {
@@ -578,13 +584,13 @@ public class LeaveTypesTests : BunitContext
     }
 
     [Fact]
-    public async Task TheYearEndHint_SaysTheDecemberPayrollCanBeTickedWhenCreatedOrOnItsPage()
+    public async Task TheYearEndHint_SaysItsForAccruedLeave_AndTheDecemberPayrollCanBeTickedWhenCreatedOrOnItsPage()
     {
         var cut = RenderPage(Vl);
         await cut.Find("[data-new-leave-type]").ClickAsync(new MouseEventArgs());
 
         cut.Find("[data-converts-at-year-end-hint]").TextContent.Trim().Should().Be(
-            "Unused days are paid in cash on a December payroll with Convert unused leave ticked, when it's created or later on the payroll's page.");
+            "Unused accrued days are paid in cash on a December payroll with Convert unused leave ticked, when it's created or later on the payroll's page.");
     }
 
     // The data migration switched conversion on for every SIL, including one that already carried
