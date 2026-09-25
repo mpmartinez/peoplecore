@@ -73,6 +73,9 @@ public class LeaveTypeService : ILeaveTypeService
             throw new DomainException("Set at least 1 for the most times allowed.");
         if (dto.MinServiceMonths < 0)
             throw new DomainException("Service months can't be negative.");
+        // Only an accrued type has a yearly balance whose unused days could move to the next year.
+        if (dto.IsCarryOver && dto.EntitlementKind != LeaveEntitlementKind.Accrued)
+            throw new DomainException("Only accrued leave can carry over.");
     }
 
     /// <summary>Writes every setting. Create and update are both full replacements.</summary>
@@ -83,7 +86,8 @@ public class LeaveTypeService : ILeaveTypeService
         lt.MaxDaysPerYear = dto.MaxDaysPerYear;
         lt.IsPaid = dto.IsPaid;
         lt.IsCarryOver = dto.IsCarryOver;
-        lt.CarryOverMaxDays = dto.CarryOverMaxDays;
+        // Like MaxEvents, cleared rather than checked on a kind that can't use it.
+        lt.CarryOverMaxDays = dto.EntitlementKind == LeaveEntitlementKind.Accrued ? dto.CarryOverMaxDays : null;
         // LeaveRules compares this to employee.Gender.ToString(); a blank would shut everyone out.
         lt.GenderRestriction = string.IsNullOrWhiteSpace(dto.GenderRestriction) ? null : dto.GenderRestriction.Trim();
         lt.RequiresDocument = dto.RequiresDocument;

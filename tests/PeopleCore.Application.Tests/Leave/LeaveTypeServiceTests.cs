@@ -123,9 +123,12 @@ public class LeaveTypeServiceTests
 
     // ---- every setting ---------------------------------------------------------------------
 
-    /// <summary>A per-event type with every setting moved off its default.</summary>
+    /// <summary>
+    /// A per-event type with every setting moved off its default - bar carry-over, which only an
+    /// accrued type may have (<see cref="AnAccruedType_StoresItsCarryOver"/>).
+    /// </summary>
     private static CreateLeaveTypeDto EverySetting() => new(
-        "Maternity Leave", "ML", 0m, IsPaid: false, IsCarryOver: true, CarryOverMaxDays: 3m,
+        "Maternity Leave", "ML", 0m, IsPaid: false, IsCarryOver: false, CarryOverMaxDays: null,
         GenderRestriction: "Female", RequiresDocument: true,
         IsConvertibleToCash: true, CountsAsVacationForDeMinimis: false,
         IsActive: false, EntitlementKind: LeaveEntitlementKind.PerEvent, CountsCalendarDays: true,
@@ -138,8 +141,8 @@ public class LeaveTypeServiceTests
         lt.Code.Should().Be("ML");
         lt.MaxDaysPerYear.Should().Be(0m);
         lt.IsPaid.Should().BeFalse();
-        lt.IsCarryOver.Should().BeTrue();
-        lt.CarryOverMaxDays.Should().Be(3m);
+        lt.IsCarryOver.Should().BeFalse();
+        lt.CarryOverMaxDays.Should().BeNull();
         lt.GenderRestriction.Should().Be("Female");
         lt.RequiresDocument.Should().BeTrue();
         lt.IsConvertibleToCash.Should().BeTrue();
@@ -162,8 +165,8 @@ public class LeaveTypeServiceTests
         dto.Code.Should().Be("ML");
         dto.MaxDaysPerYear.Should().Be(0m);
         dto.IsPaid.Should().BeFalse();
-        dto.IsCarryOver.Should().BeTrue();
-        dto.CarryOverMaxDays.Should().Be(3m);
+        dto.IsCarryOver.Should().BeFalse();
+        dto.CarryOverMaxDays.Should().BeNull();
         dto.GenderRestriction.Should().Be("Female");
         dto.RequiresDocument.Should().BeTrue();
         dto.IsConvertibleToCash.Should().BeTrue();
@@ -212,8 +215,8 @@ public class LeaveTypeServiceTests
     {
         var existing = new LeaveType
         {
-            Name = "Maternity Leave", Code = "ML", MaxDaysPerYear = 0m, IsPaid = false, IsCarryOver = true,
-            CarryOverMaxDays = 3m, GenderRestriction = "Female", RequiresDocument = true,
+            Name = "Maternity Leave", Code = "ML", MaxDaysPerYear = 0m, IsPaid = false, IsCarryOver = false,
+            CarryOverMaxDays = null, GenderRestriction = "Female", RequiresDocument = true,
             IsConvertibleToCash = true, CountsAsVacationForDeMinimis = false, IsActive = false,
             EntitlementKind = LeaveEntitlementKind.PerEvent, CountsCalendarDays = true, DaysPerEvent = 105m,
             MinServiceMonths = 6, RequiresMarried = true, RequiresSoloParentId = true, MaxEvents = 4,
@@ -257,6 +260,10 @@ public class LeaveTypeServiceTests
         { new("Solo Parent Leave", "SPL", 7m, true, false, null, null, false,
               EntitlementKind: LeaveEntitlementKind.YearlyAllowance, MinServiceMonths: -1), "Service months can't be negative." },
         { new("Vacation Leave", "VL", 15m, true, false, null, null, false, MinServiceMonths: -6), "Service months can't be negative." },
+        { new("Paternity Leave", "PL", 0m, true, IsCarryOver: true, null, "Male", true,
+              EntitlementKind: LeaveEntitlementKind.PerEvent, DaysPerEvent: 7m), "Only accrued leave can carry over." },
+        { new("Solo Parent Leave", "SPL", 7m, true, IsCarryOver: true, 3m, null, false,
+              EntitlementKind: LeaveEntitlementKind.YearlyAllowance), "Only accrued leave can carry over." },
     };
 
     [Theory]
@@ -304,6 +311,30 @@ public class LeaveTypeServiceTests
             EntitlementKind: LeaveEntitlementKind.YearlyAllowance, MaxEvents: 0));
 
         dto.MaxEvents.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task AnAccruedType_StoresItsCarryOver()
+    {
+        var dto = await _sut.CreateAsync(new CreateLeaveTypeDto(
+            "Vacation Leave", "VL", 15m, true, IsCarryOver: true, CarryOverMaxDays: 5m, null, false,
+            EntitlementKind: LeaveEntitlementKind.Accrued));
+
+        dto.IsCarryOver.Should().BeTrue();
+        dto.CarryOverMaxDays.Should().Be(5m);
+    }
+
+    [Theory]
+    [InlineData(LeaveEntitlementKind.PerEvent)]
+    [InlineData(LeaveEntitlementKind.YearlyAllowance)]
+    public async Task CarryOverMaxDays_IsClearedOnATypeThatIsNotAccrued(LeaveEntitlementKind kind)
+    {
+        // Like MaxEvents: a stale value from a hidden form field is thrown away, not checked.
+        var dto = await _sut.CreateAsync(new CreateLeaveTypeDto(
+            "Solo Parent Leave", "SPL", 7m, true, IsCarryOver: false, CarryOverMaxDays: 5m, null, false,
+            EntitlementKind: kind, DaysPerEvent: 7m));
+
+        dto.CarryOverMaxDays.Should().BeNull();
     }
 
     [Fact]

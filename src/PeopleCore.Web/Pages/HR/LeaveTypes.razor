@@ -193,12 +193,16 @@
             <div class="space-y-3">
                 <h3 class="text-sm font-semibold">Pay</h3>
                 <Checkbox @bind-Value="_form.IsPaid" data-setting="paid">Paid</Checkbox>
-                <Checkbox @bind-Value="_form.IsCarryOver" data-setting="carry-over">Unused days carry over to next year</Checkbox>
-                @if (_form.IsCarryOver)
+                @* Only an accrued type has a yearly balance to carry; the API refuses it on any other kind. *@
+                @if (_form.Kind == LeaveEntitlementKind.Accrued)
                 {
-                    <FormField LabelText="Most days carried over" Id="lt-carry-over-max" Description="Leave blank for no limit." Class="ml-6">
-                        <Input TValue="decimal?" Id="lt-carry-over-max" Type="number" Min="0" Step="0.5" @bind-Value="_form.CarryOverMaxDays" />
-                    </FormField>
+                    <Checkbox @bind-Value="_form.IsCarryOver" data-setting="carry-over">Unused days carry over to next year</Checkbox>
+                    @if (_form.IsCarryOver)
+                    {
+                        <FormField LabelText="Most days carried over" Id="lt-carry-over-max" Description="Leave blank for no limit." Class="ml-6">
+                            <Input TValue="decimal?" Id="lt-carry-over-max" Type="number" Min="0" Step="0.5" @bind-Value="_form.CarryOverMaxDays" />
+                        </FormField>
+                    }
                 }
                 <Checkbox @bind-Value="_form.IsConvertibleToCash" data-setting="convertible">Unused days are paid out in final pay</Checkbox>
                 @if (_form.IsConvertibleToCash)
@@ -735,15 +739,17 @@
         };
 
         // Every setting goes out, as the API replaces the whole type. The per-event figures and the
-        // maternity flag belong to a per-event type only, and a per-event type has no yearly figure,
-        // so a value left behind by an earlier kind isn't sent. An accrued type keeps whatever yearly
-        // figure it had, unshown: accrual doesn't use it, and a full replacement mustn't wipe it.
+        // maternity flag belong to a per-event type only, carry-over to an accrued type only, and a
+        // per-event type has no yearly figure, so a value left behind by an earlier kind isn't sent.
+        // An accrued type keeps whatever yearly figure it had, unshown: accrual doesn't use it, and a
+        // full replacement mustn't wipe it.
         public CreateLeaveTypeDto ToRequest()
         {
             var perEvent = Kind == LeaveEntitlementKind.PerEvent;
+            var carryOver = Kind == LeaveEntitlementKind.Accrued && IsCarryOver;
             return new CreateLeaveTypeDto(
                 Name.Trim(), Code.Trim(), perEvent ? 0m : MaxDaysPerYear ?? 0m,
-                IsPaid, IsCarryOver, IsCarryOver ? CarryOverMaxDays : null,
+                IsPaid, carryOver, carryOver ? CarryOverMaxDays : null,
                 string.IsNullOrWhiteSpace(Gender) ? null : Gender, RequiresDocument,
                 IsConvertibleToCash, CountsAsVacationForDeMinimis,
                 IsActive, Kind,

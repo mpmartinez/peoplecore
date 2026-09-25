@@ -351,6 +351,41 @@ public class LeaveTypesTests : BunitContext
     }
 
     [Theory]
+    [InlineData("Accrued", true)]
+    [InlineData("YearlyAllowance", false)]
+    [InlineData("PerEvent", false)]
+    public async Task CarryOver_IsOfferedOnlyForAnAccruedType(string kind, bool offered)
+    {
+        // Only an accrued type has a yearly balance whose unused days could move on; the API
+        // refuses carry-over on any other kind.
+        var cut = RenderPage(Sil);
+
+        await cut.Find("[data-new-leave-type]").ClickAsync(new MouseEventArgs());
+        await cut.Find("#lt-kind").ChangeAsync(new ChangeEventArgs { Value = kind });
+
+        cut.FindAll("[data-setting='carry-over']").Should().HaveCount(offered ? 1 : 0);
+    }
+
+    [Fact]
+    public async Task ChangingACarryingOverAccruedTypeToAnotherKind_SendsNoCarryOver()
+    {
+        _api.On(HttpMethod.Put, $"{TypesPath}/{VlId}", HttpStatusCode.OK, Vl);
+        _api.On(HttpMethod.Get, PoliciesOf(VlId), HttpStatusCode.OK, "[]");
+        var cut = RenderPage(Vl);
+
+        await ButtonIn(Row(cut, "VL"), "Edit").ClickAsync(new MouseEventArgs());
+        cut.Find("#lt-carry-over-max").GetAttribute("value").Should().Be("5");
+        await cut.Find("#lt-kind").ChangeAsync(new ChangeEventArgs { Value = "YearlyAllowance" });
+        cut.FindAll("#lt-carry-over-max").Should().BeEmpty();
+        await cut.Find("form[data-leave-type-form]").SubmitAsync(EventArgs.Empty);
+
+        cut.WaitForAssertion(() => cut.FindAll("form[data-leave-type-form]").Should().BeEmpty());
+        var body = BodyOf(HttpMethod.Put, $"{TypesPath}/{VlId}");
+        body.GetProperty("isCarryOver").GetBoolean().Should().BeFalse();
+        body.GetProperty("carryOverMaxDays").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Theory]
     [InlineData("Set at least 1 for the most times allowed.")]
     [InlineData("Service months can't be negative.")]
     [InlineData("Set the days per event.")]
