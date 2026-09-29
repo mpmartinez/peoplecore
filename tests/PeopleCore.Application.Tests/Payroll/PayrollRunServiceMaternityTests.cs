@@ -293,7 +293,7 @@ public partial class PayrollRunServiceTests
 
         await act.Should().ThrowAsync<DomainException>()
             .WithMessage("Maria Santos's maternity claim has changed since this payroll was computed; " +
-                         "discard this payroll and create it again, or set the allowance back.");
+                         "discard this payroll and create it again.");
         claim.Status.Should().Be(MaternityClaimStatus.Draft);
         VerifyNothingSavedAsPaid();
     }

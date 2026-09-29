@@ -59,7 +59,7 @@ public sealed class MaternityPayCalculator : IMaternityPayCalculator
         // is locked while an unpaid run advances the benefit (MaternityClaimService), so this is a
         // backstop that approval (EnsureAdvancesCurrentAsync) normally answers first.
         var settling = await AdvancedClaimsAsync(run,
-            "discard this payroll and create it again, or set the allowance back.", ct);
+            "discard this payroll and create it again.", ct);
         foreach (var claim in settling)
         {
             claim.Status = MaternityClaimStatus.Advanced;
