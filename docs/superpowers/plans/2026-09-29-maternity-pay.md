@@ -85,7 +85,7 @@ public static class MaternityMath
 }
 ```
 
-- [ ] Failing tests: contingency Mar 10, 2026 → semester Oct 2025–Mar 2026 → window Oct 2024–Sep 2025 (both ends); contingency Jul 1 → window Jan–Dec of the prior year; 8 MSCs where the 6 highest sum to 120,000 → 666.67; 4 MSCs → their sum ÷ 180; none → null; benefit 666.67 × 105 = 70,000.35; days in period for a request straddling both ends; offset floors at regular pay; exempt offset at 15 of 31 days.
+- [ ] Failing tests: contingency Mar 10, 2026 → semester Oct 2025–Mar 2026 → window Oct 2024–Sep 2025 (both ends); contingency Jun 30 → window Jan–Dec 2025; contingency Jul 1, 2026 → window Apr 2025–Mar 2026; 8 MSCs where the 6 highest sum to 120,000 → 666.67; 4 MSCs → their sum ÷ 180; none → null; benefit 666.67 × 105 = 70,000.35; days in period for a request straddling both ends; offset floors at regular pay; exempt offset at 15 of 31 days.
 - [ ] Run → fail → implement → pass → commit `feat(payroll): the SSS maternity benefit arithmetic`.
 
 ---
