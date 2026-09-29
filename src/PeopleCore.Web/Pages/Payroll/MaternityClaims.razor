@@ -1,0 +1,505 @@
+@page "/maternity-claims"
+@attribute [RequirePermission(Permissions.PayrollManage)]
+@inject ApiClient Api
+
+@*
+    The SSS maternity benefit (RA 11210), claim by claim. HR opens a claim for an approved maternity
+    leave, sets the SSS daily allowance (PeopleCore suggests one from paid payroll), and a payroll
+    advances the benefit; once SSS answers, HR records the reimbursement or the denial. The
+    outstanding total is what has been advanced and not yet settled either way.
+*@
+
+<PageTitle>Maternity Claims</PageTitle>
+
+<PageHeader Title="Maternity Claims" Section="Payroll"
+            Description="The SSS maternity benefit: advanced on a payroll, then reimbursed by SSS (RA 11210).">
+    <Actions>
+        <Button Variant="primary" OnClick="OpenCreate" data-new-claim>
+            <i class="bi bi-plus-lg mr-1"></i> New claim
+        </Button>
+    </Actions>
+</PageHeader>
+
+@if (_loadError is not null)
+{
+    <Alert Variant="destructive" Title="Couldn't load maternity claims">@_loadError</Alert>
+    <Button Variant="outline" Size="sm" Class="mt-3" OnClick="LoadClaims">Retry</Button>
+}
+else if (_summary is null)
+{
+    <div class="p-6 flex justify-center"><Spinner /></div>
+}
+else
+{
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+        <Card>
+            <CardContent Class="pt-4">
+                <div class="text-xs text-muted-foreground">Outstanding from SSS</div>
+                <div class="text-xl font-semibold" data-outstanding>@PayrollLabels.Peso(_summary.Outstanding)</div>
+                <div class="text-xs text-muted-foreground mt-1">Advanced on a payroll, not yet reimbursed or denied.</div>
+            </CardContent>
+        </Card>
+    </div>
+
+    <Card>
+        <CardContent Class="p-0">
+            @if (_summary.Claims.Count == 0)
+            {
+                <div class="p-6 text-center text-muted-foreground text-sm">No maternity claims yet.</div>
+            }
+            else
+            {
+                <div class="overflow-x-auto">
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead Class="px-4">Employee</TableHead>
+                            <TableHead Class="px-4">Leave</TableHead>
+                            <TableHead Class="px-4">Days</TableHead>
+                            <TableHead Class="px-4">Daily Allowance</TableHead>
+                            <TableHead Class="px-4">Benefit</TableHead>
+                            <TableHead Class="px-4">Status</TableHead>
+                            <TableHead Class="px-4">Advanced On</TableHead>
+                            <TableHead Class="px-4">SSS</TableHead>
+                            <TableHead Class="px-4"><span class="sr-only">Actions</span></TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        @foreach (var c in _summary.Claims)
+                        {
+                            <TableRow data-claim="@c.Id">
+                                <TableCell Class="px-4 py-3 font-medium">@c.EmployeeName</TableCell>
+                                <TableCell Class="px-4 py-3 whitespace-nowrap">@MaternityLabels.Date(c.LeaveStart) – @MaternityLabels.Date(c.LeaveEnd)</TableCell>
+                                <TableCell Class="px-4 py-3">@MaternityLabels.Days(c.Days)</TableCell>
+                                <TableCell Class="px-4 py-3">
+                                    @if (c.DailyAllowance is { } allowance)
+                                    {
+                                        @PayrollLabels.Peso(allowance)
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted-foreground">Not set</span>
+                                    }
+                                </TableCell>
+                                <TableCell Class="px-4 py-3">
+                                    @if (c.DailyAllowance is null)
+                                    {
+                                        <span class="text-muted-foreground">&mdash;</span>
+                                    }
+                                    else
+                                    {
+                                        @PayrollLabels.Peso(c.Benefit)
+                                    }
+                                </TableCell>
+                                <TableCell Class="px-4 py-3">
+                                    <Badge Variant="@MaternityLabels.StatusVariant(c.Status)" data-status>@MaternityLabels.StatusOf(c.Status)</Badge>
+                                </TableCell>
+                                <TableCell Class="px-4 py-3">
+                                    @if (c.AdvanceRunNumber is null)
+                                    {
+                                        <span class="text-muted-foreground">&mdash;</span>
+                                    }
+                                    else
+                                    {
+                                        <div class="font-medium">@c.AdvanceRunNumber</div>
+                                        @if (c.AdvancedAt is { } advancedAt)
+                                        {
+                                            <div class="text-xs text-muted-foreground">@MaternityLabels.Date(advancedAt)</div>
+                                        }
+                                    }
+                                </TableCell>
+                                <TableCell Class="px-4 py-3">
+                                    @if (c.ReimbursedAmount is { } reimbursed)
+                                    {
+                                        <div>@PayrollLabels.Peso(reimbursed)@(c.ReimbursedOn is { } on ? $" on {MaternityLabels.Date(on)}" : "")</div>
+                                    }
+                                    @if (!string.IsNullOrEmpty(c.Note))
+                                    {
+                                        <div class="text-xs text-muted-foreground">@c.Note</div>
+                                    }
+                                </TableCell>
+                                <TableCell Class="px-4 py-3">
+                                    <div class="flex gap-2 justify-end">
+                                        @* The API changes the allowance only on a Draft claim, and records SSS's answer only on an Advanced one. *@
+                                        @if (c.Status == MaternityClaimStatus.Draft)
+                                        {
+                                            <Button Variant="outline" Size="sm" OnClick="@(() => OpenAllowance(c))" data-set-allowance>Set allowance</Button>
+                                        }
+                                        else if (c.Status == MaternityClaimStatus.Advanced)
+                                        {
+                                            <Button Variant="outline" Size="sm" OnClick="@(() => OpenReimburse(c))" data-reimburse>Record reimbursement</Button>
+                                            <Button Variant="outline" Size="sm" OnClick="@(() => OpenDeny(c))" data-deny>Record denial</Button>
+                                        }
+                                    </div>
+                                </TableCell>
+                            </TableRow>
+                        }
+                    </TableBody>
+                </Table>
+                </div>
+            }
+        </CardContent>
+    </Card>
+}
+
+<Dialog IsOpen="@_createOpen" Title="New maternity claim"
+        Description="For an approved maternity leave that has no claim yet." OnClose="CloseDialogs" BodyClass="space-y-4" data-create-dialog>
+    <ChildContent>
+        @if (_createError is not null)
+        {
+            <Alert Variant="destructive" data-create-error>@_createError</Alert>
+        }
+        @if (_eligibleError is not null)
+        {
+            <Alert Variant="destructive" data-eligible-error>Approved maternity leave could not be loaded: @_eligibleError</Alert>
+        }
+        else if (_eligible is null)
+        {
+            <div class="p-4 flex justify-center"><Spinner Size="sm" /></div>
+        }
+        else if (_eligible.Count == 0)
+        {
+            <p class="text-sm text-muted-foreground">No approved maternity leave is waiting for a claim.</p>
+        }
+        else
+        {
+            <FormField LabelText="Maternity leave" Id="claim-leave" Required="true">
+                <Select TValue="Guid?" Id="claim-leave" @bind-Value="_chosenLeave" Placeholder="Select..." Disabled="@_saving">
+                    @foreach (var leave in _eligible)
+                    {
+                        <option value="@leave.LeaveRequestId">@leave.EmployeeName &middot; @MaternityLabels.Date(leave.StartDate) – @MaternityLabels.Date(leave.EndDate) (@MaternityLabels.Days(leave.Days) days)</option>
+                    }
+                </Select>
+            </FormField>
+        }
+    </ChildContent>
+    <FooterContent>
+        <div class="flex justify-end gap-2">
+            <Button Variant="outline" OnClick="CloseDialogs">Cancel</Button>
+            <Button Variant="primary" OnClick="CreateClaim" Loading="@_saving" Disabled="@(_eligible is not { Count: > 0 })" data-submit-create>Create claim</Button>
+        </div>
+    </FooterContent>
+</Dialog>
+
+<Dialog IsOpen="@(_allowanceClaim is not null)" Title="@($"Daily allowance for {_allowanceClaim?.EmployeeName}")"
+        Description="The SSS daily maternity allowance. The benefit is the allowance times the leave days." OnClose="CloseDialogs"
+        BodyClass="space-y-4" data-allowance-dialog>
+    <ChildContent>
+        @if (_formError is not null)
+        {
+            <Alert Variant="destructive" data-allowance-error>@_formError</Alert>
+        }
+        <p class="text-sm text-muted-foreground" data-suggestion>
+            @if (_loadingSuggestion)
+            {
+                <span>Working out a suggestion…</span>
+            }
+            else if (_suggestionError is not null)
+            {
+                <span>Couldn't work out a suggestion: @_suggestionError</span>
+            }
+            else if (_suggestion is not null)
+            {
+                <span>@MaternityLabels.Suggestion(_suggestion)</span>
+            }
+        </p>
+        <FormField LabelText="Daily allowance (₱)" Id="claim-allowance" Required="true">
+            <Input TValue="decimal?" Id="claim-allowance" Type="number" Min="0" Step="0.01" @bind-Value="_allowance" Disabled="@_saving" />
+        </FormField>
+        @if (_allowanceClaim is not null && _allowance is > 0m)
+        {
+            <p class="text-sm" data-benefit-preview>
+                Benefit: @PayrollLabels.Peso(Math.Round(Math.Round(_allowance.Value, 2, MidpointRounding.AwayFromZero) * _allowanceClaim.Days, 2, MidpointRounding.AwayFromZero))
+                for @MaternityLabels.Days(_allowanceClaim.Days) days.
+            </p>
+        }
+    </ChildContent>
+    <FooterContent>
+        <div class="flex justify-end gap-2">
+            <Button Variant="outline" OnClick="CloseDialogs">Cancel</Button>
+            <Button Variant="primary" OnClick="SaveAllowance" Loading="@_saving" data-submit-allowance>Save allowance</Button>
+        </div>
+    </FooterContent>
+</Dialog>
+
+<Dialog IsOpen="@(_reimburseClaim is not null)" Title="@($"SSS reimbursement for {_reimburseClaim?.EmployeeName}")"
+        Description="@(_reimburseClaim is null ? null : $"The benefit advanced was {PayrollLabels.Peso(_reimburseClaim.Benefit)}.")"
+        OnClose="CloseDialogs" BodyClass="space-y-4" data-reimburse-dialog>
+    <ChildContent>
+        @if (_formError is not null)
+        {
+            <Alert Variant="destructive" data-reimburse-error>@_formError</Alert>
+        }
+        <div class="grid grid-cols-2 gap-3">
+            <FormField LabelText="Reimbursed on" Id="reimbursed-on" Required="true">
+                <Input TValue="DateOnly" Id="reimbursed-on" Type="date" @bind-Value="_reimbursedOn" Disabled="@_saving" />
+            </FormField>
+            <FormField LabelText="Amount (₱)" Id="reimbursed-amount" Required="true">
+                <Input TValue="decimal?" Id="reimbursed-amount" Type="number" Min="0" Step="0.01" @bind-Value="_reimbursedAmount" Disabled="@_saving" />
+            </FormField>
+        </div>
+        <FormField LabelText="Note" Id="reimburse-note" Description="Needed when the amount differs from the benefit.">
+            <Textarea TValue="string" Id="reimburse-note" @bind-Value="_note" MaxLength="@NoteMaxLength" Disabled="@_saving" />
+        </FormField>
+    </ChildContent>
+    <FooterContent>
+        <div class="flex justify-end gap-2">
+            <Button Variant="outline" OnClick="CloseDialogs">Cancel</Button>
+            <Button Variant="primary" OnClick="Reimburse" Loading="@_saving" data-submit-reimburse>Record reimbursement</Button>
+        </div>
+    </FooterContent>
+</Dialog>
+
+<Dialog IsOpen="@(_denyClaim is not null)" Title="@($"SSS denial for {_denyClaim?.EmployeeName}")"
+        Description="@(_denyClaim is null ? null : $"The {PayrollLabels.Peso(_denyClaim.Benefit)} advanced won't be reimbursed.")"
+        OnClose="CloseDialogs" BodyClass="space-y-4" data-deny-dialog>
+    <ChildContent>
+        @if (_formError is not null)
+        {
+            <Alert Variant="destructive" data-deny-error>@_formError</Alert>
+        }
+        <FormField LabelText="Why SSS denied it" Id="deny-note" Required="true">
+            <Textarea TValue="string" Id="deny-note" @bind-Value="_note" MaxLength="@NoteMaxLength" Disabled="@_saving" />
+        </FormField>
+    </ChildContent>
+    <FooterContent>
+        <div class="flex justify-end gap-2">
+            <Button Variant="outline" OnClick="CloseDialogs">Cancel</Button>
+            <Button Variant="destructive" OnClick="Deny" Loading="@_saving" data-submit-deny>Record denial</Button>
+        </div>
+    </FooterContent>
+</Dialog>
+
+@code {
+    private const int NoteMaxLength = 500;
+
+    private MaternityClaimsSummaryDto? _summary;
+    private string? _loadError;
+    // A later load wins: an earlier one still in flight is dropped when it answers.
+    private int _loadVersion;
+
+    // Bumped whenever a form opens or closes, so what an earlier form asked for (the eligible
+    // leave, a suggestion) never lands in the one on screen now.
+    private int _dialogVersion;
+    private bool _saving;
+    private string? _formError;
+
+    private bool _createOpen;
+    private List<EligibleMaternityLeaveDto>? _eligible;
+    private Guid? _chosenLeave;
+    private string? _createError;
+    private string? _eligibleError;
+
+    private MaternityClaimDto? _allowanceClaim;
+    private decimal? _allowance;
+    private SuggestedAllowanceDto? _suggestion;
+    private bool _loadingSuggestion;
+    private string? _suggestionError;
+
+    private MaternityClaimDto? _reimburseClaim;
+    private DateOnly _reimbursedOn;
+    private decimal? _reimbursedAmount;
+
+    private MaternityClaimDto? _denyClaim;
+    private string? _note;
+
+    protected override async Task OnInitializedAsync() => await LoadClaims();
+
+    private async Task LoadClaims()
+    {
+        var version = ++_loadVersion;
+        _loadError = null;
+        try
+        {
+            var summary = await Api.GetMaternityClaimsAsync();
+            if (version != _loadVersion) return;
+            _summary = summary;
+        }
+        catch (Exception ex)
+        {
+            if (version != _loadVersion) return;
+            // Without the list there's no outstanding total to trust either.
+            _summary = null;
+            _loadError = ex.Message;
+        }
+    }
+
+    private void CloseDialogs()
+    {
+        _dialogVersion++;
+        _createOpen = false;
+        _allowanceClaim = _reimburseClaim = _denyClaim = null;
+    }
+
+    private void ResetForm()
+    {
+        CloseDialogs();
+        _formError = _createError = null;
+        _note = null;
+    }
+
+    private async Task OpenCreate()
+    {
+        ResetForm();
+        var version = _dialogVersion;
+        _createOpen = true;
+        _eligible = null;
+        _eligibleError = null;
+        _chosenLeave = null;
+        try
+        {
+            var eligible = await Api.GetEligibleMaternityLeaveAsync();
+            if (version != _dialogVersion) return;
+            _eligible = eligible?.ToList() ?? [];
+        }
+        catch (Exception ex)
+        {
+            if (version != _dialogVersion) return;
+            _eligibleError = ex.Message;
+        }
+    }
+
+    private async Task CreateClaim()
+    {
+        if (_saving) return;
+        _createError = null;
+        if (_chosenLeave is not { } leaveRequestId)
+        {
+            _createError = "Choose an approved maternity leave.";
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            await Api.CreateMaternityClaimAsync(leaveRequestId);
+        }
+        catch (Exception ex)
+        {
+            _createError = ex.Message;
+            return;
+        }
+        finally
+        {
+            _saving = false;
+        }
+
+        CloseDialogs();
+        await LoadClaims();
+    }
+
+    private async Task OpenAllowance(MaternityClaimDto claim)
+    {
+        ResetForm();
+        var version = _dialogVersion;
+        _allowanceClaim = claim;
+        // A claim that already has an allowance starts from it; otherwise the suggestion fills it in.
+        _allowance = claim.DailyAllowance;
+        _suggestion = null;
+        _suggestionError = null;
+        _loadingSuggestion = true;
+        try
+        {
+            var suggestion = await Api.GetMaternityAllowanceSuggestionAsync(claim.Id);
+            if (version != _dialogVersion) return;
+            _suggestion = suggestion;
+            if (_allowance is null && suggestion?.DailyAllowance is { } suggested) _allowance = suggested;
+        }
+        catch (Exception ex)
+        {
+            if (version != _dialogVersion) return;
+            _suggestionError = ex.Message;
+        }
+        finally
+        {
+            if (version == _dialogVersion) _loadingSuggestion = false;
+        }
+    }
+
+    private async Task SaveAllowance()
+    {
+        if (_saving || _allowanceClaim is not { } claim) return;
+        _formError = null;
+        if (_allowance is not { } allowance || allowance <= 0m)
+        {
+            _formError = "Enter the SSS daily maternity allowance.";
+            return;
+        }
+
+        if (await SendAsync(() => Api.SetMaternityAllowanceAsync(claim.Id, allowance)))
+            await LoadClaims();
+    }
+
+    private void OpenReimburse(MaternityClaimDto claim)
+    {
+        ResetForm();
+        _reimburseClaim = claim;
+        _reimbursedOn = DateOnly.FromDateTime(DateTime.Today);
+        // Most reimbursements are the benefit in full; anything else needs a note.
+        _reimbursedAmount = claim.Benefit;
+    }
+
+    private async Task Reimburse()
+    {
+        if (_saving || _reimburseClaim is not { } claim) return;
+        _formError = null;
+        // Rounded as the API rounds it, before either rule reads it.
+        var amount = Math.Round(_reimbursedAmount ?? 0m, 2, MidpointRounding.AwayFromZero);
+        var note = Note();
+        if (amount <= 0m)
+            _formError = "Enter the amount SSS reimbursed.";
+        else if (amount != claim.Benefit && note is null)
+            _formError = "Explain why the reimbursement differs from the benefit.";
+        else if (note is { Length: > NoteMaxLength })
+            _formError = "Keep the note to 500 characters.";
+        if (_formError is not null) return;
+
+        if (await SendAsync(() => Api.ReimburseMaternityClaimAsync(claim.Id, new ReimburseRequest(_reimbursedOn, amount, note))))
+            await LoadClaims();
+    }
+
+    private void OpenDeny(MaternityClaimDto claim)
+    {
+        ResetForm();
+        _denyClaim = claim;
+    }
+
+    private async Task Deny()
+    {
+        if (_saving || _denyClaim is not { } claim) return;
+        _formError = null;
+        var note = Note();
+        if (note is null)
+            _formError = "Explain why SSS denied the claim.";
+        else if (note.Length > NoteMaxLength)
+            _formError = "Keep the note to 500 characters.";
+        if (_formError is not null) return;
+
+        if (await SendAsync(() => Api.DenyMaternityClaimAsync(claim.Id, note)))
+            await LoadClaims();
+    }
+
+    private string? Note() => string.IsNullOrWhiteSpace(_note) ? null : _note.Trim();
+
+    /// <summary>Sends one command; on success the form closes, on a refusal it stays open with the API's reason.</summary>
+    private async Task<bool> SendAsync(Func<Task<MaternityClaimDto?>> send)
+    {
+        _saving = true;
+        try
+        {
+            await send();
+        }
+        catch (Exception ex)
+        {
+            _formError = ex.Message;
+            return false;
+        }
+        finally
+        {
+            _saving = false;
+        }
+
+        CloseDialogs();
+        return true;
+    }
+}

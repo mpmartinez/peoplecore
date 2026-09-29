@@ -58,8 +58,12 @@ public class PayrollRunsTests : BunitContext
         return cut;
     }
 
-    private IRenderedComponent<PayrollRuns> RenderWithCreateDialogOpen()
+    private const string ReadyPath = "/api/maternity-claims/ready";
+
+    /// <param name="readyJson">The ids with a maternity claim ready to advance; null leaves the route unanswered (a 404).</param>
+    private IRenderedComponent<PayrollRuns> RenderWithCreateDialogOpen(string? readyJson = "[]")
     {
+        if (readyJson is not null) _api.On(HttpMethod.Get, ReadyPath, HttpStatusCode.OK, readyJson);
         _api.On(HttpMethod.Get, RunsPath, HttpStatusCode.OK, Runs());
         var cut = RenderPage();
         Button(cut, "Create Run").Click();
@@ -285,7 +289,7 @@ public class PayrollRunsTests : BunitContext
         // server derives from attendance and unpay overtime and holiday premiums.
         var body = _api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)];
         body.Should().Be(
-            $$"""{"periodStart":"{{start}}","periodEnd":"{{end}}","payDate":"{{payDate}}","frequency":"SemiMonthly","employees":[{"employeeId":"{{MariaId}}","includeThirteenthMonth":false}],"includeLeaveConversion":{{(convertsLeave ? "true" : "false")}}}""");
+            $$"""{"periodStart":"{{start}}","periodEnd":"{{end}}","payDate":"{{payDate}}","frequency":"SemiMonthly","employees":[{"employeeId":"{{MariaId}}","includeThirteenthMonth":false,"advanceMaternityBenefit":false}],"includeLeaveConversion":{{(convertsLeave ? "true" : "false")}}}""");
     }
 
     [Fact]
@@ -557,6 +561,131 @@ public class PayrollRunsTests : BunitContext
         var body = System.Text.Json.JsonDocument.Parse(_api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)]!).RootElement;
         body.GetProperty("includeLeaveConversion").GetBoolean().Should().BeTrue();
         body.GetProperty("employees").EnumerateArray().Should().OnlyContain(e => e.GetProperty("includeThirteenthMonth").GetBoolean());
+    }
+
+    // ---------- The maternity benefit advance ----------
+
+    private static IElement? AdvanceBox(IRenderedComponent<PayrollRuns> cut, Guid employeeId) =>
+        cut.FindAll($"[data-advance-maternity='{employeeId}']").SingleOrDefault();
+
+    private const string NetCashNote =
+        "In a fully covered cutoff, the net cash is the advance less that cutoff's SSS, PhilHealth and Pag-IBIG shares.";
+
+    [Fact]
+    public void TheAdvanceBox_IsOfferedOnlyForEmployeesWithAClaimReadyToAdvance_WithTheNetCashNote()
+    {
+        StubTwoActiveEmployees();
+
+        var cut = RenderWithCreateDialogOpen($$"""["{{MariaId}}"]""");
+
+        cut.WaitForAssertion(() => AdvanceBox(cut, MariaId).Should().NotBeNull());
+        var box = AdvanceBox(cut, MariaId)!;
+        box.ParentElement!.TextContent.Should().Contain("Advance maternity benefit");
+        box.HasAttribute("aria-checked").Should().BeFalse("it starts unticked");
+        box.Closest("[data-maternity-advance]")!.QuerySelector("[data-maternity-net-cash-note]")!.TextContent.Trim()
+            .Should().Be(NetCashNote);
+        AdvanceBox(cut, JoseId).Should().BeNull();
+        // The employee checklist keeps one box per employee; the advance box is its own.
+        EmployeeCheckbox(cut, "Maria Santos").Should().NotBeSameAs(box);
+    }
+
+    [Fact]
+    public void ATickedAdvance_IsSentForThatEmployeeOnly()
+    {
+        StubTwoActiveEmployees();
+        _api.On(HttpMethod.Post, "/api/payroll-runs", HttpStatusCode.Created, $$"""{"id":"{{Guid.NewGuid()}}","runNumber":"PR-2026-0015"}""");
+        var cut = RenderWithCreateDialogOpen($$"""["{{MariaId}}"]""");
+
+        cut.WaitForAssertion(() => AdvanceBox(cut, MariaId).Should().NotBeNull());
+        AdvanceBox(cut, MariaId)!.Click();
+        Button(cut, "Create").Click();
+
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Post));
+        var body = System.Text.Json.JsonDocument.Parse(_api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)]!).RootElement;
+        body.GetProperty("employees").EnumerateArray()
+            .ToDictionary(e => e.GetProperty("employeeId").GetGuid(), e => e.GetProperty("advanceMaternityBenefit").GetBoolean())
+            .Should().BeEquivalentTo(new Dictionary<Guid, bool> { [MariaId] = true, [JoseId] = false });
+    }
+
+    [Fact]
+    public void AnEmployeeTakenOffTheRun_LosesTheAdvanceBox_AndTheirTickIsNotSent()
+    {
+        StubTwoActiveEmployees();
+        _api.On(HttpMethod.Post, "/api/payroll-runs", HttpStatusCode.Created, $$"""{"id":"{{Guid.NewGuid()}}","runNumber":"PR-2026-0015"}""");
+        var cut = RenderWithCreateDialogOpen($$"""["{{MariaId}}"]""");
+
+        cut.WaitForAssertion(() => AdvanceBox(cut, MariaId).Should().NotBeNull());
+        AdvanceBox(cut, MariaId)!.Click();
+        EmployeeCheckbox(cut, "Maria Santos").Click();
+        AdvanceBox(cut, MariaId).Should().BeNull();
+        EmployeeCheckbox(cut, "Maria Santos").Click();
+        AdvanceBox(cut, MariaId)!.HasAttribute("aria-checked").Should().BeFalse("taking her off cleared the tick");
+        AdvanceBox(cut, MariaId)!.Click();
+        EmployeeCheckbox(cut, "Maria Santos").Click();
+        Button(cut, "Create").Click();
+
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Post));
+        var body = System.Text.Json.JsonDocument.Parse(_api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Post)]!).RootElement;
+        var employees = body.GetProperty("employees").EnumerateArray().ToList();
+        employees.Should().ContainSingle().Which.GetProperty("employeeId").GetGuid().Should().Be(JoseId);
+        employees.Single().GetProperty("advanceMaternityBenefit").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
+    public void AFailedReadyCheck_OffersNoAdvance_SaysSoQuietly_AndTheRunCanStillBeCreated()
+    {
+        StubTwoActiveEmployees();
+        _api.On(HttpMethod.Post, "/api/payroll-runs", HttpStatusCode.Created, $$"""{"id":"{{Guid.NewGuid()}}","runNumber":"PR-2026-0015"}""");
+        var cut = RenderWithCreateDialogOpen(readyJson: null);
+
+        cut.WaitForAssertion(() => cut.Find("[data-maternity-ready-error]").TextContent.Should()
+            .Contain("Couldn't check who has a maternity benefit ready to advance"));
+        cut.FindAll("[data-advance-maternity]").Should().BeEmpty();
+        cut.FindAll("[role=alert]").Should().BeEmpty("it doesn't stop the run");
+
+        Button(cut, "Create").Click();
+        cut.WaitForAssertion(() => _api.Requests.Should().Contain(r => r.Method == HttpMethod.Post));
+    }
+
+    [Fact]
+    public void ARefusedAdvance_ShowsTheApisReason_AndKeepsTheTick()
+    {
+        StubTwoActiveEmployees();
+        _api.On(HttpMethod.Post, "/api/payroll-runs", HttpStatusCode.BadRequest,
+            """{"title":"Business rule violation","status":400,"detail":"Maria Santos's maternity benefit was already advanced on PR-2026-0015."}""");
+        var cut = RenderWithCreateDialogOpen($$"""["{{MariaId}}"]""");
+
+        cut.WaitForAssertion(() => AdvanceBox(cut, MariaId).Should().NotBeNull());
+        AdvanceBox(cut, MariaId)!.Click();
+        Button(cut, "Create").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should()
+            .Contain("Maria Santos's maternity benefit was already advanced on PR-2026-0015."));
+        AdvanceBox(cut, MariaId)!.HasAttribute("aria-checked").Should().BeTrue("the tick stays for a retry");
+    }
+
+    [Fact]
+    public async Task ALateReadyAnswerFromAnEarlierOpening_DoesNotReplaceTheCurrentOne()
+    {
+        StubTwoActiveEmployees();
+        _api.On(HttpMethod.Get, RunsPath, HttpStatusCode.OK, Runs());
+        // The first opening's answer is held; the second opening's comes straight back: nobody is ready.
+        var first = new TaskCompletionSource<HttpResponseMessage>();
+        var readyCalls = 0;
+        _api.OnAsync(HttpMethod.Get, ReadyPath, () => ++readyCalls == 1 ? first.Task : Task.FromResult(Json("[]")));
+        var cut = RenderPage();
+
+        Button(cut, "Create Run").Click();
+        cut.WaitForAssertion(() => readyCalls.Should().Be(1));
+        Button(cut, "Cancel").Click();
+        Button(cut, "Create Run").Click();
+        cut.WaitForAssertion(() => readyCalls.Should().Be(2));
+
+        cut.WaitForAssertion(() => cut.FindAll(".animate-spin").Should().BeEmpty());
+        first.SetResult(Json($$"""["{{MariaId}}"]"""));
+        await Task.Delay(100); // let the late answer land, if it is going to
+
+        cut.FindAll("[data-advance-maternity]").Should().BeEmpty("only the second opening's answer counts");
     }
 
     private static HttpResponseMessage Json(string json) =>

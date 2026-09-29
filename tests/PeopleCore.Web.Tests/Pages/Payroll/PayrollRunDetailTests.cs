@@ -33,7 +33,8 @@ public class PayrollRunDetailTests : BunitContext
 
     private static string RunJson(string status, bool withEmployee = true, int missingAttendance = 0,
         string runType = "Regular", string? employees = null, decimal totalDeductions = 0m,
-        string periodEnd = "2026-09-15", bool includesLeaveConversion = false, bool includesThirteenthMonth = false) =>
+        string periodEnd = "2026-09-15", bool includesLeaveConversion = false, bool includesThirteenthMonth = false,
+        string? warnings = null) =>
         $$"""
         {"id":"{{RunId}}","runNumber":"PR-2026-0017","periodLabel":"Sep 1-15, 2026","periodStart":"2026-09-01",
          "periodEnd":"{{periodEnd}}","payDate":"2026-09-20","frequency":"SemiMonthly","status":"{{status}}",
@@ -41,7 +42,7 @@ public class PayrollRunDetailTests : BunitContext
          "employeesMissingAttendance":{{missingAttendance}},"runType":"{{runType}}",
          "employees":[{{employees ?? (withEmployee ? EmployeeLine : "")}}],
          "includesLeaveConversion":{{(includesLeaveConversion ? "true" : "false")}},
-         "includesThirteenthMonth":{{(includesThirteenthMonth ? "true" : "false")}}}
+         "includesThirteenthMonth":{{(includesThirteenthMonth ? "true" : "false")}}{{(warnings is null ? "" : $",\"warnings\":{warnings}")}}}
         """;
 
     private const string December = "2026-12-31";
@@ -1128,6 +1129,92 @@ public class PayrollRunDetailTests : BunitContext
 
         gate.SetResult(new HttpResponseMessage(HttpStatusCode.NoContent));
         cut.WaitForAssertion(() => CurrentUri.Should().Be("http://localhost/payroll-runs"));
+    }
+
+    // ---------- Maternity pay ----------
+
+    private static string MaternityLine(Guid employeeId, string name, decimal advance, decimal offset) =>
+        $$"""
+        {"id":"{{Guid.NewGuid()}}","employeeId":"{{employeeId}}","employeeName":"{{name}}","employeeNumber":"EMP-0042",
+         "regularPay":10999.98,"grossPay":81000.33,"maternityBenefitAdvance":{{advance}},"maternityBenefitOffset":{{offset}}}
+        """;
+
+    private const string NetCashNote =
+        "In a fully covered cutoff, the net cash is the advance less that cutoff's SSS, PhilHealth and Pag-IBIG shares.";
+
+    [Fact]
+    public void AnAdvanceAndAnOffset_GetTheirOwnColumns_WithTheNetCashNote()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft",
+            employees: $"{MaternityLine(MariaId, "Maria Santos", 70000.35m, 4000.02m)},{JoseLine}"));
+
+        var cut = RenderPage();
+
+        var headers = cut.FindAll("thead th").Select(h => h.TextContent.Trim()).ToList();
+        headers.Should().Contain(["Maternity advance", "Covered by SSS maternity"]);
+        headers.IndexOf("Maternity advance").Should().BeLessThan(headers.IndexOf("Gross"));
+        var maria = cut.FindAll("tbody tr").Single(r => r.TextContent.Contains("Maria Santos"));
+        maria.QuerySelector("[data-maternity-advance]")!.TextContent.Trim().Should().Be("₱70,000.35");
+        maria.QuerySelector("[data-maternity-offset]")!.TextContent.Trim().Should().Be("₱4,000.02");
+        var jose = cut.FindAll("tbody tr").Single(r => r.TextContent.Contains("Jose Reyes"));
+        jose.QuerySelector("[data-maternity-advance]")!.TextContent.Trim().Should().Be("₱0.00");
+        cut.Find("[data-maternity-net-cash-note]").TextContent.Trim().Should().Be(NetCashNote);
+    }
+
+    [Fact]
+    public void AnOffsetAlone_ShowsItsColumn_ButNoAdvanceColumnOrNote()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft",
+            employees: MaternityLine(MariaId, "Maria Santos", 0m, 4000.02m)));
+
+        var cut = RenderPage();
+
+        cut.FindAll("thead th").Select(h => h.TextContent.Trim()).Should().Contain("Covered by SSS maternity").And.NotContain("Maternity advance");
+        cut.FindAll("[data-maternity-net-cash-note]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ARunWithoutMaternityPay_HasNoMaternityColumnsNoteOrWarnings()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft"));
+
+        var cut = RenderPage();
+
+        cut.FindAll("thead th").Select(h => h.TextContent.Trim()).Should().NotContain(["Maternity advance", "Covered by SSS maternity"]);
+        cut.FindAll("[data-maternity-net-cash-note]").Should().BeEmpty();
+        cut.FindAll("[data-maternity-warnings]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void TheRunsWarnings_AreListedAboveTheTable()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft",
+            warnings: """["Maternity benefit not set up yet for Ana Cruz.","Maternity benefit not advanced yet for Maria Santos."]"""));
+
+        var cut = RenderPage();
+
+        var warnings = cut.Find("[data-maternity-warnings]");
+        warnings.GetAttribute("role").Should().Be("alert");
+        warnings.ClassList.Should().Contain("text-warning", "the warnings are amber");
+        warnings.QuerySelectorAll("li").Select(li => li.TextContent.Trim()).Should().Equal(
+            "Maternity benefit not set up yet for Ana Cruz.", "Maternity benefit not advanced yet for Maria Santos.");
+        var table = cut.Find("table");
+        (warnings.CompareDocumentPosition(table) & AngleSharp.Dom.DocumentPositions.Following).Should()
+            .Be(AngleSharp.Dom.DocumentPositions.Following, "the warnings come before the table");
+    }
+
+    [Fact]
+    public void AMaternityRefusal_ShowsTheApisReason()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Approved"))
+            .On(HttpMethod.Put, $"{RunPath}/mark-paid", HttpStatusCode.BadRequest,
+                """{"title":"Business rule violation","status":400,"detail":"Maria Santos's maternity claim has changed since this payroll was computed; discard this payroll and create it again."}""");
+        var cut = RenderPage();
+
+        Button(cut, "Mark Paid").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should()
+            .Contain("Maria Santos's maternity claim has changed since this payroll was computed; discard this payroll and create it again."));
     }
 
     private static HttpResponseMessage Json(string json) =>

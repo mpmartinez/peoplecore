@@ -165,9 +165,25 @@
                               ValueChanged="@(v => ToggleEmployee(e.Id, v))">
                         @e.FullName <span class="text-muted-foreground text-xs">(@e.EmployeeNumber)</span>
                     </Checkbox>
+                    @* Offered only to an employee on the run whose maternity claim is ready to advance (a
+                       Draft claim with an allowance that no run carries yet); the API refuses anyone else. *@
+                    @if (_maternityReadyIds.Contains(e.Id) && _selectedEmployeeIds.Contains(e.Id))
+                    {
+                        <div class="ml-6 space-y-1" data-maternity-advance>
+                            <Checkbox Value="@_advanceMaternityIds.Contains(e.Id)"
+                                      ValueChanged="@(v => ToggleAdvance(e.Id, v))" data-advance-maternity="@e.Id">
+                                Advance maternity benefit
+                            </Checkbox>
+                            <p class="ml-6 text-xs text-muted-foreground" data-maternity-net-cash-note>@MaternityLabels.NetCashNote</p>
+                        </div>
+                    }
                 }
             </div>
             <div class="text-xs text-muted-foreground mt-1">@_selectedEmployeeIds.Count selected of @_activeEmployees.Count active employees</div>
+            @if (_maternityReadyError is not null)
+            {
+                <div class="text-xs text-muted-foreground mt-1" data-maternity-ready-error>Couldn't check who has a maternity benefit ready to advance: @_maternityReadyError</div>
+            }
         }
     </div>
 
@@ -201,6 +217,14 @@
     private HashSet<Guid> _selectedEmployeeIds = [];
     private CreateRunFormModel _form = new();
 
+    // The employees whose maternity benefit this run can advance, and those it will.
+    private HashSet<Guid> _maternityReadyIds = [];
+    private HashSet<Guid> _advanceMaternityIds = [];
+    // A failed check only means no advance is offered; the run itself can still be created.
+    private string? _maternityReadyError;
+    // Bumped each time the dialog opens, so an earlier opening's answers still in flight are dropped.
+    private int _dialogVersion;
+
     protected override async Task OnInitializedAsync() => await LoadRuns();
 
     private void GoToRun(Guid id) => Nav.NavigateTo($"/payroll-runs/{id}");
@@ -228,28 +252,48 @@
 
     private async Task OpenCreateDialog()
     {
+        var version = ++_dialogVersion;
         _form = new CreateRunFormModel();
         _selectedEmployeeIds = [];
         _activeEmployees = [];
+        _maternityReadyIds = [];
+        _advanceMaternityIds = [];
+        _maternityReadyError = null;
         _createError = null;
         _employeesLoadFailed = false;
         _showCreateDialog = true;
         _loadingEmployees = true;
         try
         {
-            _activeEmployees = await LoadAllActiveEmployeesAsync();
+            var employees = await LoadAllActiveEmployeesAsync();
+            if (version != _dialogVersion) return;
+            _activeEmployees = employees;
             // Spec default: the dialog starts with every active employee selected, with the
             // checklist above offered only to trim - not to build the list from scratch.
             _selectedEmployeeIds = _activeEmployees.Select(e => e.Id).ToHashSet();
         }
         catch (Exception ex)
         {
+            if (version != _dialogVersion) return;
             _employeesLoadFailed = true;
             _createError = ex.Message;
         }
         finally
         {
-            _loadingEmployees = false;
+            if (version == _dialogVersion) _loadingEmployees = false;
+        }
+
+        if (_employeesLoadFailed) return;
+        try
+        {
+            var ready = await Api.GetMaternityReadyEmployeeIdsAsync();
+            if (version != _dialogVersion) return;
+            _maternityReadyIds = (ready ?? []).ToHashSet();
+        }
+        catch (Exception ex)
+        {
+            if (version != _dialogVersion) return;
+            _maternityReadyError = ex.Message;
         }
     }
 
@@ -257,15 +301,31 @@
 
     private bool EndsInDecember => _form.PeriodEnd.Month == 12;
 
+    // Taking an employee off the run clears their advance too, so putting them back doesn't bring
+    // back a tick nobody can see was left on.
     private void ToggleEmployee(Guid employeeId, bool selected)
     {
         if (selected) _selectedEmployeeIds.Add(employeeId);
-        else _selectedEmployeeIds.Remove(employeeId);
+        else
+        {
+            _selectedEmployeeIds.Remove(employeeId);
+            _advanceMaternityIds.Remove(employeeId);
+        }
+    }
+
+    private void ToggleAdvance(Guid employeeId, bool advance)
+    {
+        if (advance) _advanceMaternityIds.Add(employeeId);
+        else _advanceMaternityIds.Remove(employeeId);
     }
 
     private void SelectAllEmployees() => _selectedEmployeeIds = _activeEmployees.Select(e => e.Id).ToHashSet();
 
-    private void ClearAllEmployees() => _selectedEmployeeIds.Clear();
+    private void ClearAllEmployees()
+    {
+        _selectedEmployeeIds.Clear();
+        _advanceMaternityIds.Clear();
+    }
 
     // GetEmployeesAsync is paged with a default pageSize of 20. Taking page one alone would
     // silently create a payroll run missing every employee after the twentieth - a payday
@@ -308,7 +368,8 @@
             // approved leave, approved overtime, the holiday calendar and the shift schedule -
             // sending a zero would silently beat the derived figure and unpay overtime and
             // holiday premiums the employee actually earned. The 13th month is set per employee on
-            // the API, and the one tick applies to everyone on the run.
+            // the API, and the one tick applies to everyone on the run. The maternity advance is
+            // each employee's own, sent only for someone ready to advance and still on the run.
             var includeThirteenthMonth = _form.IncludeThirteenthMonth;
             var (run, error) = await Api.CreatePayrollRunAsync(new
             {
@@ -316,7 +377,12 @@
                 periodEnd = _form.PeriodEnd.ToString("yyyy-MM-dd"),
                 payDate = _form.PayDate.ToString("yyyy-MM-dd"),
                 frequency = _form.Frequency,
-                employees = _selectedEmployeeIds.Select(id => new { employeeId = id, includeThirteenthMonth }),
+                employees = _selectedEmployeeIds.Select(id => new
+                {
+                    employeeId = id,
+                    includeThirteenthMonth,
+                    advanceMaternityBenefit = _maternityReadyIds.Contains(id) && _advanceMaternityIds.Contains(id)
+                }),
                 includeLeaveConversion = EndsInDecember && _form.IncludeLeaveConversion
             });
 
