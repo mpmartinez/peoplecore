@@ -17,15 +17,16 @@ public static class PayslipLineBuilder
 {
     public static List<PayrollEarningLineDto> Earnings(PayrollRunEmployeeDto e)
     {
-        // RegularPay is already net of absences and tardiness, so the basic figure is restored
-        // and the reductions shown beneath it. Presenting them as deductions instead would
-        // double-count: they are not part of TotalDeductions.
-        decimal basicForPeriod = e.RegularPay + e.AbsenceDeduction + e.TardinessDeduction;
+        // RegularPay is already net of absences, tardiness and the days SSS maternity covers, so
+        // the basic figure is restored and the reductions shown beneath it. Presenting them as
+        // deductions instead would double-count: they are not part of TotalDeductions.
+        decimal basicForPeriod = e.RegularPay + e.AbsenceDeduction + e.TardinessDeduction + e.MaternityBenefitOffset;
 
         var lines = new List<PayrollEarningLineDto> { new("Basic Pay", basicForPeriod) };
 
         if (e.AbsenceDeduction > 0) lines.Add(new("Less: Absences", -e.AbsenceDeduction));
         if (e.TardinessDeduction > 0) lines.Add(new("Less: Tardiness / Undertime", -e.TardinessDeduction));
+        if (e.MaternityBenefitOffset > 0) lines.Add(new("Less: covered by SSS maternity benefit", -e.MaternityBenefitOffset));
         if (e.OvertimePay > 0) lines.Add(new("Overtime Pay", e.OvertimePay));
         if (e.HolidayPay > 0) lines.Add(new("Holiday / Rest Day Premium", e.HolidayPay));
         if (e.NightDiffPay > 0) lines.Add(new("Night Shift Differential", e.NightDiffPay));
@@ -45,6 +46,10 @@ public static class PayslipLineBuilder
         bool separationAndRetirementTaxable = separationAndRetirementNonTaxable < e.SeparationPay + e.RetirementPay;
         if (e.SeparationPay > 0) lines.Add(new("Separation Pay", e.SeparationPay, IsTaxable: separationAndRetirementTaxable));
         if (e.RetirementPay > 0) lines.Add(new("Retirement Pay", e.RetirementPay, IsTaxable: separationAndRetirementTaxable));
+
+        // The SSS maternity benefit advanced ahead of reimbursement: the SSS benefit, tax-free.
+        if (e.MaternityBenefitAdvance > 0)
+            lines.Add(new("SSS maternity benefit (advance)", e.MaternityBenefitAdvance, IsTaxable: false));
 
         return lines;
     }

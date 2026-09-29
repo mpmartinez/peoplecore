@@ -147,6 +147,44 @@ public class Bir2316ServiceTests
     }
 
     [Fact]
+    public async Task GetPreviewAsync_LeavesTheMaternityAdvanceOut_AndCertifiesTheReducedBasic()
+    {
+        // One monthly run computed by the real engine: a 30,000 salary with 6,000 of it covered by
+        // SSS maternity (regular pay 24,000) and the 70,000.35 benefit advanced. Contributions on
+        // the 30,000 basic: SSS 1,500 (MSC 30,000), PhilHealth 750, Pag-IBIG 200 = 2,450. The
+        // withholding base is 24,000 - 2,450 = 21,550 (107.50 withheld).
+        var engine = new PayrollComputationService();
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = _employeeId, BasicSalary = 30_000m, PayFrequency = PayFrequency.Monthly
+        };
+        var run = new PayrollRun
+        {
+            RunNumber = "PAY-2026-001", PeriodStart = new DateOnly(2026, 1, 1), PeriodEnd = new DateOnly(2026, 1, 31),
+            PayDate = new DateOnly(2026, 1, 31), Frequency = PayFrequency.Monthly, Status = PayrollRunStatus.Paid
+        };
+        var entry = engine.Compute(compensation, run, maternity: new MaternityInput(Advance: 70_000.35m, Offset: 6_000m));
+        run.Employees.Add(entry);
+        PaidRunsAre(run);
+        entry.GrossPay.Should().Be(94_000.35m, "24,000 regular pay + the 70,000.35 advance");
+
+        var result = (await _sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None))!;
+
+        // Basic: the reduced 24,000 less 2,450 of contributions = 21,550 - the engine's base.
+        result.Item39_BasicSalary.Should().Be(21_550m);
+        result.Item52_TotalTaxableCompensation.Should().Be(21_550m);
+        result.Item36_SssPhicPagibigContributions.Should().Be(2_450m);
+        result.Item38_TotalNonTaxable.Should().Be(2_450m, "the advance is in no non-taxable item either");
+        result.Item34_ThirteenthMonthAndBenefits.Should().Be(0m);
+        result.Item35_DeMinimis.Should().Be(0m);
+        result.Item37_SalariesOtherForms.Should().Be(0m);
+        // Item 19 = 2,450 + 21,550 = 24,000: gross pay less the advance, which is the SSS
+        // benefit, not compensation.
+        result.Item19_GrossCompensation.Should().Be(24_000m).And.Be(entry.GrossPay - entry.MaternityBenefitAdvance);
+        result.Item25A_PresentTaxWithheld.Should().Be(107.50m);
+    }
+
+    [Fact]
     public async Task GetPreviewAsync_CertifiesHolidayNightDiffAndTaxableAllowances()
     {
         // PayrollComputationService withholds against

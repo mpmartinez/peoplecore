@@ -288,7 +288,10 @@ public sealed class GovernmentReportService : IGovernmentReportService
         decimal gross = 0, thirteenth = 0, shares = 0, deMinimis = 0, otherNonTaxable = 0, taxable = 0, tax = 0;
         foreach (var (employee, entries) in people)
         {
-            decimal g = entries.Sum(e => e.GrossPay);
+            // Compensation is gross pay less the SSS maternity benefit advanced: the benefit is
+            // the SSS's, not compensation, so it has no 1601-C column at all (neither here nor
+            // as non-taxable) - just as the 2316, and so the 1604-C, leave it out.
+            decimal g = entries.Sum(e => e.GrossPay - e.MaternityBenefitAdvance);
             decimal t13 = NonTaxableThirteenthMonth(entries.Sum(e => e.ThirteenthMonthAndOtherBenefits),
                                                     earlierThirteenth.GetValueOrDefault(employee.Id));
             decimal s = entries.Sum(e => e.SSSEmployee + e.PhilHealthEmployee + e.PagIbigEmployee);

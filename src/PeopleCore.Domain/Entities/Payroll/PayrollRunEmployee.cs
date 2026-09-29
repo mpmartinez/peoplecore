@@ -91,9 +91,14 @@ public class PayrollRunEmployee : AuditableEntity
     /// <summary>The part of regular pay SSS covers during maternity leave, already netted out of <see cref="RegularPay"/>.</summary>
     public decimal MaternityBenefitOffset { get; set; }
 
+    /// <summary>
+    /// Everything this entry pays the employee. It includes <see cref="MaternityBenefitAdvance"/>,
+    /// which is the SSS benefit rather than compensation: the government reports that start from
+    /// gross (the 1601-C) take it back out, and the 2316 never sums it.
+    /// </summary>
     public decimal GrossPay =>
         RegularPay + OvertimePay + HolidayPay + NightDiffPay + TaxableAllowances + NonTaxableAllowances
-        + ThirteenthMonth + LeaveConversionPay + SeparationPay + RetirementPay;
+        + ThirteenthMonth + LeaveConversionPay + SeparationPay + RetirementPay + MaternityBenefitAdvance;
 
     /// <summary>
     /// The final-pay earnings taxable outright: separation or retirement pay that isn't exempt.

@@ -163,6 +163,87 @@ public class PayslipLineBuilderTests
         PayslipLineBuilder.DeductionsTotal(e).Should().Be(e.TotalDeductions);
     }
 
+    // ---------- Maternity (RA 11210) ----------
+
+    [Fact]
+    public void A_maternity_entry_shows_the_covered_days_against_basic_pay_and_the_advance_as_a_non_taxable_earning()
+    {
+        var e = Maternity();
+
+        var lines = PayslipLineBuilder.Earnings(e);
+
+        // 24,000 regular pay is net of the 6,000 SSS covers, so the basic is restored to 30,000
+        // and the offset shown beneath it, right after the absences line would be.
+        lines[0].Should().Be(new PayrollEarningLineDto("Basic Pay", 30_000m));
+        lines[1].Should().Be(new PayrollEarningLineDto("Less: covered by SSS maternity benefit", -6_000m));
+        lines.Should().ContainSingle(l => l.Description == "SSS maternity benefit (advance)")
+            .Which.Should().Be(new PayrollEarningLineDto("SSS maternity benefit (advance)", 70_000.35m, IsTaxable: false));
+    }
+
+    [Fact]
+    public void A_maternity_entry_foots_earnings_less_deductions_to_net_pay()
+    {
+        var e = Maternity();
+
+        var earnings = PayslipLineBuilder.Earnings(e);
+        var deductions = PayslipLineBuilder.Deductions(e).Where(l => !l.IsEmployer).ToList();
+
+        // 30,000 - 6,000 + 70,000.35 = 94,000.35.
+        earnings.Sum(l => l.Amount).Should().Be(e.GrossPay).And.Be(94_000.35m);
+        // 1,500 + 750 + 200 + 107.50 = 2,557.50.
+        deductions.Sum(l => l.Amount).Should().Be(PayslipLineBuilder.DeductionsTotal(e)).And.Be(2_557.50m);
+        // 94,000.35 - 2,557.50 = 91,442.85.
+        (earnings.Sum(l => l.Amount) - deductions.Sum(l => l.Amount)).Should().Be(e.NetPay).And.Be(91_442.85m);
+    }
+
+    [Fact]
+    public void A_maternity_entry_can_show_the_offset_without_an_advance_and_the_advance_without_an_offset()
+    {
+        var offsetOnly = Maternity() with { MaternityBenefitAdvance = 0m, GrossPay = 24_000m, NetPay = 21_442.50m };
+        var advanceOnly = Maternity() with
+        {
+            RegularPay = 30_000m, MaternityBenefitOffset = 0m, GrossPay = 100_000.35m,
+            WithholdingTax = 1_007.50m, TotalDeductions = 3_457.50m, NetPay = 96_542.85m
+        };
+
+        var offsetLines = PayslipLineBuilder.Earnings(offsetOnly);
+        offsetLines.Should().NotContain(l => l.Description == "SSS maternity benefit (advance)");
+        offsetLines.Sum(l => l.Amount).Should().Be(offsetOnly.GrossPay);
+
+        var advanceLines = PayslipLineBuilder.Earnings(advanceOnly);
+        advanceLines.Should().NotContain(l => l.Description == "Less: covered by SSS maternity benefit");
+        advanceLines[0].Amount.Should().Be(30_000m);
+        advanceLines.Sum(l => l.Amount).Should().Be(advanceOnly.GrossPay);
+    }
+
+    [Fact]
+    public void A_regular_run_has_no_maternity_lines()
+    {
+        PayslipLineBuilder.Earnings(FullyLoaded()).Should().NotContain(l => l.Description.Contains("maternity"));
+    }
+
+    /// <summary>
+    /// A maternity month on a 30,000 salary: 6,000 of it covered by SSS (regular pay 24,000) and
+    /// the 70,000.35 benefit advanced; contributions on the 30,000 basic (1,500 / 750 / 200) and
+    /// 107.50 withheld on 24,000 - 2,450 = 21,550.
+    /// </summary>
+    private static PayrollRunEmployeeDto Maternity() => Clean() with
+    {
+        RegularPay = 24_000m,
+        MaternityBenefitOffset = 6_000m,
+        MaternityBenefitAdvance = 70_000.35m,
+        GrossPay = 94_000.35m,
+        SSSEmployee = 1_500m,
+        SSSEmployer = 3_030m,
+        PhilHealthEmployee = 750m,
+        PhilHealthEmployer = 750m,
+        PagIbigEmployee = 200m,
+        PagIbigEmployer = 200m,
+        WithholdingTax = 107.50m,
+        TotalDeductions = 2_557.50m,
+        NetPay = 91_442.85m
+    };
+
     /// <summary>
     /// A worked final pay: 5,000 salary, 10,000 13th month, 7,500 leave (6,000 of it de minimis)
     /// and 40,000 authorized-cause separation pay; 3,000 of loans, 3,500 of HR deductions, and the

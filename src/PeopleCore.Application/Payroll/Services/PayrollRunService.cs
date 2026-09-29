@@ -930,5 +930,6 @@ public class PayrollRunService : IPayrollRunService
         e.AbsenceDeduction, e.TardinessDeduction,
         e.SSSEmployee, e.SSSEmployer, e.PhilHealthEmployee, e.PhilHealthEmployer,
         e.PagIbigEmployee, e.PagIbigEmployer, e.WithholdingTax, e.LoanDeductions, e.OtherDeductions,
-        e.LeaveConversionPay, e.LeaveConversionNonTaxable, e.SeparationPay, e.RetirementPay, e.FinalPayNonTaxable);
+        e.LeaveConversionPay, e.LeaveConversionNonTaxable, e.SeparationPay, e.RetirementPay, e.FinalPayNonTaxable,
+        e.MaternityBenefitAdvance, e.MaternityBenefitOffset);
 }

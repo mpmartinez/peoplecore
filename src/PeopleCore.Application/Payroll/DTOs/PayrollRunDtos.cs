@@ -94,7 +94,12 @@ public record PayrollRunEmployeeDto(
     decimal LeaveConversionNonTaxable = 0m,
     decimal SeparationPay = 0m,
     decimal RetirementPay = 0m,
-    decimal FinalPayNonTaxable = 0m);
+    decimal FinalPayNonTaxable = 0m,
+    // Maternity pay (RA 11210). The advance is in GrossPay (tax-free); the offset is already
+    // netted out of RegularPay, and PayslipLineBuilder restores it to the basic figure the way it
+    // restores AbsenceDeduction and TardinessDeduction.
+    decimal MaternityBenefitAdvance = 0m,
+    decimal MaternityBenefitOffset = 0m);
 
 public record PayrollRunDto(
     Guid Id,

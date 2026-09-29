@@ -182,13 +182,18 @@ public class PayrollComputationService
     /// before, and inconsistent inputs err toward withholding more, not less. It affects only the
     /// tax: the 13th month due still comes off <paramref name="thirteenthMonthPaidEarlierInYear"/>.
     /// </param>
+    /// <param name="maternity">
+    /// The SSS maternity benefit advanced on this entry and the part of regular pay the benefit
+    /// covers (RA 11210). The offset comes off regular pay before anything reads it; the advance
+    /// joins gross pay only. Null for an entry with neither.
+    /// </param>
     public PayrollRunEmployee Compute(EmployeeCompensation compensation, PayrollRun run, decimal daysWorked = 0,
         decimal overtimeHours = 0, decimal holidayDays = 0, bool includeThirteenthMonth = false,
         ContributionRates? rates = null, PayrollAttendanceInput? attendance = null,
         decimal? dailyRateFactor = null, decimal thirteenthMonthPaidEarlierInYear = 0m,
         decimal basicEarnedEarlierInYear = 0m, bool isThirteenthMonthEligible = true,
         FinalPayExtras? finalPay = null, LeaveConversionInput? leaveConversion = null,
-        decimal otherBenefitsExemptUsedEarlierInYear = 0m)
+        decimal otherBenefitsExemptUsedEarlierInYear = 0m, MaternityInput? maternity = null)
     {
         // One leave-conversion path: a final pay's leave becomes the same input a year-end
         // conversion passes, so the two are recorded and taxed identically.
@@ -223,6 +228,17 @@ public class PayrollComputationService
         decimal lostMinutes = (attendance?.LateMinutes ?? 0m) + (attendance?.UndertimeMinutes ?? 0m);
         decimal tardinessDeduction = Math.Round(hourlyRate * lostMinutes / 60m, 2);
         decimal regularPay = Math.Max(0m, basePeriodPay - absenceDeduction - tardinessDeduction);
+
+        // Maternity leave (RA 11210): the days SSS covers are paid by its benefit, not the salary,
+        // so the offset comes off regular pay here - before the withholding base, the 13th-month
+        // basis, gross pay and the loan budget read it - leaving the taxable salary differential.
+        // Callers cap it at regular pay already; the cap here is a guard. Contributions are
+        // untouched: they are struck from the monthly basic below, not from regular pay.
+        decimal maternityOffset = Math.Min(maternity?.Offset ?? 0m, regularPay);
+        regularPay -= maternityOffset;
+        // The advance is the SSS benefit paid ahead of reimbursement, not compensation: it is
+        // recorded on the entry and joins GrossPay there, and nothing below reads it.
+        decimal maternityAdvance = maternity?.Advance ?? 0m;
 
         // Premiums, priced per kind of day from DolePremiumRates. Without attendance the caller's
         // overtime and holiday figures stand for ordinary overtime and regular holiday days.
@@ -418,6 +434,8 @@ public class PayrollComputationService
             });
         }
 
+        // The maternity advance stays out of this budget: it is the SSS benefit held for the
+        // employee, not wages a loan or HR deduction may be collected from.
         // Statutory deductions must be remitted whatever the period looked like, so only the
         // discretionary ones give way when they would not fit. Clamping net pay itself would
         // record deductions that were never actually withheld, and the loan balances retired
@@ -483,6 +501,8 @@ public class PayrollComputationService
             SeparationPay = separationPay,
             RetirementPay = retirementPay,
             FinalPayNonTaxable = finalPayNonTaxable,
+            MaternityBenefitAdvance = maternityAdvance,
+            MaternityBenefitOffset = maternityOffset,
             SSSEmployee = sssEmp,
             SSSEmployer = sssEmr,
             PhilHealthEmployee = phEmp,
