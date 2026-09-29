@@ -10,15 +10,22 @@ public record MaternityClaimDto(Guid Id, Guid LeaveRequestId, Guid EmployeeId, s
 
 /// <summary>
 /// The SSS daily maternity allowance worked out from paid payroll: the 6 highest monthly salary
-/// credits in the window, over 180. Null when no month in the window has one.
+/// credits in the window (each capped at the Regular SS ceiling), over 180. Null when no month in
+/// the window has one, or when <paramref name="RatesOverridden"/>: the payroll settings override
+/// both SSS rates, so the MSC can't be worked back from the share.
 /// </summary>
-public record SuggestedAllowanceDto(decimal? DailyAllowance, int MonthsFound, DateOnly WindowFrom, DateOnly WindowTo);
+public record SuggestedAllowanceDto(decimal? DailyAllowance, int MonthsFound, DateOnly WindowFrom, DateOnly WindowTo,
+    bool RatesOverridden = false);
 
 public record SetAllowanceRequest(decimal DailyAllowance);
 
 public record ReimburseRequest(DateOnly ReimbursedOn, decimal ReimbursedAmount, string? Note);
 
-public record DenyRequest(string Note);
+/// <summary>
+/// The note is nullable so a missing one reaches the service, which explains what is needed; a
+/// non-nullable one would be [Required] to MVC, answered with a validation error that has no detail.
+/// </summary>
+public record DenyRequest(string? Note);
 
 /// <summary>Every claim, newest first, and the benefit advanced but not yet reimbursed or denied.</summary>
 public record MaternityClaimsSummaryDto(IReadOnlyList<MaternityClaimDto> Claims, decimal Outstanding);

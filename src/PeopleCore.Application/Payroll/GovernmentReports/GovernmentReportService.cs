@@ -177,17 +177,11 @@ public sealed class GovernmentReportService : IGovernmentReportService
     {
         // Working the MSC and EC back only holds under the statutory schedule, which is what
         // ComputeSSS uses unless both rates are overridden.
-        var settings = await _settings.GetDefaultAsync(ct);
-        bool overridden = settings?.SSSEmployeeRate is not null && settings.SSSEmployerRate is not null;
+        bool overridden = SssRatesOverridden(await _settings.GetDefaultAsync(ct));
         if (overridden)
             warnings.Add("The company's payroll settings override the SSS rates, so the MSC and EC can't be worked out and are left blank.");
 
-        // Payroll deducts half the month's SSS in each semi-monthly cutoff and all of it in a
-        // monthly run, so the MSC only works back once the month's cutoffs are all in; a single
-        // cutoff's half share would understate the MSC and the EC that goes with it. Cutoffs are
-        // counted rather than calendar days checked, because many companies' cutoffs (26th-10th,
-        // 21st-20th) never cover the end of the month they close in. A final pay completes the
-        // month whatever its frequency: it tops the month's SSS up to the whole month.
+        // The MSC only works back once the month's cutoffs are all in (see IsFullSssMonth).
         var sssCutoffsByEmployee = runs
             .SelectMany(r => r.Employees.Where(e => e.SSSEmployee > 0).Select(e => (e.EmployeeId, r.Frequency, r.RunType)))
             .ToLookup(x => x.EmployeeId, x => (x.Frequency, x.RunType));
@@ -199,10 +193,7 @@ public sealed class GovernmentReportService : IGovernmentReportService
         {
             decimal employeeShare = entries.Sum(e => e.SSSEmployee);
             decimal employerTotal = entries.Sum(e => e.SSSEmployer);
-            var cutoffs = sssCutoffsByEmployee[employee.Id].ToList();
-            bool fullMonth = cutoffs.Any(c => c.RunType == PayrollRunType.FinalPay)
-                             || cutoffs.Any(c => c.Frequency == PayFrequency.Monthly)
-                             || cutoffs.Count(c => c.Frequency == PayFrequency.SemiMonthly) >= 2;
+            bool fullMonth = IsFullSssMonth(sssCutoffsByEmployee[employee.Id]);
 
             (decimal? msc, decimal? credit) = (null, null);
             if (!overridden && fullMonth)

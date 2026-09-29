@@ -20,12 +20,15 @@ public sealed class MaternityClaimService : IMaternityClaimService
     private readonly IMaternityClaimRepository _claims;
     private readonly ILeaveRequestRepository _leaveRequests;
     private readonly IPayrollRunRepository _runs;
+    private readonly IPayrollSettingsRepository _settings;
 
-    public MaternityClaimService(IMaternityClaimRepository claims, ILeaveRequestRepository leaveRequests, IPayrollRunRepository runs)
+    public MaternityClaimService(IMaternityClaimRepository claims, ILeaveRequestRepository leaveRequests,
+        IPayrollRunRepository runs, IPayrollSettingsRepository settings)
     {
         _claims = claims;
         _leaveRequests = leaveRequests;
         _runs = runs;
+        _settings = settings;
     }
 
     public async Task<MaternityClaimsSummaryDto> ListAsync(CancellationToken ct = default)
@@ -53,32 +56,42 @@ public sealed class MaternityClaimService : IMaternityClaimService
             Days = request.TotalDays,
             Status = MaternityClaimStatus.Draft,
         };
-        await _claims.AddAsync(claim, ct);
+        // A rival create that commits between the check above and this save is refused by the
+        // unique index, and AddNewAsync turns that into the same message.
+        await _claims.AddNewAsync(claim, ct);
         return ToDto(claim);
     }
 
     /// <summary>
-    /// For each month of the contribution window, the MSC behind the employee's SSS share over the
-    /// Paid regular runs whose period ends in the month - the month the SSS remittance report puts
-    /// a run in. Months with no entry, or no SSS deducted, have no MSC and are skipped.
+    /// For each month of the contribution window, the MSC behind the employee's SSS share over
+    /// every Paid run whose period ends in the month (final pays included), the way the SSS
+    /// remittance report works it out: a month whose cutoffs aren't all in is skipped, as its
+    /// share would understate the MSC, and months with no entry or no SSS deducted have no MSC.
+    /// Each month's MSC counts only up to the Regular SS ceiling. No suggestion when the payroll
+    /// settings override both SSS rates, as the MSC can't be worked back from the share.
     /// </summary>
     public async Task<SuggestedAllowanceDto> SuggestAsync(Guid claimId, CancellationToken ct = default)
     {
         var claim = await GetAsync(claimId, ct);
         var (from, to) = MaternityMath.ContributionWindow(claim.LeaveRequest.StartDate);
+        if (GovernmentReportMath.SssRatesOverridden(await _settings.GetDefaultAsync(ct)))
+            return new SuggestedAllowanceDto(null, 0, from, to, RatesOverridden: true);
 
         var credits = new List<decimal>();
         for (var month = from; month <= to; month = month.AddMonths(1))
         {
             var entries = (await _runs.GetPaidRunsByPeriodEndMonthAsync(month.Year, month.Month, ct))
-                .Where(r => r.RunType == PayrollRunType.Regular)
-                .SelectMany(r => r.Employees)
-                .Where(e => e.EmployeeId == claim.EmployeeId)
+                .SelectMany(r => r.Employees
+                    .Where(e => e.EmployeeId == claim.EmployeeId)
+                    .Select(e => (Run: r, Entry: e)))
                 .ToList();
             if (entries.Count == 0) continue;
 
-            var (msc, _) = GovernmentReportMath.SssCredit(entries.Sum(e => e.SSSEmployee));
-            if (msc is decimal credit) credits.Add(credit);
+            var cutoffs = entries.Where(x => x.Entry.SSSEmployee > 0m).Select(x => (x.Run.Frequency, x.Run.RunType));
+            if (!GovernmentReportMath.IsFullSssMonth(cutoffs)) continue;
+
+            var (msc, _) = GovernmentReportMath.SssCredit(entries.Sum(x => x.Entry.SSSEmployee));
+            if (msc is decimal credit) credits.Add(Math.Min(credit, MaternityMath.RegularSsMscCeiling));
         }
 
         return new SuggestedAllowanceDto(MaternityMath.SuggestedDailyAllowance(credits), credits.Count, from, to);
@@ -106,14 +119,16 @@ public sealed class MaternityClaimService : IMaternityClaimService
             throw new DomainException("Only an advanced claim can be reimbursed.");
         if (request.ReimbursedOn == default)
             throw new DomainException("Enter the date SSS reimbursed the claim.");
-        if (request.ReimbursedAmount <= 0m)
+        // Compared and stored to 2 dp, as the benefit is (numeric(18,2)).
+        decimal amount = Math.Round(request.ReimbursedAmount, 2, MidpointRounding.AwayFromZero);
+        if (amount <= 0m)
             throw new DomainException("Enter the amount SSS reimbursed.");
         var note = Note(request.Note);
-        if (request.ReimbursedAmount != claim.Benefit && note is null)
+        if (amount != claim.Benefit && note is null)
             throw new DomainException("Explain why the reimbursement differs from the benefit.");
 
         claim.ReimbursedOn = request.ReimbursedOn;
-        claim.ReimbursedAmount = request.ReimbursedAmount;
+        claim.ReimbursedAmount = amount;
         claim.Note = note;
         claim.Status = MaternityClaimStatus.Reimbursed;
         await _claims.UpdateAsync(claim, ct);

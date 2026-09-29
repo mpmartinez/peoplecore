@@ -17,6 +17,7 @@ public class MaternityClaimServiceTests
     private readonly Mock<IMaternityClaimRepository> _claims = new();
     private readonly Mock<ILeaveRequestRepository> _leaveRequests = new();
     private readonly Mock<IPayrollRunRepository> _runs = new();
+    private readonly Mock<IPayrollSettingsRepository> _settings = new();
     private readonly MaternityClaimService _sut;
 
     private static readonly Employee Maria = new() { FirstName = "Maria", MiddleName = "Reyes", LastName = "Santos" };
@@ -25,9 +26,9 @@ public class MaternityClaimServiceTests
     {
         _runs.Setup(r => r.GetPaidRunsByPeriodEndMonthAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
              .ReturnsAsync([]);
-        _claims.Setup(c => c.AddAsync(It.IsAny<MaternityClaim>(), It.IsAny<CancellationToken>()))
+        _claims.Setup(c => c.AddNewAsync(It.IsAny<MaternityClaim>(), It.IsAny<CancellationToken>()))
                .ReturnsAsync((MaternityClaim c, CancellationToken _) => c);
-        _sut = new MaternityClaimService(_claims.Object, _leaveRequests.Object, _runs.Object);
+        _sut = new MaternityClaimService(_claims.Object, _leaveRequests.Object, _runs.Object, _settings.Object);
     }
 
     private static LeaveRequest ARequest(bool maternity = true, LeaveStatus status = LeaveStatus.Approved,
@@ -65,7 +66,7 @@ public class MaternityClaimServiceTests
         request.TotalDays = 120m;
         _leaveRequests.Setup(r => r.GetByIdAsync(request.Id, It.IsAny<CancellationToken>())).ReturnsAsync(request);
         MaternityClaim? added = null;
-        _claims.Setup(c => c.AddAsync(It.IsAny<MaternityClaim>(), It.IsAny<CancellationToken>()))
+        _claims.Setup(c => c.AddNewAsync(It.IsAny<MaternityClaim>(), It.IsAny<CancellationToken>()))
                .Callback((MaternityClaim c, CancellationToken _) => added = c)
                .ReturnsAsync((MaternityClaim c, CancellationToken _) => c);
 
@@ -110,7 +111,7 @@ public class MaternityClaimServiceTests
 
         await act.Should().ThrowAsync<DomainException>()
             .WithMessage("Only an approved maternity leave request can have a claim.");
-        _claims.Verify(c => c.AddAsync(It.IsAny<MaternityClaim>(), It.IsAny<CancellationToken>()), Times.Never);
+        _claims.Verify(c => c.AddNewAsync(It.IsAny<MaternityClaim>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -125,6 +126,19 @@ public class MaternityClaimServiceTests
 
         await act.Should().ThrowAsync<DomainException>()
             .WithMessage("Maria Reyes Santos already has a maternity claim for this leave.");
+        _claims.Verify(c => c.AddNewAsync(It.IsAny<MaternityClaim>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Create_SavesThroughAddNew_WhichTurnsARacingDuplicateIntoTheSameMessage()
+    {
+        var request = ARequest();
+        _leaveRequests.Setup(r => r.GetByIdAsync(request.Id, It.IsAny<CancellationToken>())).ReturnsAsync(request);
+
+        await _sut.CreateAsync(request.Id);
+
+        // AddAsync would let the unique index's violation out as a 500.
+        _claims.Verify(c => c.AddNewAsync(It.IsAny<MaternityClaim>(), It.IsAny<CancellationToken>()), Times.Once);
         _claims.Verify(c => c.AddAsync(It.IsAny<MaternityClaim>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -225,6 +239,40 @@ public class MaternityClaimServiceTests
         claim.Note.Should().Be("SSS used a lower MSC");
     }
 
+    [Fact]
+    public async Task Reimburse_TheAmountIsRoundedTo2dp_BeforeItIsComparedAndStored()
+    {
+        var claim = AClaim(MaternityClaimStatus.Advanced, 805.56m, 84_583.80m);
+
+        // 84,583.804 rounds to 84,583.80, the benefit, so no note is needed.
+        await _sut.ReimburseAsync(claim.Id, new ReimburseRequest(new DateOnly(2026, 11, 3), 84_583.804m, null));
+
+        claim.Status.Should().Be(MaternityClaimStatus.Reimbursed);
+        claim.ReimbursedAmount.Should().Be(84_583.80m);
+        claim.Note.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Reimburse_AnAmountThatRoundsAwayFromTheBenefit_StillNeedsANote()
+    {
+        var claim = AClaim(MaternityClaimStatus.Advanced, 805.56m, 84_583.80m);
+
+        // 84,583.805 rounds away from zero to 84,583.81.
+        var act = () => _sut.ReimburseAsync(claim.Id, new ReimburseRequest(new DateOnly(2026, 11, 3), 84_583.805m, null));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Explain why the reimbursement differs from the benefit.");
+    }
+
+    [Fact]
+    public async Task Reimburse_AnAmountThatRoundsToZero_IsRefused()
+    {
+        var claim = AClaim(MaternityClaimStatus.Advanced, 805.56m, 84_583.80m);
+
+        var act = () => _sut.ReimburseAsync(claim.Id, new ReimburseRequest(new DateOnly(2026, 11, 3), 0.004m, "partial"));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Enter the amount SSS reimbursed.");
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
@@ -308,7 +356,7 @@ public class MaternityClaimServiceTests
     {
         var claim = AClaim(MaternityClaimStatus.Advanced, 800m, 84_000m);
 
-        var act = () => _sut.DenyAsync(claim.Id, new DenyRequest(note!));
+        var act = () => _sut.DenyAsync(claim.Id, new DenyRequest(note));
 
         await act.Should().ThrowAsync<DomainException>().WithMessage("Explain why SSS denied the claim.");
         claim.Status.Should().Be(MaternityClaimStatus.Advanced);
@@ -410,6 +458,13 @@ public class MaternityClaimServiceTests
         return run;
     }
 
+    /// <summary>The run as one semi-monthly cutoff, which pays half the month's SSS.</summary>
+    private static PayrollRun SemiMonthly(PayrollRun run)
+    {
+        run.Frequency = PayFrequency.SemiMonthly;
+        return run;
+    }
+
     private void RunsIn(int year, int month, params PayrollRun[] runs)
         => _runs.Setup(r => r.GetPaidRunsByPeriodEndMonthAsync(year, month, It.IsAny<CancellationToken>())).ReturnsAsync(runs);
 
@@ -434,39 +489,102 @@ public class MaternityClaimServiceTests
     {
         var claim = AClaim();
         var other = Guid.NewGuid();
-        // MSC = share / 5%, to the nearest 500. Eight months, one of them two semi-monthly cutoffs.
+        // MSC = share / 5%, to the nearest 500, capped at the Regular SS ceiling of 20,000.
+        // Eight months, one of them two semi-monthly cutoffs.
         RunsIn(2025, 4, PaidRun(new(2025, 4, 30), entries: (Maria.Id, 1_000m)));                 // 20,000
         RunsIn(2025, 5, PaidRun(new(2025, 5, 31), entries: (Maria.Id, 500m)));                   // 10,000
-        RunsIn(2025, 6, PaidRun(new(2025, 6, 15), entries: (Maria.Id, 875m)),
-                        PaidRun(new(2025, 6, 30), entries: [(Maria.Id, 875m), (other, 5_000m)])); // 35,000
-        RunsIn(2025, 7, PaidRun(new(2025, 7, 31), entries: (Maria.Id, 1_500m)));                 // 30,000
+        RunsIn(2025, 6, SemiMonthly(PaidRun(new(2025, 6, 15), entries: (Maria.Id, 875m))),
+                        SemiMonthly(PaidRun(new(2025, 6, 30), entries: [(Maria.Id, 875m), (other, 5_000m)]))); // 35,000 -> 20,000
+        RunsIn(2025, 7, PaidRun(new(2025, 7, 31), entries: (Maria.Id, 1_500m)));                 // 30,000 -> 20,000
         RunsIn(2025, 9, PaidRun(new(2025, 9, 30), entries: (Maria.Id, 750m)));                   // 15,000
-        RunsIn(2025, 11, PaidRun(new(2025, 11, 30), entries: (Maria.Id, 1_250m)));               // 25,000
-        RunsIn(2026, 1, PaidRun(new(2026, 1, 31), entries: (Maria.Id, 1_000m)));                 // 20,000
-        RunsIn(2026, 3, PaidRun(new(2026, 3, 31), entries: (Maria.Id, 1_250m)));                 // 25,000
+        RunsIn(2025, 11, PaidRun(new(2025, 11, 30), entries: (Maria.Id, 600m)));                 // 12,000
+        RunsIn(2026, 1, PaidRun(new(2026, 1, 31), entries: (Maria.Id, 900m)));                   // 18,000
+        RunsIn(2026, 3, PaidRun(new(2026, 3, 31), entries: (Maria.Id, 550m)));                   // 11,000
 
         var suggestion = await _sut.SuggestAsync(claim.Id);
 
-        // 35,000 + 30,000 + 25,000 + 25,000 + 20,000 + 20,000 = 155,000 / 180 = 861.11
-        suggestion.DailyAllowance.Should().Be(861.11m);
+        // 20,000 + 20,000 + 20,000 + 18,000 + 15,000 + 12,000 = 105,000 / 180 = 583.33
+        // (left out: 11,000 and 10,000)
+        suggestion.DailyAllowance.Should().Be(583.33m);
         suggestion.MonthsFound.Should().Be(8);
     }
 
     [Fact]
-    public async Task Suggest_SkipsFinalPayRuns_MonthsWithoutAnEntry_AndMonthsWithNoSss()
+    public async Task Suggest_CapsEachMonthAtTheRegularSsCeiling_SoSixFullMonthsGiveTheStatutoryMaximum()
     {
         var claim = AClaim();
-        RunsIn(2025, 4, PaidRun(new(2025, 4, 30), entries: (Maria.Id, 1_000m)),                   // 20,000
-                        PaidRun(new(2025, 4, 30), PayrollRunType.FinalPay, (Maria.Id, 1_000m)));  // not a regular run
-        RunsIn(2025, 5, PaidRun(new(2025, 5, 31), entries: (Guid.NewGuid(), 1_000m)));            // not Maria
-        RunsIn(2025, 6, PaidRun(new(2025, 6, 30), entries: (Maria.Id, 0m)));                      // no SSS: no MSC
-        RunsIn(2025, 7, PaidRun(new(2025, 7, 31), PayrollRunType.FinalPay, (Maria.Id, 1_500m)));  // only a final pay
+        // A 1,750 share works back to a 35,000 MSC, but only the Regular SS part up to 20,000 counts.
+        foreach (var month in new[] { 4, 5, 6, 7, 8, 9 })
+            RunsIn(2025, month, PaidRun(new DateOnly(2025, month, 28), entries: (Maria.Id, 1_750m)));
 
         var suggestion = await _sut.SuggestAsync(claim.Id);
 
-        // Fewer than 6 months still gives a suggestion: 20,000 / 180 = 111.11
+        // 6 x 20,000 = 120,000 / 180 = 666.67 a day, 70,000 for 105 days.
+        suggestion.DailyAllowance.Should().Be(666.67m);
+        suggestion.MonthsFound.Should().Be(6);
+        MaternityMath.RegularSsMscCeiling.Should().Be(20_000m);
+    }
+
+    [Fact]
+    public async Task Suggest_CountsFinalPayRuns_SkipsMonthsWithoutAnEntry_AndMonthsWithNoSss()
+    {
+        var claim = AClaim();
+        // April: the first cutoff alone is half a month, and the final pay tops it up to the whole month.
+        RunsIn(2025, 4, SemiMonthly(PaidRun(new(2025, 4, 15), entries: (Maria.Id, 250m))),
+                        SemiMonthly(PaidRun(new(2025, 4, 30), PayrollRunType.FinalPay, (Maria.Id, 350m)))); // 600: 12,000
+        RunsIn(2025, 5, PaidRun(new(2025, 5, 31), entries: (Guid.NewGuid(), 1_000m)));            // not Maria
+        RunsIn(2025, 6, PaidRun(new(2025, 6, 30), entries: (Maria.Id, 0m)));                      // no SSS: no MSC
+        RunsIn(2025, 7, SemiMonthly(PaidRun(new(2025, 7, 31), PayrollRunType.FinalPay, (Maria.Id, 400m)))); // 8,000
+
+        var suggestion = await _sut.SuggestAsync(claim.Id);
+
+        // Fewer than 6 months still gives a suggestion: 12,000 + 8,000 = 20,000 / 180 = 111.11
+        suggestion.DailyAllowance.Should().Be(111.11m);
+        suggestion.MonthsFound.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Suggest_SkipsAMonthWithOnlyItsFirstSemiMonthlyCutoffPaid()
+    {
+        var claim = AClaim();
+        // April's second cutoff isn't paid: half the share would understate the MSC (10,000).
+        RunsIn(2025, 4, SemiMonthly(PaidRun(new(2025, 4, 15), entries: (Maria.Id, 500m))));
+        RunsIn(2025, 5, SemiMonthly(PaidRun(new(2025, 5, 15), entries: (Maria.Id, 500m))),
+                        SemiMonthly(PaidRun(new(2025, 5, 31), entries: (Maria.Id, 500m))));        // 1,000: 20,000
+
+        var suggestion = await _sut.SuggestAsync(claim.Id);
+
+        // 20,000 / 180 = 111.11
         suggestion.DailyAllowance.Should().Be(111.11m);
         suggestion.MonthsFound.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Suggest_WhenPayrollSettingsOverrideBothSssRates_HasNoSuggestion()
+    {
+        var claim = AClaim();
+        _settings.Setup(s => s.GetDefaultAsync(It.IsAny<CancellationToken>()))
+                 .ReturnsAsync(new PayrollSettings { SSSEmployeeRate = 0.05m, SSSEmployerRate = 0.10m });
+        RunsIn(2025, 4, PaidRun(new(2025, 4, 30), entries: (Maria.Id, 1_000m)));
+
+        var suggestion = await _sut.SuggestAsync(claim.Id);
+
+        // The MSC can't be worked back from a share under overridden rates.
+        suggestion.Should().Be(new SuggestedAllowanceDto(null, 0, new DateOnly(2025, 4, 1), new DateOnly(2026, 3, 31), true));
+    }
+
+    [Fact]
+    public async Task Suggest_WhenOnlyOneSssRateIsOverridden_StillSuggests()
+    {
+        var claim = AClaim();
+        _settings.Setup(s => s.GetDefaultAsync(It.IsAny<CancellationToken>()))
+                 .ReturnsAsync(new PayrollSettings { SSSEmployeeRate = 0.05m });
+        RunsIn(2025, 4, PaidRun(new(2025, 4, 30), entries: (Maria.Id, 1_000m)));
+
+        var suggestion = await _sut.SuggestAsync(claim.Id);
+
+        // 20,000 / 180 = 111.11
+        suggestion.Should().Be(new SuggestedAllowanceDto(111.11m, 1, new DateOnly(2025, 4, 1), new DateOnly(2026, 3, 31), false));
     }
 
     [Fact]

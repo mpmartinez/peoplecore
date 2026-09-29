@@ -1,9 +1,11 @@
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using PeopleCore.Application.Payroll.Maternity;
 using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Leave;
 using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Enums;
+using PeopleCore.Domain.Exceptions;
 using PeopleCore.Infrastructure.Persistence;
 using PeopleCore.Infrastructure.Persistence.Repositories;
 
@@ -19,7 +21,8 @@ public class MaternityClaimServiceDbTests : DatabaseTestBase
     public MaternityClaimServiceDbTests(PostgresFixture fixture) : base(fixture) { }
 
     private static MaternityClaimService Service(AppDbContext context) => new(
-        new MaternityClaimRepository(context), new LeaveRequestRepository(context), new PayrollRunRepository(context));
+        new MaternityClaimRepository(context), new LeaveRequestRepository(context), new PayrollRunRepository(context),
+        new PayrollSettingsRepository(context));
 
     private LeaveType? _maternity;
 
@@ -47,10 +50,12 @@ public class MaternityClaimServiceDbTests : DatabaseTestBase
 
     private int _runCount;
 
-    /// <summary>A Paid (unless told otherwise) regular run ending on <paramref name="periodEnd"/>, with each employee's SSS share.</summary>
-    private void ARunWith(DateOnly periodEnd, PayrollRunStatus status, params (Employee Employee, decimal Sss)[] entries)
+    /// <summary>A regular run ending on <paramref name="periodEnd"/>, with each employee's SSS share.</summary>
+    private PayrollRun ARunWith(DateOnly periodEnd, PayrollRunStatus status, PayFrequency frequency,
+        params (Employee Employee, decimal Sss)[] entries)
     {
         var run = ARun($"PAY-T-{++_runCount:000}", periodEnd.AddDays(-14), periodEnd, periodEnd.AddDays(5), status);
+        run.Frequency = frequency;
         foreach (var (employee, sss) in entries)
         {
             var entry = AnEntry(run.Id, employee.Id);
@@ -58,10 +63,11 @@ public class MaternityClaimServiceDbTests : DatabaseTestBase
             run.Employees.Add(entry);
         }
         Context.PayrollRuns.Add(run);
+        return run;
     }
 
     [Fact]
-    public async Task Suggest_OverEightPaidRuns_TakesTheSixHighestMonthlyCreditsInTheWindow()
+    public async Task Suggest_OverRealPaidRuns_TakesTheSixHighestFullMonthCreditsInTheWindow()
     {
         var maria = AnEmployee("Santos", "Maria");
         var ana = AnEmployee("Cruz", "Ana");
@@ -69,27 +75,79 @@ public class MaternityClaimServiceDbTests : DatabaseTestBase
         await Context.SaveChangesAsync();
         // Leave starting 10 Aug 2026: Q3, so the semester is Apr-Sep 2026 and the window Apr 2025-Mar 2026.
         var request = await ARequestAsync(maria, await MaternityTypeAsync(), new DateOnly(2026, 8, 10));
+        const PayrollRunStatus paid = PayrollRunStatus.Paid;
+        const PayFrequency monthly = PayFrequency.Monthly, semi = PayFrequency.SemiMonthly;
 
-        // Eight paid runs in the window over seven months; September's two cutoffs add up to one month.
-        ARunWith(new(2025, 5, 31), PayrollRunStatus.Paid, (maria, 1_000m));                // 20,000
-        ARunWith(new(2025, 6, 30), PayrollRunStatus.Paid, (maria, 1_000m));                // 20,000
-        ARunWith(new(2025, 7, 31), PayrollRunStatus.Paid, (maria, 1_250m));                // 25,000
-        ARunWith(new(2025, 8, 31), PayrollRunStatus.Paid, (maria, 1_500m));                // 30,000
-        ARunWith(new(2025, 9, 15), PayrollRunStatus.Paid, (maria, 875m), (ana, 5_000m));   // \ 35,000
-        ARunWith(new(2025, 9, 30), PayrollRunStatus.Paid, (maria, 875m));                  // /
-        ARunWith(new(2025, 10, 31), PayrollRunStatus.Paid, (maria, 500m));                 // 10,000
-        ARunWith(new(2025, 11, 30), PayrollRunStatus.Paid, (maria, 750m));                 // 15,000
-        // Left out: before and after the window, and a run that isn't paid.
-        ARunWith(new(2025, 3, 31), PayrollRunStatus.Paid, (maria, 2_500m));
-        ARunWith(new(2026, 4, 30), PayrollRunStatus.Paid, (maria, 2_500m));
-        ARunWith(new(2025, 12, 31), PayrollRunStatus.Approved, (maria, 2_500m));
+        // MSC = share / 5%, to the nearest 500, capped at the Regular SS ceiling of 20,000.
+        ARunWith(new(2025, 5, 31), paid, monthly, (maria, 1_000m));                // 20,000
+        ARunWith(new(2025, 6, 30), paid, monthly, (maria, 1_000m));                // 20,000
+        ARunWith(new(2025, 7, 31), paid, monthly, (maria, 900m));                  // 18,000
+        ARunWith(new(2025, 8, 31), paid, monthly, (maria, 1_500m));                // 30,000 -> 20,000
+        ARunWith(new(2025, 9, 15), paid, semi, (maria, 875m), (ana, 5_000m));      // \ 1,750: 35,000 -> 20,000
+        ARunWith(new(2025, 9, 30), paid, semi, (maria, 875m));                     // /
+        ARunWith(new(2025, 10, 31), paid, monthly, (maria, 500m));                 // 10,000
+        ARunWith(new(2025, 11, 30), paid, monthly, (maria, 750m));                 // 15,000
+        // February: a final pay tops the first cutoff up to the whole month.
+        ARunWith(new(2026, 2, 15), paid, semi, (maria, 250m));                     // \ 600: 12,000
+        ARunWith(new(2026, 2, 28), paid, semi, (maria, 350m)).RunType = PayrollRunType.FinalPay; // /
+        // Left out: before and after the window, a run that isn't paid, and January, whose second
+        // cutoff isn't paid (half the month's share would understate the MSC).
+        ARunWith(new(2025, 3, 31), paid, monthly, (maria, 2_500m));
+        ARunWith(new(2026, 4, 30), paid, monthly, (maria, 2_500m));
+        ARunWith(new(2025, 12, 31), PayrollRunStatus.Approved, monthly, (maria, 2_500m));
+        ARunWith(new(2026, 1, 15), paid, semi, (maria, 2_500m));
         await Context.SaveChangesAsync();
 
         var claim = await Service(Context).CreateAsync(request.Id);
         var suggestion = await Service(NewContext()).SuggestAsync(claim.Id);
 
-        // 35,000 + 30,000 + 25,000 + 20,000 + 20,000 + 15,000 = 145,000 / 180 = 805.56
-        suggestion.Should().Be(new SuggestedAllowanceDto(805.56m, 7, new DateOnly(2025, 4, 1), new DateOnly(2026, 3, 31)));
+        // 20,000 + 20,000 + 20,000 + 20,000 + 18,000 + 15,000 = 113,000 / 180 = 627.78
+        // (8 months: left out of the six are 12,000 and 10,000)
+        suggestion.Should().Be(new SuggestedAllowanceDto(627.78m, 8, new DateOnly(2025, 4, 1), new DateOnly(2026, 3, 31)));
+    }
+
+    /// <summary>
+    /// Re-implements <see cref="IMaternityClaimRepository"/> so the service's duplicate check runs
+    /// this instead: the check finds no claim, then a rival create commits before this one saves.
+    /// </summary>
+    private sealed class RacingClaimRepository(AppDbContext context, Func<Task> rival)
+        : MaternityClaimRepository(context), IMaternityClaimRepository
+    {
+        public new async Task<MaternityClaim?> GetByLeaveRequestAsync(Guid leaveRequestId, CancellationToken ct = default)
+        {
+            var existing = await base.GetByLeaveRequestAsync(leaveRequestId, ct);
+            await rival();
+            return existing;
+        }
+    }
+
+    [Fact]
+    public async Task Create_WhenARivalCreateCommitsFirst_GivesTheReadableMessage()
+    {
+        var maria = AnEmployee("Santos", "Maria");
+        Context.Employees.Add(maria);
+        await Context.SaveChangesAsync();
+        var request = await ARequestAsync(maria, await MaternityTypeAsync(), new DateOnly(2026, 8, 10));
+
+        // The rival's claim goes in directly through a second context.
+        async Task Rival()
+        {
+            await using var second = NewContext();
+            second.MaternityClaims.Add(new MaternityClaim { LeaveRequestId = request.Id, EmployeeId = maria.Id, Days = 105m });
+            await second.SaveChangesAsync();
+        }
+        await using var context = NewContext();
+        var service = new MaternityClaimService(new RacingClaimRepository(context, Rival), new LeaveRequestRepository(context),
+            new PayrollRunRepository(context), new PayrollSettingsRepository(context));
+
+        var act = () => service.CreateAsync(request.Id);
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("Maria Santos already has a maternity claim for this leave.");
+        // The rejected claim is detached, so a later save on this context doesn't retry it.
+        context.ChangeTracker.Entries<MaternityClaim>().Should().BeEmpty();
+        await using var reader = NewContext();
+        (await reader.MaternityClaims.CountAsync(c => c.LeaveRequestId == request.Id)).Should().Be(1);
     }
 
     [Fact]

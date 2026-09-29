@@ -19,6 +19,14 @@ public static class MaternityMath
     public const int Divisor = 180;
 
     /// <summary>
+    /// SSS benefits, maternity included, are computed on the Regular SS monthly salary credit,
+    /// which tops out at 20,000 (SSS Circular 2024-006, under RA 11199's contribution schedule).
+    /// The MSC above it goes to the Mandatory Provident Fund (WISP) and doesn't count, which is why
+    /// the maximum daily maternity allowance is 20,000 x 6 / 180 = 666.67, or 70,000 for 105 days.
+    /// </summary>
+    public const decimal RegularSsMscCeiling = 20_000m;
+
+    /// <summary>
     /// The 12-month window before the semester of contingency, from the first day of its first month
     /// to the last day of its last month. The semester is the two calendar quarters ending with the
     /// quarter of <paramref name="contingency"/>.

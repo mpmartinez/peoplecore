@@ -1,13 +1,18 @@
 using System.Reflection;
+using System.Text.Json;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Routing;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PeopleCore.API.Authorization;
 using PeopleCore.API.Controllers.Payroll;
+using PeopleCore.API.Middleware;
 using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Payroll.Maternity;
 using PeopleCore.Domain.Enums;
+using PeopleCore.Domain.Exceptions;
 using Xunit;
 
 namespace PeopleCore.Application.Tests.Payroll;
@@ -143,5 +148,37 @@ public class MaternityClaimsControllerTests
         var result = await Controller().Deny(ClaimId, request, CancellationToken.None);
 
         result.Result.Should().BeOfType<OkObjectResult>().Which.Value.Should().Be(Claim);
+    }
+
+    [Fact]
+    public void DenyRequest_NoteIsNullable_SoMvcDoesNotRequireItBeforeTheServiceCanExplain()
+    {
+        // MVC treats a non-nullable reference type as [Required] and answers a missing one with a
+        // ValidationProblem that has no detail, so the service's message would never reach HR.
+        var nullability = new NullabilityInfoContext();
+        var property = typeof(DenyRequest).GetProperty(nameof(DenyRequest.Note))!;
+        var parameter = typeof(DenyRequest).GetConstructors().Single().GetParameters().Single();
+
+        nullability.Create(property).ReadState.Should().Be(NullabilityState.Nullable);
+        nullability.Create(parameter).WriteState.Should().Be(NullabilityState.Nullable);
+    }
+
+    [Fact]
+    public async Task Deny_WithoutANote_ReachesTheService_AndItsMessageComesBackAsThe400Detail()
+    {
+        _service.Setup(s => s.DenyAsync(ClaimId, It.Is<DenyRequest>(r => r.Note == null), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new DomainException("Explain why SSS denied the claim."));
+        var http = new DefaultHttpContext();
+        http.Response.Body = new MemoryStream();
+        var pipeline = new ExceptionHandlingMiddleware(
+            async _ => await Controller().Deny(ClaimId, new DenyRequest(null), CancellationToken.None),
+            NullLogger<ExceptionHandlingMiddleware>.Instance);
+
+        await pipeline.InvokeAsync(http);
+
+        http.Response.StatusCode.Should().Be(StatusCodes.Status400BadRequest);
+        http.Response.Body.Position = 0;
+        using var problem = await JsonDocument.ParseAsync(http.Response.Body);
+        problem.RootElement.GetProperty("detail").GetString().Should().Be("Explain why SSS denied the claim.");
     }
 }
