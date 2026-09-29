@@ -124,9 +124,52 @@ public class MaternityPayCalculatorTests
     [InlineData(MaternityClaimStatus.Advanced)]
     [InlineData(MaternityClaimStatus.Reimbursed)]
     [InlineData(MaternityClaimStatus.Denied)]
-    public async Task TheAdvance_WithOnlyAnEarlierClaimAlreadySettled_IsRefused_AsNoneReady(MaternityClaimStatus status)
+    public async Task TheAdvance_OnAClaimAlreadyAdvanced_ForLeaveStillCurrent_IsRefused_NamingTheRun(MaternityClaimStatus status)
     {
-        // An earlier pregnancy's claim: its benefit was advanced, so there is nothing to advance now.
+        // The leave (Aug 10 - Nov 22) hasn't ended by Aug 16, so this is the same pregnancy's claim.
+        AClaim(status: status, advanceRun: new PayrollRun { RunNumber = "PAY-2026-015" });
+
+        var act = () => _sut.ForAsync(Cutoff(8, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("Maria Santos's maternity benefit was already advanced on PAY-2026-015.");
+    }
+
+    [Fact]
+    public async Task TheAdvance_WhenSeveralCurrentClaimsWereAdvanced_NamesTheLatestAdvance()
+    {
+        var earlier = AClaim(status: MaternityClaimStatus.Denied, advanceRun: new PayrollRun { RunNumber = "PAY-2026-010" });
+        earlier.AdvancedAt = new DateOnly(2026, 6, 5);
+        var later = AClaim(status: MaternityClaimStatus.Advanced, advanceRun: new PayrollRun { RunNumber = "PAY-2026-015" });
+        later.AdvancedAt = new DateOnly(2026, 8, 5);
+        _claims.Setup(c => c.GetForEmployeesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+               .ReturnsAsync([earlier, later]);
+
+        var act = () => _sut.ForAsync(Cutoff(8, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("Maria Santos's maternity benefit was already advanced on PAY-2026-015.");
+    }
+
+    [Fact]
+    public async Task TheAdvance_WithADeniedClaimThatNoRunAdvanced_IsRefused_AsNoneReady()
+    {
+        AClaim(status: MaternityClaimStatus.Denied);
+
+        var act = () => _sut.ForAsync(Cutoff(8, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Maria Santos has no maternity claim ready to advance.");
+    }
+
+    [Theory]
+    [InlineData(MaternityClaimStatus.Advanced)]
+    [InlineData(MaternityClaimStatus.Reimbursed)]
+    [InlineData(MaternityClaimStatus.Denied)]
+    public async Task TheAdvance_WithOnlyAnEarlierPregnancysClaim_IsRefused_AsNoneReady(MaternityClaimStatus status)
+    {
+        // An earlier pregnancy: that leave ended 22 Nov 2025, before this Aug 16-31 2026 cutoff.
+        _leaveRequest.StartDate = new DateOnly(2025, 8, 10);
+        _leaveRequest.EndDate = new DateOnly(2025, 11, 22);
         AClaim(status: status, advanceRun: new PayrollRun { RunNumber = "PAY-2025-015" });
 
         var act = () => _sut.ForAsync(Cutoff(8, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);

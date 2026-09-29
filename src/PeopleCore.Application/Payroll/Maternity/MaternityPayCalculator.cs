@@ -180,8 +180,8 @@ public sealed class MaternityRun
     /// <summary>
     /// One employee's figures. The advance is the benefit of their ready claim, earliest leave first,
     /// that no other regular run carries. It is refused, naming the run, when every ready claim is
-    /// carried elsewhere, and as none ready when there is no ready claim - an earlier pregnancy's
-    /// claim that was advanced long ago isn't this one.
+    /// carried elsewhere or the claim for leave still current was already advanced; and as none
+    /// ready otherwise - an earlier pregnancy's claim, advanced long ago, isn't this one.
     /// </summary>
     public MaternityPay For(Guid employeeId, bool advanceRequested, decimal regularPayBeforeOffset, bool exempt)
     {
@@ -229,6 +229,21 @@ public sealed class MaternityRun
             return free;
         if (ready.Count > 0)
             throw MaternityPayCalculator.AlreadyAdvanced(name, _advancedElsewhere[ready[0].Id]);
+
+        // No ready claim. One already advanced for leave that hasn't ended before this period is this
+        // pregnancy's, so the benefit was already advanced - on the latest such run. A claim for leave
+        // that ended earlier is an earlier pregnancy's, and a denied claim no run advanced has no run
+        // to name: then there is simply nothing ready.
+        var advancedForCurrentLeave = claims
+            .Where(c => c.Status != MaternityClaimStatus.Draft
+                        && (c.LeaveRequest is null || c.LeaveRequest.EndDate >= _run!.PeriodStart)
+                        && c.AdvanceRun is not null)
+            .OrderByDescending(c => c.AdvancedAt)
+            .ThenByDescending(c => c.CreatedAt)
+            .FirstOrDefault();
+        if (advancedForCurrentLeave is not null)
+            throw MaternityPayCalculator.AlreadyAdvanced(name, advancedForCurrentLeave.AdvanceRun!.RunNumber);
+
         throw new DomainException($"{name} has no maternity claim ready to advance.");
     }
 

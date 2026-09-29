@@ -135,10 +135,10 @@ public class MaternityPayDbTests : DatabaseTestBase
             entry.MaternityClaimId.Should().Be(claimId);
         }
 
-        // Paid once: a later run can't advance it again - her only claim is no longer ready.
+        // Paid once: a later run can't advance it again while the leave is current.
         var again = () => CreateAsync(Cutoff(maria.Id, 8, 16, 31, new DateOnly(2026, 9, 5), advance: true));
         await again.Should().ThrowAsync<DomainException>()
-            .WithMessage("Maria Santos has no maternity claim ready to advance.");
+            .WithMessage($"Maria Santos's maternity benefit was already advanced on {july.RunNumber}.");
     }
 
     [Fact]
