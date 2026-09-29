@@ -124,14 +124,14 @@ public class MaternityPayCalculatorTests
     [InlineData(MaternityClaimStatus.Advanced)]
     [InlineData(MaternityClaimStatus.Reimbursed)]
     [InlineData(MaternityClaimStatus.Denied)]
-    public async Task TheAdvance_OnAClaimAlreadyAdvanced_IsRefused_NamingTheRun(MaternityClaimStatus status)
+    public async Task TheAdvance_WithOnlyAnEarlierClaimAlreadySettled_IsRefused_AsNoneReady(MaternityClaimStatus status)
     {
-        AClaim(status: status, advanceRun: new PayrollRun { RunNumber = "PAY-2026-015" });
+        // An earlier pregnancy's claim: its benefit was advanced, so there is nothing to advance now.
+        AClaim(status: status, advanceRun: new PayrollRun { RunNumber = "PAY-2025-015" });
 
         var act = () => _sut.ForAsync(Cutoff(8, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
 
-        await act.Should().ThrowAsync<DomainException>()
-            .WithMessage("Maria Santos's maternity benefit was already advanced on PAY-2026-015.");
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Maria Santos has no maternity claim ready to advance.");
     }
 
     [Fact]
@@ -147,6 +147,25 @@ public class MaternityPayCalculatorTests
             .WithMessage("Maria Santos's maternity benefit was already advanced on PAY-2026-016.");
         // This run's own stored entry doesn't count against it on a recompute.
         _runs.Verify(r => r.GetMaternityAdvancesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), run.Id, It.IsAny<CancellationToken>()));
+    }
+
+    [Fact]
+    public async Task TheAdvance_WhenTheOnlyReadyClaimIsCarriedElsewhere_NamesThatRun_EvenBesideAnEarlierAdvancedClaim()
+    {
+        var earlier = new MaternityClaim
+        {
+            EmployeeId = _maria.Id, Employee = _maria, LeaveRequestId = Guid.NewGuid(), Days = 105m, DailyAllowance = 600m,
+            Benefit = 63_000m, Status = MaternityClaimStatus.Reimbursed, AdvanceRun = new PayrollRun { RunNumber = "PAY-2024-011" }
+        };
+        var claim = AClaim();
+        _claims.Setup(c => c.GetForEmployeesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+               .ReturnsAsync([claim, earlier]);
+        AdvancedOn(claim, "PAY-2026-016");
+
+        var act = () => _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("Maria Santos's maternity benefit was already advanced on PAY-2026-016.");
     }
 
     [Fact]
@@ -202,6 +221,36 @@ public class MaternityPayCalculatorTests
         withoutClaim.Offset.Should().Be(6_000m);
         withClaim.Offset.Should().Be(6_000m);
         wholeCutoff.Offset.Should().Be(15_000m);
+    }
+
+    [Fact]
+    public async Task OverlappingApprovedRequests_CountEachLeaveDayOnce()
+    {
+        // A second approved maternity request, Aug 12-20, overlaps the first. Aug 1-15 still holds
+        // only Aug 10-15: 6 days, not 6 + 4.
+        var claim = AClaim();
+        var overlapping = new LeaveRequest
+        {
+            EmployeeId = _maria.Id, Employee = _maria, LeaveTypeId = _maternityType.Id, LeaveType = _maternityType,
+            StartDate = new DateOnly(2026, 8, 12), EndDate = new DateOnly(2026, 8, 20), TotalDays = 9m, Status = LeaveStatus.Approved
+        };
+        var overlappingClaim = new MaternityClaim
+        {
+            EmployeeId = _maria.Id, Employee = _maria, LeaveRequestId = overlapping.Id, LeaveRequest = overlapping,
+            Days = 9m, DailyAllowance = 500m, Benefit = 4_500m
+        };
+        _leave.Setup(l => l.GetApprovedByPeriodAsync(It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+              .ReturnsAsync([overlapping, _leaveRequest]);
+        _claims.Setup(c => c.GetForEmployeesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+               .ReturnsAsync([claim, overlappingClaim]);
+
+        var withAllowance = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: false);
+        var exempt = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: true);
+
+        // The earlier request's claim covers all 6 days: 666.67 x 6 = 4,000.02, and the overlapping
+        // request adds nothing. Exempt: 15,000 x 6 / 15 = 6,000.00, not 15,000 x 10 / 15.
+        withAllowance.Offset.Should().Be(4_000.02m);
+        exempt.Offset.Should().Be(6_000m);
     }
 
     [Fact]
@@ -346,8 +395,61 @@ public class MaternityPayCalculatorTests
         var act = () => _sut.SettleAdvancesAsync(run);
 
         await act.Should().ThrowAsync<DomainException>()
-            .WithMessage("Maria Santos's maternity claim has changed since this payroll was computed; recompute it before paying.");
+            .WithMessage("Maria Santos's maternity claim has changed since this payroll was computed; " +
+                         "discard this payroll and create it again, or set the allowance back.");
         claim.Status.Should().Be(MaternityClaimStatus.Draft);
+    }
+
+    [Fact]
+    public async Task Settling_AClaimAlreadyAdvancedElsewhere_IsRefused_NamingThatRun()
+    {
+        var claim = AClaim(status: MaternityClaimStatus.Advanced, advanceRun: new PayrollRun { RunNumber = "PAY-2026-015" });
+        var run = Cutoff(7, 16, 31);
+        run.Employees.Add(new PayrollRunEmployee
+        {
+            EmployeeId = _maria.Id, Employee = _maria, AdvanceMaternityBenefit = true, MaternityBenefitAdvance = 70_000.35m,
+            MaternityClaimId = claim.Id
+        });
+
+        var act = () => _sut.SettleAdvancesAsync(run);
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("Maria Santos's maternity benefit was already advanced on PAY-2026-015.");
+        claim.AdvanceRunId.Should().NotBe(run.Id);
+    }
+
+    [Fact]
+    public async Task CheckingBeforeApproval_WhenTheBenefitChangedSinceCompute_IsRefused_WhileARecomputeCanStillFixIt()
+    {
+        var claim = AClaim(allowance: 600m);   // 63,000 now, 70,000.35 when computed
+        var run = Cutoff(7, 16, 31);
+        run.Employees.Add(new PayrollRunEmployee
+        {
+            EmployeeId = _maria.Id, Employee = _maria, AdvanceMaternityBenefit = true, MaternityBenefitAdvance = 70_000.35m,
+            MaternityClaimId = claim.Id
+        });
+
+        var act = () => _sut.EnsureAdvancesCurrentAsync(run);
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("Maria Santos's maternity claim has changed since this payroll was computed; recompute it before approving.");
+        claim.Status.Should().Be(MaternityClaimStatus.Draft);
+    }
+
+    [Fact]
+    public async Task CheckingBeforeApproval_AnUnchangedClaim_ChangesNothing()
+    {
+        var claim = AClaim();
+        var run = Cutoff(7, 16, 31);
+        run.Employees.Add(new PayrollRunEmployee
+        {
+            EmployeeId = _maria.Id, AdvanceMaternityBenefit = true, MaternityBenefitAdvance = 70_000.35m, MaternityClaimId = claim.Id
+        });
+
+        await _sut.EnsureAdvancesCurrentAsync(run);
+
+        claim.Status.Should().Be(MaternityClaimStatus.Draft);
+        claim.AdvanceRunId.Should().BeNull();
     }
 
     [Fact]

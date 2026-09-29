@@ -1,4 +1,5 @@
 using FluentAssertions;
+using FluentAssertions.Equivalency;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PeopleCore.Application.Leave.Interfaces;
@@ -182,11 +183,48 @@ public partial class PayrollRunServiceTests
 
         var after = savedRun()!.Employees.Single();
         after.Should().NotBeSameAs(before);
+        after.Should().BeEquivalentTo(before, AsRecomputed);
         after.AdvanceMaternityBenefit.Should().BeTrue();
         after.MaternityClaimId.Should().Be(claim!.Id);
-        after.MaternityBenefitAdvance.Should().Be(before.MaternityBenefitAdvance).And.Be(70_000.35m);
-        after.MaternityBenefitOffset.Should().Be(before.MaternityBenefitOffset).And.Be(4_000.02m);
-        after.NetPay.Should().Be(before.NetPay);
+        after.MaternityBenefitAdvance.Should().Be(70_000.35m);
+        after.MaternityBenefitOffset.Should().Be(4_000.02m);
+    }
+
+    /// <summary>
+    /// A recomputed entry is a new row: its keys and audit stamps are new, and its children point at it.
+    /// Every other member must come out the same.
+    /// </summary>
+    internal static EquivalencyOptions<PayrollRunEmployee> AsRecomputed(EquivalencyOptions<PayrollRunEmployee> options)
+        => options.Excluding(m => m.Name == "Id" || m.Name == "PayrollRunEmployeeId" || m.Name == "PayrollRunEmployee"
+                                  || m.Name == "CreatedAt" || m.Name == "UpdatedAt" || m.Name == "CreatedBy"
+                                  || m.Name == "UpdatedBy" || m.Name == "PayrollRun" || m.Name == "Employee");
+
+    [Fact]
+    public async Task ApproveAsync_WhenTheClaimChangedSinceCompute_IsRefused_SoTheRunCanStillBeRecomputed()
+    {
+        var (maria, _, claim, savedRun) = MariaOnMaternityLeave();
+        await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: true));
+        claim!.DailyAllowance = 600m;
+        claim.Benefit = 63_000m;
+
+        var act = () => MaternitySut.ApproveAsync(savedRun()!.Id);
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("Maria Santos's maternity claim has changed since this payroll was computed; recompute it before approving.");
+        savedRun()!.Status.Should().Be(PayrollRunStatus.Draft);
+        _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ApproveAsync_WithTheClaimAsComputed_Approves()
+    {
+        var (maria, _, claim, savedRun) = MariaOnMaternityLeave();
+        await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: true));
+
+        await MaternitySut.ApproveAsync(savedRun()!.Id);
+
+        savedRun()!.Status.Should().Be(PayrollRunStatus.Approved);
+        claim!.Status.Should().Be(MaternityClaimStatus.Draft, "approving pays nothing yet");
     }
 
     [Fact]
@@ -254,7 +292,8 @@ public partial class PayrollRunServiceTests
         var act = () => MaternitySut.MarkPaidAsync(savedRun()!.Id);
 
         await act.Should().ThrowAsync<DomainException>()
-            .WithMessage("Maria Santos's maternity claim has changed since this payroll was computed; recompute it before paying.");
+            .WithMessage("Maria Santos's maternity claim has changed since this payroll was computed; " +
+                         "discard this payroll and create it again, or set the allowance back.");
         claim.Status.Should().Be(MaternityClaimStatus.Draft);
         VerifyNothingSavedAsPaid();
     }

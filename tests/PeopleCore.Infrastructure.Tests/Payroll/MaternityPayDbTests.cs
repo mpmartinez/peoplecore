@@ -135,10 +135,10 @@ public class MaternityPayDbTests : DatabaseTestBase
             entry.MaternityClaimId.Should().Be(claimId);
         }
 
-        // Paid once: a later run can't advance it again.
+        // Paid once: a later run can't advance it again - her only claim is no longer ready.
         var again = () => CreateAsync(Cutoff(maria.Id, 8, 16, 31, new DateOnly(2026, 9, 5), advance: true));
         await again.Should().ThrowAsync<DomainException>()
-            .WithMessage($"Maria Santos's maternity benefit was already advanced on {july.RunNumber}.");
+            .WithMessage("Maria Santos has no maternity claim ready to advance.");
     }
 
     [Fact]
@@ -158,19 +158,29 @@ public class MaternityPayDbTests : DatabaseTestBase
     {
         var (maria, claimId) = await MariaWithAReadyClaimAsync();
         var created = await CreateAsync(Cutoff(maria.Id, 8, 1, 15, new DateOnly(2026, 8, 20), advance: true));
+        PayrollRunEmployee before;
+        await using (var reader = NewContext())
+        {
+            before = await reader.PayrollRunEmployees.Include(e => e.PremiumDays).Include(e => e.LoanDeductionLines)
+                .SingleAsync(e => e.PayrollRunId == created.Id);
+        }
 
         await using (var context = NewContext())
         {
             await Payroll(context).ComputeAsync(created.Id);
         }
 
-        await using var reader = NewContext();
-        var entry = await reader.PayrollRunEmployees.SingleAsync(e => e.PayrollRunId == created.Id);
+        await using var after = NewContext();
+        var entry = await after.PayrollRunEmployees.Include(e => e.PremiumDays).Include(e => e.LoanDeductionLines)
+            .SingleAsync(e => e.PayrollRunId == created.Id);
+        entry.Id.Should().NotBe(before.Id, "a recompute replaces the entry");
+        entry.Should().BeEquivalentTo(before, o => o.Excluding(m => m.Name == "Id" || m.Name == "PayrollRunEmployeeId"
+            || m.Name == "PayrollRunEmployee" || m.Name == "CreatedAt" || m.Name == "UpdatedAt" || m.Name == "CreatedBy"
+            || m.Name == "UpdatedBy" || m.Name == "PayrollRun" || m.Name == "Employee"));
         entry.AdvanceMaternityBenefit.Should().BeTrue();
         entry.MaternityClaimId.Should().Be(claimId);
         entry.MaternityBenefitAdvance.Should().Be(70_000.35m);
         entry.MaternityBenefitOffset.Should().Be(4_000.02m);
-        entry.NetPay.Should().Be(created.Employees.Single().NetPay);
     }
 
     [Fact]
@@ -189,6 +199,34 @@ public class MaternityPayDbTests : DatabaseTestBase
         claim.AdvanceRunId.Should().BeNull();
         var next = await CreateAsync(Cutoff(maria.Id, 8, 1, 15, new DateOnly(2026, 8, 20), advance: true));
         next.Employees.Single().MaternityBenefitAdvance.Should().Be(70_000.35m);
+    }
+
+    [Fact]
+    public async Task TheAllowance_IsLockedWhileAnUnpaidRunAdvancesIt_AndOnceItIsPaid()
+    {
+        var (maria, claimId) = await MariaWithAReadyClaimAsync();
+        var run = await CreateAsync(Cutoff(maria.Id, 7, 16, 31, new DateOnly(2026, 8, 5), advance: true));
+
+        async Task SetAllowance()
+        {
+            await using var context = NewContext();
+            await Claims(context).SetAllowanceAsync(claimId, new SetAllowanceRequest(600m));
+        }
+
+        await FluentActions.Awaiting(SetAllowance).Should().ThrowAsync<DomainException>()
+            .WithMessage($"{run.RunNumber} advances this benefit; discard it or pay it first.");
+
+        await using (var context = NewContext())
+        {
+            await Payroll(context).ApproveAsync(run.Id);
+        }
+        await using (var context = NewContext())
+        {
+            await Payroll(context).MarkPaidAsync(run.Id);
+        }
+        await FluentActions.Awaiting(SetAllowance).Should().ThrowAsync<DomainException>()
+            .WithMessage("Only a draft claim's allowance can be changed.");
+        (await ClaimAsync(claimId)).DailyAllowance.Should().Be(666.67m);
     }
 
     [Fact]

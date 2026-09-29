@@ -295,6 +295,10 @@ public class PayrollRunService : IPayrollRunService
         // computed is caught before anyone approves figures that can't be paid.
         if (run.RunType == PayrollRunType.Regular && run.IncludesLeaveConversion)
             await YearEndLeavePaidOutAsync(run, ct);
+        // Likewise a maternity claim the run advances, while a recompute can still put it right: an
+        // approved regular run can't be recomputed.
+        if (run.RunType == PayrollRunType.Regular && _maternityPay is not null)
+            await _maternityPay.EnsureAdvancesCurrentAsync(run, ct);
 
         run.Status = PayrollRunStatus.Approved;
         run.UpdatedAt = _clock.GetUtcNow().UtcDateTime;

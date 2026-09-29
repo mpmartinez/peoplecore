@@ -50,7 +50,32 @@ public sealed class MaternityPayCalculator : IMaternityPayCalculator
             .ToList();
     }
 
+    public async Task EnsureAdvancesCurrentAsync(PayrollRun run, CancellationToken ct = default)
+        => await AdvancedClaimsAsync(run, "recompute it before approving.", ct);
+
     public async Task<IReadOnlyList<MaternityClaim>> SettleAdvancesAsync(PayrollRun run, CancellationToken ct = default)
+    {
+        // An approved regular run can't be recomputed, so the way out is a new run. The allowance
+        // is locked while an unpaid run advances the benefit (MaternityClaimService), so this is a
+        // backstop that approval (EnsureAdvancesCurrentAsync) normally answers first.
+        var settling = await AdvancedClaimsAsync(run,
+            "discard this payroll and create it again, or set the allowance back.", ct);
+        foreach (var claim in settling)
+        {
+            claim.Status = MaternityClaimStatus.Advanced;
+            claim.AdvanceRunId = run.Id;
+            claim.AdvancedAt = run.PayDate;
+        }
+        return settling;
+    }
+
+    /// <summary>
+    /// The claims the run's entries advance, each checked to still be the one the run was computed
+    /// with: Draft, and its benefit what the entry advances. Every claim is checked before the caller
+    /// changes any, so a refusal leaves them all as they were. None for a final pay.
+    /// </summary>
+    /// <param name="whatToDo">How the "has changed" refusal ends: what HR can do about it at this step.</param>
+    private async Task<IReadOnlyList<MaternityClaim>> AdvancedClaimsAsync(PayrollRun run, string whatToDo, CancellationToken ct)
     {
         if (run.RunType != PayrollRunType.Regular)
             return [];
@@ -61,8 +86,7 @@ public sealed class MaternityPayCalculator : IMaternityPayCalculator
         var claims = (await _claims.GetForEmployeesAsync(advancing.Select(e => e.EmployeeId).Distinct().ToList(), ct) ?? [])
             .ToDictionary(c => c.Id);
 
-        // Every claim is checked before any is changed, so a refusal leaves them all as they were.
-        var settling = new List<MaternityClaim>();
+        var advanced = new List<MaternityClaim>();
         foreach (var entry in advancing)
         {
             claims.TryGetValue(entry.MaternityClaimId!.Value, out var claim);
@@ -72,18 +96,10 @@ public sealed class MaternityPayCalculator : IMaternityPayCalculator
             if (claim is { Status: not MaternityClaimStatus.Draft })
                 throw AlreadyAdvanced(name, claim.AdvanceRun?.RunNumber);
             if (claim is null || claim.DailyAllowance is null || claim.Benefit != entry.MaternityBenefitAdvance)
-                throw new DomainException(
-                    $"{name}'s maternity claim has changed since this payroll was computed; recompute it before paying.");
-            settling.Add(claim);
+                throw new DomainException($"{name}'s maternity claim has changed since this payroll was computed; {whatToDo}");
+            advanced.Add(claim);
         }
-
-        foreach (var claim in settling)
-        {
-            claim.Status = MaternityClaimStatus.Advanced;
-            claim.AdvanceRunId = run.Id;
-            claim.AdvancedAt = run.PayDate;
-        }
-        return settling;
+        return advanced;
     }
 
     /// <summary>The claim a stored entry advances, or null when it advances nothing.</summary>
@@ -163,7 +179,9 @@ public sealed class MaternityRun
 
     /// <summary>
     /// One employee's figures. The advance is the benefit of their ready claim, earliest leave first,
-    /// that no other regular run carries; it is refused when there is none.
+    /// that no other regular run carries. It is refused, naming the run, when every ready claim is
+    /// carried elsewhere, and as none ready when there is no ready claim - an earlier pregnancy's
+    /// claim that was advanced long ago isn't this one.
     /// </summary>
     public MaternityPay For(Guid employeeId, bool advanceRequested, decimal regularPayBeforeOffset, bool exempt)
     {
@@ -211,12 +229,6 @@ public sealed class MaternityRun
             return free;
         if (ready.Count > 0)
             throw MaternityPayCalculator.AlreadyAdvanced(name, _advancedElsewhere[ready[0].Id]);
-
-        // A claim still in Draft only needs its allowance. With none, the latest one was advanced.
-        if (claims.All(c => c.Status != MaternityClaimStatus.Draft)
-            && claims.OrderByDescending(c => c.AdvancedAt).ThenByDescending(c => c.CreatedAt).FirstOrDefault() is { } done)
-            throw MaternityPayCalculator.AlreadyAdvanced(name, done.AdvanceRun?.RunNumber);
-
         throw new DomainException($"{name} has no maternity claim ready to advance.");
     }
 
@@ -227,18 +239,40 @@ public sealed class MaternityRun
     /// </summary>
     private decimal Offset(Guid employeeId, decimal regularPay, bool exempt)
     {
-        var requests = _requests[employeeId].OrderBy(r => r.StartDate).ToList();
+        var days = OwnDaysInPeriod(employeeId);
         if (exempt)
         {
             int periodDays = _run!.PeriodEnd.DayNumber - _run.PeriodStart.DayNumber + 1;
-            return MaternityMath.ExemptOffset(regularPay, requests.Sum(DaysInPeriod), periodDays);
+            return MaternityMath.ExemptOffset(regularPay, days.Sum(d => d.Days), periodDays);
         }
 
         decimal offset = 0m;
-        foreach (var request in requests)
+        foreach (var (request, own) in days)
             if (ClaimFor(request)?.DailyAllowance is decimal allowance)
-                offset += MaternityMath.Offset(regularPay - offset, allowance, DaysInPeriod(request));
+                offset += MaternityMath.Offset(regularPay - offset, allowance, own);
         return offset;
+    }
+
+    /// <summary>
+    /// Each request's leave days in the period that no earlier request (by start date) already
+    /// covers, so overlapping approved requests count each calendar day once - the union of their
+    /// ranges. An overlapped day goes to the request that starts first, and so to its claim.
+    /// </summary>
+    private List<(LeaveRequest Request, int Days)> OwnDaysInPeriod(Guid employeeId)
+    {
+        var covered = new HashSet<DateOnly>();
+        var result = new List<(LeaveRequest, int)>();
+        foreach (var request in _requests[employeeId].OrderBy(r => r.StartDate).ThenBy(r => r.EndDate))
+        {
+            var from = request.StartDate > _run!.PeriodStart ? request.StartDate : _run.PeriodStart;
+            var to = request.EndDate < _run.PeriodEnd ? request.EndDate : _run.PeriodEnd;
+            int own = 0;
+            for (var date = from; date <= to; date = date.AddDays(1))
+                if (covered.Add(date))
+                    own++;
+            result.Add((request, own));
+        }
+        return result;
     }
 
     private MaternityClaim? ClaimFor(LeaveRequest request)

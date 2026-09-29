@@ -201,6 +201,41 @@ public class MaternityClaimServiceTests
         claim.Benefit.Should().Be(84_000m);
     }
 
+    private void AdvancedOn(MaternityClaim claim, string runNumber)
+        => _runs.Setup(r => r.GetMaternityAdvancesAsync(It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(claim.Id)),
+                    Guid.Empty, It.IsAny<CancellationToken>()))
+                .ReturnsAsync([new MaternityAdvanceInRun(claim.Id, runNumber)]);
+
+    [Fact]
+    public async Task SetAllowance_WhileAnUnpaidRunAdvancesTheBenefit_IsRefused()
+    {
+        // The run was computed with this benefit; changing it would leave the run advancing the
+        // old figure, and the run can't be recomputed once it is approved.
+        var claim = AClaim(allowance: 666.67m, benefit: 70_000.35m);
+        AdvancedOn(claim, "PAY-2026-017");
+
+        var act = () => _sut.SetAllowanceAsync(claim.Id, new SetAllowanceRequest(600m));
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("PAY-2026-017 advances this benefit; discard it or pay it first.");
+        claim.DailyAllowance.Should().Be(666.67m);
+        claim.Benefit.Should().Be(70_000.35m);
+        _claims.Verify(c => c.UpdateAsync(It.IsAny<MaternityClaim>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SetAllowance_OnceTheRunAdvancingItIsPaid_IsTheDraftOnlyRule()
+    {
+        // Paying the run made the claim Advanced, so the draft rule answers first.
+        var claim = AClaim(MaternityClaimStatus.Advanced, allowance: 666.67m, benefit: 70_000.35m);
+        AdvancedOn(claim, "PAY-2026-017");
+
+        var act = () => _sut.SetAllowanceAsync(claim.Id, new SetAllowanceRequest(600m));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Only a draft claim's allowance can be changed.");
+        claim.DailyAllowance.Should().Be(666.67m);
+    }
+
     [Fact]
     public async Task SetAllowance_UnknownClaim_IsNotFound()
     {
@@ -429,6 +464,24 @@ public class MaternityClaimServiceTests
         var ids = await _sut.ReadyEmployeeIdsAsync();
 
         ids.Should().Equal(Maria.Id);
+    }
+
+    [Fact]
+    public async Task ReadyEmployeeIds_LeaveOutAClaimARunAlreadyAdvances()
+    {
+        var ana = new Employee { FirstName = "Ana", LastName = "Cruz" };
+        var carried = AClaim(MaternityClaimStatus.Draft, 666.67m, 70_000.35m);
+        var anasCarried = AClaim(MaternityClaimStatus.Draft, 666.67m, 70_000.35m, ARequest(employee: ana));
+        var anasFree = AClaim(MaternityClaimStatus.Draft, 600m, 63_000m,
+            ARequest(employee: ana, start: new DateOnly(2027, 9, 1)));
+        _claims.Setup(c => c.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync([carried, anasCarried, anasFree]);
+        _runs.Setup(r => r.GetMaternityAdvancesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), Guid.Empty, It.IsAny<CancellationToken>()))
+             .ReturnsAsync([new MaternityAdvanceInRun(carried.Id, "PAY-2026-017"), new MaternityAdvanceInRun(anasCarried.Id, "PAY-2026-018")]);
+
+        var ids = await _sut.ReadyEmployeeIdsAsync();
+
+        // Maria's only ready claim is on PAY-2026-017; Ana still has one no run advances.
+        ids.Should().Equal(ana.Id);
     }
 
     [Fact]

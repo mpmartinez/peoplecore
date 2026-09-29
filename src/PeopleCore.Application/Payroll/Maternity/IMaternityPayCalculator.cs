@@ -40,6 +40,13 @@ public interface IMaternityPayCalculator
     Task<IReadOnlyList<string>> WarningsAsync(PayrollRun run, CancellationToken ct = default);
 
     /// <summary>
+    /// For approval: refuses when a claim the run advances is no longer the one it was computed with
+    /// (its benefit changed, or it was advanced elsewhere), while the run can still be recomputed.
+    /// Changes nothing.
+    /// </summary>
+    Task EnsureAdvancesCurrentAsync(PayrollRun run, CancellationToken ct = default);
+
+    /// <summary>
     /// For Mark Paid: every claim the run advances, marked <see cref="Domain.Enums.MaternityClaimStatus.Advanced"/>
     /// with the run and its pay date, for the caller to save with the run. Refuses when a claim is no
     /// longer the one the run was computed with. Changes nothing for a final pay.

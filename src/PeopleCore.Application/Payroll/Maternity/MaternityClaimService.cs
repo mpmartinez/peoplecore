@@ -104,6 +104,12 @@ public sealed class MaternityClaimService : IMaternityClaimService
             throw new DomainException("Only a draft claim's allowance can be changed.");
         if (request.DailyAllowance <= 0m)
             throw new DomainException("Enter the SSS daily maternity allowance.");
+        // A run advancing the benefit was computed with it; changed, the run would advance the old
+        // figure, and once approved it can't be recomputed. A paid run made the claim Advanced, so
+        // the run found here is unpaid.
+        var carrying = await _runs.GetMaternityAdvancesAsync([claim.Id], Guid.Empty, ct) ?? [];
+        if (carrying.Count > 0)
+            throw new DomainException($"{carrying[0].RunNumber} advances this benefit; discard it or pay it first.");
 
         // Stored to 2 dp (numeric(18,2)), and the benefit is worked from what is stored.
         claim.DailyAllowance = Math.Round(request.DailyAllowance, 2, MidpointRounding.AwayFromZero);
@@ -154,11 +160,24 @@ public sealed class MaternityClaimService : IMaternityClaimService
             .ToList();
 
     public async Task<IReadOnlyList<Guid>> ReadyEmployeeIdsAsync(CancellationToken ct = default)
-        => (await _claims.GetAllAsync(ct))
+    {
+        var ready = (await _claims.GetAllAsync(ct))
             .Where(c => c.Status == MaternityClaimStatus.Draft && c.DailyAllowance is not null)
+            .ToList();
+        if (ready.Count == 0)
+            return [];
+
+        // A claim an unpaid run already advances can't go on another one. (A paid run made its
+        // claim Advanced, so it isn't ready to begin with.)
+        var carried = (await _runs.GetMaternityAdvancesAsync(ready.Select(c => c.Id).ToList(), Guid.Empty, ct) ?? [])
+            .Select(a => a.ClaimId)
+            .ToHashSet();
+        return ready
+            .Where(c => !carried.Contains(c.Id))
             .Select(c => c.EmployeeId)
             .Distinct()
             .ToList();
+    }
 
     private async Task<MaternityClaim> GetAsync(Guid claimId, CancellationToken ct)
         => await _claims.GetByIdAsync(claimId, ct)
