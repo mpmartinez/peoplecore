@@ -40,8 +40,9 @@ public class PayrollRunService : IPayrollRunService
     /// computing or paying one without it is refused.
     /// </param>
     /// <param name="clock">
-    /// When Mark Paid happens, stamped on the run and the leave balances it draws down, as final
-    /// pay stamps them. Defaults to the system clock.
+    /// When a run changes - computed, approved, an employee removed, or paid - stamped on the run,
+    /// and on the leave balances Mark Paid draws down, as final pay stamps them. Defaults to the
+    /// system clock.
     /// </param>
     public PayrollRunService(
         IPayrollRunRepository runRepo,
@@ -150,7 +151,7 @@ public class PayrollRunService : IPayrollRunService
             var recomputed = await finalPay.RecomputeAsync(run, ct);
 
             run.Status = PayrollRunStatus.Draft;
-            run.UpdatedAt = DateTime.UtcNow;
+            run.UpdatedAt = _clock.GetUtcNow().UtcDateTime;
             await _runRepo.ReplaceEntriesAsync(run, recomputed, ct);
             return;
         }
@@ -254,7 +255,7 @@ public class PayrollRunService : IPayrollRunService
         // The figures an approver would be asked to sign off on have changed, so any submission
         // no longer stands and the run goes back to draft to be resubmitted.
         run.Status = PayrollRunStatus.Draft;
-        run.UpdatedAt = DateTime.UtcNow;
+        run.UpdatedAt = _clock.GetUtcNow().UtcDateTime;
 
         await _runRepo.ReplaceEntriesAsync(run, entries, ct);
     }
@@ -286,7 +287,7 @@ public class PayrollRunService : IPayrollRunService
             await YearEndLeavePaidOutAsync(run, ct);
 
         run.Status = PayrollRunStatus.Approved;
-        run.UpdatedAt = DateTime.UtcNow;
+        run.UpdatedAt = _clock.GetUtcNow().UtcDateTime;
 
         await _runRepo.UpdateAsync(run, ct);
     }
@@ -384,7 +385,7 @@ public class PayrollRunService : IPayrollRunService
         // The run's totals change, so any submission or approval no longer stands - as on a
         // recompute.
         run.Status = PayrollRunStatus.Draft;
-        run.UpdatedAt = DateTime.UtcNow;
+        run.UpdatedAt = _clock.GetUtcNow().UtcDateTime;
         await _runRepo.RemoveEntryAsync(run, entry, ct);
 
         return ToDto(run);

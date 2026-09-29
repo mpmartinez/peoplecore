@@ -1945,6 +1945,54 @@ public class PayrollRunServiceTests
         run.UpdatedAt.Should().Be(paidAt);
     }
 
+    private static readonly DateTime ClockNow = new(2026, 12, 30, 2, 15, 0, DateTimeKind.Utc);
+
+    [Fact]
+    public async Task ComputeAsync_OnAFinalPay_StampsTheRunFromTheInjectedClock()
+    {
+        var (run, _) = ApprovedFinalPay(Item("Finance", 1, cleared: false));
+        run.Status = PayrollRunStatus.Draft;
+        _finalPay.Setup(f => f.RecomputeAsync(run, It.IsAny<CancellationToken>())).ReturnsAsync(run.Employees.ToList());
+
+        await _sut.ComputeAsync(run.Id);
+
+        run.UpdatedAt.Should().Be(ClockNow);
+    }
+
+    [Fact]
+    public async Task ComputeAsync_OnARegularRun_StampsTheRunFromTheInjectedClock()
+    {
+        var (maria, savedRun) = MariaAt36500();
+        RecomputesInPlace();
+        await _sut.CreateAsync(RoundTripRequest(maria.Id));
+        var run = savedRun()!;
+
+        await _sut.ComputeAsync(run.Id);
+
+        run.UpdatedAt.Should().Be(ClockNow);
+    }
+
+    [Fact]
+    public async Task ApproveAsync_StampsTheRunFromTheInjectedClock()
+    {
+        var (run, _) = RegularRunWithMaria(PayrollRunStatus.Draft);
+
+        await _sut.ApproveAsync(run.Id);
+
+        run.UpdatedAt.Should().Be(ClockNow);
+    }
+
+    [Fact]
+    public async Task RemoveEmployeeAsync_StampsTheRunFromTheInjectedClock()
+    {
+        var (run, maria) = RegularRunWithMaria(PayrollRunStatus.Draft);
+        RemovingActuallyRemoves(run, maria);
+
+        await _sut.RemoveEmployeeAsync(run.Id, maria.Id);
+
+        run.UpdatedAt.Should().Be(ClockNow);
+    }
+
     [Fact]
     public async Task MarkPaidAsync_OnAFlaggedRun_WhoseLeaveChangedSinceCompute_IsRefused_AndChangesNothing()
     {
