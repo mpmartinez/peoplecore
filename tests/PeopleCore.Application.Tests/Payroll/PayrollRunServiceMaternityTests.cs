@@ -1,0 +1,278 @@
+using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using PeopleCore.Application.Leave.Interfaces;
+using PeopleCore.Application.Payroll.DTOs;
+using PeopleCore.Application.Payroll.Interfaces;
+using PeopleCore.Application.Payroll.Maternity;
+using PeopleCore.Application.Payroll.Services;
+using PeopleCore.Domain.Entities.Leave;
+using PeopleCore.Domain.Entities.Payroll;
+using PeopleCore.Domain.Enums;
+using PeopleCore.Domain.Exceptions;
+using PeopleCore.Domain.Payroll;
+using Employee = PeopleCore.Domain.Entities.Employees.Employee;
+using Xunit;
+
+namespace PeopleCore.Application.Tests.Payroll;
+
+/// <summary>
+/// Maternity pay through the run (RA 11210): the advance, the offset, the warnings, and the claim
+/// settled at Mark Paid. Maria Santos earns 30,000 a month, paid semi-monthly, so a cutoff's regular
+/// pay is 15,000. Her leave runs 10 Aug to 22 Nov 2026 (105 days) and her SSS daily allowance is
+/// 666.67, so the benefit is 666.67 x 105 = 70,000.35.
+/// </summary>
+public partial class PayrollRunServiceTests
+{
+    private readonly Mock<ILeaveRequestRepository> _leaveRepo = new();
+    private readonly Mock<IMaternityClaimRepository> _claimRepo = new();
+    private PayrollRunService? _maternitySut;
+
+    /// <summary>The service with the real maternity calculator over the mocked repositories.</summary>
+    private PayrollRunService MaternitySut => _maternitySut ??= new PayrollRunService(
+        _runRepo.Object, _compensationRepo.Object, _allowanceRepo.Object, _loanRepo.Object, _settingsRepo.Object,
+        new PayrollComputationService(), _attendanceBridge.Object, _employeeRepo.Object, _separations.Object,
+        NullLogger<PayrollRunService>.Instance, _finalPay.Object, _yearEnd.Object, _clock,
+        new MaternityPayCalculator(_leaveRepo.Object, _claimRepo.Object, _runRepo.Object, _employeeRepo.Object));
+
+    private static readonly DateOnly MaternityStart = new(2026, 8, 10);
+    private static readonly DateOnly MaternityEnd = new(2026, 11, 22);
+
+    /// <summary>Maria, her compensation, her approved maternity leave and (optionally) her claim.</summary>
+    private (Employee Maria, EmployeeCompensation Compensation, MaternityClaim? Claim, Func<PayrollRun?> SavedRun)
+        MariaOnMaternityLeave(bool withClaim = true, decimal? allowance = 666.67m)
+    {
+        var maria = new Employee { FirstName = "Maria", LastName = "Santos" };
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = maria.Id, BasicSalary = 30_000m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "S"
+        };
+        var savedRun = SetupRoundTripRepositories(compensation);
+        _employeeRepo.Setup(r => r.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+                     .ReturnsAsync([maria]);
+
+        var type = new LeaveType { Name = "Maternity Leave", Code = "ML", IsMaternity = true, IsPaid = true };
+        var request = new LeaveRequest
+        {
+            EmployeeId = maria.Id, Employee = maria, LeaveType = type, LeaveTypeId = type.Id,
+            StartDate = MaternityStart, EndDate = MaternityEnd, TotalDays = 105m, Status = LeaveStatus.Approved
+        };
+        _leaveRepo.Setup(l => l.GetApprovedByPeriodAsync(It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                  .ReturnsAsync((DateOnly from, DateOnly to, CancellationToken _) =>
+                      new[] { request }.Where(r => r.StartDate <= to && r.EndDate >= from).ToList());
+
+        MaternityClaim? claim = null;
+        if (withClaim)
+        {
+            claim = new MaternityClaim
+            {
+                EmployeeId = maria.Id, Employee = maria, LeaveRequestId = request.Id, LeaveRequest = request, Days = 105m,
+                DailyAllowance = allowance, Benefit = allowance is decimal a ? MaternityMath.Benefit(a, 105m) : 0m
+            };
+        }
+        _claimRepo.Setup(c => c.GetForEmployeesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+                  .ReturnsAsync(claim is null ? [] : [claim]);
+        NoOtherRunAdvances();
+        return (maria, compensation, claim, savedRun);
+    }
+
+    private void NoOtherRunAdvances()
+        => _runRepo.Setup(r => r.GetMaternityAdvancesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<Guid>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync([]);
+
+    private static CreatePayrollRunRequest AugustFirstHalf(Guid employeeId, bool advance) => new(
+        new DateOnly(2026, 8, 1), new DateOnly(2026, 8, 15), new DateOnly(2026, 8, 20), PayFrequency.SemiMonthly,
+        [new PayrollRunEmployeeInput(employeeId, AdvanceMaternityBenefit: advance)]);
+
+    [Fact]
+    public async Task CreateAsync_AdvancesTheBenefit_AndOffsetsTheLeaveDays_AndTheDtoCarriesEachFigure()
+    {
+        var (maria, compensation, claim, savedRun) = MariaOnMaternityLeave();
+
+        var dto = await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: true));
+
+        // Aug 10-15 is 6 days of leave: 666.67 x 6 = 4,000.02 comes off the 15,000 regular pay,
+        // leaving 10,999.98. Gross = 10,999.98 + the 70,000.35 advance = 81,000.33.
+        var entry = savedRun()!.Employees.Single();
+        entry.AdvanceMaternityBenefit.Should().BeTrue();
+        entry.MaternityClaimId.Should().Be(claim!.Id);
+        entry.MaternityBenefitAdvance.Should().Be(70_000.35m);
+        entry.MaternityBenefitOffset.Should().Be(4_000.02m);
+        entry.RegularPay.Should().Be(10_999.98m);
+        entry.GrossPay.Should().Be(81_000.33m);
+
+        // The rest of the entry is exactly what the engine gives for that maternity input: the
+        // offset was worked out against the 15,000 before it, not against the reduced figure.
+        var direct = new PayrollComputationService().Compute(compensation, savedRun()!, daysWorked: 11m,
+            attendance: new PayrollAttendanceInput(), dailyRateFactor: 365m,
+            maternity: new MaternityInput(70_000.35m, 4_000.02m));
+        entry.WithholdingTax.Should().Be(direct.WithholdingTax);
+        entry.NetPay.Should().Be(direct.NetPay);
+
+        // Two different figures, so a swap of the DTO's two positional members would show.
+        var line = dto.Employees.Single();
+        line.MaternityBenefitAdvance.Should().Be(70_000.35m);
+        line.MaternityBenefitOffset.Should().Be(4_000.02m);
+        dto.Warnings.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithoutAnAdvance_OffsetsTheLeave_AndWarnsTheBenefitIsNotAdvancedYet()
+    {
+        var (maria, _, _, savedRun) = MariaOnMaternityLeave();
+
+        var dto = await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: false));
+
+        var entry = savedRun()!.Employees.Single();
+        entry.AdvanceMaternityBenefit.Should().BeFalse();
+        entry.MaternityBenefitAdvance.Should().Be(0m);
+        entry.MaternityClaimId.Should().BeNull();
+        entry.MaternityBenefitOffset.Should().Be(4_000.02m);
+        dto.Warnings.Should().Equal("Maternity benefit not advanced yet for Maria Santos.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_AnAdvanceWithoutAReadyClaim_IsRefused_AndNothingIsSaved()
+    {
+        var (maria, _, _, _) = MariaOnMaternityLeave(allowance: null);
+
+        var act = () => MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: true));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Maria Santos has no maternity claim ready to advance.");
+        _runRepo.Verify(r => r.AddWithEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithNoClaim_OffsetsNothing_AndWarnsTheBenefitIsNotSetUp()
+    {
+        var (maria, _, _, savedRun) = MariaOnMaternityLeave(withClaim: false);
+
+        var dto = await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: false));
+
+        savedRun()!.Employees.Single().MaternityBenefitOffset.Should().Be(0m);
+        savedRun()!.Employees.Single().RegularPay.Should().Be(15_000m);
+        dto.Warnings.Should().Equal("Maternity benefit not set up yet for Maria Santos.");
+    }
+
+    [Fact]
+    public async Task CreateAsync_ForAnExemptEmployer_OffsetsTheRegularPayForTheLeaveDays_EvenWithoutAClaim()
+    {
+        var (maria, _, _, savedRun) = MariaOnMaternityLeave(withClaim: false);
+        _settingsRepo.Setup(r => r.GetDefaultAsync(It.IsAny<CancellationToken>()))
+                     .ReturnsAsync(new PayrollSettings { ExemptFromMaternityDifferential = true });
+
+        await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: false));
+
+        // 15,000 x 6 leave days / 15 calendar days = 6,000.00, leaving 9,000.
+        var entry = savedRun()!.Employees.Single();
+        entry.MaternityBenefitOffset.Should().Be(6_000m);
+        entry.RegularPay.Should().Be(9_000m);
+    }
+
+    [Fact]
+    public async Task ComputeAsync_KeepsTheAdvanceFromTheStoredEntry_AndReproducesTheRun()
+    {
+        var (maria, _, claim, savedRun) = MariaOnMaternityLeave();
+        await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: true));
+        var before = savedRun()!.Employees.Single();
+        RecomputesInPlace();
+
+        await MaternitySut.ComputeAsync(savedRun()!.Id);
+
+        var after = savedRun()!.Employees.Single();
+        after.Should().NotBeSameAs(before);
+        after.AdvanceMaternityBenefit.Should().BeTrue();
+        after.MaternityClaimId.Should().Be(claim!.Id);
+        after.MaternityBenefitAdvance.Should().Be(before.MaternityBenefitAdvance).And.Be(70_000.35m);
+        after.MaternityBenefitOffset.Should().Be(before.MaternityBenefitOffset).And.Be(4_000.02m);
+        after.NetPay.Should().Be(before.NetPay);
+    }
+
+    [Fact]
+    public async Task ComputeAsync_WhenAnotherRunNowCarriesTheAdvance_IsRefused()
+    {
+        var (maria, _, claim, savedRun) = MariaOnMaternityLeave();
+        await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: true));
+        RecomputesInPlace();
+        _runRepo.Setup(r => r.GetMaternityAdvancesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), savedRun()!.Id,
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync([new MaternityAdvanceInRun(claim!.Id, "PAY-2026-021")]);
+
+        var act = () => MaternitySut.ComputeAsync(savedRun()!.Id);
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("Maria Santos's maternity benefit was already advanced on PAY-2026-021.");
+        _runRepo.Verify(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyList<PayrollRunEmployee>>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetAsync_RebuildsTheWarnings_SoAClaimSetUpSinceClearsThem()
+    {
+        var (maria, _, claim, savedRun) = MariaOnMaternityLeave(allowance: null);
+        var created = await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: false));
+        claim!.DailyAllowance = 666.67m;
+        claim.Benefit = 70_000.35m;
+
+        var loaded = await MaternitySut.GetAsync(savedRun()!.Id);
+
+        created.Warnings.Should().Equal("Maternity benefit not set up yet for Maria Santos.");
+        loaded!.Warnings.Should().Equal("Maternity benefit not advanced yet for Maria Santos.");
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_SettlesTheAdvancedClaim_InTheSameSaveAsTheRun()
+    {
+        var (maria, _, claim, savedRun) = MariaOnMaternityLeave();
+        await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: true));
+        var run = savedRun()!;
+        run.Status = PayrollRunStatus.Approved;
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+
+        await MaternitySut.MarkPaidAsync(run.Id);
+
+        claim!.Status.Should().Be(MaternityClaimStatus.Advanced);
+        claim.AdvanceRunId.Should().Be(run.Id);
+        claim.AdvancedAt.Should().Be(new DateOnly(2026, 8, 20));
+        _runRepo.Verify(r => r.SavePaidAsync(run, It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
+            It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+            It.Is<IReadOnlyCollection<MaternityClaim>>(c => c.Single() == claim),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenTheClaimChangedSinceCompute_IsRefused_AndSavesNothing()
+    {
+        var (maria, _, claim, savedRun) = MariaOnMaternityLeave();
+        await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: true));
+        savedRun()!.Status = PayrollRunStatus.Approved;
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        claim!.DailyAllowance = 600m;
+        claim.Benefit = 63_000m;
+
+        var act = () => MaternitySut.MarkPaidAsync(savedRun()!.Id);
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("Maria Santos's maternity claim has changed since this payroll was computed; recompute it before paying.");
+        claim.Status.Should().Be(MaternityClaimStatus.Draft);
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
+    public async Task AFinalPay_GetsNoMaternityHandling()
+    {
+        var (run, _) = ApprovedFinalPay(Item("Laptop", 1, cleared: true));
+
+        var dto = await MaternitySut.GetAsync(run.Id);
+        await MaternitySut.MarkPaidAsync(run.Id);
+
+        dto!.Warnings.Should().BeEmpty();
+        _leaveRepo.VerifyNoOtherCalls();
+        _claimRepo.VerifyNoOtherCalls();
+        _runRepo.Verify(r => r.SavePaidAsync(run, It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
+            It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+            It.Is<IReadOnlyCollection<MaternityClaim>>(c => c.Count == 0),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+}

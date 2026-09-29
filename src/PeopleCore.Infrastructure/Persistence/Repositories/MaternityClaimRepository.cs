@@ -50,6 +50,20 @@ public class MaternityClaimRepository : Repository<MaternityClaim>, IMaternityCl
             .OrderByDescending(c => c.CreatedAt)
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyList<MaternityClaim>> GetForEmployeesAsync(
+        IReadOnlyCollection<Guid> employeeIds, CancellationToken ct = default)
+    {
+        var ids = employeeIds.Distinct().ToList();
+        if (ids.Count == 0) return [];
+        return await Context.MaternityClaims
+            .Where(c => ids.Contains(c.EmployeeId))
+            .Include(c => c.Employee)
+            .Include(c => c.LeaveRequest)
+            .Include(c => c.AdvanceRun)
+            .OrderByDescending(c => c.CreatedAt)
+            .ToListAsync(ct);
+    }
+
     /// <summary>Every claim, newest first, with its employee, leave request and advance run loaded.</summary>
     public override async Task<IReadOnlyList<MaternityClaim>> GetAllAsync(CancellationToken ct = default)
         => await Context.MaternityClaims

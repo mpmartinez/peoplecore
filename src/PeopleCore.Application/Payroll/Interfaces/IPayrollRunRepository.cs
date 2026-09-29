@@ -166,11 +166,23 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     Task<int> CountUnpaidRunsPaidInYearAsync(int year, CancellationToken ct = default);
 
     /// <summary>
-    /// Saves what marking a run Paid changed - the run's status, the loans it retired and the leave
-    /// balances it drew converted days from - in one save, so they commit together or not at all.
+    /// Saves what marking a run Paid changed - the run's status, the loans it retired, the leave
+    /// balances it drew converted days from and the maternity claims it advanced - in one save, so
+    /// they commit together or not at all.
     /// </summary>
     Task SavePaidAsync(PayrollRun run, IReadOnlyCollection<EmployeeLoan> loans,
-        IReadOnlyCollection<Domain.Entities.Leave.LeaveBalance> leaveBalances, CancellationToken ct = default);
+        IReadOnlyCollection<Domain.Entities.Leave.LeaveBalance> leaveBalances,
+        IReadOnlyCollection<MaternityClaim> maternityClaims, CancellationToken ct = default);
+
+    /// <summary>
+    /// The maternity advances on file for the claims: one per entry that advances one of them
+    /// (<see cref="PayrollRunEmployee.AdvanceMaternityBenefit"/>, a
+    /// <see cref="PayrollRunEmployee.MaternityBenefitAdvance"/> above zero), on a Regular run - in any
+    /// status - other than <paramref name="excludeRunId"/>, earliest pay date first. A benefit is
+    /// advanced once, so a second run carrying it is refused.
+    /// </summary>
+    Task<IReadOnlyList<MaternityAdvanceInRun>> GetMaternityAdvancesAsync(
+        IReadOnlyCollection<Guid> claimIds, Guid excludeRunId, CancellationToken ct = default);
 
     /// <summary>
     /// Year-end leave conversions already on file for the employees: one per entry with
@@ -208,6 +220,9 @@ public sealed record ThirteenthMonthInRun(Guid EmployeeId, string RunNumber);
 
 /// <summary>An employee on the unpaid run numbered <paramref name="RunNumber"/>, paid before the one being computed.</summary>
 public sealed record EarlierUnpaidRun(Guid EmployeeId, string RunNumber);
+
+/// <summary>A maternity claim whose benefit the run numbered <paramref name="RunNumber"/> advances.</summary>
+public sealed record MaternityAdvanceInRun(Guid ClaimId, string RunNumber);
 
 /// <summary>An employee whose leave the run numbered <paramref name="RunNumber"/> converted to cash.</summary>
 public sealed record LeaveConvertedInRun(Guid EmployeeId, string RunNumber);

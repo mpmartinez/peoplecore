@@ -21,6 +21,12 @@ public interface IMaternityClaimRepository : IRepository<MaternityClaim>
     Task<IReadOnlyList<MaternityClaim>> GetForEmployeeAsync(Guid employeeId, CancellationToken ct = default);
 
     /// <summary>
+    /// All of the employees' claims, tracked, each with its <see cref="MaternityClaim.Employee"/>,
+    /// <see cref="MaternityClaim.LeaveRequest"/> and <see cref="MaternityClaim.AdvanceRun"/> loaded.
+    /// </summary>
+    Task<IReadOnlyList<MaternityClaim>> GetForEmployeesAsync(IReadOnlyCollection<Guid> employeeIds, CancellationToken ct = default);
+
+    /// <summary>
     /// Approved requests of a maternity leave type (<see cref="LeaveType.IsMaternity"/>) that have
     /// no claim yet, earliest start first, each with its <see cref="LeaveRequest.Employee"/> loaded.
     /// </summary>

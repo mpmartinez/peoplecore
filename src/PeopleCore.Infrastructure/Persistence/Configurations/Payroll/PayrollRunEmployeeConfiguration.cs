@@ -62,6 +62,12 @@ public class PayrollRunEmployeeConfiguration : IEntityTypeConfiguration<PayrollR
         builder.Property(x => x.AdvanceMaternityBenefit).HasDefaultValue(false);
         builder.Property(x => x.MaternityBenefitAdvance).HasColumnType("numeric(18,2)").HasDefaultValue(0m);
         builder.Property(x => x.MaternityBenefitOffset).HasColumnType("numeric(18,2)").HasDefaultValue(0m);
+        // The claim the entry advances. A claim is never deleted in the app; if one were, the entry
+        // would keep its figures and lose only the link.
+        builder.HasOne<MaternityClaim>()
+               .WithMany()
+               .HasForeignKey(x => x.MaternityClaimId)
+               .OnDelete(DeleteBehavior.SetNull);
 
         // Computed properties - not columns.
         builder.Ignore(x => x.GrossPay);

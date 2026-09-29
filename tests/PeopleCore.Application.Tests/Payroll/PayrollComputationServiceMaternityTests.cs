@@ -200,6 +200,19 @@ public class PayrollComputationServiceMaternityTests
         entry.NetPay.Should().Be(92_500.35m);
     }
 
+    [Fact]
+    public void An_entrys_employer_cost_leaves_out_the_advance_SSS_reimburses()
+    {
+        var entry = new PayrollRunEmployee
+        {
+            RegularPay = 24_000m, MaternityBenefitAdvance = 70_000.35m,
+            SSSEmployer = 3_030m, PhilHealthEmployer = 750m, PagIbigEmployer = 200m
+        };
+
+        // 24,000 + 3,030 + 750 + 200 = 27,980: gross (94,000.35) less the 70,000.35 advance.
+        entry.TotalEmployerCost.Should().Be(27_980m);
+    }
+
     private static EmployeeCompensation NewEmployee() => new()
     {
         EmployeeId = Guid.NewGuid(),

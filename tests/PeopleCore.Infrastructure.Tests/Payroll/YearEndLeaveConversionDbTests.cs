@@ -396,7 +396,7 @@ public class YearEndLeaveConversionDbTests : DatabaseTestBase
 
             var saves = 0;
             context.SavedChanges += (_, _) => saves++;
-            await runs.SavePaidAsync(run, [loan], [balance]);
+            await runs.SavePaidAsync(run, [loan], [balance], []);
             saves.Should().Be(1);
         }
 

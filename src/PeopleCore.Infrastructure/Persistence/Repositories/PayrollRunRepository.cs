@@ -129,17 +129,37 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
     }
 
     public async Task SavePaidAsync(PayrollRun run, IReadOnlyCollection<EmployeeLoan> loans,
-        IReadOnlyCollection<Domain.Entities.Leave.LeaveBalance> leaveBalances, CancellationToken ct = default)
+        IReadOnlyCollection<Domain.Entities.Leave.LeaveBalance> leaveBalances,
+        IReadOnlyCollection<MaternityClaim> maternityClaims, CancellationToken ct = default)
     {
-        // Normally all three were loaded through this request's context and are tracked already;
+        // Normally all of them were loaded through this request's context and are tracked already;
         // any that weren't are attached as existing rows to update. One SaveChanges is one
-        // transaction, so the run can't be Paid without its loans retired and its leave used.
+        // transaction, so the run can't be Paid without its loans retired, its leave used and its
+        // maternity advances recorded.
         Attach(run);
         foreach (var loan in loans)
             Attach(loan);
         foreach (var balance in leaveBalances)
             Attach(balance);
+        foreach (var claim in maternityClaims)
+            Attach(claim);
         await Context.SaveChangesAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<MaternityAdvanceInRun>> GetMaternityAdvancesAsync(
+        IReadOnlyCollection<Guid> claimIds, Guid excludeRunId, CancellationToken ct = default)
+    {
+        var ids = claimIds.Distinct().ToList();
+        if (ids.Count == 0) return [];
+        return await Context.PayrollRunEmployees
+            .Where(e => e.MaternityClaimId != null && ids.Contains(e.MaternityClaimId.Value)
+                        && e.AdvanceMaternityBenefit
+                        && e.MaternityBenefitAdvance > 0m
+                        && e.PayrollRunId != excludeRunId
+                        && e.PayrollRun.RunType == PayrollRunType.Regular)
+            .OrderBy(e => e.PayrollRun.PayDate)
+            .Select(e => new MaternityAdvanceInRun(e.MaternityClaimId!.Value, e.PayrollRun.RunNumber))
+            .ToListAsync(ct);
     }
 
     private void Attach<TEntity>(TEntity entity) where TEntity : class

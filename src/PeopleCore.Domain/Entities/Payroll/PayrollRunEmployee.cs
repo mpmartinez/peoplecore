@@ -90,6 +90,11 @@ public class PayrollRunEmployee : AuditableEntity
     public decimal MaternityBenefitAdvance { get; set; }
     /// <summary>The part of regular pay SSS covers during maternity leave, already netted out of <see cref="RegularPay"/>.</summary>
     public decimal MaternityBenefitOffset { get; set; }
+    /// <summary>
+    /// The claim whose benefit <see cref="MaternityBenefitAdvance"/> advances, when there is one. It
+    /// is how a claim is advanced on one payroll only, and which claim Mark Paid settles.
+    /// </summary>
+    public Guid? MaternityClaimId { get; set; }
 
     /// <summary>
     /// Everything this entry pays the employee. It includes <see cref="MaternityBenefitAdvance"/>,
@@ -158,7 +163,10 @@ public class PayrollRunEmployee : AuditableEntity
         SSSEmployee + PhilHealthEmployee + PagIbigEmployee + WithholdingTax + LoanDeductions + OtherDeductions;
     public decimal NetPay => GrossPay - TotalDeductions;
 
-    // Employer cost total
+    /// <summary>
+    /// What the entry costs the employer. The maternity advance is left out: SSS reimburses it, so
+    /// it is cash the employer fronts, not a cost.
+    /// </summary>
     public decimal TotalEmployerCost =>
-        GrossPay + SSSEmployer + PhilHealthEmployer + PagIbigEmployer;
+        GrossPay - MaternityBenefitAdvance + SSSEmployer + PhilHealthEmployer + PagIbigEmployer;
 }
