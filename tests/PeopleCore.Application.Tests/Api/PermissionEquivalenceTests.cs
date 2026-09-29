@@ -171,6 +171,11 @@ public class PermissionEquivalenceTests
         ["MaternityClaimsController.SetAllowance"] = [Permissions.PayrollManage],
         ["MaternityClaimsController.Reimburse"] = [Permissions.PayrollManage],
         ["MaternityClaimsController.Deny"] = [Permissions.PayrollManage],
+
+        // GET and PUT api/payroll-settings/default: the settings row payroll computes from, read and
+        // changed without naming its company - managing payroll settings, like the per-company pair.
+        ["PayrollSettingsController.GetDefault"] = [Permissions.PayrollManage],
+        ["PayrollSettingsController.UpdateDefault"] = [Permissions.PayrollManage],
     };
 
     private static IEnumerable<(Type Controller, MethodInfo Action)> Endpoints() =>

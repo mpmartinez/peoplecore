@@ -695,13 +695,14 @@ public class ApiClient
     public Task<MaternityClaimDto?> DenyMaternityClaimAsync(Guid claimId, string? note)
         => SendJsonAsync<MaternityClaimDto>(HttpMethod.Put, $"api/maternity-claims/{claimId}/deny", new DenyRequest(note));
 
-    // Payroll settings (payroll.manage). The PUT is a full replacement and answers 204 with no body.
-    public Task<PayrollSettingsDto?> GetPayrollSettingsAsync(Guid companyId)
-        => GetJsonAsync<PayrollSettingsDto>($"api/payroll-settings/{companyId}");
+    // Payroll settings (payroll.manage): the row payroll computes from, whichever company it belongs
+    // to. The PUT is a full replacement and answers 204 with no body.
+    public Task<PayrollSettingsDto?> GetPayrollSettingsAsync()
+        => GetJsonAsync<PayrollSettingsDto>("api/payroll-settings/default");
 
     public async Task SavePayrollSettingsAsync(PayrollSettingsDto settings)
     {
-        using var message = new HttpRequestMessage(HttpMethod.Put, $"api/payroll-settings/{settings.CompanyId}")
+        using var message = new HttpRequestMessage(HttpMethod.Put, "api/payroll-settings/default")
         {
             Content = JsonContent.Create(settings, options: JsonOptions)
         };
@@ -1254,7 +1255,10 @@ public enum MaternityClaimStatus { Draft, Advanced, Reimbursed, Denied }
 public record MaternityClaimDto(Guid Id, Guid LeaveRequestId, Guid EmployeeId, string EmployeeName,
     DateOnly LeaveStart, DateOnly LeaveEnd, decimal Days, decimal? DailyAllowance, decimal Benefit,
     MaternityClaimStatus Status, Guid? AdvanceRunId, string? AdvanceRunNumber, DateOnly? AdvancedAt,
-    DateOnly? ReimbursedOn, decimal? ReimbursedAmount, string? Note);
+    DateOnly? ReimbursedOn, decimal? ReimbursedAmount, string? Note,
+    // On a Draft claim in the list, the unpaid run advancing its benefit (the allowance is locked until
+    // that run is paid or discarded).
+    string? CarriedByRunNumber = null);
 
 // DailyAllowance is null when no month in the window has a paid payroll, or when RatesOverridden:
 // the payroll settings override both SSS rates, so the salary credit can't be worked back.

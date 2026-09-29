@@ -31,7 +31,7 @@ public class ApiClientMaternityTests
         "id", "leaveRequestId", "employeeId", "employeeName",
         "leaveStart", "leaveEnd", "days", "dailyAllowance", "benefit",
         "status", "advanceRunId", "advanceRunNumber", "advancedAt",
-        "reimbursedOn", "reimbursedAmount", "note",
+        "reimbursedOn", "reimbursedAmount", "note", "carriedByRunNumber",
     ];
 
     private static readonly string[] SuggestionFields = ["dailyAllowance", "monthsFound", "windowFrom", "windowTo", "ratesOverridden"];
@@ -53,7 +53,8 @@ public class ApiClientMaternityTests
         {"id":"{{ClaimId}}","leaveRequestId":"{{LeaveId}}","employeeId":"{{MariaId}}","employeeName":"Maria Santos",
          "leaveStart":"2026-08-10","leaveEnd":"2026-11-22","days":105,"dailyAllowance":666.67,"benefit":70000.35,
          "status":"Reimbursed","advanceRunId":"{{RunId}}","advanceRunNumber":"PR-2026-0015","advancedAt":"2026-08-05",
-         "reimbursedOn":"2026-10-01","reimbursedAmount":70000,"note":"SSS rounded down"}
+         "reimbursedOn":"2026-10-01","reimbursedAmount":70000,"note":"SSS rounded down",
+         "carriedByRunNumber":"PR-2026-0016"}
         """;
 
     private const string SettingsJson = """
@@ -112,7 +113,7 @@ public class ApiClientMaternityTests
             ClaimId, LeaveId, MariaId, "Maria Santos",
             new DateOnly(2026, 8, 10), new DateOnly(2026, 11, 22), 105m, 666.67m, 70000.35m,
             MaternityClaimStatus.Reimbursed, RunId, "PR-2026-0015", new DateOnly(2026, 8, 5),
-            new DateOnly(2026, 10, 1), 70000m, "SSS rounded down"));
+            new DateOnly(2026, 10, 1), 70000m, "SSS rounded down", "PR-2026-0016"));
     }
 
     [Fact]
@@ -206,9 +207,10 @@ public class ApiClientMaternityTests
     [Fact]
     public async Task GetPayrollSettings_ReadsEveryField()
     {
-        _api.On(HttpMethod.Get, $"/api/payroll-settings/{CompanyId}", HttpStatusCode.OK, SettingsJson);
+        // The row payroll computes from, whatever company it belongs to.
+        _api.On(HttpMethod.Get, "/api/payroll-settings/default", HttpStatusCode.OK, SettingsJson);
 
-        var settings = await CreateClient().GetPayrollSettingsAsync(CompanyId);
+        var settings = await CreateClient().GetPayrollSettingsAsync();
 
         settings.Should().Be(new PayrollSettingsDto(CompanyId, 0.05m, 500m, 5000m, 0.02m, 0.01m, 1500m, 0.02m, 10000m, 261m,
             null, 0.1m, true));
@@ -217,7 +219,7 @@ public class ApiClientMaternityTests
     [Fact]
     public async Task SavePayrollSettings_PutsTheWholeRecord_AndExpectsNoBodyBack()
     {
-        _api.On(HttpMethod.Put, $"/api/payroll-settings/{CompanyId}", HttpStatusCode.NoContent);
+        _api.On(HttpMethod.Put, "/api/payroll-settings/default", HttpStatusCode.NoContent);
 
         await CreateClient().SavePayrollSettingsAsync(new PayrollSettingsDto(CompanyId, 0.05m, 500m, 5000m, 0.02m, 0.01m, 1500m,
             0.02m, 10000m, 261m, null, 0.1m, true));

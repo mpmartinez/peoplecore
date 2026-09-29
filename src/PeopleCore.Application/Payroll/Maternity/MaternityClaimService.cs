@@ -35,7 +35,20 @@ public sealed class MaternityClaimService : IMaternityClaimService
     {
         var claims = await _claims.GetAllAsync(ct);
         decimal outstanding = claims.Where(c => c.Status == MaternityClaimStatus.Advanced).Sum(c => c.Benefit);
-        return new MaternityClaimsSummaryDto(claims.Select(ToDto).ToList(), outstanding);
+
+        // The unpaid run advancing each Draft claim, by the query ReadyEmployeeIdsAsync uses. (A paid
+        // run made its claim Advanced.) The earliest pay date comes first; that one is named.
+        var drafts = claims.Where(c => c.Status == MaternityClaimStatus.Draft).Select(c => c.Id).ToList();
+        var carriedBy = new Dictionary<Guid, string>();
+        if (drafts.Count > 0)
+        {
+            foreach (var advance in await _runs.GetMaternityAdvancesAsync(drafts, Guid.Empty, ct) ?? [])
+                carriedBy.TryAdd(advance.ClaimId, advance.RunNumber);
+        }
+
+        return new MaternityClaimsSummaryDto(
+            claims.Select(c => ToDto(c) with { CarriedByRunNumber = carriedBy.GetValueOrDefault(c.Id) }).ToList(),
+            outstanding);
     }
 
     public async Task<MaternityClaimDto> CreateAsync(Guid leaveRequestId, CancellationToken ct = default)

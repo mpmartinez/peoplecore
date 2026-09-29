@@ -3,10 +3,14 @@ using PeopleCore.Domain.Enums;
 namespace PeopleCore.Application.Payroll.Maternity;
 
 /// <summary>A maternity claim as HR sees it: the leave it covers, the benefit, and where it stands with SSS.</summary>
+/// <param name="CarriedByRunNumber">
+/// On a Draft claim in the list, the unpaid run that advances its benefit (its allowance is locked
+/// until that run is paid or discarded). Null otherwise, and on the claim a command answers with.
+/// </param>
 public record MaternityClaimDto(Guid Id, Guid LeaveRequestId, Guid EmployeeId, string EmployeeName,
     DateOnly LeaveStart, DateOnly LeaveEnd, decimal Days, decimal? DailyAllowance, decimal Benefit,
     MaternityClaimStatus Status, Guid? AdvanceRunId, string? AdvanceRunNumber, DateOnly? AdvancedAt,
-    DateOnly? ReimbursedOn, decimal? ReimbursedAmount, string? Note);
+    DateOnly? ReimbursedOn, decimal? ReimbursedAmount, string? Note, string? CarriedByRunNumber = null);
 
 /// <summary>
 /// The SSS daily maternity allowance worked out from paid payroll: the 6 highest monthly salary

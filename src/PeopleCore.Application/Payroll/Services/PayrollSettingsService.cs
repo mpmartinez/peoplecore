@@ -1,6 +1,7 @@
 using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Domain.Entities.Payroll;
+using PeopleCore.Domain.Exceptions;
 
 namespace PeopleCore.Application.Payroll.Services;
 
@@ -51,6 +52,17 @@ public class PayrollSettingsService : IPayrollSettingsService
             Apply(settings, dto);
             await _repo.UpdateAsync(settings, ct);
         }
+    }
+
+    public async Task<PayrollSettingsDto> GetDefaultAsync(CancellationToken ct = default)
+        => ToDto(await _repo.GetDefaultAsync(ct) ?? new PayrollSettings { CompanyId = Guid.Empty });
+
+    public async Task UpdateDefaultAsync(PayrollSettingsDto dto, CancellationToken ct = default)
+    {
+        var settings = await _repo.GetDefaultAsync(ct)
+            ?? throw new DomainException("There are no payroll settings to change yet; they are created with the first company.");
+        Apply(settings, dto);
+        await _repo.UpdateAsync(settings, ct);
     }
 
     private static void Apply(PayrollSettings settings, PayrollSettingsDto dto)

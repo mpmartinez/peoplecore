@@ -39,13 +39,15 @@ public class MaternityClaimsTests : BunitContext
 
     private static string Claim(Guid? id = null, string name = "Maria Santos", string status = "Draft",
         decimal? allowance = null, decimal benefit = 0m, string? runNumber = null, string? advancedAt = null,
-        string? reimbursedOn = null, decimal? reimbursedAmount = null, string? note = null) =>
+        string? reimbursedOn = null, decimal? reimbursedAmount = null, string? note = null, string? carriedBy = null,
+        Guid? employeeId = null) =>
         $$"""
-        {"id":"{{id ?? MariaClaimId}}","leaveRequestId":"{{MariaLeaveId}}","employeeId":"{{MariaId}}","employeeName":"{{name}}",
+        {"id":"{{id ?? MariaClaimId}}","leaveRequestId":"{{MariaLeaveId}}","employeeId":"{{employeeId ?? MariaId}}","employeeName":"{{name}}",
          "leaveStart":"2026-08-10","leaveEnd":"2026-11-22","days":105,"dailyAllowance":{{Num(allowance)}},"benefit":{{benefit}},
          "status":"{{status}}","advanceRunId":{{(runNumber is null ? "null" : $"\"{Guid.NewGuid()}\"")}},
          "advanceRunNumber":{{Str(runNumber)}},"advancedAt":{{Str(advancedAt)}},
-         "reimbursedOn":{{Str(reimbursedOn)}},"reimbursedAmount":{{Num(reimbursedAmount)}},"note":{{Str(note)}}}
+         "reimbursedOn":{{Str(reimbursedOn)}},"reimbursedAmount":{{Num(reimbursedAmount)}},"note":{{Str(note)}},
+         "carriedByRunNumber":{{Str(carriedBy)}}}
         """;
 
     private static string Num(decimal? value) => value is null ? "null" : value.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -140,6 +142,21 @@ public class MaternityClaimsTests : BunitContext
         var offered = new[] { "set-allowance", "reimburse", "deny" }
             .Where(a => Row(cut, MariaClaimId).QuerySelector($"[data-{a}]") is not null);
         offered.Should().Equal(expected);
+    }
+
+    [Fact]
+    public void ADraftClaimAnUnpaidRunAdvances_NamesTheRun_InsteadOfOfferingTheAllowance()
+    {
+        // The API refuses a new allowance while a run advances the benefit; the way on is that run.
+        var cut = RenderPage(Summary(0m,
+            Claim(allowance: 666.67m, benefit: 70000.35m, carriedBy: "PR-2026-0015"),
+            Claim(AnaClaimId, "Ana Cruz", allowance: 600m, benefit: 63000m, employeeId: AnaId)));
+
+        var maria = Row(cut, MariaClaimId);
+        maria.QuerySelector("[data-carried-by]")!.TextContent.Trim().Should().Be("Advancing on PR-2026-0015");
+        maria.QuerySelector("[data-set-allowance]").Should().BeNull();
+        Row(cut, AnaClaimId).QuerySelector("[data-set-allowance]").Should().NotBeNull();
+        Row(cut, AnaClaimId).QuerySelector("[data-carried-by]").Should().BeNull();
     }
 
     [Fact]
@@ -256,6 +273,30 @@ public class MaternityClaimsTests : BunitContext
         gate.SetResult(Json(Claim()));
         cut.WaitForAssertion(() => cut.FindAll("[data-create-dialog]").Should().BeEmpty());
         _api.Requests.Count(r => r.Method == HttpMethod.Post).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task AClaimOpenedAfterItsFormWasClosed_DoesNotCloseTheFormOnScreenNow()
+    {
+        _api.On(HttpMethod.Get, "/api/maternity-claims/eligible", HttpStatusCode.OK,
+                $"[{Eligible(MariaLeaveId, MariaId, "Maria Santos", "2026-08-10", "2026-11-22", 105m)}]")
+            .On(HttpMethod.Get, $"/api/maternity-claims/{AnaClaimId}/suggestion", HttpStatusCode.OK, Suggestion(500m, 4));
+        var gate = _api.OnGated(HttpMethod.Post, $"/api/maternity-claims/{MariaLeaveId}");
+        var cut = RenderPage(Summary(0m, Claim(AnaClaimId, "Ana Cruz", employeeId: AnaId)));
+
+        cut.Find("[data-new-claim]").Click();
+        cut.WaitForAssertion(() => cut.FindAll("#claim-leave option").Should().HaveCount(2));
+        cut.Find("#claim-leave").Change(MariaLeaveId.ToString());
+        cut.Find("[data-submit-create]").Click();
+        cut.WaitForAssertion(() => CancelButton(cut).HasAttribute("disabled").Should().BeTrue("the claim is being opened"));
+        CloseButton(cut).Click();
+        Row(cut, AnaClaimId).QuerySelector("[data-set-allowance]")!.Click();
+        cut.WaitForAssertion(() => cut.Find("[data-suggestion]").TextContent.Should().Contain("₱500.00"));
+
+        gate.SetResult(Json(Claim(), HttpStatusCode.Created));
+        await Task.Delay(100); // let the late answer land, if it is going to
+
+        cut.FindAll("[data-allowance-dialog]").Should().ContainSingle("Ana's form is still open");
     }
 
     // ---------- The allowance ----------
@@ -396,6 +437,36 @@ public class MaternityClaimsTests : BunitContext
     }
 
     // ---------- Reimbursement and denial ----------
+
+    private static IElement CancelButton(IRenderedComponent<MaternityClaims> cut) =>
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Cancel");
+
+    /// <summary>The dialog's own close (X) button.</summary>
+    private static IElement CloseButton(IRenderedComponent<MaternityClaims> cut) =>
+        cut.FindAll("button").Single(b => b.TextContent.Trim() == "Close");
+
+    [Fact]
+    public async Task ARefusalAnsweredAfterItsFormWasClosed_DoesNotLandOnTheNextForm()
+    {
+        var gate = _api.OnGated(HttpMethod.Put, $"/api/maternity-claims/{MariaClaimId}/deny");
+        var cut = RenderPage(Summary(140000.70m,
+            Claim(status: "Advanced", allowance: 666.67m, benefit: 70000.35m, runNumber: "PR-2026-0015", advancedAt: "2026-08-05"),
+            Claim(AnaClaimId, "Ana Cruz", "Advanced", 666.67m, 70000.35m, "PR-2026-0015", "2026-08-05", employeeId: AnaId)));
+
+        Row(cut, MariaClaimId).QuerySelector("[data-deny]")!.Click();
+        cut.Find("#deny-note").Input("No MAT-1 on file");
+        cut.Find("[data-submit-deny]").Click();
+        cut.WaitForAssertion(() => CancelButton(cut).HasAttribute("disabled").Should().BeTrue("the denial is being sent"));
+        CloseButton(cut).Click();
+        Row(cut, AnaClaimId).QuerySelector("[data-deny]")!.Click();
+
+        gate.SetResult(Problem("Only an advanced claim can be denied."));
+        await Task.Delay(100); // let the late answer land, if it is going to
+
+        cut.Find("[data-deny-dialog]").TextContent.Should().Contain("Ana Cruz");
+        cut.FindAll("[data-deny-error]").Should().BeEmpty();
+        CancelButton(cut).HasAttribute("disabled").Should().BeFalse();
+    }
 
     private IRenderedComponent<MaternityClaims> RenderAdvanced(string action)
     {

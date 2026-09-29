@@ -450,6 +450,35 @@ public class MaternityClaimServiceTests
     }
 
     [Fact]
+    public async Task List_NamesTheUnpaidRunCarryingADraftClaim_AndAsksOnlyAboutDraftClaims()
+    {
+        var carried = AClaim(MaternityClaimStatus.Draft, 666.67m, 70_000.35m);
+        var free = AClaim(MaternityClaimStatus.Draft, 600m, 63_000m);
+        var advanced = AClaim(MaternityClaimStatus.Advanced, 800m, 84_000m);
+        _claims.Setup(c => c.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync([carried, free, advanced]);
+        IReadOnlyCollection<Guid>? asked = null;
+        _runs.Setup(r => r.GetMaternityAdvancesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), Guid.Empty, It.IsAny<CancellationToken>()))
+             .Callback((IReadOnlyCollection<Guid> ids, Guid _, CancellationToken _) => asked = ids)
+             .ReturnsAsync([new MaternityAdvanceInRun(carried.Id, "PAY-2026-017")]);
+
+        var summary = await _sut.ListAsync();
+
+        summary.Claims.Select(c => c.CarriedByRunNumber).Should().Equal("PAY-2026-017", null, null);
+        asked.Should().BeEquivalentTo([carried.Id, free.Id]);
+    }
+
+    [Fact]
+    public async Task List_WithNoDraftClaims_DoesNotAskWhichRunsCarryThem()
+    {
+        _claims.Setup(c => c.GetAllAsync(It.IsAny<CancellationToken>()))
+               .ReturnsAsync([AClaim(MaternityClaimStatus.Reimbursed, 800m, 84_000m)]);
+
+        (await _sut.ListAsync()).Claims.Single().CarriedByRunNumber.Should().BeNull();
+
+        _runs.Verify(r => r.GetMaternityAdvancesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task ReadyEmployeeIds_AreThoseWithADraftClaimThatHasAnAllowance()
     {
         var ana = new Employee { FirstName = "Ana", LastName = "Cruz" };

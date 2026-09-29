@@ -20,7 +20,6 @@ namespace PeopleCore.Web.Tests.Pages.Payroll;
 public class PayrollSettingsTests : BunitContext
 {
     private static readonly Guid CompanyId = Guid.Parse("c0c0c0c0-0000-0000-0000-000000000001");
-    private static readonly Guid OtherCompanyId = Guid.Parse("c0c0c0c0-0000-0000-0000-000000000002");
 
     private readonly StubHttpHandler _api = new();
 
@@ -29,7 +28,8 @@ public class PayrollSettingsTests : BunitContext
         Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(_api)));
     }
 
-    private string SettingsPath => $"/api/payroll-settings/{CompanyId}";
+    // The row payroll computes from; the page never has to know which company it belongs to.
+    private const string SettingsPath = "/api/payroll-settings/default";
 
     private static string Settings(bool exempt) => $$"""
         {"companyId":"{{CompanyId}}","philHealthRate":0.05,"philHealthMinShare":500,"philHealthMaxShare":5000,
@@ -43,9 +43,6 @@ public class PayrollSettingsTests : BunitContext
 
     private IRenderedComponent<PayrollSettings> RenderPage(bool exempt = false)
     {
-        // The settings row belongs to the first company by name, as the API seeds it.
-        _api.On(HttpMethod.Get, "/api/companies", HttpStatusCode.OK,
-            $$"""[{"id":"{{OtherCompanyId}}","name":"Zamboanga Branch"},{"id":"{{CompanyId}}","name":"Bayanihan Trading"}]""");
         _api.On(HttpMethod.Get, SettingsPath, HttpStatusCode.OK, Settings(exempt));
         var cut = Render<PayrollSettings>();
         cut.WaitForAssertion(() => cut.FindAll("[data-exempt-switch]").Should().ContainSingle());
@@ -123,7 +120,6 @@ public class PayrollSettingsTests : BunitContext
     [Fact]
     public void AFailedLoad_ShowsTheApisReason_AndOffersNoSwitch()
     {
-        _api.On(HttpMethod.Get, "/api/companies", HttpStatusCode.OK, $$"""[{"id":"{{CompanyId}}","name":"Bayanihan Trading"}]""");
         _api.On(HttpMethod.Get, SettingsPath, () => Json("""{"status":400,"detail":"Settings unavailable."}""", HttpStatusCode.BadRequest));
 
         var cut = Render<PayrollSettings>();
@@ -133,13 +129,11 @@ public class PayrollSettingsTests : BunitContext
     }
 
     [Fact]
-    public void NoCompany_SaysSo()
+    public void ThePage_ReadsTheRowPayrollUses_WithoutGuessingACompany()
     {
-        _api.On(HttpMethod.Get, "/api/companies", HttpStatusCode.OK, "[]");
+        var cut = RenderPage();
 
-        var cut = Render<PayrollSettings>();
-
-        cut.WaitForAssertion(() => cut.Markup.Should().Contain("No company is set up yet."));
-        cut.FindAll("[data-exempt-switch]").Should().BeEmpty();
+        _api.Requests.Select(r => r.RequestUri!.AbsolutePath).Should().Equal(SettingsPath);
+        cut.FindAll("[data-exempt-switch]").Should().ContainSingle();
     }
 }

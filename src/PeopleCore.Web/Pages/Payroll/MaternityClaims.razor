@@ -121,7 +121,12 @@ else
                                 <TableCell Class="px-4 py-3">
                                     <div class="flex gap-2 justify-end">
                                         @* The API changes the allowance only on a Draft claim, and records SSS's answer only on an Advanced one. *@
-                                        @if (c.Status == MaternityClaimStatus.Draft)
+                                        @if (c.Status == MaternityClaimStatus.Draft && c.CarriedByRunNumber is { } carriedBy)
+                                        {
+                                            @* The allowance is locked while an unpaid run advances the benefit. *@
+                                            <span class="text-xs text-muted-foreground whitespace-nowrap" data-carried-by>Advancing on @carriedBy</span>
+                                        }
+                                        else if (c.Status == MaternityClaimStatus.Draft)
                                         {
                                             <Button Variant="outline" Size="sm" OnClick="@(() => OpenAllowance(c))" data-set-allowance>Set allowance</Button>
                                         }
@@ -175,7 +180,7 @@ else
     </ChildContent>
     <FooterContent>
         <div class="flex justify-end gap-2">
-            <Button Variant="outline" OnClick="CloseDialogs">Cancel</Button>
+            <Button Variant="outline" OnClick="CloseDialogs" Disabled="@_saving">Cancel</Button>
             <Button Variant="primary" OnClick="CreateClaim" Loading="@_saving" Disabled="@(_eligible is not { Count: > 0 })" data-submit-create>Create claim</Button>
         </div>
     </FooterContent>
@@ -216,7 +221,7 @@ else
     </ChildContent>
     <FooterContent>
         <div class="flex justify-end gap-2">
-            <Button Variant="outline" OnClick="CloseDialogs">Cancel</Button>
+            <Button Variant="outline" OnClick="CloseDialogs" Disabled="@_saving">Cancel</Button>
             <Button Variant="primary" OnClick="SaveAllowance" Loading="@_saving" data-submit-allowance>Save allowance</Button>
         </div>
     </FooterContent>
@@ -244,7 +249,7 @@ else
     </ChildContent>
     <FooterContent>
         <div class="flex justify-end gap-2">
-            <Button Variant="outline" OnClick="CloseDialogs">Cancel</Button>
+            <Button Variant="outline" OnClick="CloseDialogs" Disabled="@_saving">Cancel</Button>
             <Button Variant="primary" OnClick="Reimburse" Loading="@_saving" data-submit-reimburse>Record reimbursement</Button>
         </div>
     </FooterContent>
@@ -264,7 +269,7 @@ else
     </ChildContent>
     <FooterContent>
         <div class="flex justify-end gap-2">
-            <Button Variant="outline" OnClick="CloseDialogs">Cancel</Button>
+            <Button Variant="outline" OnClick="CloseDialogs" Disabled="@_saving">Cancel</Button>
             <Button Variant="destructive" OnClick="Deny" Loading="@_saving" data-submit-deny>Record denial</Button>
         </div>
     </FooterContent>
@@ -369,6 +374,9 @@ else
             return;
         }
 
+        // The form may be closed (its X) while the claim is being opened; the answer then belongs to
+        // no form on screen, so it neither closes another one nor shows its error there.
+        var version = _dialogVersion;
         _saving = true;
         try
         {
@@ -376,7 +384,7 @@ else
         }
         catch (Exception ex)
         {
-            _createError = ex.Message;
+            if (version == _dialogVersion) _createError = ex.Message;
             return;
         }
         finally
@@ -384,7 +392,7 @@ else
             _saving = false;
         }
 
-        CloseDialogs();
+        if (version == _dialogVersion) CloseDialogs();
         await LoadClaims();
     }
 
@@ -481,9 +489,15 @@ else
 
     private string? Note() => string.IsNullOrWhiteSpace(_note) ? null : _note.Trim();
 
-    /// <summary>Sends one command; on success the form closes, on a refusal it stays open with the API's reason.</summary>
+    /// <summary>
+    /// Sends one command; on success the form closes, on a refusal it stays open with the API's
+    /// reason. Returns whether it went through, so the list reloads even when the form it was sent
+    /// from was closed (its X) meanwhile - but then the answer neither closes the form on screen now
+    /// nor shows its error there.
+    /// </summary>
     private async Task<bool> SendAsync(Func<Task<MaternityClaimDto?>> send)
     {
+        var version = _dialogVersion;
         _saving = true;
         try
         {
@@ -491,7 +505,7 @@ else
         }
         catch (Exception ex)
         {
-            _formError = ex.Message;
+            if (version == _dialogVersion) _formError = ex.Message;
             return false;
         }
         finally
@@ -499,7 +513,7 @@ else
             _saving = false;
         }
 
-        CloseDialogs();
+        if (version == _dialogVersion) CloseDialogs();
         return true;
     }
 }

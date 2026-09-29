@@ -4,6 +4,7 @@ using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Application.Payroll.Services;
 using PeopleCore.Domain.Entities.Payroll;
+using PeopleCore.Domain.Exceptions;
 using Xunit;
 
 namespace PeopleCore.Application.Tests.Payroll;
@@ -95,6 +96,66 @@ public class PayrollSettingsServiceTests
         _repo.Verify(r => r.AddAsync(It.IsAny<PayrollSettings>(), It.IsAny<CancellationToken>()), Times.Never);
         // Updating an existing row must not need to consult which other company owns a row.
         _repo.Verify(r => r.GetDefaultAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── The row payroll computes from (api/payroll-settings/default) ─────────
+
+    [Fact]
+    public async Task GetDefaultAsync_ReturnsTheRowPayrollComputesFrom()
+    {
+        var companyId = Guid.NewGuid();
+        _repo.Setup(r => r.GetDefaultAsync(It.IsAny<CancellationToken>()))
+             .ReturnsAsync(new PayrollSettings { CompanyId = companyId, DailyRateFactor = 313m, ExemptFromMaternityDifferential = true });
+
+        var dto = await _sut.GetDefaultAsync();
+
+        dto.CompanyId.Should().Be(companyId);
+        dto.DailyRateFactor.Should().Be(313m);
+        dto.ExemptFromMaternityDifferential.Should().BeTrue();
+        _repo.Verify(r => r.GetByCompanyIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetDefaultAsync_WithNoRow_GivesTheDefaultsPayrollComputesWith()
+    {
+        _repo.Setup(r => r.GetDefaultAsync(It.IsAny<CancellationToken>())).ReturnsAsync((PayrollSettings?)null);
+
+        var dto = await _sut.GetDefaultAsync();
+
+        var defaults = new PayrollSettings();
+        dto.Should().Be(new PayrollSettingsDto(Guid.Empty, defaults.PhilHealthRate, defaults.PhilHealthMinShare, defaults.PhilHealthMaxShare,
+            defaults.PagIbigEmployeeRate, defaults.PagIbigLowEmployeeRate, defaults.PagIbigLowRateThreshold,
+            defaults.PagIbigEmployerRate, defaults.PagIbigMaxFundSalary, defaults.DailyRateFactor,
+            defaults.SSSEmployeeRate, defaults.SSSEmployerRate, false));
+    }
+
+    [Fact]
+    public async Task UpdateDefaultAsync_ChangesTheRowPayrollComputesFrom_AndKeepsItsCompany()
+    {
+        var companyId = Guid.NewGuid();
+        var row = new PayrollSettings { CompanyId = companyId };
+        _repo.Setup(r => r.GetDefaultAsync(It.IsAny<CancellationToken>())).ReturnsAsync(row);
+
+        // Whatever company the caller names, it's the row payroll uses that changes.
+        await _sut.UpdateDefaultAsync(MakeDto(Guid.NewGuid()) with { PhilHealthRate = 0.06m, ExemptFromMaternityDifferential = true });
+
+        row.CompanyId.Should().Be(companyId);
+        row.PhilHealthRate.Should().Be(0.06m);
+        row.ExemptFromMaternityDifferential.Should().BeTrue();
+        _repo.Verify(r => r.UpdateAsync(row, It.IsAny<CancellationToken>()), Times.Once);
+        _repo.Verify(r => r.AddAsync(It.IsAny<PayrollSettings>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateDefaultAsync_WithNoRow_IsRefused()
+    {
+        _repo.Setup(r => r.GetDefaultAsync(It.IsAny<CancellationToken>())).ReturnsAsync((PayrollSettings?)null);
+
+        var act = () => _sut.UpdateDefaultAsync(MakeDto(Guid.NewGuid()));
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("There are no payroll settings to change yet; they are created with the first company.");
+        _repo.Verify(r => r.AddAsync(It.IsAny<PayrollSettings>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

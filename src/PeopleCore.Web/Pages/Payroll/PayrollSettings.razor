@@ -6,9 +6,8 @@
     Payroll settings the page can change. The statutory rates aren't edited here; the API's PUT
     replaces the whole settings record, so they go back exactly as they were read.
 
-    There is one settings row, and payroll computes from it (a run carries no company yet). It
-    belongs to the first company by name - the one the API seeds it for - so that is the one read
-    and saved here.
+    There is one settings row, and payroll computes from it (a run carries no company yet), so the
+    page reads and saves that row (api/payroll-settings/default) without naming a company.
 *@
 
 <PageTitle>Payroll Settings</PageTitle>
@@ -23,11 +22,7 @@ else if (_loadError is not null)
 {
     <Alert Variant="destructive" Title="Couldn't load payroll settings">@_loadError</Alert>
 }
-else if (_settings is null)
-{
-    <p class="text-sm text-muted-foreground">No company is set up yet.</p>
-}
-else
+else if (_settings is not null)
 {
     <Card Class="max-w-2xl">
         <CardContent Class="pt-6 space-y-4">
@@ -67,12 +62,7 @@ else
     {
         try
         {
-            var company = (await Api.GetCompaniesAsync() ?? [])
-                .OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
-                .FirstOrDefault();
-            if (company is null) return;
-
-            _settings = await Api.GetPayrollSettingsAsync(company.Id);
+            _settings = await Api.GetPayrollSettingsAsync();
             _exempt = _settings?.ExemptFromMaternityDifferential ?? false;
         }
         catch (Exception ex)
