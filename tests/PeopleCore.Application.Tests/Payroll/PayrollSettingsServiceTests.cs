@@ -54,6 +54,30 @@ public class PayrollSettingsServiceTests
     }
 
     [Fact]
+    public async Task GetAsync_DefaultsExemptFromMaternityDifferentialToFalse()
+    {
+        var companyId = Guid.NewGuid();
+        _repo.Setup(r => r.GetByCompanyIdAsync(companyId, It.IsAny<CancellationToken>()))
+             .ReturnsAsync((PayrollSettings?)null);
+
+        (await _sut.GetAsync(companyId)).ExemptFromMaternityDifferential.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ReadsAndWritesExemptFromMaternityDifferential()
+    {
+        var companyId = Guid.NewGuid();
+        var existingRow = new PayrollSettings { CompanyId = companyId };
+        _repo.Setup(r => r.GetByCompanyIdAsync(companyId, It.IsAny<CancellationToken>()))
+             .ReturnsAsync(existingRow);
+
+        await _sut.UpdateAsync(companyId, MakeDto(companyId) with { ExemptFromMaternityDifferential = true });
+
+        existingRow.ExemptFromMaternityDifferential.Should().BeTrue();
+        (await _sut.GetAsync(companyId)).ExemptFromMaternityDifferential.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task UpdateAsync_WhenUpdatingTheExistingCompanysOwnRow_Succeeds()
     {
         var companyId = Guid.NewGuid();

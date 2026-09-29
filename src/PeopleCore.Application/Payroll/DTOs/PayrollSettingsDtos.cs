@@ -13,4 +13,5 @@ public record PayrollSettingsDto(
     decimal PagIbigMaxFundSalary,
     decimal DailyRateFactor,
     decimal? SSSEmployeeRate,
-    decimal? SSSEmployerRate);
+    decimal? SSSEmployerRate,
+    bool ExemptFromMaternityDifferential = false);

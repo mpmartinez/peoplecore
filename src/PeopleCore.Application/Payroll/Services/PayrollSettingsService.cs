@@ -66,11 +66,12 @@ public class PayrollSettingsService : IPayrollSettingsService
         settings.DailyRateFactor = dto.DailyRateFactor;
         settings.SSSEmployeeRate = dto.SSSEmployeeRate;
         settings.SSSEmployerRate = dto.SSSEmployerRate;
+        settings.ExemptFromMaternityDifferential = dto.ExemptFromMaternityDifferential;
     }
 
     private static PayrollSettingsDto ToDto(PayrollSettings s) => new(
         s.CompanyId, s.PhilHealthRate, s.PhilHealthMinShare, s.PhilHealthMaxShare,
         s.PagIbigEmployeeRate, s.PagIbigLowEmployeeRate, s.PagIbigLowRateThreshold,
         s.PagIbigEmployerRate, s.PagIbigMaxFundSalary, s.DailyRateFactor,
-        s.SSSEmployeeRate, s.SSSEmployerRate);
+        s.SSSEmployeeRate, s.SSSEmployerRate, s.ExemptFromMaternityDifferential);
 }

@@ -83,6 +83,14 @@ public class PayrollRunEmployee : AuditableEntity
     /// </summary>
     public decimal FinalPayNonTaxable { get; set; }
 
+    // Maternity pay (RA 11210).
+    /// <summary>Input: this entry advances the employee's SSS maternity benefit (their Draft claim).</summary>
+    public bool AdvanceMaternityBenefit { get; set; }
+    /// <summary>The SSS maternity benefit advanced on this entry: tax-free, and in gross pay only.</summary>
+    public decimal MaternityBenefitAdvance { get; set; }
+    /// <summary>The part of regular pay SSS covers during maternity leave, already netted out of <see cref="RegularPay"/>.</summary>
+    public decimal MaternityBenefitOffset { get; set; }
+
     public decimal GrossPay =>
         RegularPay + OvertimePay + HolidayPay + NightDiffPay + TaxableAllowances + NonTaxableAllowances
         + ThirteenthMonth + LeaveConversionPay + SeparationPay + RetirementPay;

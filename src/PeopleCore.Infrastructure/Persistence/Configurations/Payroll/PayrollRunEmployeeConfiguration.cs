@@ -58,6 +58,11 @@ public class PayrollRunEmployeeConfiguration : IEntityTypeConfiguration<PayrollR
         builder.Property(x => x.LoanDeductions).HasColumnType("numeric(18,2)");
         builder.Property(x => x.OtherDeductions).HasColumnType("numeric(18,2)");
 
+        // Maternity pay
+        builder.Property(x => x.AdvanceMaternityBenefit).HasDefaultValue(false);
+        builder.Property(x => x.MaternityBenefitAdvance).HasColumnType("numeric(18,2)").HasDefaultValue(0m);
+        builder.Property(x => x.MaternityBenefitOffset).HasColumnType("numeric(18,2)").HasDefaultValue(0m);
+
         // Computed properties - not columns.
         builder.Ignore(x => x.GrossPay);
         builder.Ignore(x => x.TotalDeductions);
