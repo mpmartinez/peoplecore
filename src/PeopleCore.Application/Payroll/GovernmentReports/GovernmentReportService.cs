@@ -301,15 +301,16 @@ public sealed class GovernmentReportService : IGovernmentReportService
             decimal t13 = NonTaxableThirteenthMonth(entries.Sum(e => e.ThirteenthMonthAndOtherBenefits),
                                                     earlierThirteenth.GetValueOrDefault(employee.Id));
             decimal s = entries.Sum(e => e.SSSEmployee + e.PhilHealthEmployee + e.PagIbigEmployee);
-            // LeaveConversionNonTaxable is final pay's de minimis slice - the form's own "De
+            // LeaveConversionNonTaxable is the de minimis slice of converted leave - a final pay's
+            // or a December run's year-end conversion - and the form's own "De
             // minimis" column/line, kept apart from the "Other non-taxable" column/line below so
             // the two don't double-count it. It has its own column (between "13th month
             // (non-taxable)" and "Employee shares") because, unlike allowances, it is subtracted
             // from Compensation to reach Taxable - without the column the row's own numbers would
             // no longer add up to what's printed.
             decimal dm = entries.Sum(e => e.LeaveConversionNonTaxable);
-            // NonTaxableAllowances plus whatever of final pay's non-taxable amount is NOT the de
-            // minimis slice above (separation or retirement pay that qualifies for exemption) -
+            // NonTaxableAllowances plus whatever of FinalPayNonTaxable is NOT the de minimis slice
+            // above (a final pay's separation or retirement pay that qualifies for exemption) -
             // both are non-taxable compensation with no line of their own, the same catch-all
             // "Other non-taxable" bucket Bir2316Service.Item37 uses for the same reason.
             decimal otherNt = entries.Sum(e => e.NonTaxableAllowances) +

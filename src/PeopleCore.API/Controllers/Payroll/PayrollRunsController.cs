@@ -56,6 +56,32 @@ public class PayrollRunsController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>
+    /// Turns a regular run's year-end leave conversion on (December runs only) or off, and
+    /// recomputes it; an approved or submitted run goes back to Draft. Returns the updated run.
+    /// </summary>
+    [HttpPut("{id:guid}/leave-conversion")]
+    public async Task<IActionResult> SetLeaveConversion(Guid id, [FromBody] SetLeaveConversionRequest request,
+        CancellationToken ct = default)
+        => Ok(await _service.SetLeaveConversionAsync(id, request.Include, ct));
+
+    /// <summary>
+    /// Includes or leaves out the 13th month for every employee on a regular run, in any month, and
+    /// recomputes it; an approved or submitted run goes back to Draft. Returns the updated run.
+    /// </summary>
+    [HttpPut("{id:guid}/thirteenth-month")]
+    public async Task<IActionResult> SetThirteenthMonth(Guid id, [FromBody] SetThirteenthMonthRequest request,
+        CancellationToken ct = default)
+        => Ok(await _service.SetThirteenthMonthAsync(id, request.Include, ct));
+
+    /// <summary>Discards a regular run that was never paid, with its entries.</summary>
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Discard(Guid id, CancellationToken ct = default)
+    {
+        await _service.DiscardAsync(id, ct);
+        return NoContent();
+    }
+
     /// <summary>Takes a separated employee off a regular run; the run goes back to Draft.</summary>
     [HttpDelete("{id:guid}/employees/{employeeId:guid}")]
     public async Task<IActionResult> RemoveEmployee(Guid id, Guid employeeId, CancellationToken ct = default)

@@ -36,7 +36,7 @@ public class LeaveTypesTests : BunitContext
 
     private const string MaternityNote = "Paid through regular payroll for now; the SSS benefit split comes in a later release.";
 
-    private const string SilNote = "Unused SIL must be converted to cash at year-end (Labor Code Art. 95); PeopleCore doesn't do this automatically yet.";
+    private const string SilNote = "Unused SIL is converted to cash on the December payroll (tick Convert unused leave).";
 
     private readonly StubHttpHandler _api = new();
 
@@ -55,17 +55,18 @@ public class LeaveTypesTests : BunitContext
         bool requiresDocument = false, bool isActive = true, bool isConvertibleToCash = false,
         bool countsAsVacationForDeMinimis = false, bool countsCalendarDays = false, decimal? daysPerEvent = null,
         int? minServiceMonths = null, bool requiresMarried = false, bool requiresSoloParentId = false,
-        int? maxEvents = null, bool isConfidential = false, bool isMaternity = false) =>
+        int? maxEvents = null, bool isConfidential = false, bool isMaternity = false, bool convertsAtYearEnd = false) =>
         JsonSerializer.Serialize(new
         {
             id, name, code, maxDaysPerYear, isPaid, isCarryOver, carryOverMaxDays,
             genderRestriction = gender, requiresDocument, isActive, isConvertibleToCash,
             countsAsVacationForDeMinimis, entitlementKind = kind, countsCalendarDays, daysPerEvent,
             minServiceMonths, requiresMarried, requiresSoloParentId, maxEvents, isConfidential, isMaternity,
+            convertsAtYearEnd,
         });
 
     private static readonly string Sil = LeaveType(SilId, "Service Incentive Leave", "SIL", maxDaysPerYear: 5m,
-        isConvertibleToCash: true, countsAsVacationForDeMinimis: true);
+        isConvertibleToCash: true, countsAsVacationForDeMinimis: true, convertsAtYearEnd: true);
 
     private static readonly string Ml = LeaveType(MlId, "Maternity Leave", "ML", "PerEvent", daysPerEvent: 105m,
         countsCalendarDays: true, gender: "Female", requiresDocument: true, isMaternity: true);
@@ -170,10 +171,10 @@ public class LeaveTypesTests : BunitContext
     {
         var spl = LeaveType(Guid.NewGuid(), "Solo Parent Leave", "SPL", "YearlyAllowance", maxDaysPerYear: 7m,
             requiresSoloParentId: true, minServiceMonths: 6);
-        var cut = RenderPage(spl, Sil);
+        var cut = RenderPage(spl, Old);
 
         Row(cut, "SPL").QuerySelector("[data-rules]")!.TextContent.Trim().Should().Be("Solo parent ID · 6 months' service");
-        Row(cut, "SIL").QuerySelector("[data-rules]")!.TextContent.Trim().Should().Be("None");
+        Row(cut, "OLD").QuerySelector("[data-rules]")!.TextContent.Trim().Should().Be("None");
     }
 
     [Fact]
@@ -304,7 +305,7 @@ public class LeaveTypesTests : BunitContext
 
         cut.WaitForAssertion(() => cut.FindAll("form[data-leave-type-form]").Should().BeEmpty());
         var body = BodyOf(HttpMethod.Post, TypesPath);
-        body.EnumerateObject().Select(p => p.Name).Should().HaveCount(20);
+        body.EnumerateObject().Select(p => p.Name).Should().HaveCount(21);
         body.GetProperty("name").GetString().Should().Be("Paternity Leave");
         body.GetProperty("code").GetString().Should().Be("PL");
         body.GetProperty("entitlementKind").GetString().Should().Be("PerEvent");
@@ -323,6 +324,7 @@ public class LeaveTypesTests : BunitContext
         body.GetProperty("isActive").GetBoolean().Should().BeTrue();
         body.GetProperty("isCarryOver").GetBoolean().Should().BeFalse();
         body.GetProperty("carryOverMaxDays").ValueKind.Should().Be(JsonValueKind.Null);
+        body.GetProperty("convertsAtYearEnd").GetBoolean().Should().BeFalse();
         Calls(HttpMethod.Get, TypesPath).Should().Be(2);
     }
 
@@ -424,10 +426,246 @@ public class LeaveTypesTests : BunitContext
         body.GetProperty("carryOverMaxDays").ValueKind.Should().Be(JsonValueKind.Null);
     }
 
+    // ---- Year-end cash conversion ------------------------------------------------------------
+
+    [Fact]
+    public void ATypeThatConvertsAtYearEnd_SaysSoInItsRules()
+    {
+        var vawc = LeaveType(VawcId, "VAWC Leave", "VAWC", "YearlyAllowance", maxDaysPerYear: 10m,
+            gender: "Female", isConfidential: true, requiresDocument: true, convertsAtYearEnd: true);
+        var cut = RenderPage(Sil, vawc, Vl);
+
+        Row(cut, "SIL").QuerySelector("[data-rules]")!.TextContent.Trim().Should().Be("Year-end cash");
+        Row(cut, "VAWC").QuerySelector("[data-rules]")!.TextContent.Trim().Should().Be("Female · Document · Confidential · Year-end cash");
+        Row(cut, "VL").QuerySelector("[data-rules]")!.TextContent.Trim().Should().Be("None");
+    }
+
+    [Fact]
+    public async Task TheYearEndSetting_AndCarryOver_HideEachOther()
+    {
+        // The API refuses a type that both carries over and converts: its unused days go one way or
+        // the other.
+        var cut = RenderPage(Vl);
+        await cut.Find("[data-new-leave-type]").ClickAsync(new MouseEventArgs());
+
+        var setting = cut.Find("[data-converts-at-year-end]");
+        setting.ParentElement!.TextContent.Should().Contain("Converts to cash at year-end");
+        setting.HasAttribute("aria-checked").Should().BeFalse();
+        cut.FindAll("[data-setting='carry-over']").Should().ContainSingle();
+
+        await cut.Find("[data-setting='carry-over']").ClickAsync(new MouseEventArgs());
+        cut.FindAll("[data-converts-at-year-end]").Should().BeEmpty();
+
+        await cut.Find("[data-setting='carry-over']").ClickAsync(new MouseEventArgs());
+        await cut.Find("[data-converts-at-year-end]").ClickAsync(new MouseEventArgs());
+        cut.FindAll("[data-setting='carry-over']").Should().BeEmpty();
+        cut.FindAll("#lt-carry-over-max").Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task EditingSil_ShowsItConvertingAtYearEnd_AndSendsThatBack()
+    {
+        _api.On(HttpMethod.Put, $"{TypesPath}/{SilId}", HttpStatusCode.OK, Sil);
+        _api.On(HttpMethod.Get, PoliciesOf(SilId), HttpStatusCode.OK, "[]");
+        var cut = RenderPage(Sil);
+
+        await ButtonIn(Row(cut, "SIL"), "Edit").ClickAsync(new MouseEventArgs());
+        cut.Find("[data-converts-at-year-end]").HasAttribute("aria-checked").Should().BeTrue();
+        cut.FindAll("[data-setting='carry-over']").Should().BeEmpty();
+        await cut.Find("form[data-leave-type-form]").SubmitAsync(EventArgs.Empty);
+
+        cut.WaitForAssertion(() => cut.FindAll("form[data-leave-type-form]").Should().BeEmpty());
+        var body = BodyOf(HttpMethod.Put, $"{TypesPath}/{SilId}");
+        body.GetProperty("convertsAtYearEnd").GetBoolean().Should().BeTrue();
+        body.GetProperty("isCarryOver").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task TickingTheYearEndSetting_OnANewType_SendsIt()
+    {
+        _api.On(HttpMethod.Post, TypesPath, HttpStatusCode.Created, Vawc);
+        var cut = RenderPage(Vl);
+
+        await cut.Find("[data-new-leave-type]").ClickAsync(new MouseEventArgs());
+        await cut.Find("#lt-name").InputAsync(new ChangeEventArgs { Value = "Earned Leave" });
+        await cut.Find("#lt-code").InputAsync(new ChangeEventArgs { Value = "EL" });
+        await cut.Find("[data-converts-at-year-end]").ClickAsync(new MouseEventArgs());
+        await cut.Find("form[data-leave-type-form]").SubmitAsync(EventArgs.Empty);
+
+        cut.WaitForAssertion(() => cut.FindAll("form[data-leave-type-form]").Should().BeEmpty());
+        var body = BodyOf(HttpMethod.Post, TypesPath);
+        body.GetProperty("convertsAtYearEnd").GetBoolean().Should().BeTrue();
+        body.GetProperty("entitlementKind").GetString().Should().Be("Accrued");
+        body.GetProperty("isCarryOver").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ACarryOverTickedWhileConversionWasHidden_GivesWayToTheYearEndSetting()
+    {
+        // Year-end ticked, pay switched off (year-end hides and isn't sent, carry-over comes back),
+        // carry-over ticked there, and pay switched back on: the form must not end up with both
+        // settings hidden, or send both.
+        _api.On(HttpMethod.Post, TypesPath, HttpStatusCode.Created, Sil);
+        var cut = RenderPage(Vl);
+
+        await cut.Find("[data-new-leave-type]").ClickAsync(new MouseEventArgs());
+        await cut.Find("#lt-name").InputAsync(new ChangeEventArgs { Value = "Earned Leave" });
+        await cut.Find("#lt-code").InputAsync(new ChangeEventArgs { Value = "EL" });
+        await cut.Find("[data-converts-at-year-end]").ClickAsync(new MouseEventArgs());
+        await cut.Find("[data-setting='paid']").ClickAsync(new MouseEventArgs());
+        await cut.Find("[data-setting='carry-over']").ClickAsync(new MouseEventArgs());
+        await cut.Find("[data-setting='paid']").ClickAsync(new MouseEventArgs());
+
+        cut.Find("[data-converts-at-year-end]").HasAttribute("aria-checked").Should().BeTrue();
+        cut.FindAll("[data-setting='carry-over']").Should().BeEmpty();
+        await cut.Find("form[data-leave-type-form]").SubmitAsync(EventArgs.Empty);
+
+        cut.WaitForAssertion(() => cut.FindAll("form[data-leave-type-form]").Should().BeEmpty());
+        var body = BodyOf(HttpMethod.Post, TypesPath);
+        body.GetProperty("convertsAtYearEnd").GetBoolean().Should().BeTrue();
+        body.GetProperty("isCarryOver").GetBoolean().Should().BeFalse();
+        body.GetProperty("carryOverMaxDays").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Theory]
+    [InlineData("Accrued", true, true)]
+    [InlineData("YearlyAllowance", true, false)]
+    [InlineData("PerEvent", true, false)]
+    [InlineData("Accrued", false, false)]
+    [InlineData("YearlyAllowance", false, false)]
+    public async Task TheYearEndSetting_IsOfferedOnlyForPaidAccruedTypes(string kind, bool paid, bool offered)
+    {
+        // A per-event type has no yearly balance to convert, a yearly-allowance type's balance only
+        // exists once the employee first files, and an unpaid type's days are worth nothing in
+        // cash; the API refuses all three.
+        var cut = RenderPage(Vl);
+
+        await cut.Find("[data-new-leave-type]").ClickAsync(new MouseEventArgs());
+        await cut.Find("#lt-kind").ChangeAsync(new ChangeEventArgs { Value = kind });
+        if (!paid) await cut.Find("[data-setting='paid']").ClickAsync(new MouseEventArgs());
+
+        cut.FindAll("[data-converts-at-year-end]").Should().HaveCount(offered ? 1 : 0);
+    }
+
+    [Theory]
+    [InlineData("per-event")]
+    [InlineData("yearly")]
+    [InlineData("pay")]
+    public async Task AYearEndTick_LeftOnATypeThatCanNoLongerConvert_IsNotSent(string change)
+    {
+        _api.On(HttpMethod.Post, TypesPath, HttpStatusCode.Created, Pl);
+        var cut = RenderPage(Vl);
+
+        await cut.Find("[data-new-leave-type]").ClickAsync(new MouseEventArgs());
+        await cut.Find("#lt-name").InputAsync(new ChangeEventArgs { Value = "Some Leave" });
+        await cut.Find("#lt-code").InputAsync(new ChangeEventArgs { Value = "SOME" });
+        await cut.Find("[data-converts-at-year-end]").ClickAsync(new MouseEventArgs());
+        if (change == "per-event")
+        {
+            await cut.Find("#lt-kind").ChangeAsync(new ChangeEventArgs { Value = "PerEvent" });
+            await cut.Find("#lt-days-per-event").InputAsync(new ChangeEventArgs { Value = "3" });
+        }
+        else if (change == "yearly")
+        {
+            await cut.Find("#lt-kind").ChangeAsync(new ChangeEventArgs { Value = "YearlyAllowance" });
+            await cut.Find("#lt-max-days").InputAsync(new ChangeEventArgs { Value = "3" });
+        }
+        else
+        {
+            await cut.Find("[data-setting='paid']").ClickAsync(new MouseEventArgs());
+            // No longer converting, so carry-over is offered again.
+            cut.FindAll("[data-setting='carry-over']").Should().ContainSingle();
+        }
+        cut.FindAll("[data-converts-at-year-end]").Should().BeEmpty();
+        await cut.Find("form[data-leave-type-form]").SubmitAsync(EventArgs.Empty);
+
+        cut.WaitForAssertion(() => cut.FindAll("form[data-leave-type-form]").Should().BeEmpty());
+        BodyOf(HttpMethod.Post, TypesPath).GetProperty("convertsAtYearEnd").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task TheYearEndHint_SaysItsForAccruedLeave_AndTheDecemberPayrollCanBeTickedWhenCreatedOrOnItsPage()
+    {
+        var cut = RenderPage(Vl);
+        await cut.Find("[data-new-leave-type]").ClickAsync(new MouseEventArgs());
+
+        cut.Find("[data-converts-at-year-end-hint]").TextContent.Trim().Should().Be(
+            "Unused accrued days are paid in cash on a December payroll with Convert unused leave ticked, when it's created or later on the payroll's page.");
+    }
+
+    // The data migration switched conversion on for every SIL, including one that already carried
+    // over; the API refuses both, so the form keeps conversion and says what saving does.
+    private static readonly string LegacySil = LeaveType(SilId, "Service Incentive Leave", "SIL", maxDaysPerYear: 5m,
+        isCarryOver: true, carryOverMaxDays: 5m, isConvertibleToCash: true, countsAsVacationForDeMinimis: true,
+        convertsAtYearEnd: true);
+
+    [Fact]
+    public async Task ALegacyTypeThatBothCarriesOverAndConverts_SaysSavingTurnsCarryOverOff()
+    {
+        _api.On(HttpMethod.Put, $"{TypesPath}/{SilId}", HttpStatusCode.OK, Sil);
+        _api.On(HttpMethod.Get, PoliciesOf(SilId), HttpStatusCode.OK, "[]");
+        var cut = RenderPage(LegacySil);
+
+        await ButtonIn(Row(cut, "SIL"), "Edit").ClickAsync(new MouseEventArgs());
+
+        cut.Find("[data-carry-over-off-note]").TextContent.Trim().Should().Be(
+            "Carry-over is off while this type converts at year-end; saving turns it off.");
+        cut.Find("[data-converts-at-year-end]").HasAttribute("aria-checked").Should().BeTrue();
+        cut.FindAll("[data-setting='carry-over']").Should().BeEmpty();
+
+        await cut.Find("form[data-leave-type-form]").SubmitAsync(EventArgs.Empty);
+
+        cut.WaitForAssertion(() => cut.FindAll("form[data-leave-type-form]").Should().BeEmpty());
+        var body = BodyOf(HttpMethod.Put, $"{TypesPath}/{SilId}");
+        body.GetProperty("convertsAtYearEnd").GetBoolean().Should().BeTrue();
+        body.GetProperty("isCarryOver").GetBoolean().Should().BeFalse();
+        body.GetProperty("carryOverMaxDays").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task UntickingConversionOnALegacyType_BringsCarryOverBackAsItWas_AndTheNoteGoes()
+    {
+        _api.On(HttpMethod.Get, PoliciesOf(SilId), HttpStatusCode.OK, "[]");
+        var cut = RenderPage(LegacySil);
+
+        await ButtonIn(Row(cut, "SIL"), "Edit").ClickAsync(new MouseEventArgs());
+        await cut.Find("[data-converts-at-year-end]").ClickAsync(new MouseEventArgs());
+
+        cut.FindAll("[data-carry-over-off-note]").Should().BeEmpty();
+        cut.Find("[data-setting='carry-over']").HasAttribute("aria-checked").Should().BeTrue();
+        cut.Find("#lt-carry-over-max").GetAttribute("value").Should().Be("5");
+        cut.FindAll("[data-converts-at-year-end]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ATypeThatOnlyConverts_HasNoCarryOverNote()
+    {
+        _api.On(HttpMethod.Get, PoliciesOf(SilId), HttpStatusCode.OK, "[]");
+        var cut = RenderPage(Sil);
+
+        await ButtonIn(Row(cut, "SIL"), "Edit").ClickAsync(new MouseEventArgs());
+
+        cut.FindAll("[data-carry-over-off-note]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task TheDeMinimisSetting_IsOfferedForAYearEndType_ThatIsntPaidOutInFinalPay()
+    {
+        // The year-end pay-out splits its days by that setting too, so it can't be hidden there.
+        var cut = RenderPage(Vl);
+        await cut.Find("[data-new-leave-type]").ClickAsync(new MouseEventArgs());
+
+        cut.FindAll("[data-setting='de-minimis']").Should().BeEmpty();
+        await cut.Find("[data-converts-at-year-end]").ClickAsync(new MouseEventArgs());
+
+        cut.FindAll("[data-setting='de-minimis']").Should().ContainSingle();
+    }
+
     [Theory]
     [InlineData("Set at least 1 for the most times allowed.")]
     [InlineData("Service months can't be negative.")]
     [InlineData("Set the days per event.")]
+    [InlineData("A leave type can't both carry over and convert at year-end.")]
     public async Task ASaveTheApiRefuses_ShowsItsReason_AndKeepsTheForm(string reason)
     {
         _api.On(HttpMethod.Put, $"{TypesPath}/{PlId}", HttpStatusCode.BadRequest, Problem(reason));

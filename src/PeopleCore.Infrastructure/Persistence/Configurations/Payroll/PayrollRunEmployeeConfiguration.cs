@@ -30,6 +30,7 @@ public class PayrollRunEmployeeConfiguration : IEntityTypeConfiguration<PayrollR
         builder.Property(x => x.TaxableAllowances).HasColumnType("numeric(18,2)");
         builder.Property(x => x.NonTaxableAllowances).HasColumnType("numeric(18,2)");
         builder.Property(x => x.ThirteenthMonth).HasColumnType("numeric(18,2)");
+        builder.Property(x => x.ThirteenthMonthPaidEarlierInYear).HasColumnType("numeric(18,2)");
 
         // Final-pay earnings
         builder.Property(x => x.LeaveConversionPay).HasColumnType("numeric(18,2)");

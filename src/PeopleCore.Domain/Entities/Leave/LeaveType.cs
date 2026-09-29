@@ -49,4 +49,7 @@ public class LeaveType : AuditableEntity
 
     /// <summary>Whether this is the Expanded Maternity Leave type.</summary>
     public bool IsMaternity { get; set; } = false;
+
+    /// <summary>Whether a remaining balance of this type is paid out in cash on the December payroll.</summary>
+    public bool ConvertsAtYearEnd { get; set; } = false;
 }

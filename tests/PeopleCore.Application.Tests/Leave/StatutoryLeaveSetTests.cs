@@ -78,6 +78,7 @@ public class StatutoryLeaveSetTests
         sil.CountsCalendarDays.Should().BeFalse();
         sil.IsConvertibleToCash.Should().BeTrue();
         sil.CountsAsVacationForDeMinimis.Should().BeTrue();
+        sil.ConvertsAtYearEnd.Should().BeTrue();
         sil.GenderRestriction.Should().BeNull();
         sil.RequiresDocument.Should().BeFalse();
         sil.MinServiceMonths.Should().BeNull();
@@ -152,6 +153,7 @@ public class StatutoryLeaveSetTests
         t.IsMaternity.Should().Be(row.IsMaternity);
         t.IsConvertibleToCash.Should().BeFalse();
         t.CountsAsVacationForDeMinimis.Should().BeFalse();
+        t.ConvertsAtYearEnd.Should().BeFalse();
     }
 
     [Fact]

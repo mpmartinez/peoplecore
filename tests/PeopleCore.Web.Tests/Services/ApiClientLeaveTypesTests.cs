@@ -31,7 +31,7 @@ public class ApiClientLeaveTypesTests
         "isActive", "entitlementKind",
         "countsCalendarDays", "daysPerEvent", "minServiceMonths",
         "requiresMarried", "requiresSoloParentId", "maxEvents",
-        "isConfidential", "isMaternity",
+        "isConfidential", "isMaternity", "convertsAtYearEnd",
     ];
 
     // PeopleCore.Application.Leave.DTOs.LeaveTypeDto, parameter by parameter.
@@ -46,6 +46,7 @@ public class ApiClientLeaveTypesTests
         "daysPerEvent", "minServiceMonths",
         "requiresMarried", "requiresSoloParentId",
         "maxEvents", "isConfidential", "isMaternity",
+        "convertsAtYearEnd",
     ];
 
     private const string PaternityJson = """
@@ -57,7 +58,8 @@ public class ApiClientLeaveTypesTests
          "entitlementKind":"PerEvent","countsCalendarDays":true,
          "daysPerEvent":7,"minServiceMonths":6,
          "requiresMarried":true,"requiresSoloParentId":true,
-         "maxEvents":4,"isConfidential":true,"isMaternity":true}
+         "maxEvents":4,"isConfidential":true,"isMaternity":true,
+         "convertsAtYearEnd":true}
         """;
 
     private static List<string> PropertyNames(string json) =>
@@ -86,7 +88,8 @@ public class ApiClientLeaveTypesTests
             LeaveEntitlementKind.PerEvent, true,
             7m, 6,
             true, true,
-            4, true, true));
+            4, true, true,
+            true));
     }
 
     [Fact]
@@ -102,9 +105,10 @@ public class ApiClientLeaveTypesTests
             true, LeaveEntitlementKind.PerEvent,
             false, 7m, null,
             true, false, 4,
-            false, false));
+            false, false, true));
 
         created!.Code.Should().Be("PL");
+        created.ConvertsAtYearEnd.Should().BeTrue();
         var body = _api.RequestBodies.Single()!;
         PropertyNames(body).Should().Equal(CreateLeaveTypeFields);
         var root = JsonDocument.Parse(body).RootElement;
@@ -112,6 +116,7 @@ public class ApiClientLeaveTypesTests
         root.GetProperty("daysPerEvent").GetDecimal().Should().Be(7m);
         root.GetProperty("maxEvents").GetInt32().Should().Be(4);
         root.GetProperty("minServiceMonths").ValueKind.Should().Be(JsonValueKind.Null);
+        root.GetProperty("convertsAtYearEnd").GetBoolean().Should().BeTrue();
     }
 
     [Fact]
@@ -121,7 +126,7 @@ public class ApiClientLeaveTypesTests
 
         await CreateClient().UpdateLeaveTypeAsync(TypeId, new CreateLeaveTypeDto(
             "Paternity Leave", "PL", 0m, true, false, null, "Male", true, false, false,
-            true, LeaveEntitlementKind.PerEvent, false, 7m, null, true, false, 4, false, false));
+            true, LeaveEntitlementKind.PerEvent, false, 7m, null, true, false, 4, false, false, false));
 
         PropertyNames(_api.RequestBodies.Single()!).Should().Equal(CreateLeaveTypeFields);
     }

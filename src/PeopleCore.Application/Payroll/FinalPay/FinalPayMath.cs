@@ -72,13 +72,18 @@ public static class FinalPayMath
     /// vacation-type days) and the rest. The rest is "other benefits" (RR 5-2011, as amended by
     /// RR 11-2018): exempt together with the 13th month up to the year's 90,000, taxable past it.
     /// </summary>
+    /// <param name="deMinimisDaysLeft">
+    /// How many of the tax year's ten de minimis days are still unused - fewer than ten when leave
+    /// converted earlier in the same pay year took some. Never below zero.
+    /// </param>
     public static (decimal DeMinimis, decimal OtherBenefits) LeaveConversion(
-        IEnumerable<(decimal Days, bool CountsAsVacation)> balances, decimal dailyRate)
+        IEnumerable<(decimal Days, bool CountsAsVacation)> balances, decimal dailyRate,
+        decimal deMinimisDaysLeft = DeMinimisVacationDays)
     {
         var positive = balances.Where(b => b.Days > 0m).ToList();
         decimal vacationDays = positive.Where(b => b.CountsAsVacation).Sum(b => b.Days);
         decimal otherDays = positive.Where(b => !b.CountsAsVacation).Sum(b => b.Days);
-        decimal deMinimisDays = Math.Min(vacationDays, DeMinimisVacationDays);
+        decimal deMinimisDays = Math.Min(vacationDays, Math.Clamp(deMinimisDaysLeft, 0m, DeMinimisVacationDays));
         return (Math.Round(deMinimisDays * dailyRate, 2),
                 Math.Round((vacationDays - deMinimisDays + otherDays) * dailyRate, 2));
     }

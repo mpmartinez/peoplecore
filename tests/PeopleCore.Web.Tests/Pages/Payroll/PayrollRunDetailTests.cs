@@ -32,13 +32,24 @@ public class PayrollRunDetailTests : BunitContext
     private static readonly Guid JoseId = Guid.Parse("0c6f9a3e-8b2d-4f71-a5c4-3e9d1b7f2a60");
 
     private static string RunJson(string status, bool withEmployee = true, int missingAttendance = 0,
-        string runType = "Regular", string? employees = null, decimal totalDeductions = 0m) =>
+        string runType = "Regular", string? employees = null, decimal totalDeductions = 0m,
+        string periodEnd = "2026-09-15", bool includesLeaveConversion = false, bool includesThirteenthMonth = false) =>
         $$"""
         {"id":"{{RunId}}","runNumber":"PR-2026-0017","periodLabel":"Sep 1-15, 2026","periodStart":"2026-09-01",
-         "periodEnd":"2026-09-15","payDate":"2026-09-20","frequency":"SemiMonthly","status":"{{status}}",
+         "periodEnd":"{{periodEnd}}","payDate":"2026-09-20","frequency":"SemiMonthly","status":"{{status}}",
          "employeeCount":1,"totalGrossPay":0,"totalDeductions":{{totalDeductions}},"totalNetPay":0,"createdAt":"2026-09-01T00:00:00Z",
          "employeesMissingAttendance":{{missingAttendance}},"runType":"{{runType}}",
-         "employees":[{{employees ?? (withEmployee ? EmployeeLine : "")}}]}
+         "employees":[{{employees ?? (withEmployee ? EmployeeLine : "")}}],
+         "includesLeaveConversion":{{(includesLeaveConversion ? "true" : "false")}},
+         "includesThirteenthMonth":{{(includesThirteenthMonth ? "true" : "false")}}}
+        """;
+
+    private const string December = "2026-12-31";
+
+    private static string YearEndLine =>
+        $$"""
+        {"id":"{{Guid.NewGuid()}}","employeeId":"{{MariaId}}","employeeName":"Maria Santos","employeeNumber":"EMP-0042",
+         "grossPay":40100,"netPay":36000,"leaveConversionPay":3600,"leaveConversionNonTaxable":3600,"finalPayNonTaxable":3600}
         """;
 
     private static string EmployeeLine =>
@@ -511,6 +522,612 @@ public class PayrollRunDetailTests : BunitContext
             .Contain("A paid payroll run can't be changed."));
         cut.FindAll("[data-confirm-remove]").Should().BeEmpty();
         cut.FindAll("tbody tr").Should().HaveCount(2);
+    }
+
+    // ---------- Year-end leave conversion ----------
+
+    private string LeaveConversionPath => $"{RunPath}/leave-conversion";
+
+    private static IElement? LeaveConversionToggle(IRenderedComponent<PayrollRunDetail> cut) =>
+        cut.FindAll("[data-leave-conversion-toggle]").SingleOrDefault();
+
+    private static IElement ConfirmButton(IRenderedComponent<PayrollRunDetail> cut) =>
+        cut.Find("[data-confirm-leave-conversion]").QuerySelectorAll("button").Last();
+
+    [Fact]
+    public void AFlaggedRun_ShowsTheYearEndBadge_AndEachEmployeesLeaveConversion()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK,
+            RunJson("Draft", periodEnd: December, includesLeaveConversion: true, employees: YearEndLine));
+
+        var cut = RenderPage();
+
+        cut.Find("[data-leave-conversion-badge]").TextContent.Trim().Should().Be("Year-end leave conversion");
+        var headers = cut.FindAll("thead th").Select(h => h.TextContent.Trim()).ToList();
+        headers.Should().Contain("Leave conversion");
+        // Not a final pay: none of its other columns.
+        headers.Should().NotContain(["Separation Pay", "Retirement Pay", "Non-taxable (de minimis + separation/retirement)"]);
+        cut.Find("[data-leave-conversion]").TextContent.Should().Contain("3,600.00");
+        cut.FindAll("[data-final-pay-badge]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AnUnflaggedDecemberRun_HasNoLeaveConversionBadgeOrColumn()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", periodEnd: December));
+
+        var cut = RenderPage();
+
+        cut.FindAll("[data-leave-conversion-badge]").Should().BeEmpty();
+        cut.FindAll("thead th").Select(h => h.TextContent.Trim()).Should().NotContain("Leave conversion");
+        cut.FindAll("[data-leave-conversion]").Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("Regular", "Draft", December, false, "Convert unused leave")]
+    [InlineData("Regular", "ForApproval", December, false, "Convert unused leave")]
+    [InlineData("Regular", "Approved", December, true, "Stop converting unused leave")]
+    [InlineData("Regular", "Draft", December, true, "Stop converting unused leave")]
+    [InlineData("Regular", "Paid", December, true, null)]
+    [InlineData("Regular", "Draft", "2026-11-30", false, null)]
+    [InlineData("FinalPay", "Draft", December, false, null)]
+    public void TheConversionToggle_IsOfferedOnRegularDecemberRunsThatArentPaid(
+        string runType, string status, string periodEnd, bool flagged, string? expected)
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK,
+            RunJson(status, runType: runType, periodEnd: periodEnd, includesLeaveConversion: flagged));
+
+        var cut = RenderPage();
+
+        if (expected is null) LeaveConversionToggle(cut).Should().BeNull();
+        else LeaveConversionToggle(cut)!.TextContent.Trim().Should().Be(expected);
+    }
+
+    [Fact]
+    public void TurningTheConversionOn_AsksFirst_ThenPutsIt_AndReloadsTheRun()
+    {
+        var flagged = false;
+        _api.On(HttpMethod.Get, RunPath, () => Json(RunJson("Draft", periodEnd: December, includesLeaveConversion: flagged,
+                employees: flagged ? YearEndLine : EmployeeLine)))
+            .On(HttpMethod.Put, LeaveConversionPath, () =>
+            {
+                flagged = true;
+                return Json(RunJson("Draft", periodEnd: December, includesLeaveConversion: true, employees: YearEndLine));
+            });
+        var cut = RenderPage();
+
+        LeaveConversionToggle(cut)!.Click();
+
+        var dialog = cut.WaitForElement("[data-confirm-leave-conversion]");
+        dialog.TextContent.Should().Contain("Convert unused leave").And.NotContain("approval again");
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Put);
+
+        ConfirmButton(cut).Click();
+
+        cut.WaitForAssertion(() => cut.Find("[data-leave-conversion-badge]").TextContent.Trim().Should().Be("Year-end leave conversion"));
+        var put = _api.Requests.FindIndex(r => r.Method == HttpMethod.Put);
+        _api.Requests[put].RequestUri!.AbsolutePath.Should().Be(LeaveConversionPath);
+        _api.RequestBodies[put].Should().Be("""{"include":true}""");
+        _api.Requests.Count(r => r.Method == HttpMethod.Get).Should().Be(2, "the run is reloaded after the change");
+        cut.FindAll("[data-confirm-leave-conversion]").Should().BeEmpty();
+        LeaveConversionToggle(cut)!.TextContent.Trim().Should().Be("Stop converting unused leave");
+        cut.Find("[data-leave-conversion]").TextContent.Should().Contain("3,600.00");
+    }
+
+    [Theory]
+    [InlineData("Approved")]
+    [InlineData("ForApproval")]
+    public void TurningTheConversionOff_OnARunAwaitingOrPastApproval_WarnsItGoesBackToDraftForApprovalAgain(string status)
+    {
+        var current = status;
+        _api.On(HttpMethod.Get, RunPath, () => Json(RunJson(current, periodEnd: December, includesLeaveConversion: current != "Draft",
+                employees: YearEndLine)))
+            .On(HttpMethod.Put, LeaveConversionPath, () =>
+            {
+                current = "Draft";
+                return Json(RunJson("Draft", periodEnd: December));
+            });
+        var cut = RenderPage();
+
+        LeaveConversionToggle(cut)!.Click();
+
+        var dialog = cut.WaitForElement("[data-confirm-leave-conversion]");
+        dialog.TextContent.Should().Contain("Stop converting unused leave")
+            .And.Contain("goes back to Draft").And.Contain("approval again");
+
+        ConfirmButton(cut).Click();
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain(">Draft<"));
+        _api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Put)].Should().Be("""{"include":false}""");
+        cut.FindAll("[data-leave-conversion-badge]").Should().BeEmpty();
+        LeaveConversionToggle(cut)!.TextContent.Trim().Should().Be("Convert unused leave");
+    }
+
+    [Fact]
+    public void CancellingTheConversionChange_SendsNothing()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", periodEnd: December));
+        var cut = RenderPage();
+
+        LeaveConversionToggle(cut)!.Click();
+        cut.WaitForElement("[data-confirm-leave-conversion]").QuerySelectorAll("button").First().Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[data-confirm-leave-conversion]").Should().BeEmpty());
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Put);
+    }
+
+    [Theory]
+    [InlineData("A paid payroll run can't be changed.")]
+    [InlineData("Year-end leave conversion goes on a December payroll.")]
+    [InlineData("A final pay's leave conversion can't be changed here.")]
+    [InlineData("This payroll already converts unused leave.")]
+    [InlineData("This payroll already doesn't convert unused leave.")]
+    [InlineData("Maria Santos's leave for 2026 was already converted in PR-2026-0023.")]
+    public void ARefusedConversionChange_ShowsTheApisReason(string reason)
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", periodEnd: December))
+            .On(HttpMethod.Put, LeaveConversionPath, HttpStatusCode.BadRequest,
+                System.Text.Json.JsonSerializer.Serialize(new { title = "Business rule violation", status = 400, detail = reason }));
+        var cut = RenderPage();
+
+        LeaveConversionToggle(cut)!.Click();
+        cut.WaitForElement("[data-confirm-leave-conversion]");
+        ConfirmButton(cut).Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain(reason));
+        cut.FindAll("[data-confirm-leave-conversion]").Should().BeEmpty();
+        LeaveConversionToggle(cut)!.HasAttribute("disabled").Should().BeFalse("the user can try again");
+    }
+
+    [Fact]
+    public void WhileTheConversionChangeIsInFlight_TheRunsActionsAreDisabled_AndASecondConfirmSendsNothing()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", periodEnd: December));
+        var gate = _api.OnGated(HttpMethod.Put, LeaveConversionPath);
+        var cut = RenderPage();
+
+        LeaveConversionToggle(cut)!.Click();
+        cut.WaitForElement("[data-confirm-leave-conversion]");
+        ConfirmButton(cut).Click();
+
+        cut.WaitForAssertion(() => LeaveConversionToggle(cut)!.HasAttribute("disabled").Should().BeTrue());
+        Button(cut, "Compute").HasAttribute("disabled").Should().BeTrue();
+        Button(cut, "Approve").HasAttribute("disabled").Should().BeTrue();
+
+        ConfirmButton(cut).Click();
+        _api.Requests.Count(r => r.Method == HttpMethod.Put).Should().Be(1);
+
+        gate.SetResult(Json(RunJson("Draft", periodEnd: December, includesLeaveConversion: true)));
+        cut.WaitForAssertion(() => LeaveConversionToggle(cut)!.HasAttribute("disabled").Should().BeFalse());
+    }
+
+    [Fact]
+    public void WhileAnEmployeeIsBeingRemoved_TheRunsOtherActionsAreDisabled()
+    {
+        // Removing recomputes the run too; a Compute, Approve or conversion change sent alongside it
+        // would race it.
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", periodEnd: December, employees: $"{EmployeeLine},{JoseLine}"));
+        var gate = _api.OnGated(HttpMethod.Delete, $"{RunPath}/employees/{JoseId}");
+        var cut = RenderPage();
+
+        cut.Find($"[data-remove-employee='{JoseId}']").Click();
+        cut.WaitForElement("[data-confirm-remove]").QuerySelectorAll("button").Last().Click();
+
+        cut.WaitForAssertion(() => LeaveConversionToggle(cut)!.HasAttribute("disabled").Should().BeTrue());
+        Button(cut, "Compute").HasAttribute("disabled").Should().BeTrue();
+        Button(cut, "Approve").HasAttribute("disabled").Should().BeTrue();
+
+        ThirteenthMonthToggle(cut)!.HasAttribute("disabled").Should().BeTrue();
+
+        gate.SetResult(Json(RunJson("Draft", periodEnd: December)));
+        cut.WaitForAssertion(() => LeaveConversionToggle(cut)!.HasAttribute("disabled").Should().BeFalse());
+        Button(cut, "Compute").HasAttribute("disabled").Should().BeFalse();
+        ThirteenthMonthToggle(cut)!.HasAttribute("disabled").Should().BeFalse();
+    }
+
+    [Fact]
+    public void AnApprovalRefusedBecauseTheConvertibleLeaveChanged_SaysSo_AndOffersRecompute()
+    {
+        const string reason = "Maria Santos's convertible leave has changed since this payroll was computed; recompute it before paying.";
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK,
+                RunJson("ForApproval", periodEnd: December, includesLeaveConversion: true, employees: YearEndLine))
+            .On(HttpMethod.Put, $"{RunPath}/approve", HttpStatusCode.BadRequest,
+                System.Text.Json.JsonSerializer.Serialize(new { title = "Business rule violation", status = 400, detail = reason }));
+        var cut = RenderPage();
+
+        Button(cut, "Approve").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain(reason));
+        cut.Markup.Should().Contain(">For approval<");
+        ActionButtons(cut).Should().Equal("Compute", "Approve");
+        Button(cut, "Compute").HasAttribute("disabled").Should().BeFalse("recomputing is the way on");
+    }
+
+    [Fact]
+    public void AnApprovedFlaggedRun_CanBeRecomputed_AfterAskingFirst()
+    {
+        // The API recomputes an Approved run that converts leave (and sends it back to Draft): it's
+        // where an approval or Mark Paid refused with "recompute it before paying" leads.
+        var status = "Approved";
+        _api.On(HttpMethod.Get, RunPath, () => Json(RunJson(status, periodEnd: December, includesLeaveConversion: true, employees: YearEndLine)))
+            .On(HttpMethod.Put, $"{RunPath}/compute", () =>
+            {
+                status = "Draft";
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            });
+        var cut = RenderPage();
+
+        ActionButtons(cut).Should().Equal("Compute", "Mark Paid");
+        Button(cut, "Compute").Click();
+
+        var dialog = cut.WaitForElement("[data-confirm-compute]");
+        dialog.TextContent.Should().Contain("goes back to Draft").And.Contain("approval again").And.NotContain("final pay");
+        dialog.QuerySelectorAll("button").Last().Click();
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain(">Draft<"));
+        ActionButtons(cut).Should().Equal("Compute", "Approve");
+    }
+
+    // ---------- The 13th month ----------
+
+    private string ThirteenthMonthPath => $"{RunPath}/thirteenth-month";
+
+    private static IElement? ThirteenthMonthToggle(IRenderedComponent<PayrollRunDetail> cut) =>
+        cut.FindAll("[data-thirteenth-month-toggle]").SingleOrDefault();
+
+    private static IElement ConfirmThirteenthMonthButton(IRenderedComponent<PayrollRunDetail> cut) =>
+        cut.Find("[data-confirm-thirteenth-month]").QuerySelectorAll("button").Last();
+
+    private static string ThirteenthMonthLine =>
+        $$"""
+        {"id":"{{Guid.NewGuid()}}","employeeId":"{{MariaId}}","employeeName":"Maria Santos","employeeNumber":"EMP-0042",
+         "grossPay":39541.67,"netPay":36000,"thirteenthMonth":3041.67}
+        """;
+
+    [Fact]
+    public void ARunWithThe13thMonth_ShowsTheBadge_AndEachEmployees13thMonth()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK,
+            RunJson("Draft", includesThirteenthMonth: true, employees: $"{ThirteenthMonthLine},{JoseLine}"));
+
+        var cut = RenderPage();
+
+        cut.Find("[data-thirteenth-month-badge]").TextContent.Trim().Should().Be("13th month");
+        cut.FindAll("thead th").Select(h => h.TextContent.Trim()).Should().Contain("13th month");
+        var cells = cut.FindAll("[data-thirteenth-month]").Select(c => c.TextContent.Trim()).ToList();
+        cells.Should().HaveCount(2);
+        cells[0].Should().EndWith("3,041.67");
+        cells[1].Should().EndWith("0.00");
+    }
+
+    [Fact]
+    public void AFinalPay_HasNo13thMonthBadge_SinceItAlwaysIncludesIt_ButShowsTheColumn()
+    {
+        var finalPayLine = FinalPayLine(1200m).TrimEnd().TrimEnd('}') + ""","thirteenthMonth":3041.67}""";
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK,
+            RunJson("Draft", runType: "FinalPay", includesThirteenthMonth: true, employees: finalPayLine));
+
+        var cut = RenderPage();
+
+        cut.FindAll("[data-thirteenth-month-badge]").Should().BeEmpty();
+        cut.FindAll("[data-final-pay-badge]").Should().ContainSingle();
+        cut.Find("[data-thirteenth-month]").TextContent.Should().Contain("3,041.67");
+    }
+
+    [Fact]
+    public void AnApprovedRunWithThe13thMonth_CanBeRecomputed_AfterAskingFirst()
+    {
+        // The API recomputes it (back to Draft): it's where a Mark Paid refused because a 13th month
+        // was paid on another run since this one was computed leads.
+        var status = "Approved";
+        _api.On(HttpMethod.Get, RunPath, () => Json(RunJson(status, includesThirteenthMonth: true, employees: ThirteenthMonthLine)))
+            .On(HttpMethod.Put, $"{RunPath}/compute", () =>
+            {
+                status = "Draft";
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            });
+        var cut = RenderPage();
+
+        ActionButtons(cut).Should().Equal("Compute", "Mark Paid");
+        Button(cut, "Compute").Click();
+
+        var dialog = cut.WaitForElement("[data-confirm-compute]");
+        dialog.TextContent.Should().Contain("goes back to Draft").And.Contain("approval again").And.NotContain("final pay");
+        dialog.QuerySelectorAll("button").Last().Click();
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain(">Draft<"));
+        ActionButtons(cut).Should().Equal("Compute", "Approve");
+    }
+
+    [Fact]
+    public void AMarkPaidRefusedBecauseA13thMonthWasPaidElsewhere_SaysSo()
+    {
+        const string reason = "Maria Santos's 13th month was paid on PR-2026-0020 after this payroll was computed; recompute it before paying.";
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Approved", includesThirteenthMonth: true, employees: ThirteenthMonthLine))
+            .On(HttpMethod.Put, $"{RunPath}/mark-paid", HttpStatusCode.BadRequest,
+                System.Text.Json.JsonSerializer.Serialize(new { title = "Business rule violation", status = 400, detail = reason }));
+        var cut = RenderPage();
+
+        Button(cut, "Mark Paid").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain(reason));
+        Button(cut, "Compute").HasAttribute("disabled").Should().BeFalse("recomputing is the way on");
+    }
+
+    [Fact]
+    public void ARunWithout13thMonthPay_HasNoBadgeOrColumn()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft"));
+
+        var cut = RenderPage();
+
+        cut.FindAll("[data-thirteenth-month-badge]").Should().BeEmpty();
+        cut.FindAll("thead th").Select(h => h.TextContent.Trim()).Should().NotContain("13th month");
+        cut.FindAll("[data-thirteenth-month]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ARunIncludingThe13thMonth_ThatPaysNoneOfIt_ShowsTheBadgeButNoColumn()
+    {
+        // Everyone on it is ineligible, say: the run includes it, but nobody's 13th month is above zero.
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", includesThirteenthMonth: true));
+
+        var cut = RenderPage();
+
+        cut.FindAll("[data-thirteenth-month-badge]").Should().ContainSingle();
+        cut.FindAll("thead th").Select(h => h.TextContent.Trim()).Should().NotContain("13th month");
+    }
+
+    [Theory]
+    [InlineData("Regular", "Draft", "2026-09-15", false, "Include 13th month")]
+    [InlineData("Regular", "ForApproval", "2026-06-15", false, "Include 13th month")]
+    [InlineData("Regular", "Approved", December, true, "Leave out the 13th month")]
+    [InlineData("Regular", "Draft", "2026-11-30", true, "Leave out the 13th month")]
+    [InlineData("Regular", "Paid", December, true, null)]
+    [InlineData("Regular", "Paid", "2026-09-15", false, null)]
+    [InlineData("FinalPay", "Draft", December, true, null)]
+    public void The13thMonthToggle_IsOfferedOnRegularRunsThatArentPaid_InAnyMonth(
+        string runType, string status, string periodEnd, bool includes, string? expected)
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK,
+            RunJson(status, runType: runType, periodEnd: periodEnd, includesThirteenthMonth: includes));
+
+        var cut = RenderPage();
+
+        if (expected is null) ThirteenthMonthToggle(cut).Should().BeNull();
+        else ThirteenthMonthToggle(cut)!.TextContent.Trim().Should().Be(expected);
+    }
+
+    [Fact]
+    public void Including13thMonth_AsksFirst_ThenPutsIt_AndReloadsTheRun()
+    {
+        var includes = false;
+        _api.On(HttpMethod.Get, RunPath, () => Json(RunJson("Draft", includesThirteenthMonth: includes,
+                employees: includes ? ThirteenthMonthLine : EmployeeLine)))
+            .On(HttpMethod.Put, ThirteenthMonthPath, () =>
+            {
+                includes = true;
+                return Json(RunJson("Draft", includesThirteenthMonth: true, employees: ThirteenthMonthLine));
+            });
+        var cut = RenderPage();
+
+        ThirteenthMonthToggle(cut)!.Click();
+
+        var dialog = cut.WaitForElement("[data-confirm-thirteenth-month]");
+        dialog.TextContent.Should().Contain("Include 13th month").And.Contain("Due by Dec 24 (PD 851).")
+            .And.NotContain("approval again");
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Put);
+
+        ConfirmThirteenthMonthButton(cut).Click();
+
+        cut.WaitForAssertion(() => cut.Find("[data-thirteenth-month-badge]").TextContent.Trim().Should().Be("13th month"));
+        var put = _api.Requests.FindIndex(r => r.Method == HttpMethod.Put);
+        _api.Requests[put].RequestUri!.AbsolutePath.Should().Be(ThirteenthMonthPath);
+        _api.RequestBodies[put].Should().Be("""{"include":true}""");
+        _api.Requests.Count(r => r.Method == HttpMethod.Get).Should().Be(2, "the run is reloaded after the change");
+        cut.FindAll("[data-confirm-thirteenth-month]").Should().BeEmpty();
+        ThirteenthMonthToggle(cut)!.TextContent.Trim().Should().Be("Leave out the 13th month");
+        cut.Find("[data-thirteenth-month]").TextContent.Should().Contain("3,041.67");
+    }
+
+    [Theory]
+    [InlineData("Approved")]
+    [InlineData("ForApproval")]
+    public void LeavingOutThe13thMonth_OnARunAwaitingOrPastApproval_WarnsItGoesBackToDraftForApprovalAgain(string status)
+    {
+        var current = status;
+        _api.On(HttpMethod.Get, RunPath, () => Json(RunJson(current, includesThirteenthMonth: current != "Draft",
+                employees: current != "Draft" ? ThirteenthMonthLine : EmployeeLine)))
+            .On(HttpMethod.Put, ThirteenthMonthPath, () =>
+            {
+                current = "Draft";
+                return Json(RunJson("Draft"));
+            });
+        var cut = RenderPage();
+
+        ThirteenthMonthToggle(cut)!.Click();
+
+        var dialog = cut.WaitForElement("[data-confirm-thirteenth-month]");
+        dialog.TextContent.Should().Contain("Leave out the 13th month")
+            .And.Contain("goes back to Draft").And.Contain("approval again").And.NotContain("Dec 24");
+
+        ConfirmThirteenthMonthButton(cut).Click();
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain(">Draft<"));
+        _api.RequestBodies[_api.Requests.FindIndex(r => r.Method == HttpMethod.Put)].Should().Be("""{"include":false}""");
+        cut.FindAll("[data-thirteenth-month-badge]").Should().BeEmpty();
+        cut.FindAll("[data-thirteenth-month]").Should().BeEmpty();
+        ThirteenthMonthToggle(cut)!.TextContent.Trim().Should().Be("Include 13th month");
+    }
+
+    [Fact]
+    public void CancellingThe13thMonthChange_SendsNothing()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft"));
+        var cut = RenderPage();
+
+        ThirteenthMonthToggle(cut)!.Click();
+        cut.WaitForElement("[data-confirm-thirteenth-month]").QuerySelectorAll("button").First().Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[data-confirm-thirteenth-month]").Should().BeEmpty());
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Put);
+    }
+
+    [Theory]
+    [InlineData("A paid payroll run can't be changed.")]
+    [InlineData("A final pay's 13th month can't be changed here.")]
+    [InlineData("This payroll already includes the 13th month.")]
+    [InlineData("This payroll already leaves out the 13th month.")]
+    [InlineData("Maria Santos's leave for 2026 was already converted in PR-2026-0023.")]
+    [InlineData("The 2026 13th month must be paid by Dec 24, 2026; leave it out of this payroll and include it on one paid in 2026.")]
+    public void ARefused13thMonthChange_ShowsTheApisReason(string reason)
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", periodEnd: December))
+            .On(HttpMethod.Put, ThirteenthMonthPath, HttpStatusCode.BadRequest,
+                System.Text.Json.JsonSerializer.Serialize(new { title = "Business rule violation", status = 400, detail = reason }));
+        var cut = RenderPage();
+
+        ThirteenthMonthToggle(cut)!.Click();
+        cut.WaitForElement("[data-confirm-thirteenth-month]");
+        ConfirmThirteenthMonthButton(cut).Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain(reason));
+        cut.FindAll("[data-confirm-thirteenth-month]").Should().BeEmpty();
+        ThirteenthMonthToggle(cut)!.HasAttribute("disabled").Should().BeFalse("the user can try again");
+    }
+
+    [Fact]
+    public void WhileThe13thMonthChangeIsInFlight_TheRunsActionsAreDisabled_AndASecondConfirmSendsNothing()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", periodEnd: December));
+        var gate = _api.OnGated(HttpMethod.Put, ThirteenthMonthPath);
+        var cut = RenderPage();
+
+        ThirteenthMonthToggle(cut)!.Click();
+        cut.WaitForElement("[data-confirm-thirteenth-month]");
+        ConfirmThirteenthMonthButton(cut).Click();
+
+        cut.WaitForAssertion(() => ThirteenthMonthToggle(cut)!.HasAttribute("disabled").Should().BeTrue());
+        LeaveConversionToggle(cut)!.HasAttribute("disabled").Should().BeTrue();
+        Button(cut, "Compute").HasAttribute("disabled").Should().BeTrue();
+        Button(cut, "Approve").HasAttribute("disabled").Should().BeTrue();
+        DiscardButton(cut)!.HasAttribute("disabled").Should().BeTrue();
+
+        ConfirmThirteenthMonthButton(cut).Click();
+        _api.Requests.Count(r => r.Method == HttpMethod.Put).Should().Be(1);
+
+        gate.SetResult(Json(RunJson("Draft", periodEnd: December, includesThirteenthMonth: true)));
+        cut.WaitForAssertion(() => ThirteenthMonthToggle(cut)!.HasAttribute("disabled").Should().BeFalse());
+        LeaveConversionToggle(cut)!.HasAttribute("disabled").Should().BeFalse();
+    }
+
+    // ---------- Discarding a run ----------
+
+    private static IElement? DiscardButton(IRenderedComponent<PayrollRunDetail> cut) =>
+        cut.FindAll("[data-discard-run]").SingleOrDefault();
+
+    private static IElement ConfirmDiscardButton(IRenderedComponent<PayrollRunDetail> cut) =>
+        cut.Find("[data-confirm-discard]").QuerySelectorAll("button").Last();
+
+    [Theory]
+    [InlineData("Regular", "Draft", true)]
+    [InlineData("Regular", "Processing", true)]
+    [InlineData("Regular", "ForApproval", true)]
+    [InlineData("Regular", "Approved", true)]
+    [InlineData("Regular", "Paid", false)]
+    [InlineData("FinalPay", "Draft", false)]
+    [InlineData("FinalPay", "Approved", false)]
+    public void DiscardIsOfferedOnRegularRunsThatArentPaid(string runType, string status, bool offered)
+    {
+        // The API refuses a paid run (it's part of the record) and a final pay (its separation links to it).
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson(status, runType: runType));
+
+        var cut = RenderPage();
+
+        if (offered)
+            DiscardButton(cut)!.TextContent.Trim().Should().Be("Discard payroll");
+        else
+            DiscardButton(cut).Should().BeNull();
+    }
+
+    [Fact]
+    public void Discarding_AsksFirst_ThenDeletesTheRun_AndGoesToTheRunsList()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Approved"))
+            .On(HttpMethod.Delete, RunPath, HttpStatusCode.NoContent);
+        var cut = RenderPage();
+
+        DiscardButton(cut)!.Click();
+
+        var dialog = cut.WaitForElement("[data-confirm-discard]");
+        dialog.QuerySelector("h2")!.TextContent.Trim().Should().Be("Discard PR-2026-0017?");
+        dialog.TextContent.Should().Contain("Its figures are deleted; nothing has been paid.");
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Delete);
+
+        ConfirmDiscardButton(cut).Click();
+
+        cut.WaitForAssertion(() => CurrentUri.Should().Be("http://localhost/payroll-runs"));
+        _api.Requests.Should().ContainSingle(r => r.Method == HttpMethod.Delete
+                                                 && r.RequestUri!.AbsolutePath == RunPath);
+    }
+
+    [Fact]
+    public void CancellingTheDiscard_SendsNothing_AndStaysOnTheRun()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft"));
+        var cut = RenderPage();
+        var before = CurrentUri;
+
+        DiscardButton(cut)!.Click();
+        cut.WaitForElement("[data-confirm-discard]").QuerySelectorAll("button").First().Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[data-confirm-discard]").Should().BeEmpty());
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Delete);
+        CurrentUri.Should().Be(before);
+    }
+
+    [Fact]
+    public void ARefusedDiscard_ShowsTheApisReason_AndStaysOnTheRun()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft"))
+            .On(HttpMethod.Delete, RunPath, HttpStatusCode.BadRequest,
+                """{"title":"Bad request","detail":"A paid payroll run can't be discarded.","status":400}""");
+        var cut = RenderPage();
+        var before = CurrentUri;
+
+        DiscardButton(cut)!.Click();
+        cut.WaitForElement("[data-confirm-discard]");
+        ConfirmDiscardButton(cut).Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should()
+            .Contain("A paid payroll run can't be discarded."));
+        cut.FindAll("[data-confirm-discard]").Should().BeEmpty();
+        CurrentUri.Should().Be(before);
+        DiscardButton(cut)!.HasAttribute("disabled").Should().BeFalse("the user can try again");
+    }
+
+    [Fact]
+    public void WhileTheRunIsBeingDiscarded_TheRunsActionsAreDisabled_AndASecondConfirmSendsNothing()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", periodEnd: December));
+        var gate = _api.OnGated(HttpMethod.Delete, RunPath);
+        var cut = RenderPage();
+
+        DiscardButton(cut)!.Click();
+        cut.WaitForElement("[data-confirm-discard]");
+        ConfirmDiscardButton(cut).Click();
+
+        cut.WaitForAssertion(() => DiscardButton(cut)!.HasAttribute("disabled").Should().BeTrue());
+        Button(cut, "Compute").HasAttribute("disabled").Should().BeTrue();
+        Button(cut, "Approve").HasAttribute("disabled").Should().BeTrue();
+        LeaveConversionToggle(cut)!.HasAttribute("disabled").Should().BeTrue();
+        ThirteenthMonthToggle(cut)!.HasAttribute("disabled").Should().BeTrue();
+
+        ConfirmDiscardButton(cut).Click();
+        _api.Requests.Count(r => r.Method == HttpMethod.Delete).Should().Be(1);
+
+        gate.SetResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        cut.WaitForAssertion(() => CurrentUri.Should().Be("http://localhost/payroll-runs"));
     }
 
     private static HttpResponseMessage Json(string json) =>

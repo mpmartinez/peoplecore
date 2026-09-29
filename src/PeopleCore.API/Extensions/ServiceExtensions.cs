@@ -225,6 +225,7 @@ public static class ServiceExtensions
         services.AddScoped<PayrollComputationService>();
         services.AddScoped<IPayrollAttendanceBridge, PayrollAttendanceBridge>();
         services.AddScoped<IFinalPayService, FinalPayService>();
+        services.AddScoped<IYearEndLeaveConversion, YearEndLeaveConversion>();
         services.AddScoped<IPayrollRunService, PayrollRunService>();
         services.AddScoped<IEmployeeCompensationService, EmployeeCompensationService>();
         services.AddScoped<IPayrollSettingsService, PayrollSettingsService>();

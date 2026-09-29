@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using PeopleCore.Infrastructure.Persistence;
@@ -11,9 +12,11 @@ using PeopleCore.Infrastructure.Persistence;
 namespace PeopleCore.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260925042037_AddYearEndLeaveConversion")]
+    partial class AddYearEndLeaveConversion
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2386,10 +2389,6 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("ThirteenthMonth")
                         .HasColumnType("numeric(18,2)")
                         .HasColumnName("thirteenth_month");
-
-                    b.Property<decimal?>("ThirteenthMonthPaidEarlierInYear")
-                        .HasColumnType("numeric(18,2)")
-                        .HasColumnName("thirteenth_month_paid_earlier_in_year");
 
                     b.Property<decimal>("UndertimeMinutes")
                         .HasColumnType("numeric(6,2)")

@@ -26,6 +26,7 @@ public class LeaveTypeConfiguration : IEntityTypeConfiguration<LeaveType>
         builder.Property(lt => lt.RequiresSoloParentId).HasDefaultValue(false);
         builder.Property(lt => lt.IsConfidential).HasDefaultValue(false);
         builder.Property(lt => lt.IsMaternity).HasDefaultValue(false);
+        builder.Property(lt => lt.ConvertsAtYearEnd).HasDefaultValue(false);
 
         builder.ToTable("leave_types");
     }

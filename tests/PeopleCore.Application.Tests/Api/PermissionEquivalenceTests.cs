@@ -148,6 +148,15 @@ public class PermissionEquivalenceTests
         ["EmployeesController.Coe"] = [Permissions.EmployeesManage],
 
         ["PayrollRunsController.RemoveEmployee"] = [Permissions.PayrollManage],
+        // PUT api/payroll-runs/{id}/leave-conversion turns a run's year-end leave conversion on or
+        // off and recomputes it - managing the run, like removing an employee from it.
+        ["PayrollRunsController.SetLeaveConversion"] = [Permissions.PayrollManage],
+        // PUT api/payroll-runs/{id}/thirteenth-month includes or leaves out the run's 13th month and
+        // recomputes it - managing the run, like the leave conversion.
+        ["PayrollRunsController.SetThirteenthMonth"] = [Permissions.PayrollManage],
+        // DELETE api/payroll-runs/{id} discards a regular run that was never paid - managing the
+        // run, like removing an employee from it.
+        ["PayrollRunsController.Discard"] = [Permissions.PayrollManage],
         ["FinalPayController.Get"] = [Permissions.PayrollManage],
         ["FinalPayController.Create"] = [Permissions.PayrollManage],
         ["FinalPayController.Update"] = [Permissions.PayrollManage],

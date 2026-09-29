@@ -86,7 +86,7 @@
                                     }
                                     @if (IsSil(type.Code))
                                     {
-                                        <p class="mt-1 text-xs text-warning max-w-xs" data-sil-note>@SilNote</p>
+                                        <p class="mt-1 text-xs text-muted-foreground max-w-xs" data-sil-note>@SilNote</p>
                                     }
                                 </TableCell>
                                 <TableCell Class="px-4 py-3" data-kind>@KindLabel(type.EntitlementKind)</TableCell>
@@ -132,7 +132,7 @@
             </div>
             @if (IsSil(_form.Code))
             {
-                <p class="-mt-4 text-xs text-warning" data-sil-note>@SilNote</p>
+                <p class="-mt-4 text-xs text-muted-foreground" data-sil-note>@SilNote</p>
             }
 
             <div class="space-y-4">
@@ -201,8 +201,12 @@
             <div class="space-y-3">
                 <h3 class="text-sm font-semibold">Pay</h3>
                 <Checkbox @bind-Value="_form.IsPaid" data-setting="paid">Paid</Checkbox>
-                @* Only an accrued type has a yearly balance to carry; the API refuses it on any other kind. *@
-                @if (_form.Kind == LeaveEntitlementKind.Accrued)
+                @* Only an accrued type has a yearly balance to carry; the API refuses it on any other kind.
+                   Only a paid accrued type has days worth converting to cash at year-end: a
+                   yearly-allowance type's balance only exists once the employee first files. Unused
+                   days either carry over or convert, never both (the API refuses each of these), so
+                   each setting is hidden while the other is on. *@
+                @if (_form.OffersCarryOver)
                 {
                     <Checkbox @bind-Value="_form.IsCarryOver" data-setting="carry-over">Unused days carry over to next year</Checkbox>
                     @if (_form.IsCarryOver)
@@ -212,8 +216,20 @@
                         </FormField>
                     }
                 }
+                @if (_form.OffersYearEnd)
+                {
+                    <Checkbox @bind-Value="_form.ConvertsAtYearEnd" data-converts-at-year-end>Converts to cash at year-end</Checkbox>
+                    <p class="-mt-2 ml-6 text-xs text-muted-foreground" data-converts-at-year-end-hint>Unused accrued days are paid in cash on a December payroll with Convert unused leave ticked, when it's created or later on the payroll's page.</p>
+                    @* A type saved carrying over (a SIL from before conversion existed can be both) loses
+                       carry-over when saved converting. *@
+                    @if (_editing is { IsCarryOver: true } && _form.Converts)
+                    {
+                        <p class="-mt-2 ml-6 text-xs text-warning" data-carry-over-off-note>Carry-over is off while this type converts at year-end; saving turns it off.</p>
+                    }
+                }
                 <Checkbox @bind-Value="_form.IsConvertibleToCash" data-setting="convertible">Unused days are paid out in final pay</Checkbox>
-                @if (_form.IsConvertibleToCash)
+                @* Both pay-outs split their days by this setting. *@
+                @if (_form.IsConvertibleToCash || _form.Converts)
                 {
                     <Checkbox @bind-Value="_form.CountsAsVacationForDeMinimis" data-setting="de-minimis" Class="ml-6">Counts as vacation leave toward the 10-day de minimis limit</Checkbox>
                 }
@@ -358,9 +374,9 @@
 @code {
     private const string MaternityNote = "Paid through regular payroll for now; the SSS benefit split comes in a later release.";
 
-    // Art. 95 makes unused service incentive leave commutable to cash at the end of the year. The
-    // accrual engine credits it, but nothing converts what is left yet.
-    private const string SilNote = "Unused SIL must be converted to cash at year-end (Labor Code Art. 95); PeopleCore doesn't do this automatically yet.";
+    // Art. 95 makes unused service incentive leave commutable to cash at the end of the year. SIL
+    // converts at year-end by default, and the December payroll pays it out when it's ticked to.
+    private const string SilNote = "Unused SIL is converted to cash on the December payroll (tick Convert unused leave).";
 
     private static bool IsSil(string? code) => string.Equals(code?.Trim(), "SIL", StringComparison.OrdinalIgnoreCase);
 
@@ -687,6 +703,7 @@
         if (type.MinServiceMonths is > 0 and var months) rules.Add(months == 1 ? "1 month's service" : $"{months} months' service");
         if (type.RequiresDocument) rules.Add("Document");
         if (type.IsConfidential) rules.Add("Confidential");
+        if (type.ConvertsAtYearEnd) rules.Add("Year-end cash");
         return rules.Count == 0 ? "None" : string.Join(" · ", rules);
     }
 
@@ -727,6 +744,17 @@
         // The API's own default for a new type.
         public bool CountsAsVacationForDeMinimis { get; set; } = true;
         public bool IsActive { get; set; } = true;
+        public bool ConvertsAtYearEnd { get; set; }
+
+        // Year-end conversion is for a paid accrued type only, and carry-over for an accrued type
+        // only; carry-over gives way to conversion. A tick left on either from before
+        // the kind or pay changed, or before the other was ticked, is neither shown nor sent, so the
+        // form can never hide both settings or send both.
+        public bool CanConvertAtYearEnd => Kind == LeaveEntitlementKind.Accrued && IsPaid;
+        public bool Converts => CanConvertAtYearEnd && ConvertsAtYearEnd;
+        public bool OffersCarryOver => Kind == LeaveEntitlementKind.Accrued && !Converts;
+        public bool CarriesOver => OffersCarryOver && IsCarryOver;
+        public bool OffersYearEnd => CanConvertAtYearEnd && !CarriesOver;
 
         public static LeaveTypeForm From(LeaveTypeDto t) => new()
         {
@@ -750,6 +778,7 @@
             IsConvertibleToCash = t.IsConvertibleToCash,
             CountsAsVacationForDeMinimis = t.CountsAsVacationForDeMinimis,
             IsActive = t.IsActive,
+            ConvertsAtYearEnd = t.ConvertsAtYearEnd,
         };
 
         // Every setting goes out, as the API replaces the whole type. The per-event figures and the
@@ -760,7 +789,7 @@
         public CreateLeaveTypeDto ToRequest()
         {
             var perEvent = Kind == LeaveEntitlementKind.PerEvent;
-            var carryOver = Kind == LeaveEntitlementKind.Accrued && IsCarryOver;
+            var carryOver = CarriesOver;
             return new CreateLeaveTypeDto(
                 Name.Trim(), Code.Trim(), perEvent ? 0m : MaxDaysPerYear ?? 0m,
                 IsPaid, carryOver, carryOver ? CarryOverMaxDays : null,
@@ -769,7 +798,7 @@
                 IsActive, Kind,
                 CountsCalendarDays, perEvent ? DaysPerEvent : null, MinServiceMonths,
                 RequiresMarried, RequiresSoloParentId, perEvent ? MaxEvents : null,
-                IsConfidential, perEvent && IsMaternity);
+                IsConfidential, perEvent && IsMaternity, Converts);
         }
     }
 

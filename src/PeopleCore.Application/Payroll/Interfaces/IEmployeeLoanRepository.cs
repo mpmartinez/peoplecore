@@ -16,6 +16,4 @@ public interface IEmployeeLoanRepository : IRepository<EmployeeLoan>
 
     /// <summary>The specific loans a run's deduction lines refer to, for retiring their balances.</summary>
     Task<IReadOnlyList<EmployeeLoan>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default);
-
-    Task UpdateRangeAsync(IEnumerable<EmployeeLoan> loans, CancellationToken ct = default);
 }

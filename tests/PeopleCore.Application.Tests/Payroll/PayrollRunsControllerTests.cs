@@ -30,6 +30,48 @@ public class PayrollRunsControllerTests
     }
 
     [Fact]
+    public void SetLeaveConversion_IsAPutOnTheRunsLeaveConversion()
+    {
+        typeof(PayrollRunsController).GetMethod(nameof(PayrollRunsController.SetLeaveConversion))!
+            .GetCustomAttribute<HttpPutAttribute>()!
+            .Template.Should().Be("{id:guid}/leave-conversion");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SetLeaveConversion_PassesTheChoiceOn_AndReturnsTheUpdatedRun(bool include)
+    {
+        _service.Setup(s => s.SetLeaveConversionAsync(RunId, include, It.IsAny<CancellationToken>())).ReturnsAsync(Run);
+
+        var result = await new PayrollRunsController(_service.Object)
+            .SetLeaveConversion(RunId, new SetLeaveConversionRequest(include), CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>().Which.Value.Should().Be(Run);
+    }
+
+    [Fact]
+    public void SetThirteenthMonth_IsAPutOnTheRunsThirteenthMonth()
+    {
+        typeof(PayrollRunsController).GetMethod(nameof(PayrollRunsController.SetThirteenthMonth))!
+            .GetCustomAttribute<HttpPutAttribute>()!
+            .Template.Should().Be("{id:guid}/thirteenth-month");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SetThirteenthMonth_PassesTheChoiceOn_AndReturnsTheUpdatedRun(bool include)
+    {
+        _service.Setup(s => s.SetThirteenthMonthAsync(RunId, include, It.IsAny<CancellationToken>())).ReturnsAsync(Run);
+
+        var result = await new PayrollRunsController(_service.Object)
+            .SetThirteenthMonth(RunId, new SetThirteenthMonthRequest(include), CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>().Which.Value.Should().Be(Run);
+    }
+
+    [Fact]
     public async Task RemoveEmployee_ReturnsTheUpdatedRun()
     {
         _service.Setup(s => s.RemoveEmployeeAsync(RunId, EmployeeId, It.IsAny<CancellationToken>())).ReturnsAsync(Run);
@@ -37,5 +79,22 @@ public class PayrollRunsControllerTests
         var result = await new PayrollRunsController(_service.Object).RemoveEmployee(RunId, EmployeeId, CancellationToken.None);
 
         result.Should().BeOfType<OkObjectResult>().Which.Value.Should().Be(Run);
+    }
+
+    [Fact]
+    public void Discard_IsADeleteOnTheRun()
+    {
+        typeof(PayrollRunsController).GetMethod(nameof(PayrollRunsController.Discard))!
+            .GetCustomAttribute<HttpDeleteAttribute>()!
+            .Template.Should().Be("{id:guid}");
+    }
+
+    [Fact]
+    public async Task Discard_DeletesTheRun_AndReturnsNoContent()
+    {
+        var result = await new PayrollRunsController(_service.Object).Discard(RunId, CancellationToken.None);
+
+        result.Should().BeOfType<NoContentResult>();
+        _service.Verify(s => s.DiscardAsync(RunId, It.IsAny<CancellationToken>()), Times.Once);
     }
 }

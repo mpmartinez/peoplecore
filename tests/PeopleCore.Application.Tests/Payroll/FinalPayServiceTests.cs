@@ -1390,6 +1390,41 @@ public class FinalPayServiceTests
             new FinalPayLeaveLineDto("Service Incentive Leave", 5m, false));
     }
 
+    /// <summary>
+    /// A Dec 16-31, 2025 run with the year-end conversion, paid on 2026-01-05 - in the final pay's
+    /// tax year - that paid some of Maria's leave as de minimis at 1,200 a day.
+    /// </summary>
+    private PayrollRun PaidYearEndConversion(decimal deMinimisDays)
+    {
+        var run = new PayrollRun
+        {
+            RunNumber = "PAY-2025-024", PeriodStart = new DateOnly(2025, 12, 16), PeriodEnd = new DateOnly(2025, 12, 31),
+            PayDate = new DateOnly(2026, 1, 5), Frequency = PayFrequency.Monthly, Status = PayrollRunStatus.Paid,
+            IncludesLeaveConversion = true,
+        };
+        run.Employees.Add(new PayrollRunEmployee
+        {
+            PayrollRunId = run.Id, EmployeeId = _employee.Id, DailyRate = 1_200m,
+            LeaveConversionPay = deMinimisDays * 1_200m, LeaveConversionNonTaxable = deMinimisDays * 1_200m,
+        });
+        return run;
+    }
+
+    [Fact]
+    public async Task CreateAsync_Leave_TakesOnlyWhatThePayYearLeftOfTheTenDeMinimisDays()
+    {
+        // 6 of 2026's ten de minimis days were paid on 2026-01-05.
+        _paidRuns.Add(PaidYearEndConversion(deMinimisDays: 6m));
+
+        await _sut.CreateAsync(_separation.Id, Request());
+
+        // The 5 vacation days are still 5 x 1,200 = 6,000, but only 10 - 6 = 4 of them are de
+        // minimis (4,800); the fifth is other benefits (1,200).
+        SavedEntry.LeaveConversionPay.Should().Be(6_000m);
+        SavedEntry.LeaveConversionNonTaxable.Should().Be(4_800m);
+        SavedEntry.LeaveConversionOtherBenefits.Should().Be(1_200m);
+    }
+
     [Fact]
     public async Task CreateAsync_LeaveBeyondDeMinimis_SharesThe90000WithThe13thMonth_AndOnlyTheRestIsTaxed()
     {
@@ -1532,18 +1567,29 @@ public class FinalPayServiceTests
     }
 
     [Fact]
-    public async Task RecordLeavePaidOutAsync_MarksTheDaysUsed_AndSavesEachBalance()
+    public async Task LeavePaidOutAsync_Refuses_WhenTheDeMinimisSplitChanged_EvenAtTheSameTotal()
     {
+        // The final pay converted 5 days as 6,000 of de minimis. Then a year-end conversion paid
+        // in 2026 used 6 of the year's ten de minimis days: the same 6,000 now splits 4,800 / 1,200.
         await _sut.CreateAsync(_separation.Id, Request());
-        var paidOut = await _sut.LeavePaidOutAsync(_savedRun!);
+        _paidRuns.Add(PaidYearEndConversion(deMinimisDays: 6m));
 
-        await _sut.RecordLeavePaidOutAsync(paidOut);
+        var act = () => _sut.LeavePaidOutAsync(_savedRun!);
 
-        _balances[0].UsedDays.Should().Be(5m);
-        _balances[0].RemainingDays.Should().Be(0m);
-        _balances[1].UsedDays.Should().Be(0m, "sick leave wasn't paid out");
-        _leaveBalances.Verify(r => r.UpdateAsync(_balances[0], It.IsAny<CancellationToken>()), Times.Once);
-        _leaveBalances.Verify(r => r.UpdateAsync(_balances[1], It.IsAny<CancellationToken>()), Times.Never);
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Maria Santos's convertible leave has changed since the final pay was computed; recompute it before paying.");
+    }
+
+    [Fact]
+    public async Task LeavePaidOutAsync_ChangesNothing()
+    {
+        // Mark Paid records the days, in the same save as the run's status.
+        await _sut.CreateAsync(_separation.Id, Request());
+
+        await _sut.LeavePaidOutAsync(_savedRun!);
+
+        _balances[0].UsedDays.Should().Be(0m);
+        _leaveBalances.Verify(r => r.UpdateAsync(It.IsAny<LeaveBalance>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ------------------------------------------------------------------

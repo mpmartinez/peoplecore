@@ -21,17 +21,21 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
             .AsSplitQuery()
             .FirstOrDefaultAsync(r => r.Id == id, ct);
 
-    public async Task<int> CountForYearAsync(int year, CancellationToken ct = default)
-        => await Context.PayrollRuns.CountAsync(
-            r => r.RunType == PayrollRunType.Regular && r.PeriodStart.Year == year, ct);
+    public Task<int> GetLastRegularSequenceAsync(int year, CancellationToken ct = default)
+        => GetLastSequenceAsync(PayrollRunType.Regular, $"PAY-{year}-", ct);
 
-    public async Task<int> GetLastFinalPaySequenceAsync(int payYear, CancellationToken ct = default)
+    public Task<int> GetLastFinalPaySequenceAsync(int payYear, CancellationToken ct = default)
+        => GetLastSequenceAsync(PayrollRunType.FinalPay, $"FP-{payYear}-", ct);
+
+    /// <summary>
+    /// The highest numeric suffix among the run numbers of the type that start with the prefix, or
+    /// 0. Keyed on the number itself, as the unique index on RunNumber is: a year holds a few dozen
+    /// runs at most, so their suffixes are parsed here rather than in SQL.
+    /// </summary>
+    private async Task<int> GetLastSequenceAsync(PayrollRunType type, string prefix, CancellationToken ct)
     {
-        // Keyed on the number itself, as the unique index on RunNumber is: a year holds only a
-        // handful of final pays, so their suffixes are parsed here rather than in SQL.
-        var prefix = $"FP-{payYear}-";
         var numbers = await Context.PayrollRuns
-            .Where(r => r.RunType == PayrollRunType.FinalPay && r.RunNumber.StartsWith(prefix))
+            .Where(r => r.RunType == type && r.RunNumber.StartsWith(prefix))
             .Select(r => r.RunNumber)
             .ToListAsync(ct);
 
@@ -122,6 +126,78 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
         var first = new DateOnly(year, 1, 1);
         var next = first.AddYears(1);
         return await Context.PayrollRuns.CountAsync(r => r.Status != PayrollRunStatus.Paid && r.PayDate >= first && r.PayDate < next, ct);
+    }
+
+    public async Task SavePaidAsync(PayrollRun run, IReadOnlyCollection<EmployeeLoan> loans,
+        IReadOnlyCollection<Domain.Entities.Leave.LeaveBalance> leaveBalances, CancellationToken ct = default)
+    {
+        // Normally all three were loaded through this request's context and are tracked already;
+        // any that weren't are attached as existing rows to update. One SaveChanges is one
+        // transaction, so the run can't be Paid without its loans retired and its leave used.
+        Attach(run);
+        foreach (var loan in loans)
+            Attach(loan);
+        foreach (var balance in leaveBalances)
+            Attach(balance);
+        await Context.SaveChangesAsync(ct);
+    }
+
+    private void Attach<TEntity>(TEntity entity) where TEntity : class
+    {
+        if (Context.Entry(entity).State == EntityState.Detached)
+            Context.Set<TEntity>().Update(entity);
+    }
+
+    public async Task<IReadOnlyList<LeaveConvertedInRun>> GetLeaveConversionsInYearAsync(
+        int periodEndYear, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId, CancellationToken ct = default)
+    {
+        var first = new DateOnly(periodEndYear, 1, 1);
+        var next = first.AddYears(1);
+        var ids = employeeIds.ToList();
+        return await Context.PayrollRunEmployees
+            .Where(e => ids.Contains(e.EmployeeId)
+                        && e.LeaveConversionPay > 0m
+                        && e.PayrollRunId != excludeRunId
+                        && e.PayrollRun.RunType == PayrollRunType.Regular
+                        && e.PayrollRun.PeriodEnd >= first && e.PayrollRun.PeriodEnd < next)
+            .OrderBy(e => e.PayrollRun.PeriodEnd)
+            .Select(e => new LeaveConvertedInRun(e.EmployeeId, e.PayrollRun.RunNumber))
+            .ToListAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<ThirteenthMonthInRun>> GetUnpaidThirteenthMonthsInYearAsync(
+        int payYear, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId, CancellationToken ct = default)
+    {
+        var first = new DateOnly(payYear, 1, 1);
+        var next = first.AddYears(1);
+        var ids = employeeIds.ToList();
+        return await Context.PayrollRunEmployees
+            .Where(e => ids.Contains(e.EmployeeId)
+                        && e.IncludeThirteenthMonth
+                        && e.PayrollRunId != excludeRunId
+                        && e.PayrollRun.RunType == PayrollRunType.Regular
+                        && e.PayrollRun.Status != PayrollRunStatus.Paid
+                        && e.PayrollRun.PayDate >= first && e.PayrollRun.PayDate < next)
+            .OrderBy(e => e.PayrollRun.PayDate)
+            .Select(e => new ThirteenthMonthInRun(e.EmployeeId, e.PayrollRun.RunNumber))
+            .ToListAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<EarlierUnpaidRun>> GetEarlierUnpaidRunsInYearAsync(
+        int payYear, DateOnly payDate, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId,
+        CancellationToken ct = default)
+    {
+        var first = new DateOnly(payYear, 1, 1);
+        var ids = employeeIds.ToList();
+        return await Context.PayrollRunEmployees
+            .Where(e => ids.Contains(e.EmployeeId)
+                        && e.PayrollRunId != excludeRunId
+                        && e.PayrollRun.RunType == PayrollRunType.Regular
+                        && e.PayrollRun.Status != PayrollRunStatus.Paid
+                        && e.PayrollRun.PayDate >= first && e.PayrollRun.PayDate < payDate)
+            .OrderBy(e => e.PayrollRun.PayDate)
+            .Select(e => new EarlierUnpaidRun(e.EmployeeId, e.PayrollRun.RunNumber))
+            .ToListAsync(ct);
     }
 
     // A half-open range so the index on the date column can be used, instead of the Year/Month

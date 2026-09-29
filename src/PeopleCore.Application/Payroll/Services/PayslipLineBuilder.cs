@@ -33,7 +33,8 @@ public static class PayslipLineBuilder
         if (e.NonTaxableAllowances > 0) lines.Add(new("Non-Taxable Allowances", e.NonTaxableAllowances, IsTaxable: false));
         if (e.ThirteenthMonth > 0) lines.Add(new("13th Month Pay", e.ThirteenthMonth, IsTaxable: false));
 
-        // Final-pay earnings, zero on a regular run. A line is flagged non-taxable only when all
+        // Final-pay earnings; a regular run has only the leave conversion, and only when it
+        // converts unused year-end leave. A line is flagged non-taxable only when all
         // of it is: FinalPayNonTaxable covers leave conversion's de minimis part plus whatever of
         // separation and retirement pay is exempt. Leave beyond de minimis is "other benefits",
         // taxed with the 13th month only past the year's 90,000 exemption - which one payslip

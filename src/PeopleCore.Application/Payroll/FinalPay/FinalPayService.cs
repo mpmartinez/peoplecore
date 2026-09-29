@@ -65,7 +65,8 @@ namespace PeopleCore.Application.Payroll.FinalPay;
 /// </para>
 /// <para>
 /// <b>Leave conversion</b> pays the last working day's year's remaining convertible days at the
-/// daily rate. The first 10 vacation-type days are de minimis (2316 Item 35). The rest is "other
+/// daily rate. The first 10 vacation-type days are de minimis (2316 Item 35) - ten a tax year,
+/// so fewer when leave converted earlier in the pay year used some. The rest is "other
 /// benefits" (RR 5-2011 as amended by RR 11-2018): it shares the 90,000 exemption with the 13th
 /// month, exempt as far as the pay year's earlier Paid runs and this final pay's 13th month leave
 /// room (Item 34) and taxable past it (Item 48). The 2316 the tax is settled through makes that
@@ -73,7 +74,7 @@ namespace PeopleCore.Application.Payroll.FinalPay;
 /// </para>
 /// <para>
 /// <b>Paying it.</b> Marking the run Paid records the converted days as used on the balances they
-/// came from (<see cref="RecordLeavePaidOutAsync"/>), so the year-end carry-over doesn't carry
+/// came from (<see cref="LeavePayout.Apply"/>), so the year-end carry-over doesn't carry
 /// them forward - and is refused while the balances no longer price to what the entry pays
 /// (<see cref="LeavePaidOutAsync"/>).
 /// </para>
@@ -226,9 +227,11 @@ public sealed class FinalPayService : IFinalPayService
         var entry = run.Employees.FirstOrDefault(e => e.EmployeeId == separation.EmployeeId)
             ?? throw new InvalidOperationException($"Final-pay run {run.RunNumber} has no entry for its employee.");
 
-        // The statutory figures are shown at the rate the entry was computed at.
+        // The statutory figures are shown at the rate the entry was computed at. The summary's leave
+        // amounts are the entry's own, so the de minimis days left don't matter here.
         var compensation = await _compensations.GetByEmployeeIdAsync(separation.EmployeeId, ct);
-        var figures = await FiguresAsync(separation, inputs, compensation?.BasicSalary ?? 0m, entry.DailyRate, ct);
+        var figures = await FiguresAsync(separation, inputs, compensation?.BasicSalary ?? 0m, entry.DailyRate,
+            FinalPayMath.DeMinimisVacationDays, ct);
 
         return await SummaryAsync(separation, run, entry, figures, ct);
     }
@@ -270,30 +273,30 @@ public sealed class FinalPayService : IFinalPayService
             .Select(b => new LeavePaidOut(b, b.RemainingDays))
             .ToList();
 
-        // They must still price, at the entry's own daily rate, to what the entry pays: leave taken
-        // or granted since the run was computed would otherwise be recorded as paid out when it
-        // wasn't, or paid out without being recorded.
-        var (deMinimis, otherBenefits) = FinalPayMath.LeaveConversion(
-            paidOut.Select(p => (p.Days, p.Balance.LeaveType.CountsAsVacationForDeMinimis)), entry.DailyRate);
-        if (deMinimis + otherBenefits != entry.LeaveConversionPay)
+        // They must still price, at the entry's own daily rate and with the pay year's de minimis
+        // days left now, to what the entry pays, split as it splits it: leave taken or granted
+        // since the run was computed would otherwise be recorded as paid out when it wasn't, or
+        // paid out without being recorded; and a conversion paid earlier in the year since then
+        // would leave the de minimis part untaxed twice over.
+        var deMinimisDaysLeft = await DeMinimisDaysLeftAsync(separation.EmployeeId, run, ct);
+        if (!LeavePayout.StillPrices(paidOut, entry, deMinimisDaysLeft))
             throw new DomainException(
                 $"{separation.Employee.FullName}'s convertible leave has changed since the final pay was computed; recompute it before paying.");
 
         return paidOut;
     }
 
-    public async Task RecordLeavePaidOutAsync(IReadOnlyList<LeavePaidOut> paidOut, CancellationToken ct = default)
+    /// <summary>
+    /// The pay year's de minimis leave days the employee has left: ten, less what the year's other
+    /// Paid runs paid as de minimis (<see cref="LeavePayout.DeMinimisDaysLeft"/>).
+    /// </summary>
+    private async Task<decimal> DeMinimisDaysLeftAsync(Guid employeeId, PayrollRun run, CancellationToken ct)
     {
-        // Recorded as used days - LeaveBalance has no field of its own for days converted to
-        // cash - so RemainingDays falls to what's left, and the year-end carry-over, which carries
-        // RemainingDays, doesn't carry the paid-out days forward.
-        var now = _clock.GetUtcNow().UtcDateTime;
-        foreach (var (balance, days) in paidOut)
-        {
-            balance.UsedDays += days;
-            balance.UpdatedAt = now;
-            await _leaveBalances.UpdateAsync(balance, ct);
-        }
+        int payYear = run.PayDate.Year;
+        var earlier = (await _runs.GetPaidRunsForEmployeeInYearAsync(employeeId, payYear, ct) ?? [])
+            .Where(r => r.Id != run.Id && r.Status == PayrollRunStatus.Paid && r.PayDate.Year == payYear)
+            .SelectMany(r => r.Employees.Where(e => e.EmployeeId == employeeId));
+        return LeavePayout.DeMinimisDaysLeft(earlier);
     }
 
     // ── Inputs ───────────────────────────────────────────────────────────────
@@ -529,7 +532,7 @@ public sealed class FinalPayService : IFinalPayService
         decimal LeaveOtherBenefits);
 
     private async Task<Figures> FiguresAsync(Separation separation, FinalPayInputs inputs,
-        decimal monthlyBasic, decimal dailyRate, CancellationToken ct)
+        decimal monthlyBasic, decimal dailyRate, decimal deMinimisDaysLeft, CancellationToken ct)
     {
         var employee = separation.Employee;
         var lastDay = separation.LastWorkingDay;
@@ -569,8 +572,8 @@ public sealed class FinalPayService : IFinalPayService
             .Where(b => b.LeaveType is { IsConvertibleToCash: true } && b.RemainingDays > 0m)
             .Select(b => new FinalPayLeaveLineDto(b.LeaveType.Name, b.RemainingDays, b.LeaveType.CountsAsVacationForDeMinimis))
             .ToList();
-        var (leaveDeMinimis, leaveOtherBenefits) =
-            FinalPayMath.LeaveConversion(leaveLines.Select(l => (l.Days, l.CountsAsVacation)), dailyRate);
+        var (leaveDeMinimis, leaveOtherBenefits) = FinalPayMath.LeaveConversion(
+            leaveLines.Select(l => (l.Days, l.CountsAsVacation)), dailyRate, deMinimisDaysLeft);
 
         return new Figures(years, computedShown, separationPay, retirementPay, nonTaxable,
                            leaveLines, leaveDeMinimis, leaveOtherBenefits);
@@ -623,7 +626,9 @@ public sealed class FinalPayService : IFinalPayService
                 .Where(r => r.Id != run.Id)
                 .SelectMany(r => r.Employees.Where(e => e.EmployeeId == employeeId)));
 
-        var figures = await FiguresAsync(separation, inputs, compensation.BasicSalary, dailyRate, ct);
+        // Only what the pay year left of the ten de minimis days: they are a tax year's.
+        var figures = await FiguresAsync(separation, inputs, compensation.BasicSalary, dailyRate,
+            await DeMinimisDaysLeftAsync(employeeId, run, ct), ct);
         var extras = new FinalPayExtras(
             inputs.WorkingDays,
             figures.LeaveDeMinimis,

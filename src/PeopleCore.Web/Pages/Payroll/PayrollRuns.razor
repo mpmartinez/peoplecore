@@ -56,6 +56,15 @@
                                 {
                                     <Badge Variant="outline" Class="ml-2" data-final-pay-badge>Final pay</Badge>
                                 }
+                                @if (r.IncludesLeaveConversion)
+                                {
+                                    <Badge Variant="outline" Class="ml-2" data-leave-conversion-badge>Leave conversion</Badge>
+                                }
+                                @* A final pay always includes the 13th month, so the badge would say nothing. *@
+                                @if (r.IncludesThirteenthMonth && r.RunType != PayrollLabels.FinalPayRunType)
+                                {
+                                    <Badge Variant="outline" Class="ml-2" data-thirteenth-month-badge>13th month</Badge>
+                                }
                             </TableCell>
                             <TableCell Class="px-4 py-3 cursor-pointer">@r.PeriodLabel</TableCell>
                             <TableCell Class="px-4 py-3 cursor-pointer">@r.PayDate</TableCell>
@@ -99,6 +108,29 @@
             </Select>
         </FormField>
     </div>
+
+    <fieldset class="space-y-2" data-year-end-pay>
+        <legend class="text-sm font-medium">Year-end pay</legend>
+        @* Offered for every period: a 13th month paid early is an advance, and the one paid later
+           in the year nets it out. *@
+        <div class="space-y-1">
+            <Checkbox @bind-Value="_form.IncludeThirteenthMonth" data-thirteenth-month>Include 13th month</Checkbox>
+            <p class="ml-6 text-xs text-muted-foreground">Pays each eligible employee's 13th month on this payroll, less any part already paid this year.</p>
+            <p class="ml-6 text-xs text-muted-foreground" data-thirteenth-month-due>Due by Dec 24 (PD 851).</p>
+        </div>
+        @* The API takes year-end leave conversion only on a December payroll, so the box is offered
+           only while the period ends in December; a tick left behind by an earlier period end isn't sent.
+           It starts ticked when the period ends on Dec 31 - the year's last payroll is where unused
+           leave is paid out, and an earlier cutoff (Dec 1-15) would convert leave the rest of December
+           can still use - and stays as the user leaves it. *@
+        @if (EndsInDecember)
+        {
+            <div class="space-y-1">
+                <Checkbox @bind-Value="_form.IncludeLeaveConversion" data-leave-conversion>Convert unused leave</Checkbox>
+                <p class="ml-6 text-xs text-muted-foreground">Pays out each employee's unused year-end leave (such as SIL) in cash on this payroll.</p>
+            </div>
+        }
+    </fieldset>
 
     <div>
         <div class="flex items-center justify-between">
@@ -223,6 +255,8 @@
 
     private void CloseCreateDialog() => _showCreateDialog = false;
 
+    private bool EndsInDecember => _form.PeriodEnd.Month == 12;
+
     private void ToggleEmployee(Guid employeeId, bool selected)
     {
         if (selected) _selectedEmployeeIds.Add(employeeId);
@@ -273,14 +307,17 @@
             // on the server). Null tells the attendance bridge to derive them from punches,
             // approved leave, approved overtime, the holiday calendar and the shift schedule -
             // sending a zero would silently beat the derived figure and unpay overtime and
-            // holiday premiums the employee actually earned.
+            // holiday premiums the employee actually earned. The 13th month is set per employee on
+            // the API, and the one tick applies to everyone on the run.
+            var includeThirteenthMonth = _form.IncludeThirteenthMonth;
             var (run, error) = await Api.CreatePayrollRunAsync(new
             {
                 periodStart = _form.PeriodStart.ToString("yyyy-MM-dd"),
                 periodEnd = _form.PeriodEnd.ToString("yyyy-MM-dd"),
                 payDate = _form.PayDate.ToString("yyyy-MM-dd"),
                 frequency = _form.Frequency,
-                employees = _selectedEmployeeIds.Select(id => new { employeeId = id })
+                employees = _selectedEmployeeIds.Select(id => new { employeeId = id, includeThirteenthMonth }),
+                includeLeaveConversion = EndsInDecember && _form.IncludeLeaveConversion
             });
 
             if (run is null)
@@ -309,5 +346,14 @@
         public DateOnly PeriodEnd { get; set; } = DateOnly.FromDateTime(DateTime.Today);
         public DateOnly PayDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
         public string Frequency { get; set; } = "Monthly";
+        // Ticked for a period ending Dec 31 until the user unticks it, and unticked for any other
+        // until they tick it; offered, and sent, only while the period ends in December.
+        private bool? _leaveConversionChoice;
+        public bool IncludeLeaveConversion
+        {
+            get => _leaveConversionChoice ?? PeriodEnd is { Month: 12, Day: 31 };
+            set => _leaveConversionChoice = value;
+        }
+        public bool IncludeThirteenthMonth { get; set; }
     }
 }

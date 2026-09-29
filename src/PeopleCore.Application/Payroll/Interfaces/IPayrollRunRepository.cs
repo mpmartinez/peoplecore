@@ -12,11 +12,13 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     Task<PayrollRun?> GetWithEntriesAsync(Guid id, CancellationToken ct = default);
 
     /// <summary>
-    /// Regular runs already created for a period's year, for the next sequential PAY- run number.
-    /// Final-pay runs are numbered on their own sequence (<see cref="GetLastFinalPaySequenceAsync"/>)
-    /// and don't count here, so they leave no gaps in the PAY- numbers.
+    /// The highest sequence among the regular PAY-{<paramref name="year"/>}-nnn run numbers, or 0 if
+    /// there are none, for the next PAY- run number (the year is the period's, as the number is).
+    /// It is the highest number and not a count because a discarded run leaves a gap a count would
+    /// fill with a number still in use. Final-pay runs are numbered on their own sequence
+    /// (<see cref="GetLastFinalPaySequenceAsync"/>) and don't count here.
     /// </summary>
-    Task<int> CountForYearAsync(int year, CancellationToken ct = default);
+    Task<int> GetLastRegularSequenceAsync(int year, CancellationToken ct = default);
 
     /// <summary>
     /// The highest sequence among the FP-{<paramref name="payYear"/>}-nnn run numbers, or 0 if
@@ -162,4 +164,50 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     /// Runs whose pay date falls in the year that aren't Paid yet, for the 1604-C's "not included" note.
     /// </summary>
     Task<int> CountUnpaidRunsPaidInYearAsync(int year, CancellationToken ct = default);
+
+    /// <summary>
+    /// Saves what marking a run Paid changed - the run's status, the loans it retired and the leave
+    /// balances it drew converted days from - in one save, so they commit together or not at all.
+    /// </summary>
+    Task SavePaidAsync(PayrollRun run, IReadOnlyCollection<EmployeeLoan> loans,
+        IReadOnlyCollection<Domain.Entities.Leave.LeaveBalance> leaveBalances, CancellationToken ct = default);
+
+    /// <summary>
+    /// Year-end leave conversions already on file for the employees: one per entry with
+    /// LeaveConversionPay above zero, on a Regular run - in any status - whose PeriodEnd falls in
+    /// <paramref name="periodEndYear"/>, other than <paramref name="excludeRunId"/>. Final pays
+    /// convert their own leave and don't count.
+    /// </summary>
+    Task<IReadOnlyList<LeaveConvertedInRun>> GetLeaveConversionsInYearAsync(
+        int periodEndYear, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId, CancellationToken ct = default);
+
+    /// <summary>
+    /// The 13th months already on unpaid runs for the employees: one per entry that includes the
+    /// 13th month, on a Regular run that isn't Paid and whose PayDate falls in
+    /// <paramref name="payYear"/>, other than <paramref name="excludeRunId"/>, ordered by PayDate.
+    /// Two unpaid runs of a pay year would otherwise each pay the full 13th month due, since only
+    /// Paid runs count as paid earlier. Final pays work out their own and don't count.
+    /// </summary>
+    Task<IReadOnlyList<ThirteenthMonthInRun>> GetUnpaidThirteenthMonthsInYearAsync(
+        int payYear, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId, CancellationToken ct = default);
+
+    /// <summary>
+    /// The unpaid runs the employees are on that are paid before this one: one per entry on a
+    /// Regular run that isn't Paid and whose PayDate falls in <paramref name="payYear"/> and before
+    /// <paramref name="payDate"/>, other than <paramref name="excludeRunId"/>, ordered by PayDate.
+    /// The 13th month is worked out from the basic on the pay year's Paid runs, so an earlier
+    /// cutoff that isn't paid yet would drop out of it. Final pays don't count.
+    /// </summary>
+    Task<IReadOnlyList<EarlierUnpaidRun>> GetEarlierUnpaidRunsInYearAsync(
+        int payYear, DateOnly payDate, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId,
+        CancellationToken ct = default);
 }
+
+/// <summary>An employee whose 13th month the unpaid run numbered <paramref name="RunNumber"/> includes.</summary>
+public sealed record ThirteenthMonthInRun(Guid EmployeeId, string RunNumber);
+
+/// <summary>An employee on the unpaid run numbered <paramref name="RunNumber"/>, paid before the one being computed.</summary>
+public sealed record EarlierUnpaidRun(Guid EmployeeId, string RunNumber);
+
+/// <summary>An employee whose leave the run numbered <paramref name="RunNumber"/> converted to cash.</summary>
+public sealed record LeaveConvertedInRun(Guid EmployeeId, string RunNumber);
