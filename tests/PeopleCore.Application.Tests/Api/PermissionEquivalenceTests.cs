@@ -160,6 +160,17 @@ public class PermissionEquivalenceTests
         ["FinalPayController.Get"] = [Permissions.PayrollManage],
         ["FinalPayController.Create"] = [Permissions.PayrollManage],
         ["FinalPayController.Update"] = [Permissions.PayrollManage],
+
+        // The SSS maternity benefit claims: listing, opening, the suggested allowance, setting it,
+        // reimbursement and denial, plus the pickers the claims page and the payroll create form use.
+        ["MaternityClaimsController.List"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.Eligible"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.Ready"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.Create"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.Suggestion"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.SetAllowance"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.Reimburse"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.Deny"] = [Permissions.PayrollManage],
     };
 
     private static IEnumerable<(Type Controller, MethodInfo Action)> Endpoints() =>
