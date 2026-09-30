@@ -301,6 +301,44 @@ public class MaternityPayDbTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task ForAnExemptEmployer_AClaimWhoseLeaveWasOffsetBeforeItsAllowanceWasSet_CanStillBeSetUpAndAdvanced()
+    {
+        await ExemptFromTheDifferentialAsync();
+        var maria = AnEmployee("Santos", "Maria");
+        Context.Employees.Add(maria);
+        Context.EmployeeCompensations.Add(new EmployeeCompensation
+        {
+            EmployeeId = maria.Id, BasicSalary = 30_000m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "S"
+        });
+        var type = new LeaveType { Name = "Maternity Leave", Code = "ML", MaxDaysPerYear = 105m, IsMaternity = true, IsPaid = true };
+        Context.LeaveTypes.Add(type);
+        var request = new LeaveRequest
+        {
+            EmployeeId = maria.Id, LeaveTypeId = type.Id, StartDate = new DateOnly(2026, 8, 10),
+            EndDate = new DateOnly(2026, 11, 22), TotalDays = 105m, Status = LeaveStatus.Approved
+        };
+        Context.LeaveRequests.Add(request);
+        await Context.SaveChangesAsync();
+        MaternityClaimDto claim;
+        await using (var context = NewContext())
+            claim = await Claims(context).CreateAsync(request.Id);
+
+        // Aug 1-15 is paid before the allowance is known: exempt, so the offset is the whole
+        // 15,000 x 6 / 15 = 6,000.00 of the leave days' pay, with no claim needed or recorded.
+        var august = await CreateAsync(Cutoff(maria.Id, 8, 1, 15, new DateOnly(2026, 8, 20), advance: false));
+        august.Employees.Single().MaternityBenefitOffset.Should().Be(6_000m);
+        await ApproveAndPayAsync(august.Id);
+        await using (var reader = NewContext())
+            (await reader.PayrollRunEmployees.SingleAsync(e => e.PayrollRunId == august.Id)).MaternityClaimId.Should().BeNull();
+
+        // The allowance can still be set, and the benefit advanced: 666.67 x 105 = 70,000.35.
+        await using (var context = NewContext())
+            (await Claims(context).SetAllowanceAsync(claim.Id, new SetAllowanceRequest(666.67m))).Benefit.Should().Be(70_000.35m);
+        var september = await CreateAsync(Cutoff(maria.Id, 9, 1, 15, new DateOnly(2026, 9, 20), advance: true));
+        september.Employees.Single().MaternityBenefitAdvance.Should().Be(70_000.35m);
+    }
+
+    [Fact]
     public async Task Outstanding_IsWhatHerPaidEntriesDeferred_LessWhatTheyCollected()
     {
         var maria = AnEmployee("Santos", "Maria");

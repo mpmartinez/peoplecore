@@ -274,15 +274,17 @@ public sealed class MaternityRun
     /// SSS covers each claim's daily allowance for its days, never more than those days' pay, so the
     /// pay for days outside the leave is never reduced. Days whose claim has no allowance yet are
     /// left as ordinary pay - no offset and no differential - and warned about. The claim returned is
-    /// the one whose leave the offset nets first (by start date), for the entry to record.
+    /// the one whose allowance the offset nets first (by start date), for the entry to record; none for
+    /// an exempt offset, which nets no allowance.
     /// </summary>
     private (decimal Offset, decimal Differential, Guid? ClaimId) Offset(Guid employeeId, decimal regularPay, bool exempt)
     {
         var days = OwnDaysInPeriod(employeeId);
         int periodDays = _run!.PeriodEnd.DayNumber - _run.PeriodStart.DayNumber + 1;
+        // The exempt offset doesn't use any claim's allowance, so the entry records no claim for it:
+        // it must never lock the allowance (or the void) of a claim still being set up.
         if (exempt)
-            return (MaternityMath.ExemptOffset(regularPay, days.Sum(d => d.Days), periodDays), 0m,
-                days.Where(d => d.Days > 0).Select(d => ClaimFor(d.Request)?.Id).FirstOrDefault(id => id is not null));
+            return (MaternityMath.ExemptOffset(regularPay, days.Sum(d => d.Days), periodDays), 0m, null);
 
         int coveredDays = 0;
         decimal covered = 0m;

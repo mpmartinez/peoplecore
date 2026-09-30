@@ -9,7 +9,7 @@ namespace PeopleCore.Application.Payroll.Maternity;
 /// <param name="ClaimId">
 /// The claim the entry records: the one <paramref name="Advance"/> advances, or else the one whose
 /// allowance <paramref name="Offset"/> nets (so the allowance can be locked once a paid run netted
-/// it). Null when the entry does neither.
+/// it). Null when the entry does neither - and for an exempt employer's offset, which nets no allowance.
 /// </param>
 public sealed record MaternityPay(decimal Advance, decimal Offset, IReadOnlyList<string> Warnings, Guid? ClaimId,
     decimal Differential = 0m)

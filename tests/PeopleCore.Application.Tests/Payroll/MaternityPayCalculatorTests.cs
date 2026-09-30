@@ -337,6 +337,11 @@ public class MaternityPayCalculatorTests
         withoutClaim.Differential.Should().Be(0m);
         withClaim.Differential.Should().Be(0m);
         wholeCutoff.Differential.Should().Be(0m);
+        // The exempt offset doesn't use the allowance, so the entry records no claim: it must never
+        // lock the allowance (or the void) of a claim still being set up.
+        withoutClaim.ClaimId.Should().BeNull();
+        withClaim.ClaimId.Should().BeNull();
+        wholeCutoff.ClaimId.Should().BeNull();
     }
 
     [Fact]
