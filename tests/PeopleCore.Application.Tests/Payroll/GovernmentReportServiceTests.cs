@@ -512,6 +512,69 @@ public class GovernmentReportServiceTests
         report.Summary.Should().Contain(new GovernmentReportLineDto("13th month pay and other benefits", 30_000m));
     }
 
+    /// <summary>The 1601-C as the app builds it in January 2027, reading earlier 13th months with <paramref name="balances"/>.</summary>
+    private GovernmentReportService InJanuary2027WithOpeningBalances(params PayrollOpeningBalance[] balances)
+        => new(_runs.Object, _companies.Object, _settings.Object,
+            new FixedClock(new DateTimeOffset(2027, 1, 10, 0, 0, 0, TimeSpan.Zero)), _bir2316.Object, _employees.Object,
+            new PeopleCore.Application.Payroll.Services.PayrollYearToDate(_runs.Object,
+                OpeningBalanceFakes.Holding(balances).Object));
+
+    [Fact]
+    public async Task Bir1601C_CountsTheOpeningBalances13thMonthAndOtherBenefitsAgainstTheExemption()
+    {
+        // December pays Juan a 60,000 13th month. Before PeopleCore he was paid 40,000 of 13th month
+        // and 20,000 of other benefits: 60,000 of the exemption used, 30,000 left. So 30,000 of
+        // December's 60,000 is non-taxable (without the balance it would be all 60,000).
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.TIN, "111-222-333-000"));
+        var december = Run(new(2026, 12, 15), new(2026, 12, 18), Entry(juan, thirteenth: 60_000m));
+        _runs.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([december]);
+        _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(2026, 12, It.IsAny<CancellationToken>())).ReturnsAsync([december]);
+        var sut = InJanuary2027WithOpeningBalances(
+            OpeningBalanceFakes.OpeningBalance(juan.Id, thirteenthMonthPaid: 40_000m, otherBenefitsPaid: 20_000m));
+
+        var report = await sut.BuildAsync("1601c", 2026, 12);
+
+        report.Summary.Should().Contain(new GovernmentReportLineDto("13th month pay and other benefits", 30_000m));
+        // Compensation 60,000, all 13th month: 60,000 - 30,000 non-taxable = 30,000 taxable.
+        report.Summary.Should().Contain(new GovernmentReportLineDto("Total taxable compensation", 30_000m));
+    }
+
+    [Fact]
+    public async Task Bir1601C_AddsTheOpeningBalanceToThe13thMonthPaidEarlierOnRuns()
+    {
+        // May paid 60,000 of 13th month; the balance 10,000 more and 5,000 of other benefits:
+        // 75,000 used, 15,000 left of December's 60,000.
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.TIN, "111-222-333-000"));
+        var mayAdvance = Run(new(2026, 5, 15), new(2026, 5, 20), Entry(juan, thirteenth: 60_000m));
+        var december = Run(new(2026, 12, 15), new(2026, 12, 18), Entry(juan, thirteenth: 60_000m));
+        _runs.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([mayAdvance, december]);
+        _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(2026, 12, It.IsAny<CancellationToken>())).ReturnsAsync([december]);
+        var sut = InJanuary2027WithOpeningBalances(
+            OpeningBalanceFakes.OpeningBalance(juan.Id, thirteenthMonthPaid: 10_000m, otherBenefitsPaid: 5_000m));
+
+        var report = await sut.BuildAsync("1601c", 2026, 12);
+
+        report.Summary.Should().Contain(new GovernmentReportLineDto("13th month pay and other benefits", 15_000m));
+    }
+
+    [Fact]
+    public async Task Bir1601C_WithOnlyAnotherYearsOrAnotherEmployeesBalance_SplitsAsTheRunsAloneDo()
+    {
+        // Bir1601C_Uses13thMonthPaidEarlierInTheYearAgainstTheExemption's 30,000, unchanged.
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.TIN, "111-222-333-000"));
+        var mayAdvance = Run(new(2026, 5, 15), new(2026, 5, 20), Entry(juan, thirteenth: 60_000m));
+        var december = Run(new(2026, 12, 15), new(2026, 12, 18), Entry(juan, thirteenth: 60_000m));
+        _runs.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([mayAdvance, december]);
+        _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(2026, 12, It.IsAny<CancellationToken>())).ReturnsAsync([december]);
+        var sut = InJanuary2027WithOpeningBalances(
+            OpeningBalanceFakes.OpeningBalance(juan.Id, year: 2025, thirteenthMonthPaid: 90_000m),
+            OpeningBalanceFakes.OpeningBalance(Guid.NewGuid(), thirteenthMonthPaid: 90_000m));
+
+        var report = await sut.BuildAsync("1601c", 2026, 12);
+
+        report.Summary.Should().Contain(new GovernmentReportLineDto("13th month pay and other benefits", 30_000m));
+    }
+
     [Fact]
     public async Task Bir1601C_DoesNotLoadEarlierRuns_WhenNoEntryHasAThirteenthMonth()
     {

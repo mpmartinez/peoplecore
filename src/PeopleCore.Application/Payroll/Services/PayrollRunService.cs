@@ -30,6 +30,7 @@ public class PayrollRunService : IPayrollRunService
     private readonly IYearEndLeaveConversion? _yearEndLeave;
     private readonly TimeProvider _clock;
     private readonly IMaternityPayCalculator? _maternityPay;
+    private readonly IPayrollYearToDate _yearToDate;
 
     /// <param name="finalPay">
     /// Recomputes final-pay runs, which are built from a separation rather than from a list of
@@ -52,6 +53,12 @@ public class PayrollRunService : IPayrollRunService
     /// needn't supply one: without it a run has no maternity figures or warnings, and advancing a
     /// benefit is refused.
     /// </param>
+    /// <param name="yearToDate">
+    /// What each employee was paid earlier in the pay year - the year's Paid runs plus her opening
+    /// balance - for the 13th month, the 90,000 exemption and the ten de minimis leave days.
+    /// Optional so callers that never record an opening balance needn't supply one: without it the
+    /// figures are the Paid runs' alone.
+    /// </param>
     public PayrollRunService(
         IPayrollRunRepository runRepo,
         IEmployeeCompensationRepository compensationRepo,
@@ -66,7 +73,8 @@ public class PayrollRunService : IPayrollRunService
         IFinalPayService? finalPay = null,
         IYearEndLeaveConversion? yearEndLeave = null,
         TimeProvider? clock = null,
-        IMaternityPayCalculator? maternityPay = null)
+        IMaternityPayCalculator? maternityPay = null,
+        IPayrollYearToDate? yearToDate = null)
     {
         _runRepo = runRepo;
         _compensationRepo = compensationRepo;
@@ -82,6 +90,7 @@ public class PayrollRunService : IPayrollRunService
         _yearEndLeave = yearEndLeave;
         _clock = clock ?? TimeProvider.System;
         _maternityPay = maternityPay;
+        _yearToDate = yearToDate ?? new PayrollYearToDate(runRepo);
     }
 
     public async Task<PayrollRunDto> CreateAsync(CreatePayrollRunRequest request, CancellationToken ct = default)
@@ -502,16 +511,14 @@ public class PayrollRunService : IPayrollRunService
             return [];
 
         var yearEndLeave = YearEndLeave();
-        var earlierEntries = (await _runRepo.GetPaidRunsInYearAsync(run.PayDate.Year, ct) ?? [])
-            .Where(r => r.Id != run.Id)
-            .SelectMany(r => r.Employees)
-            .ToLookup(e => e.EmployeeId);
+        var earlierInYear = await _yearToDate.ForAsync(
+            converting.Select(e => e.EmployeeId).Distinct().ToList(), run.PayDate.Year, run.Id, ct);
 
         var paidOut = new List<LeavePaidOut>();
         foreach (var entry in converting)
         {
             var days = await yearEndLeave.DaysAsync(entry.EmployeeId, run.PeriodEnd.Year, ct);
-            var deMinimisDaysLeft = LeavePayout.DeMinimisDaysLeft(earlierEntries[entry.EmployeeId]);
+            var deMinimisDaysLeft = earlierInYear[entry.EmployeeId].DeMinimisLeaveDaysLeft;
             if (!LeavePayout.StillPrices(days, entry, deMinimisDaysLeft))
             {
                 var name = entry.Employee?.FullName
@@ -527,11 +534,12 @@ public class PayrollRunService : IPayrollRunService
 
     /// <summary>
     /// Refuses a regular run whose 13th month was computed before more of it was paid elsewhere:
-    /// for every entry that computed one, the 13th month the pay year's other Paid runs hold for
-    /// the employee now must still be what the entry was netted of
-    /// (<see cref="PayrollRunEmployee.ThirteenthMonthPaidEarlierInYear"/>). Paid runs can't be
-    /// changed, so that total only grows; when it has, the entry would pay the difference twice.
-    /// Entries computed before the figure was kept (null) aren't checked. Changes nothing.
+    /// for every entry that computed one, the 13th month paid earlier in the pay year now - on its
+    /// other Paid runs and on the employee's opening balance - must still be what the entry was
+    /// netted of (<see cref="PayrollRunEmployee.ThirteenthMonthPaidEarlierInYear"/>). Paid runs
+    /// can't be changed, so their part only grows; when the total has grown, the entry would pay
+    /// the difference twice. Entries computed before the figure was kept (null) aren't checked.
+    /// Changes nothing.
     /// </summary>
     private async Task EnsureThirteenthMonthNotPaidSinceAsync(PayrollRun run, CancellationToken ct)
     {
@@ -539,25 +547,27 @@ public class PayrollRunService : IPayrollRunService
         if (computed.Count == 0)
             return;
 
-        var paidElsewhere = (await _runRepo.GetPaidRunsInYearAsync(run.PayDate.Year, ct) ?? [])
-            .Where(r => r.Id != run.Id)
-            .SelectMany(r => r.Employees.Select(e => (Run: r, Entry: e)))
-            .ToLookup(x => x.Entry.EmployeeId);
+        var earlierInYear = await _yearToDate.ForAsync(
+            computed.Select(e => e.EmployeeId).Distinct().ToList(), run.PayDate.Year, run.Id, ct);
 
         foreach (var entry in computed)
         {
-            var paid = paidElsewhere[entry.EmployeeId].ToList();
-            if (paid.Sum(x => x.Entry.ThirteenthMonth) <= entry.ThirteenthMonthPaidEarlierInYear)
+            if (earlierInYear[entry.EmployeeId].ThirteenthMonthPaid <= entry.ThirteenthMonthPaidEarlierInYear)
                 continue;
 
             // Which run paid it isn't recorded against the entry; the latest one marked Paid that
-            // paid any 13th month is the likeliest, and is the one to look at.
-            var latest = paid.Where(x => x.Entry.ThirteenthMonth > 0m).MaxBy(x => x.Run.UpdatedAt).Run;
+            // paid any 13th month is the likeliest, and is the one to look at. With none, what grew
+            // is the 13th month on her opening balance.
+            var latest = (await _runRepo.GetPaidRunsInYearAsync(run.PayDate.Year, ct) ?? [])
+                .Where(r => r.Id != run.Id)
+                .Where(r => r.Employees.Any(e => e.EmployeeId == entry.EmployeeId && e.ThirteenthMonth > 0m))
+                .MaxBy(r => r.UpdatedAt);
             var name = entry.Employee?.FullName
                 ?? (await _employeeRepo.GetByIdAsync(entry.EmployeeId, ct))?.FullName
                 ?? entry.EmployeeId.ToString();
-            throw new DomainException(
-                $"{name}'s 13th month was paid on {latest.RunNumber} after this payroll was computed; recompute it before paying.");
+            throw new DomainException(latest is null
+                ? $"{name}'s 13th month paid before PeopleCore has changed since this payroll was computed; recompute it before paying."
+                : $"{name}'s 13th month was paid on {latest.RunNumber} after this payroll was computed; recompute it before paying.");
         }
     }
 
@@ -746,34 +756,18 @@ public class PayrollRunService : IPayrollRunService
         // The 13th month is one twelfth of the basic earned in the pay year, less any part of it
         // already paid - which also uses up the 90,000 exemption first. Only Paid runs count,
         // keyed on PayDate - the same basis BIR Form 2316 totals the year on - and this run
-        // itself is never Paid while it can still be computed. The same runs give how much of the
-        // exemption is used: their 13th month and their leave beyond de minimis, which share it.
-        // Looked up only when someone in the run is receiving a 13th month or the run converts
-        // leave, since nobody else's pay depends on it.
-        var earlierInYear = new Dictionary<Guid, (decimal Basic, decimal ThirteenthMonth, decimal ExemptUsed)>();
-        // The ten de minimis leave days are the pay year's too: what those runs paid as de minimis
-        // leaves the rest (see LeavePayout.DeMinimisDaysLeft).
-        var deMinimisDaysLeft = new Dictionary<Guid, decimal>();
+        // itself is never Paid while it can still be computed; with them, what the employee was
+        // paid that year before PeopleCore (her opening balance). The same figures give how much
+        // of the exemption is used: the 13th month and the other benefits, which share it. And the
+        // ten de minimis leave days are the pay year's too: what was paid as de minimis leaves the
+        // rest. Looked up only when someone in the run is receiving a 13th month or the run
+        // converts leave, since nobody else's pay depends on it.
+        IReadOnlyDictionary<Guid, YearToDate> earlierInYear = new Dictionary<Guid, YearToDate>();
         var ineligible = new HashSet<Guid>();
         IReadOnlyList<Domain.Entities.Employees.Employee> people = [];
         if (employees.Any(e => e.IncludeThirteenthMonth) || run.IncludesLeaveConversion)
         {
-            var paidRuns = await _runRepo.GetPaidRunsInYearAsync(run.PayDate.Year, ct) ?? [];
-            earlierInYear = paidRuns
-                .Where(r => r.Id != run.Id)
-                .SelectMany(r => r.Employees)
-                .Where(e => employeeIds.Contains(e.EmployeeId))
-                .GroupBy(e => e.EmployeeId)
-                .ToDictionary(g => g.Key, g => (
-                    g.Sum(e => e.RegularPay),
-                    g.Sum(e => e.ThirteenthMonth),
-                    g.Sum(e => e.ThirteenthMonthAndOtherBenefits)));
-            deMinimisDaysLeft = paidRuns
-                .Where(r => r.Id != run.Id)
-                .SelectMany(r => r.Employees)
-                .Where(e => employeeIds.Contains(e.EmployeeId))
-                .GroupBy(e => e.EmployeeId)
-                .ToDictionary(g => g.Key, g => LeavePayout.DeMinimisDaysLeft(g));
+            earlierInYear = await _yearToDate.ForAsync(employeeIds, run.PayDate.Year, run.Id, ct);
 
             people = await _employeeRepo.GetByIdsAsync(employeeIds, ct) ?? [];
             ineligible = people.Where(p => !p.Is13thMonthEligible).Select(p => p.Id).ToHashSet();
@@ -844,6 +838,9 @@ public class PayrollRunService : IPayrollRunService
                 throw new InvalidOperationException(NoMaternityPay);
         }
 
+        // Nothing earlier when the figures weren't looked up above.
+        YearToDate EarlierInYear(Guid employeeId) => earlierInYear.GetValueOrDefault(employeeId) ?? YearToDate.None;
+
         // Contributions deferred on the employees' earlier Paid entries (a period SSS maternity
         // covered), which this run collects as far as each entry's pay allows.
         var deferredOutstanding = await DeferredContributionsOutstandingAsync(employeeIds, ct);
@@ -877,7 +874,7 @@ public class PayrollRunService : IPayrollRunService
                 if (days.Count > 0)
                 {
                     var (deMinimis, otherBenefits) = LeavePayout.Price(days, dailyRate,
-                        deMinimisDaysLeft.GetValueOrDefault(employee.EmployeeId, FinalPayMath.DeMinimisVacationDays));
+                        EarlierInYear(employee.EmployeeId).DeMinimisLeaveDaysLeft);
                     leaveConversion = new LeaveConversionInput(deMinimis, otherBenefits);
                 }
             }
@@ -890,12 +887,10 @@ public class PayrollRunService : IPayrollRunService
                 daysWorked: employee.DaysWorked ?? defaultDaysInPeriod,
                 includeThirteenthMonth: employee.IncludeThirteenthMonth,
                 rates: rates, attendance: attendance, dailyRateFactor: dailyRateFactor,
-                thirteenthMonthPaidEarlierInYear:
-                    earlierInYear.GetValueOrDefault(employee.EmployeeId).ThirteenthMonth,
-                basicEarnedEarlierInYear: earlierInYear.GetValueOrDefault(employee.EmployeeId).Basic,
+                thirteenthMonthPaidEarlierInYear: EarlierInYear(employee.EmployeeId).ThirteenthMonthPaid,
+                basicEarnedEarlierInYear: EarlierInYear(employee.EmployeeId).BasicEarned,
                 isThirteenthMonthEligible: !ineligible.Contains(employee.EmployeeId),
-                otherBenefitsExemptUsedEarlierInYear:
-                    earlierInYear.GetValueOrDefault(employee.EmployeeId).ExemptUsed,
+                otherBenefitsExemptUsedEarlierInYear: EarlierInYear(employee.EmployeeId).ExemptUsed,
                 leaveConversion: leaveConversion,
                 maternity: maternityInput,
                 deferredContributionsOutstanding: deferredOutstanding.GetValueOrDefault(employee.EmployeeId));

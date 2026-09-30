@@ -229,6 +229,7 @@ public static class ServiceExtensions
         services.AddScoped<IMaternityPayCalculator, MaternityPayCalculator>();
         services.AddScoped<IPayrollOpeningBalanceRepository, PayrollOpeningBalanceRepository>();
         services.AddScoped<IPayrollOpeningBalanceService, PayrollOpeningBalanceService>();
+        services.AddScoped<IPayrollYearToDate, PayrollYearToDate>();
         services.AddScoped<PayrollComputationService>();
         services.AddScoped<IPayrollAttendanceBridge, PayrollAttendanceBridge>();
         services.AddScoped<IFinalPayService, FinalPayService>();

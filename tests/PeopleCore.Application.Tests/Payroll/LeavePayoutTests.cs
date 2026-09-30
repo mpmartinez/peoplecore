@@ -109,4 +109,28 @@ public class LeavePayoutTests
         other.UsedDays.Should().Be(1m);
         changed.Should().HaveCount(2).And.Contain(balance).And.Contain(other);
     }
+
+    [Fact]
+    public void DeMinimisDaysUsed_IsEachEarlierEntrysDeMinimisOverItsDailyRate_ToTheCentiDay()
+    {
+        // 2,400 at 1,200 = 2 days; 1,000 at 1,500 = 0.666... -> 0.67; an entry with no daily rate
+        // or no de minimis counts nothing. 2 + 0.67 = 2.67.
+        var entries = new[]
+        {
+            new PayrollRunEmployee { DailyRate = 1_200m, LeaveConversionNonTaxable = 2_400m },
+            new PayrollRunEmployee { DailyRate = 1_500m, LeaveConversionNonTaxable = 1_000m },
+            new PayrollRunEmployee { DailyRate = 0m, LeaveConversionNonTaxable = 500m },
+            new PayrollRunEmployee { DailyRate = 1_200m },
+        };
+
+        LeavePayout.DeMinimisDaysUsed(entries).Should().Be(2.67m);
+    }
+
+    [Theory]
+    [InlineData(0, 10)]
+    [InlineData(6.5, 3.5)]   // e.g. 2 days on a Paid run + 4.5 on the opening balance
+    [InlineData(10, 0)]
+    [InlineData(12, 0)]      // never below zero
+    public void DeMinimisDaysLeft_IsTheTenLessTheDaysUsed(decimal used, decimal left)
+        => LeavePayout.DeMinimisDaysLeft(used).Should().Be(left);
 }
