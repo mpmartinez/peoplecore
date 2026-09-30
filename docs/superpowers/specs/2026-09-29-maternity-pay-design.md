@@ -135,6 +135,8 @@ once across overlapping requests):
 - Mark Paid refuses an entry whose collection no longer matches what is outstanding now: "{name}'s
   deferred contributions have changed since this payroll was computed; recompute it before paying."
   Such an Approved regular run can be recomputed (back to Draft).
+- The final pay is her last pay: what it can't collect (`DeferredContributionsUncollected` on its
+  summary) is shown on the separation page as a warning, for HR to recover another way.
 
 ## Reimbursement
 

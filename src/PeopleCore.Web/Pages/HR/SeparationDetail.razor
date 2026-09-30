@@ -806,6 +806,13 @@ else
                             The final pay can't cover @Peso(loan.Uncovered) of the @PayrollLabels.LoanTypeOf(loan.LoanType) balance; it stays on the loan.
                         </Alert>
                     }
+                    @if (summary.DeferredContributionsUncollected > 0m)
+                    {
+                        @* Shares deferred during her maternity leave that her last pay couldn't collect. *@
+                        <Alert Variant="warning" Class="my-2" data-deferred-shortfall>
+                            The final pay can't collect @Peso(summary.DeferredContributionsUncollected) of her deferred SSS, PhilHealth and Pag-IBIG shares; collect it another way.
+                        </Alert>
+                    }
 
                     @if (summary.MaternityBenefitOffset > 0m)
                     {

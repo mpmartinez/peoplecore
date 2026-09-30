@@ -96,10 +96,10 @@ public class ApiClientMaternityTests
     public void TheFinalPayMirrors_EndWithTheMaternityFields()
     {
         MembersOf<FinalPayRequest>().TakeLast(2).Should().Equal("deductions", "advanceMaternityBenefit");
-        MembersOf<FinalPaySummaryDto>().TakeLast(9).Should().Equal(
+        MembersOf<FinalPaySummaryDto>().TakeLast(10).Should().Equal(
             "clearanceComplete", "outstandingClearance",
             "advanceMaternityBenefit", "maternityBenefitAdvance", "maternityBenefitOffset", "maternityDifferential",
-            "contributionsDeferred", "deferredContributionsCollected", "maternityWarnings");
+            "contributionsDeferred", "deferredContributionsCollected", "maternityWarnings", "deferredContributionsUncollected");
     }
 
     [Fact]

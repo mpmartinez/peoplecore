@@ -117,7 +117,10 @@ public record FinalPaySummaryDto(
     decimal MaternityDifferential = 0m,
     decimal ContributionsDeferred = 0m,
     decimal DeferredContributionsCollected = 0m,
-    IReadOnlyList<string>? MaternityWarnings = null)
+    IReadOnlyList<string>? MaternityWarnings = null,
+    // Contribution shares deferred during her maternity leave that this final pay - her last pay -
+    // couldn't collect: HR recovers them another way.
+    decimal DeferredContributionsUncollected = 0m)
 {
     public IReadOnlyList<string> MaternityWarnings { get; init; } = MaternityWarnings ?? [];
 }

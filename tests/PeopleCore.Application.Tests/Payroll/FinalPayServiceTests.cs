@@ -338,6 +338,36 @@ public partial class FinalPayServiceTests
         SavedEntry.WithholdingTax.Should().Be(-2_000m);
         SavedEntry.NetPay.Should().Be(202_129.17m);
         summary.NetPay.Should().Be(202_129.17m);
+        summary.DeferredContributionsUncollected.Should().Be(0m, "all 2,450 is collected");
+    }
+
+    [Fact]
+    public async Task CreateAsync_WhenHerLastPayCantCollectEverythingDeferred_TheSummarySaysHowMuchIsLeft()
+    {
+        // 210,000 outstanding against 204,579.17 of cash left after the final pay's own deductions:
+        // it collects 204,579.17 (net 0) and 210,000 - 204,579.17 = 5,420.83 stays uncollected.
+        _runs.Setup(r => r.GetDeferredContributionsOutstandingAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+             .ReturnsAsync([new DeferredContributionsOutstanding(_employee.Id, 210_000m)]);
+
+        var summary = await _sut.CreateAsync(_separation.Id, Request());
+
+        SavedEntry.DeferredContributionsCollected.Should().Be(204_579.17m);
+        summary.NetPay.Should().Be(0m);
+        summary.DeferredContributionsUncollected.Should().Be(5_420.83m);
+    }
+
+    [Fact]
+    public async Task GetAsync_OnAPaidFinalPay_TheUncollectedIsWhatIsStillOutstanding()
+    {
+        // Once paid, the final pay's own collection is already in her outstanding figure.
+        _runs.Setup(r => r.GetDeferredContributionsOutstandingAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+             .ReturnsAsync([new DeferredContributionsOutstanding(_employee.Id, 210_000m)]);
+        await _sut.CreateAsync(_separation.Id, Request());
+        _savedRun!.Status = PayrollRunStatus.Paid;
+        _runs.Setup(r => r.GetDeferredContributionsOutstandingAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+             .ReturnsAsync([new DeferredContributionsOutstanding(_employee.Id, 5_420.83m)]);
+
+        (await _sut.GetAsync(_separation.Id))!.DeferredContributionsUncollected.Should().Be(5_420.83m);
     }
 
     [Fact]

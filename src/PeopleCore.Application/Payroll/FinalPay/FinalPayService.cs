@@ -756,7 +756,25 @@ public sealed class FinalPayService : IFinalPayService
             entry.MaternityDifferential,
             entry.ContributionsDeferred,
             entry.DeferredContributionsCollected,
-            maternityWarnings);
+            maternityWarnings,
+            await DeferredContributionsUncollectedAsync(separation.EmployeeId, run, entry, ct));
+    }
+
+    /// <summary>
+    /// The contribution shares deferred during her maternity leave that are still uncollected after
+    /// this final pay - her last pay, so nothing later will collect them. Her Paid entries'
+    /// outstanding figure, adjusted by this entry's own deferral and collection while the run isn't
+    /// Paid yet (once Paid, the figure already counts them). Never below zero.
+    /// </summary>
+    private async Task<decimal> DeferredContributionsUncollectedAsync(Guid employeeId, PayrollRun run,
+        PayrollRunEmployee entry, CancellationToken ct)
+    {
+        decimal outstanding = (await _runs.GetDeferredContributionsOutstandingAsync([employeeId], ct) ?? [])
+            .Where(o => o.EmployeeId == employeeId)
+            .Sum(o => o.Amount);
+        if (run.Status != PayrollRunStatus.Paid)
+            outstanding += entry.ContributionsDeferred - entry.DeferredContributionsCollected;
+        return Math.Max(0m, outstanding);
     }
 
     /// <summary>

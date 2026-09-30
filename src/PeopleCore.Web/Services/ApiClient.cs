@@ -1053,7 +1053,9 @@ public record FinalPaySummaryDto(
     decimal MaternityDifferential = 0m,
     decimal ContributionsDeferred = 0m,
     decimal DeferredContributionsCollected = 0m,
-    IReadOnlyList<string>? MaternityWarnings = null)
+    IReadOnlyList<string>? MaternityWarnings = null,
+    // Deferred contribution shares her final pay couldn't collect.
+    decimal DeferredContributionsUncollected = 0m)
 {
     public IReadOnlyList<string> MaternityWarnings { get; init; } = MaternityWarnings ?? [];
 }

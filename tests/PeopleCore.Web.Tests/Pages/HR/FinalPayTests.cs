@@ -553,7 +553,7 @@ public class FinalPayTests : BunitContext
 
     /// <summary>The summary with its maternity figures: the advance flag, advance, offset, differential and warnings.</summary>
     private static string MaternitySummary(bool advancing, decimal advance = 0m, decimal offset = 0m, decimal differential = 0m,
-        string warnings = "[]")
+        string warnings = "[]", decimal uncollected = 0m)
     {
         static string Num(decimal d) => d.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var summary = Summary().TrimEnd();
@@ -563,7 +563,25 @@ public class FinalPayTests : BunitContext
             + ",\"maternityBenefitOffset\":" + Num(offset)
             + ",\"maternityDifferential\":" + Num(differential)
             + ",\"contributionsDeferred\":0,\"deferredContributionsCollected\":0"
-            + ",\"maternityWarnings\":" + warnings + "}";
+            + ",\"maternityWarnings\":" + warnings
+            + ",\"deferredContributionsUncollected\":" + Num(uncollected) + "}";
+    }
+
+    [Fact]
+    public void DeferredSharesTheFinalPayCantCollect_AreWarnedAbout_LikeAnUncoveredLoan()
+    {
+        var cut = RenderWithRun(MaternitySummary(false, uncollected: 5420.83m));
+
+        Text(cut, "[data-deferred-shortfall]").Should().Contain(
+            "The final pay can't collect ₱5,420.83 of her deferred SSS, PhilHealth and Pag-IBIG shares; collect it another way.");
+    }
+
+    [Fact]
+    public void WithNothingLeftUncollected_ThereIsNoDeferredWarning()
+    {
+        var cut = RenderWithRun(MaternitySummary(false));
+
+        cut.FindAll("[data-deferred-shortfall]").Should().BeEmpty();
     }
 
     private static IEnumerable<AngleSharp.Dom.IElement> AdvanceBoxes(IRenderedComponent<SeparationDetail> cut) =>
