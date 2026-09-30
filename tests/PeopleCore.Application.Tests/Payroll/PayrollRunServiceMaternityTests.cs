@@ -102,19 +102,27 @@ public partial class PayrollRunServiceTests
         entry.MaternityBenefitOffset.Should().Be(4_000.02m);
         entry.RegularPay.Should().Be(10_999.98m);
         entry.GrossPay.Should().Be(81_000.33m);
+        // The leave days' pay is 15,000 x 6 / 15 = 6,000.00; SSS covers 4,000.02 of it, and the
+        // 1,999.98 left is the tax-exempt salary differential.
+        entry.MaternityDifferential.Should().Be(1_999.98m);
 
         // The rest of the entry is exactly what the engine gives for that maternity input: the
         // offset was worked out against the 15,000 before it, not against the reduced figure.
         var direct = new PayrollComputationService().Compute(compensation, savedRun()!, daysWorked: 11m,
             attendance: new PayrollAttendanceInput(), dailyRateFactor: 365m,
-            maternity: new MaternityInput(70_000.35m, 4_000.02m));
+            maternity: new MaternityInput(70_000.35m, 4_000.02m, 1_999.98m));
         entry.WithholdingTax.Should().Be(direct.WithholdingTax);
         entry.NetPay.Should().Be(direct.NetPay);
+        // Shares on the 30,000 basic, halved: 750 + 375 + 100 = 1,225. Base 10,999.98 - 1,999.98
+        // - 1,225 = 7,775 a cutoff, 186,600 a year: no tax. Net 81,000.33 - 1,225 = 79,775.33.
+        entry.WithholdingTax.Should().Be(0m);
+        entry.NetPay.Should().Be(79_775.33m);
 
-        // Two different figures, so a swap of the DTO's two positional members would show.
+        // Three different figures, so a swap of the DTO's positional members would show.
         var line = dto.Employees.Single();
         line.MaternityBenefitAdvance.Should().Be(70_000.35m);
         line.MaternityBenefitOffset.Should().Be(4_000.02m);
+        line.MaternityDifferential.Should().Be(1_999.98m);
         dto.Warnings.Should().BeEmpty();
     }
 
@@ -169,6 +177,7 @@ public partial class PayrollRunServiceTests
         var entry = savedRun()!.Employees.Single();
         entry.MaternityBenefitOffset.Should().Be(6_000m);
         entry.RegularPay.Should().Be(9_000m);
+        entry.MaternityDifferential.Should().Be(0m, "an exempt employer pays no differential");
     }
 
     [Fact]

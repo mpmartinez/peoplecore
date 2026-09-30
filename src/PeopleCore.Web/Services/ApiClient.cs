@@ -1197,7 +1197,10 @@ public record PayrollRunEmployeeDto(
     // the part of basic pay SSS covers for the leave days in the period (already netted out of
     // RegularPay).
     decimal MaternityBenefitAdvance = 0m,
-    decimal MaternityBenefitOffset = 0m);
+    decimal MaternityBenefitOffset = 0m,
+    // The salary differential: the pay for the leave days the offset leaves. Still in RegularPay,
+    // but non-taxable (RMC 105-2019).
+    decimal MaternityDifferential = 0m);
 
 public record PayrollRunDto(
     Guid Id,

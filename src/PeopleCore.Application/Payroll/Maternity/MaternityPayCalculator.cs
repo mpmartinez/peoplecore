@@ -189,8 +189,9 @@ public sealed class MaternityRun
             return MaternityPay.None;
 
         var advanced = advanceRequested ? ClaimToAdvance(employeeId) : null;
-        var offset = Offset(employeeId, regularPayBeforeOffset, exempt);
-        return new MaternityPay(advanced?.Benefit ?? 0m, offset, WarningsFor(employeeId, advanced?.Id), advanced?.Id);
+        var (offset, differential) = Offset(employeeId, regularPayBeforeOffset, exempt);
+        return new MaternityPay(advanced?.Benefit ?? 0m, offset, WarningsFor(employeeId, advanced?.Id), advanced?.Id,
+            differential);
     }
 
     /// <summary>
@@ -248,24 +249,35 @@ public sealed class MaternityRun
     }
 
     /// <summary>
-    /// The part of the regular pay SSS covers for the maternity days in the period. An exempt
-    /// employer takes all of those days' pay off (the benefit is all the employee gets); otherwise
-    /// it is the claim's daily allowance for each day, never more than the regular pay.
+    /// The part of the regular pay SSS covers for the maternity days in the period, and the salary
+    /// differential: the rest of those days' pay (<see cref="MaternityMath.MaternityDaysPay"/>). An
+    /// exempt employer takes all of those days' pay off (the benefit is all the employee gets), so
+    /// there is no differential. Otherwise the days are the ones a claim with an allowance covers:
+    /// SSS covers each claim's daily allowance for its days, never more than those days' pay, so the
+    /// pay for days outside the leave is never reduced. Days whose claim has no allowance yet are
+    /// left as ordinary pay - no offset and no differential - and warned about.
     /// </summary>
-    private decimal Offset(Guid employeeId, decimal regularPay, bool exempt)
+    private (decimal Offset, decimal Differential) Offset(Guid employeeId, decimal regularPay, bool exempt)
     {
         var days = OwnDaysInPeriod(employeeId);
+        int periodDays = _run!.PeriodEnd.DayNumber - _run.PeriodStart.DayNumber + 1;
         if (exempt)
-        {
-            int periodDays = _run!.PeriodEnd.DayNumber - _run.PeriodStart.DayNumber + 1;
-            return MaternityMath.ExemptOffset(regularPay, days.Sum(d => d.Days), periodDays);
-        }
+            return (MaternityMath.ExemptOffset(regularPay, days.Sum(d => d.Days), periodDays), 0m);
 
-        decimal offset = 0m;
+        int coveredDays = 0;
+        decimal covered = 0m;
         foreach (var (request, own) in days)
-            if (ClaimFor(request)?.DailyAllowance is decimal allowance)
-                offset += MaternityMath.Offset(regularPay - offset, allowance, own);
-        return offset;
+            if (own > 0 && ClaimFor(request)?.DailyAllowance is decimal allowance)
+            {
+                coveredDays += own;
+                covered += MaternityMath.Benefit(allowance, own);
+            }
+        if (coveredDays == 0)
+            return (0m, 0m);
+
+        var pay = MaternityMath.MaternityDaysPay(regularPay, coveredDays, periodDays);
+        var offset = Math.Min(pay, covered);
+        return (offset, MaternityMath.Differential(pay, offset));
     }
 
     /// <summary>

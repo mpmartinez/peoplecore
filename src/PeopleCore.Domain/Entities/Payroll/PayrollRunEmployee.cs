@@ -91,6 +91,13 @@ public class PayrollRunEmployee : AuditableEntity
     /// <summary>The part of regular pay SSS covers during maternity leave, already netted out of <see cref="RegularPay"/>.</summary>
     public decimal MaternityBenefitOffset { get; set; }
     /// <summary>
+    /// The salary differential: the pay for the maternity days that <see cref="MaternityBenefitOffset"/>
+    /// leaves. It is still in <see cref="RegularPay"/> (and so in the 13th-month basis and gross), but
+    /// it is part of the maternity benefit and exempt from tax and withholding (RMC 105-2019): the
+    /// 2316 reports it in Item 37, not the taxable basic, and the 1601-C as other non-taxable.
+    /// </summary>
+    public decimal MaternityDifferential { get; set; }
+    /// <summary>
     /// The claim whose benefit <see cref="MaternityBenefitAdvance"/> advances, when there is one. It
     /// is how a claim is advanced on one payroll only, and which claim Mark Paid settles.
     /// </summary>

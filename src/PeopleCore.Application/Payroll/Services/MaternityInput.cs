@@ -15,7 +15,12 @@ namespace PeopleCore.Application.Payroll.Services;
 /// anything else reads it (withholding base, 13th-month basis, gross); the engine caps it at the
 /// regular pay there is. Contributions stay on the monthly basic.
 /// </param>
-public sealed record MaternityInput(decimal Advance, decimal Offset)
+/// <param name="Differential">
+/// The salary differential: the pay for the maternity days the offset leaves. It stays in regular
+/// pay (and so in the 13th-month basis and gross) but, being part of the maternity benefit, it is
+/// left out of the withholding base (RMC 105-2019). The engine caps it at the regular pay left.
+/// </param>
+public sealed record MaternityInput(decimal Advance, decimal Offset, decimal Differential = 0m)
 {
     public decimal Advance { get; } = Advance >= 0m
         ? Advance
@@ -24,4 +29,8 @@ public sealed record MaternityInput(decimal Advance, decimal Offset)
     public decimal Offset { get; } = Offset >= 0m
         ? Offset
         : throw new ArgumentOutOfRangeException(nameof(Offset), Offset, "The maternity benefit offset can't be negative.");
+
+    public decimal Differential { get; } = Differential >= 0m
+        ? Differential
+        : throw new ArgumentOutOfRangeException(nameof(Differential), Differential, "The maternity salary differential can't be negative.");
 }

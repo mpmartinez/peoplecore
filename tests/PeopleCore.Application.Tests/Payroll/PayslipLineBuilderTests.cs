@@ -217,6 +217,29 @@ public class PayslipLineBuilderTests
     }
 
     [Fact]
+    public void The_salary_differential_is_its_own_non_taxable_earning_and_basic_pay_is_shown_net_of_it()
+    {
+        // 30,000 salary; SSS covers 6,000 of the leave days and the 4,000 left for them is the
+        // differential. Regular pay 24,000 holds the differential, so basic is shown as
+        // 30,000 - 4,000 = 26,000, then -6,000 covered, then +4,000 differential (non-taxable).
+        var e = Maternity() with
+        {
+            MaternityDifferential = 4_000m, MaternityBenefitAdvance = 0m, GrossPay = 24_000m,
+            WithholdingTax = 0m, TotalDeductions = 2_450m, NetPay = 21_550m
+        };
+
+        var lines = PayslipLineBuilder.Earnings(e);
+        var deductions = PayslipLineBuilder.Deductions(e).Where(l => !l.IsEmployer).ToList();
+
+        lines[0].Should().Be(new PayrollEarningLineDto("Basic Pay", 26_000m));
+        lines[1].Should().Be(new PayrollEarningLineDto("Less: covered by SSS maternity benefit", -6_000m));
+        lines[2].Should().Be(new PayrollEarningLineDto("Maternity salary differential (non-taxable)", 4_000m, IsTaxable: false));
+        // 26,000 - 6,000 + 4,000 = 24,000 = gross; 24,000 - 2,450 = 21,550 = net.
+        lines.Sum(l => l.Amount).Should().Be(e.GrossPay);
+        (lines.Sum(l => l.Amount) - deductions.Sum(l => l.Amount)).Should().Be(e.NetPay);
+    }
+
+    [Fact]
     public void A_regular_run_has_no_maternity_lines()
     {
         PayslipLineBuilder.Earnings(FullyLoaded()).Should().NotContain(l => l.Description.Contains("maternity"));

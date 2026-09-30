@@ -230,6 +230,7 @@ public class MaternityPayStorageTests : DatabaseTestBase
         entry.AdvanceMaternityBenefit = true;
         entry.MaternityBenefitAdvance = 105_057.75m;
         entry.MaternityBenefitOffset = 12_345.67m;
+        entry.MaternityDifferential = 2_345.68m;
         run.Employees = [entry];
         await new PayrollRunRepository(Context).AddWithEntriesAsync(run);
 
@@ -239,6 +240,7 @@ public class MaternityPayStorageTests : DatabaseTestBase
         loaded.AdvanceMaternityBenefit.Should().BeTrue();
         loaded.MaternityBenefitAdvance.Should().Be(105_057.75m);
         loaded.MaternityBenefitOffset.Should().Be(12_345.67m);
+        loaded.MaternityDifferential.Should().Be(2_345.68m);
     }
 
     [Fact]
@@ -258,6 +260,7 @@ public class MaternityPayStorageTests : DatabaseTestBase
         loaded.AdvanceMaternityBenefit.Should().BeFalse();
         loaded.MaternityBenefitAdvance.Should().Be(0m);
         loaded.MaternityBenefitOffset.Should().Be(0m);
+        loaded.MaternityDifferential.Should().Be(0m);
     }
 
     [Fact]

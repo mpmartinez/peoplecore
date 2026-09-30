@@ -821,8 +821,8 @@ public class PayrollRunService : IPayrollRunService
             var entry = ComputeWith(null);
             var maternityPay = maternity?.For(employee.EmployeeId, employee.AdvanceMaternityBenefit, entry.RegularPay, exempt)
                 ?? MaternityPay.None;
-            if (maternityPay.Advance > 0m || maternityPay.Offset > 0m)
-                entry = ComputeWith(new MaternityInput(maternityPay.Advance, maternityPay.Offset));
+            if (maternityPay.Advance > 0m || maternityPay.Offset > 0m || maternityPay.Differential > 0m)
+                entry = ComputeWith(new MaternityInput(maternityPay.Advance, maternityPay.Offset, maternityPay.Differential));
             entry.AdvanceMaternityBenefit = employee.AdvanceMaternityBenefit;
             entry.MaternityClaimId = maternityPay.ClaimId;
 
@@ -993,5 +993,5 @@ public class PayrollRunService : IPayrollRunService
         e.SSSEmployee, e.SSSEmployer, e.PhilHealthEmployee, e.PhilHealthEmployer,
         e.PagIbigEmployee, e.PagIbigEmployer, e.WithholdingTax, e.LoanDeductions, e.OtherDeductions,
         e.LeaveConversionPay, e.LeaveConversionNonTaxable, e.SeparationPay, e.RetirementPay, e.FinalPayNonTaxable,
-        e.MaternityBenefitAdvance, e.MaternityBenefitOffset);
+        e.MaternityBenefitAdvance, e.MaternityBenefitOffset, e.MaternityDifferential);
 }

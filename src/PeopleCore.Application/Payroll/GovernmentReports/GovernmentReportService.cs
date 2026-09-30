@@ -306,9 +306,11 @@ public sealed class GovernmentReportService : IGovernmentReportService
             // NonTaxableAllowances plus whatever of FinalPayNonTaxable is NOT the de minimis slice
             // above (a final pay's separation or retirement pay that qualifies for exemption) -
             // both are non-taxable compensation with no line of their own, the same catch-all
-            // "Other non-taxable" bucket Bir2316Service.Item37 uses for the same reason.
+            // "Other non-taxable" bucket Bir2316Service.Item37 uses for the same reason. So is the
+            // maternity salary differential (RMC 105-2019), which Item 37 also takes.
             decimal otherNt = entries.Sum(e => e.NonTaxableAllowances) +
-                               entries.Sum(e => e.FinalPayNonTaxable - e.LeaveConversionNonTaxable);
+                               entries.Sum(e => e.FinalPayNonTaxable - e.LeaveConversionNonTaxable) +
+                               entries.Sum(e => e.MaternityDifferential);
             decimal tx = g - t13 - s - dm - otherNt;
             decimal w = entries.Sum(e => e.WithholdingTax);
 

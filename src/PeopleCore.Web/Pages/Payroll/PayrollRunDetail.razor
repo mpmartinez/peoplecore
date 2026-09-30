@@ -184,6 +184,11 @@ else
                                 @* Already taken out of Regular: the part of basic pay SSS covers for the leave days. *@
                                 <TableHead Class="px-4">Covered by SSS maternity</TableHead>
                             }
+                            @if (ShowsMaternityDifferential)
+                            {
+                                @* Still in Regular: the pay for the leave days SSS doesn't cover, non-taxable (RMC 105-2019). *@
+                                <TableHead Class="px-4">Maternity differential</TableHead>
+                            }
                             <TableHead Class="px-4">Gross</TableHead>
                             <TableHead Class="px-4">SSS</TableHead>
                             <TableHead Class="px-4">PhilHealth</TableHead>
@@ -229,6 +234,10 @@ else
                                 @if (ShowsMaternityOffset)
                                 {
                                     <TableCell Class="px-4 py-3" data-maternity-offset>@PayrollLabels.Peso(e.MaternityBenefitOffset)</TableCell>
+                                }
+                                @if (ShowsMaternityDifferential)
+                                {
+                                    <TableCell Class="px-4 py-3" data-maternity-differential>@PayrollLabels.Peso(e.MaternityDifferential)</TableCell>
                                 }
                                 <TableCell Class="px-4 py-3 font-medium">&#8369;@e.GrossPay.ToString("N2")</TableCell>
                                 <TableCell Class="px-4 py-3">&#8369;@e.SSSEmployee.ToString("N2")</TableCell>
@@ -340,6 +349,8 @@ else
     // benefit covers for leave days in the period. Each column shows only when someone has it.
     private bool ShowsMaternityAdvance => _run?.Employees.Any(e => e.MaternityBenefitAdvance > 0m) == true;
     private bool ShowsMaternityOffset => _run?.Employees.Any(e => e.MaternityBenefitOffset > 0m) == true;
+    // The salary differential: the pay for the leave days the offset leaves, tax-exempt.
+    private bool ShowsMaternityDifferential => _run?.Employees.Any(e => e.MaternityDifferential > 0m) == true;
 
     // The API includes or leaves out the 13th month on a regular run that isn't paid, in any month
     // (an advance nets out of the 13th month paid later). A final pay works out its own.

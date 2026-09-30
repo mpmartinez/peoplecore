@@ -7,7 +7,8 @@ namespace PeopleCore.Application.Payroll.Maternity;
 /// of regular pay SSS covers (taken off regular pay), what HR still has to do, and the claim advanced.
 /// </summary>
 /// <param name="ClaimId">The claim <paramref name="Advance"/> advances; null when nothing is advanced.</param>
-public sealed record MaternityPay(decimal Advance, decimal Offset, IReadOnlyList<string> Warnings, Guid? ClaimId)
+public sealed record MaternityPay(decimal Advance, decimal Offset, IReadOnlyList<string> Warnings, Guid? ClaimId,
+    decimal Differential = 0m)
 {
     public static readonly MaternityPay None = new(0m, 0m, [], null);
 }

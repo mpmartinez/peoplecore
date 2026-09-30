@@ -19,14 +19,19 @@ public static class PayslipLineBuilder
     {
         // RegularPay is already net of absences, tardiness and the days SSS maternity covers, so
         // the basic figure is restored and the reductions shown beneath it. Presenting them as
-        // deductions instead would double-count: they are not part of TotalDeductions.
-        decimal basicForPeriod = e.RegularPay + e.AbsenceDeduction + e.TardinessDeduction + e.MaternityBenefitOffset;
+        // deductions instead would double-count: they are not part of TotalDeductions. The
+        // maternity salary differential is in RegularPay too, but it is non-taxable (RMC 105-2019),
+        // so it is shown as its own earning and the basic net of it.
+        decimal basicForPeriod = e.RegularPay + e.AbsenceDeduction + e.TardinessDeduction + e.MaternityBenefitOffset
+                                 - e.MaternityDifferential;
 
         var lines = new List<PayrollEarningLineDto> { new("Basic Pay", basicForPeriod) };
 
         if (e.AbsenceDeduction > 0) lines.Add(new("Less: Absences", -e.AbsenceDeduction));
         if (e.TardinessDeduction > 0) lines.Add(new("Less: Tardiness / Undertime", -e.TardinessDeduction));
         if (e.MaternityBenefitOffset > 0) lines.Add(new("Less: covered by SSS maternity benefit", -e.MaternityBenefitOffset));
+        if (e.MaternityDifferential > 0)
+            lines.Add(new("Maternity salary differential (non-taxable)", e.MaternityDifferential, IsTaxable: false));
         if (e.OvertimePay > 0) lines.Add(new("Overtime Pay", e.OvertimePay));
         if (e.HolidayPay > 0) lines.Add(new("Holiday / Rest Day Premium", e.HolidayPay));
         if (e.NightDiffPay > 0) lines.Add(new("Night Shift Differential", e.NightDiffPay));

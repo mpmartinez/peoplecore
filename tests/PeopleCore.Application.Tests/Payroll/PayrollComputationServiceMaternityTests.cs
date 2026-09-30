@@ -181,6 +181,60 @@ public class PayrollComputationServiceMaternityTests
         result.NetPay.Should().Be(67_550.35m);
     }
 
+    [Fact]
+    public void Compute_leaves_the_salary_differential_out_of_the_withholding_base_but_in_regular_pay_and_the_13th_month()
+    {
+        // RMC 105-2019: the pay for the leave days the SSS offset leaves - the salary differential -
+        // is part of the maternity benefit and exempt. Offset 6,000 and differential 4,000 on the
+        // 30,000: regular pay 24,000 still holds the differential. Withholding base
+        // 24,000 - 4,000 - 2,450 = 17,550 a month, 210,600 a year: under 250,000, so no tax.
+        // 13th month: (330,000 + 24,000) / 12 = 29,500 - the differential counts toward it.
+        var result = _sut.Compute(NewEmployee(), JanuaryRun(), includeThirteenthMonth: true,
+            basicEarnedEarlierInYear: 330_000m, maternity: new MaternityInput(0m, 6_000m, 4_000m));
+
+        result.RegularPay.Should().Be(24_000m);
+        result.MaternityBenefitOffset.Should().Be(6_000m);
+        result.MaternityDifferential.Should().Be(4_000m);
+        result.WithholdingTax.Should().Be(0m);
+        result.ThirteenthMonth.Should().Be(29_500m);
+        (result.SSSEmployee + result.PhilHealthEmployee + result.PagIbigEmployee).Should().Be(EmployeeShares);
+
+        // Gross 24,000 + 29,500 = 53,500; net 53,500 - 2,450 = 51,050.
+        result.GrossPay.Should().Be(53_500m);
+        result.NetPay.Should().Be(51_050m);
+    }
+
+    [Fact]
+    public void Compute_with_a_differential_taxes_only_the_pay_outside_the_leave()
+    {
+        // Offset 2,000, differential 1,000: regular pay 28,000. Base 28,000 - 1,000 - 2,450 =
+        // 24,550 a month, 294,600 a year -> (294,600 - 250,000) x 15% = 6,690 -> 557.50 a month.
+        // Taxing the differential too would give 25,550 -> 306,600 -> 8,490 -> 707.50.
+        var result = _sut.Compute(NewEmployee(), JanuaryRun(), maternity: new MaternityInput(0m, 2_000m, 1_000m));
+
+        result.RegularPay.Should().Be(28_000m);
+        result.MaternityDifferential.Should().Be(1_000m);
+        result.WithholdingTax.Should().Be(557.50m);
+    }
+
+    [Fact]
+    public void Compute_caps_the_differential_at_the_regular_pay_the_offset_leaves()
+    {
+        // 30,000 - 20,000 offset = 10,000 left: a 15,000 differential can only be 10,000 of it.
+        var result = _sut.Compute(NewEmployee(), JanuaryRun(), maternity: new MaternityInput(0m, 20_000m, 15_000m));
+
+        result.RegularPay.Should().Be(10_000m);
+        result.MaternityDifferential.Should().Be(10_000m);
+    }
+
+    [Fact]
+    public void A_maternity_input_refuses_a_negative_differential()
+    {
+        var act = () => new MaternityInput(0m, 0m, -0.01m);
+
+        act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
     [Theory]
     [InlineData(-0.01, 0)]
     [InlineData(0, -0.01)]

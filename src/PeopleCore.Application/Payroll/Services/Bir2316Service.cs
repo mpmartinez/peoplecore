@@ -363,8 +363,12 @@ public class Bir2316Service : IBir2316Service
             // retirement pay that qualifies for exemption - is the same kind of catch-all
             // non-taxable compensation, so it lands here too (FinalPayNonTaxable minus the de
             // minimis slice already claimed by Item 35, so nothing is counted twice).
+            // The maternity salary differential - the pay for the leave days the SSS offset leaves -
+            // is part of the maternity benefit and exempt (RMC 105-2019): non-taxable compensation
+            // with no box of its own, so it lands here as well, and Item 39 leaves it out.
             Item37_SalariesOtherForms = entries.Sum(e => e.NonTaxableAllowances) +
-                                         (finalPayNonTaxable - leaveConversionNonTaxable),
+                                         (finalPayNonTaxable - leaveConversionNonTaxable) +
+                                         entries.Sum(e => e.MaternityDifferential),
 
             // Part IV-B Section B and the supplementary block — taxable.
             //
@@ -401,7 +405,8 @@ public class Bir2316Service : IBir2316Service
             // labeling choice, not a computation one. Item51B is left at its default (0, no label)
             // when there is no taxable separation or retirement pay to report, so the "Others
             // (specify)" box does not appear on an ordinary certificate.
-            Item39_BasicSalary = entries.Sum(e => e.RegularPay - e.SSSEmployee - e.PhilHealthEmployee - e.PagIbigEmployee),
+            Item39_BasicSalary = entries.Sum(e => e.RegularPay - e.MaternityDifferential
+                                                  - e.SSSEmployee - e.PhilHealthEmployee - e.PagIbigEmployee),
             Item44A_OtherAmount = entries.Sum(e => e.HolidayPay),
             Item44A_OtherLabel = "Holiday Pay",
             Item44B_OtherAmount = entries.Sum(e => e.NightDiffPay),

@@ -239,17 +239,41 @@ public class MaternityPayCalculatorTests
         second.Offset.Should().Be(10_666.72m);
         november.Offset.Should().Be(4_666.69m);
         first.Warnings.Should().BeEmpty();
+
+        // The salary differential is the pay for the leave days the offset leaves:
+        //   Aug 1-15:  15,000 x 6 / 15 = 6,000.00 - 4,000.02 = 1,999.98;
+        //   Aug 16-31: 15,000 x 16 / 16 = 15,000.00 - 10,666.72 = 4,333.28;
+        //   Nov 16-30: 15,000 x 7 / 15 = 7,000.00 - 4,666.69 = 2,333.31.
+        first.Differential.Should().Be(1_999.98m);
+        second.Differential.Should().Be(4_333.28m);
+        november.Differential.Should().Be(2_333.31m);
     }
 
     [Fact]
-    public async Task TheOffset_IsNeverMoreThanTheRegularPay()
+    public async Task TheOffset_IsNeverMoreThanThePayForTheLeaveDays()
     {
         AClaim();
 
         var pay = await _sut.ForAsync(Cutoff(8, 16, 31), _maria.Id, false, 10_000m, exempt: false);
 
-        // 10,666.72 covered, but only 10,000 of regular pay to take it from.
+        // Aug 16-31 is all leave: 10,000 x 16 / 16 = 10,000 for the leave days. 10,666.72 covered,
+        // but only 10,000 to take it from, and no differential left.
         pay.Offset.Should().Be(10_000m);
+        pay.Differential.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task TheOffset_NeverTakesPayForTheDaysOutsideTheLeave()
+    {
+        AClaim();
+
+        // Absences left 3,000 of the Aug 1-15 regular pay. The 6 leave days' share of it is
+        // 3,000 x 6 / 15 = 1,200.00. SSS covers 666.67 x 6 = 4,000.02 of those days, so the offset
+        // is the 1,200.00 and no more: the 1,800.00 for Aug 1-9 is still paid. No differential.
+        var pay = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 3_000m, exempt: false);
+
+        pay.Offset.Should().Be(1_200m);
+        pay.Differential.Should().Be(0m);
     }
 
     [Fact]
@@ -264,6 +288,10 @@ public class MaternityPayCalculatorTests
         withoutClaim.Offset.Should().Be(6_000m);
         withClaim.Offset.Should().Be(6_000m);
         wholeCutoff.Offset.Should().Be(15_000m);
+        // An exempt employer pays no salary differential.
+        withoutClaim.Differential.Should().Be(0m);
+        withClaim.Differential.Should().Be(0m);
+        wholeCutoff.Differential.Should().Be(0m);
     }
 
     [Fact]
@@ -294,6 +322,8 @@ public class MaternityPayCalculatorTests
         // request adds nothing. Exempt: 15,000 x 6 / 15 = 6,000.00, not 15,000 x 10 / 15.
         withAllowance.Offset.Should().Be(4_000.02m);
         exempt.Offset.Should().Be(6_000m);
+        // 15,000 x 6 / 15 = 6,000.00 for the days, 4,000.02 covered: 1,999.98 differential.
+        withAllowance.Differential.Should().Be(1_999.98m);
     }
 
     [Fact]
@@ -304,6 +334,7 @@ public class MaternityPayCalculatorTests
         var pay = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: false);
 
         pay.Offset.Should().Be(0m);
+        pay.Differential.Should().Be(0m, "without an allowance nothing is known to be the SSS benefit's");
         pay.Warnings.Should().Equal("Maternity benefit not set up yet for Maria Santos.");
     }
 
@@ -313,6 +344,7 @@ public class MaternityPayCalculatorTests
         var pay = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: false);
 
         pay.Offset.Should().Be(0m);
+        pay.Differential.Should().Be(0m);
         pay.Warnings.Should().Equal("Maternity benefit not set up yet for Maria Santos.");
     }
 

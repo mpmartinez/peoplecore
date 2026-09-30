@@ -105,7 +105,10 @@ public record PayrollRunEmployeeDto(
     // netted out of RegularPay, and PayslipLineBuilder restores it to the basic figure the way it
     // restores AbsenceDeduction and TardinessDeduction.
     decimal MaternityBenefitAdvance = 0m,
-    decimal MaternityBenefitOffset = 0m);
+    decimal MaternityBenefitOffset = 0m,
+    // The salary differential: the pay for the leave days the offset leaves. Still in RegularPay,
+    // but non-taxable (RMC 105-2019); PayslipLineBuilder shows it as its own earning.
+    decimal MaternityDifferential = 0m);
 
 public record PayrollRunDto(
     Guid Id,

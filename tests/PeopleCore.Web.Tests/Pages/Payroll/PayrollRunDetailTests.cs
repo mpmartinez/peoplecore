@@ -1133,11 +1133,41 @@ public class PayrollRunDetailTests : BunitContext
 
     // ---------- Maternity pay ----------
 
-    private static string MaternityLine(Guid employeeId, string name, decimal advance, decimal offset) =>
+    private static string MaternityLine(Guid employeeId, string name, decimal advance, decimal offset, decimal differential = 0m) =>
         $$"""
         {"id":"{{Guid.NewGuid()}}","employeeId":"{{employeeId}}","employeeName":"{{name}}","employeeNumber":"EMP-0042",
-         "regularPay":10999.98,"grossPay":81000.33,"maternityBenefitAdvance":{{advance}},"maternityBenefitOffset":{{offset}}}
+         "regularPay":10999.98,"grossPay":81000.33,"maternityBenefitAdvance":{{advance}},"maternityBenefitOffset":{{offset}},
+         "maternityDifferential":{{differential}}}
         """;
+
+    [Fact]
+    public void ASalaryDifferential_GetsItsOwnColumn()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft",
+            employees: $"{MaternityLine(MariaId, "Maria Santos", 0m, 4000.02m, 1999.98m)},{JoseLine}"));
+
+        var cut = RenderPage();
+
+        var headers = cut.FindAll("thead th").Select(h => h.TextContent.Trim()).ToList();
+        headers.Should().Contain("Maternity differential");
+        headers.IndexOf("Maternity differential").Should().BeLessThan(headers.IndexOf("Gross"));
+        var maria = cut.FindAll("tbody tr").Single(r => r.TextContent.Contains("Maria Santos"));
+        maria.QuerySelector("[data-maternity-differential]")!.TextContent.Trim().Should().Be("₱1,999.98");
+        var jose = cut.FindAll("tbody tr").Single(r => r.TextContent.Contains("Jose Reyes"));
+        jose.QuerySelector("[data-maternity-differential]")!.TextContent.Trim().Should().Be("₱0.00");
+    }
+
+    [Fact]
+    public void AnOffsetWithNoDifferential_HasNoDifferentialColumn()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft",
+            employees: MaternityLine(MariaId, "Maria Santos", 0m, 4000.02m)));
+
+        var cut = RenderPage();
+
+        cut.FindAll("thead th").Select(h => h.TextContent.Trim()).Should().NotContain("Maternity differential");
+        cut.FindAll("[data-maternity-differential]").Should().BeEmpty();
+    }
 
     private const string NetCashNote =
         "In a fully covered cutoff, the net cash is the advance less that cutoff's SSS, PhilHealth and Pag-IBIG shares.";

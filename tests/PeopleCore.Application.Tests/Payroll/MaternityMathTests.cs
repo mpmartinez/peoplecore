@@ -103,8 +103,34 @@ public class MaternityMathTests
         => MaternityMath.Offset(20000m, 666.67m, 15).Should().Be(10000.05m);
 
     [Fact]
-    public void Offset_floors_at_regular_pay()
+    public void Offset_is_capped_at_the_maternity_days_pay()
         => MaternityMath.Offset(5000m, 666.67m, 15).Should().Be(5000m);
+
+    [Fact]
+    public void Maternity_days_pay_is_the_regular_pay_share_of_the_maternity_days()
+        // 15,000 x 6 / 15 = 6,000.00.
+        => MaternityMath.MaternityDaysPay(15000m, 6, 15).Should().Be(6000m);
+
+    [Fact]
+    public void Maternity_days_pay_rounds_to_centavos()
+        // 10,000 x 15 / 31 = 4,838.709... -> 4,838.71.
+        => MaternityMath.MaternityDaysPay(10000m, 15, 31).Should().Be(4838.71m);
+
+    [Fact]
+    public void Maternity_days_pay_is_zero_without_days_or_a_period()
+    {
+        MaternityMath.MaternityDaysPay(10000m, 0, 31).Should().Be(0m);
+        MaternityMath.MaternityDaysPay(10000m, 15, 0).Should().Be(0m);
+    }
+
+    [Fact]
+    public void The_differential_is_the_maternity_days_pay_the_offset_leaves()
+    {
+        // 6,000.00 for the days less 4,000.02 SSS covers = 1,999.98.
+        MaternityMath.Differential(6000m, 4000.02m).Should().Be(1999.98m);
+        // SSS covers all of it: nothing left.
+        MaternityMath.Differential(1200m, 1200m).Should().Be(0m);
+    }
 
     [Fact]
     public void Offset_is_zero_without_maternity_days()

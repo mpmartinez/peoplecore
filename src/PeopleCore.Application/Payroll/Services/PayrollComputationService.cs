@@ -236,6 +236,10 @@ public class PayrollComputationService
         // untouched: they are struck from the monthly basic below, not from regular pay.
         decimal maternityOffset = Math.Min(maternity?.Offset ?? 0m, regularPay);
         regularPay -= maternityOffset;
+        // The pay for the maternity days the offset leaves - the salary differential - stays in
+        // regular pay (the 13th month counts it, and she is paid it) but is part of the maternity
+        // benefit, so it is kept out of the withholding base below (RMC 105-2019).
+        decimal maternityDifferential = Math.Min(maternity?.Differential ?? 0m, regularPay);
         // The advance is the SSS benefit paid ahead of reimbursement, not compensation: it is
         // recorded on the entry and joins GrossPay there, and nothing below reads it.
         decimal maternityAdvance = maternity?.Advance ?? 0m;
@@ -343,14 +347,14 @@ public class PayrollComputationService
             finalPayTaxable = separationPay + retirementPay - finalPay.SeparationAndRetirementNonTaxable;
         }
 
-        // Gross taxable pay, the withholding base before contributions come off: regular pay,
-        // overtime, holiday and night premiums, taxable allowances and, on a final pay, the
-        // separation or retirement pay that isn't exempt. Non-taxable allowances, the 13th month
-        // and the leave beyond de minimis stay out (the last two are taxed only past their 90,000
-        // exemption, below). It is not the contribution base: SSS, PhilHealth and Pag-IBIG are
-        // computed on the monthly basic alone.
-        decimal grossTaxable = regularPay + overtimePay + holidayPay + nightDiffPay + taxableAllowances
-            + finalPayTaxable;
+        // Gross taxable pay, the withholding base before contributions come off: regular pay less
+        // the maternity salary differential, overtime, holiday and night premiums, taxable
+        // allowances and, on a final pay, the separation or retirement pay that isn't exempt.
+        // Non-taxable allowances, the 13th month and the leave beyond de minimis stay out (the last
+        // two are taxed only past their 90,000 exemption, below). It is not the contribution base:
+        // SSS, PhilHealth and Pag-IBIG are computed on the monthly basic alone.
+        decimal grossTaxable = regularPay - maternityDifferential + overtimePay + holidayPay + nightDiffPay
+            + taxableAllowances + finalPayTaxable;
 
         // Mandatory contributions based on monthly salary
         // The SSS schedule in force for the run: a regular run's as of its period start; a final
@@ -503,6 +507,7 @@ public class PayrollComputationService
             FinalPayNonTaxable = finalPayNonTaxable,
             MaternityBenefitAdvance = maternityAdvance,
             MaternityBenefitOffset = maternityOffset,
+            MaternityDifferential = maternityDifferential,
             SSSEmployee = sssEmp,
             SSSEmployer = sssEmr,
             PhilHealthEmployee = phEmp,

@@ -69,22 +69,38 @@ public static class MaternityMath
     }
 
     /// <summary>
-    /// The part of regular pay SSS covers for the maternity days (the daily allowance times the days),
-    /// never more than the regular pay. The employer pays only the salary differential.
+    /// The pay for the maternity days: the period's regular pay (after absences and tardiness, before
+    /// the offset) for those days out of the period's calendar days, rounded to 2 dp - never more
+    /// than the regular pay. The offset and the salary differential split it; the pay for the days
+    /// outside the leave is never touched.
     /// </summary>
-    public static decimal Offset(decimal regularPay, decimal dailyAllowance, int maternityDays)
-    {
-        if (maternityDays <= 0) return 0m;
-        return Math.Min(regularPay, Math.Round(dailyAllowance * maternityDays, 2, MidpointRounding.AwayFromZero));
-    }
-
-    /// <summary>
-    /// For an employer exempt from the salary differential (RA 11210 IRR): the share of regular pay
-    /// for the maternity days out of the period's calendar days, rounded to 2 dp, never more than the regular pay.
-    /// </summary>
-    public static decimal ExemptOffset(decimal regularPay, int maternityDays, int periodDays)
+    public static decimal MaternityDaysPay(decimal regularPay, int maternityDays, int periodDays)
     {
         if (maternityDays <= 0 || periodDays <= 0) return 0m;
         return Math.Min(regularPay, Math.Round(regularPay * maternityDays / periodDays, 2, MidpointRounding.AwayFromZero));
     }
+
+    /// <summary>
+    /// The part of the maternity days' pay SSS covers: the daily allowance times the days, never more
+    /// than <paramref name="maternityDaysPay"/> (<see cref="MaternityDaysPay"/>). The rest of those
+    /// days' pay is the salary differential (<see cref="Differential"/>).
+    /// </summary>
+    public static decimal Offset(decimal maternityDaysPay, decimal dailyAllowance, int maternityDays)
+    {
+        if (maternityDays <= 0) return 0m;
+        return Math.Min(maternityDaysPay, Math.Round(dailyAllowance * maternityDays, 2, MidpointRounding.AwayFromZero));
+    }
+
+    /// <summary>
+    /// The salary differential: the maternity days' pay the offset leaves, never negative. It is part
+    /// of the maternity benefit, so exempt from income tax and withholding (RMC 105-2019).
+    /// </summary>
+    public static decimal Differential(decimal maternityDaysPay, decimal offset) => Math.Max(0m, maternityDaysPay - offset);
+
+    /// <summary>
+    /// For an employer exempt from the salary differential (RA 11210 IRR): the whole of the maternity
+    /// days' pay (<see cref="MaternityDaysPay"/>), so she receives only the SSS benefit for them.
+    /// </summary>
+    public static decimal ExemptOffset(decimal regularPay, int maternityDays, int periodDays)
+        => MaternityDaysPay(regularPay, maternityDays, periodDays);
 }
