@@ -71,7 +71,8 @@ on that run's page. It is a warning, not a block.
   hers in `Year` with a `PayDate` after `ThroughDate`), the page warns: "{RunNumber} used these figures; its 13th month and tax won't change. Reissue her
   2316 to pick up the change." Paid runs are never recomputed.
 - Validation: "Enter a year." / "The through date must fall in {Year}." / "Amounts can't be
-  negative." / "De minimis leave days must be between 0 and 10."
+  negative." / "Contributions can't be more than the basic salary." / "De minimis leave days must
+  be between 0 and 10."
 
 ## CSV import
 

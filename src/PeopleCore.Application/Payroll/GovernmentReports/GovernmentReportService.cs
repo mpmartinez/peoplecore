@@ -160,16 +160,10 @@ public sealed class GovernmentReportService : IGovernmentReportService
             {
                 var e = employees[f.EmployeeId];
                 var withheld = withheldByEmployee.GetValueOrDefault(f.EmployeeId);
-                // An opening balance's tax withheld is in the 2316's Item 25A but on no run: it's
-                // what 25A holds beyond the runs, placed by the balance's through date as a run is
-                // by its pay date. The two columns then still add up to 25A.
-                if (f.OpeningBalanceThrough is { } through)
-                {
-                    decimal beforePeopleCore = f.Item25A_PresentTaxWithheld - withheld.JanToNov - withheld.December;
-                    withheld = through.Month == 12
-                        ? (withheld.JanToNov, withheld.December + beforePeopleCore)
-                        : (withheld.JanToNov + beforePeopleCore, withheld.December);
-                }
+                // An opening balance's tax withheld is in the 2316's Item 25A but on no run. It's
+                // months of withholding, nearly all before December even when the balance runs into
+                // it, so it goes in January to November. The two columns still add up to 25A.
+                withheld.JanToNov += f.OpeningBalanceTaxWithheld;
                 return new Bir1604CAlphalist.Person(f.EmployeeId, f, e.HireDate, e.SeparationDate, withheld.JanToNov, withheld.December);
             })
             .ToList();

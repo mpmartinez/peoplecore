@@ -132,6 +132,10 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
         ];
         if (amounts.Any(a => a < 0m))
             throw new DomainException("Amounts can't be negative.");
+        // The 2316 certifies the basic net of the contributions (Item 39); more contributions than
+        // basic would certify a negative basic salary.
+        if (request.EmployeeContributions > request.BasicSalary)
+            throw new DomainException("Contributions can't be more than the basic salary.");
         if (request.DeMinimisLeaveDays is < 0m or > MaxDeMinimisLeaveDays)
             throw new DomainException("De minimis leave days must be between 0 and 10.");
     }

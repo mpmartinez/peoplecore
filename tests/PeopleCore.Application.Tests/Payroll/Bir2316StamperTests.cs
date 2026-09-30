@@ -323,6 +323,27 @@ public class Bir2316StamperTests
             "not run into the 6A ZIP cells the way the unclipped pre-fix output did");
     }
 
+    [Theory]
+    [InlineData("Taxable Allowances")]
+    [InlineData("Other Taxable Pay")]
+    public void Stamp_PrintsEachItem51ALabelTheServiceUsesWholeAtTheNormalSize(string label)
+    {
+        // Bir2316Service labels 51A "Taxable Allowances", or "Other Taxable Pay" when an opening
+        // balance adds its other taxable pay there. Either has to fit the description box
+        // (Bir2316FieldMap.Item51A_OtherLabel, 131pt) without shrinking or an ellipsis.
+        var dto = FullSampleDto();
+        dto.Item51A_OtherLabel = label;
+
+        var runs = ExtractPositionedTextRuns(new Bir2316Stamper().Stamp(dto));
+
+        var run = runs.Should().ContainSingle(r => r.Text == label).Subject;
+        run.FontSize.Should().Be(8);
+        using var measureDocument = new PdfDocument();
+        using var gfx = XGraphics.FromPdfPage(measureDocument.AddPage());
+        EmbeddedFontResolver.EnsureRegistered();
+        gfx.MeasureString(label, new XFont("Arial", 8)).Width.Should().BeLessThanOrEqualTo(131.0);
+    }
+
     [Fact]
     public void Stamp_KeepsItem25APresentTaxWithheldInsideItsBox()
     {

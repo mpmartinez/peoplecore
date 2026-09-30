@@ -63,6 +63,7 @@ public partial class Bir2316ServiceTests
         result.Item48_TaxableThirteenthMonth.Should().Be(0m);
         result.Item50_OvertimePay.Should().Be(1_000m);                      // the run's overtime alone
         result.Item51A_OtherAmount.Should().Be(3_800m);                     // 800 allowances + 3,000 other taxable pay
+        result.Item51A_OtherLabel.Should().Be("Other Taxable Pay");         // not just allowances any more
         result.Item52_TotalTaxableCompensation.Should().Be(117_700m);       // 112,200 + 500 + 200 + 1,000 + 3,800
 
         // Item 19 is everything paid in the year: the run's 30,000 + 1,000 + 500 + 200 + 800 + 1,000
@@ -75,6 +76,7 @@ public partial class Bir2316ServiceTests
         result.Item24_TaxDue.Should().Be(0m);                               // 117,700 is under 250,000
 
         result.OpeningBalanceThrough.Should().Be(new DateOnly(2026, 3, 31));
+        result.OpeningBalanceTaxWithheld.Should().Be(9_000m);
         // The certificate covers the months the balance does: from January, not April's period.
         result.PeriodFrom.Should().Be("01/01");
         result.PeriodTo.Should().Be("04/14");
@@ -141,6 +143,8 @@ public partial class Bir2316ServiceTests
 
         result.Should().BeEquivalentTo(withoutRepository);
         result.OpeningBalanceThrough.Should().BeNull();
+        result.OpeningBalanceTaxWithheld.Should().Be(0m);
+        result.Item51A_OtherLabel.Should().Be("Taxable Allowances");
         result.Item39_BasicSalary.Should().Be(28_050m);                     // 30,000 - 1,950
         result.Item25A_PresentTaxWithheld.Should().Be(3_000m);
         result.PeriodFrom.Should().Be("03/31");                             // April's period, as before
@@ -221,8 +225,44 @@ public partial class Bir2316ServiceTests
         result[1].Item36_SssPhicPagibigContributions.Should().Be(5_000m);
         result[1].Item25A_PresentTaxWithheld.Should().Be(11_000m);
         result[1].OpeningBalanceThrough.Should().Be(new DateOnly(2026, 3, 31));
+        result[1].OpeningBalanceTaxWithheld.Should().Be(9_000m);
 
         balances.Verify(b => b.GetForEmployeesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), 2026, It.IsAny<CancellationToken>()), Times.Once);
         balances.Verify(b => b.GetAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetPreviewAsync_WithABalanceWithoutOtherTaxablePay_KeepsTheTaxableAllowancesLabel()
+    {
+        AprilIsPaid();
+        var sut = WithOpeningBalances(OpeningBalance(_employeeId, basicSalary: 90_000m, taxWithheld: 9_000m));
+
+        var result = (await sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None))!;
+
+        result.Item51A_OtherAmount.Should().Be(800m);                       // the run's allowances alone
+        result.Item51A_OtherLabel.Should().Be("Taxable Allowances");
+    }
+
+    [Theory]
+    [InlineData(false)]   // another employee's balance
+    [InlineData(true)]    // her balance, but another year's
+    public async Task GetPreviewAsync_IgnoresABalanceTheRepositoryReturnsForAnotherEmployeeOrYear(bool anotherYear)
+    {
+        // A repository that doesn't filter: whatever is asked, it returns this balance.
+        AprilIsPaid();
+        var stray = anotherYear
+            ? OpeningBalance(_employeeId, year: 2025, basicSalary: 90_000m, taxWithheld: 9_000m)
+            : OpeningBalance(_otherEmployeeId, basicSalary: 90_000m, taxWithheld: 9_000m);
+        var unfiltered = new Mock<IPayrollOpeningBalanceRepository>();
+        unfiltered.Setup(r => r.GetAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                  .ReturnsAsync(stray);
+        var sut = WithOpeningBalances(unfiltered);
+
+        var result = (await sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None))!;
+
+        unfiltered.Verify(r => r.GetAsync(_employeeId, 2026, It.IsAny<CancellationToken>()), Times.Once);
+        result.Item39_BasicSalary.Should().Be(28_050m);                     // April's alone: 30,000 - 1,950
+        result.Item25A_PresentTaxWithheld.Should().Be(3_000m);
+        result.OpeningBalanceThrough.Should().BeNull();
     }
 }

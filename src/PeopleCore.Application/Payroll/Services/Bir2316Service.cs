@@ -479,9 +479,10 @@ public class Bir2316Service : IBir2316Service
             Item50_OvertimePay = entries.Sum(e => e.OvertimePay),
             // The opening balance's other taxable pay (overtime, holiday, night differential and
             // taxable allowances as one total) can't be split into 44A/44B/50, so it takes this
-            // catch-all "Others" box with the taxable allowances.
+            // catch-all "Others" box with the taxable allowances, and the label widens to say so.
+            // Both labels fit the 131pt box at the normal size (Bir2316StamperTests).
             Item51A_OtherAmount = entries.Sum(e => e.TaxableAllowances) + balanceOtherTaxable,
-            Item51A_OtherLabel = "Taxable Allowances",
+            Item51A_OtherLabel = balanceOtherTaxable > 0m ? "Other Taxable Pay" : "Taxable Allowances",
             Item51B_OtherAmount = finalPayTaxable,
             // Kept short deliberately: the printed form's "Others (specify)" box is 130.5pt wide,
             // and a longer label (the original "Final pay (leave conversion,
@@ -500,7 +501,8 @@ public class Bir2316Service : IBir2316Service
             Item25B_PrevTaxWithheld = manual.Item25B_PrevTaxWithheld,
             Item27_PeraTaxCredit = manual.Item27_PeraTaxCredit,
 
-            OpeningBalanceThrough = balance?.ThroughDate
+            OpeningBalanceThrough = balance?.ThroughDate,
+            OpeningBalanceTaxWithheld = balanceTaxWithheld
         };
     }
 

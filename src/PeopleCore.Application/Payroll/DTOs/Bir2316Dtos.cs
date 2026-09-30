@@ -155,6 +155,13 @@ public record Bir2316Dto
     /// form: the 2316 page notes it, and the 1604-C uses it to place that balance's tax withheld.
     /// </summary>
     public DateOnly? OpeningBalanceThrough { get; set; }
+
+    /// <summary>
+    /// The tax withheld on the employee's opening balance for the year (0 without one) - part of
+    /// Item 25A. Not a box on the form: the 1604-C needs it to place that tax in its
+    /// January-to-November column, since it's on no PeopleCore run.
+    /// </summary>
+    public decimal OpeningBalanceTaxWithheld { get; set; }
 }
 
 /// <summary>

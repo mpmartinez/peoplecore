@@ -875,10 +875,11 @@ public class GovernmentReportServiceTests
     }
 
     [Fact]
-    public async Task BuildAnnualAsync_1604C_ABalanceThroughDecember_CountsItsTaxInDecember()
+    public async Task BuildAnnualAsync_1604C_ABalanceThroughDecember_StillCountsItsTaxInJanuaryToNovember()
     {
         // Go-live in late December: the balance runs through December 10 with 30,000 withheld;
-        // PeopleCore paid only December 18's run, with 2,500 withheld.
+        // PeopleCore paid only December 18's run, with 2,500 withheld. The balance is months of
+        // withholding, nearly all before December, so it goes in January to November.
         var juan = Person("Cruz", "Juan", (GovernmentIdType.TIN, "111-222-333-000"));
         juan.HireDate = new DateOnly(2020, 1, 6);
         var december = Run(new(2026, 12, 18), new(2026, 12, 18), Entry(juan, regularPay: 50_000m, tax: 2_500m));
@@ -887,8 +888,44 @@ public class GovernmentReportServiceTests
             OpeningBalanceFakes.OpeningBalance(juan.Id, basicSalary: 550_000m, taxWithheld: 30_000m,
                 throughDate: new DateOnly(2026, 12, 10)));
 
-        cell("Tax withheld, January to November").Should().Be("0.00");
-        cell("Tax withheld, December").Should().Be("32500.00");            // 30,000 + 2,500
-        cell("Total tax withheld").Should().Be("32500.00");
+        cell("Tax withheld, January to November").Should().Be("30000.00");
+        cell("Tax withheld, December").Should().Be("2500.00");
+        cell("Total tax withheld").Should().Be("32500.00");                // 30,000 + 2,500
+    }
+
+    [Fact]
+    public async Task BuildAnnualAsync_1604C_TakesTheBalancesTaxFromThe2316sOwnFigure()
+    {
+        // A form carrying 6,000 withheld before PeopleCore; March's run withheld 2,000 and
+        // December's 500. January to November = 2,000 + 6,000 = 8,000, read from the form's
+        // OpeningBalanceTaxWithheld, not worked back from Item 25A (left at 0 here, so a residual
+        // would give 2,000 + (0 - 2,500) = -500).
+        var employeeId = Guid.NewGuid();
+        var employee = new Employee
+        {
+            Id = employeeId, LastName = "Cruz", FirstName = "Juan",
+            DateOfBirth = new DateOnly(1990, 1, 1), HireDate = new DateOnly(2020, 1, 6)
+        };
+        var form = new Bir2316Dto
+        {
+            EmployeeId = employeeId, EmployeeLastName = "Cruz", EmployeeFirstName = "Juan",
+            EmployeeTin = "111-222-333-000",
+            OpeningBalanceThrough = new DateOnly(2026, 2, 28), OpeningBalanceTaxWithheld = 6_000m
+        };
+        _bir2316.Setup(b => b.BuildAllAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([form]);
+        _employees.Setup(e => e.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+                  .ReturnsAsync([employee]);
+        _runs.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([
+            Run(new(2026, 3, 20), new(2026, 3, 20), Entry(employee, tax: 2_000m)),
+            Run(new(2026, 12, 18), new(2026, 12, 18), Entry(employee, tax: 500m))
+        ]);
+
+        var report = await _sut.BuildAnnualAsync("1604c", 2026);
+
+        var section = report.Sections.Single(s => s.Title == "Employed as of December 31, no previous employer");
+        var row = section.Rows.Should().ContainSingle().Subject;
+        var columns = section.Columns.ToList();
+        row.Cells[columns.IndexOf("Tax withheld, January to November")].Should().Be("8000.00");
+        row.Cells[columns.IndexOf("Tax withheld, December")].Should().Be("500.00");
     }
 }

@@ -112,6 +112,34 @@ public class PayrollOpeningBalanceServiceTests
         await act.Should().ThrowAsync<DomainException>().WithMessage("Amounts can't be negative.");
     }
 
+    [Fact]
+    public async Task Create_WithContributionsOverTheBasicSalary_IsRefused()
+    {
+        var act = () => _sut.CreateAsync(ARequest(basic: 6_000m, contributions: 6_000.01m));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Contributions can't be more than the basic salary.");
+        _balances.Verify(b => b.AddNewAsync(It.IsAny<PayrollOpeningBalance>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Create_WithContributionsEqualToTheBasicSalary_IsAccepted()
+    {
+        var dto = await _sut.CreateAsync(ARequest(basic: 6_000m, contributions: 6_000m));
+
+        dto.EmployeeContributions.Should().Be(6_000m);
+    }
+
+    [Fact]
+    public async Task Update_WithContributionsOverTheBasicSalary_IsRefused()
+    {
+        var balance = ABalance();
+
+        var act = () => _sut.UpdateAsync(balance.Id, ARequest(basic: 1_000m, contributions: 2_000m));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Contributions can't be more than the basic salary.");
+        _balances.Verify(b => b.UpdateAsync(It.IsAny<PayrollOpeningBalance>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Theory]
     [InlineData(-0.5)]
     [InlineData(10.01)]
