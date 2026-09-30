@@ -46,8 +46,8 @@ public sealed class MaternityPayCalculator : IMaternityPayCalculator
             .ToList();
     }
 
-    public async Task EnsureAdvancesCurrentAsync(PayrollRun run, CancellationToken ct = default)
-        => await AdvancedClaimsAsync(run, "recompute it before approving.", ct);
+    public async Task EnsureAdvancesCurrentAsync(PayrollRun run, bool exempt, CancellationToken ct = default)
+        => await AdvancedClaimsAsync(run, exempt, "recompute it before approving.", ct);
 
     public async Task EnsureClaimsSetUpAsync(PayrollRun run, bool exempt, CancellationToken ct = default)
     {
@@ -64,12 +64,12 @@ public sealed class MaternityPayCalculator : IMaternityPayCalculator
         }
     }
 
-    public async Task<IReadOnlyList<MaternityClaim>> SettleAdvancesAsync(PayrollRun run, CancellationToken ct = default)
+    public async Task<IReadOnlyList<MaternityClaim>> SettleAdvancesAsync(PayrollRun run, bool exempt, CancellationToken ct = default)
     {
         // An approved regular run can't be recomputed, so the way out is a new run. The allowance
         // is locked while an unpaid run advances the benefit (MaternityClaimService), so this is a
         // backstop that approval (EnsureAdvancesCurrentAsync) normally answers first.
-        var settling = await AdvancedClaimsAsync(run,
+        var settling = await AdvancedClaimsAsync(run, exempt,
             "discard this payroll and create it again.", ct);
         foreach (var claim in settling)
         {
@@ -82,12 +82,34 @@ public sealed class MaternityPayCalculator : IMaternityPayCalculator
 
     /// <summary>
     /// The claims the run's entries advance, each checked to still be the one the run was computed
-    /// with: Draft, and its benefit what the entry advances. Every claim is checked before the caller
-    /// changes any, so a refusal leaves them all as they were.
+    /// with: Draft, and its benefit what the entry advances. Every entry's offset and differential
+    /// are checked too: worked out again from its regular pay before the offset and the claims as
+    /// they are now (allowance, status - a claim marked not SSS-qualified since offsets nothing - and
+    /// the exemption), they must be what the entry stores. Everything is checked before the caller
+    /// changes any claim, so a refusal leaves them all as they were.
     /// </summary>
     /// <param name="whatToDo">How the "has changed" refusal ends: what HR can do about it at this step.</param>
-    private async Task<IReadOnlyList<MaternityClaim>> AdvancedClaimsAsync(PayrollRun run, string whatToDo, CancellationToken ct)
+    private async Task<IReadOnlyList<MaternityClaim>> AdvancedClaimsAsync(PayrollRun run, bool exempt, string whatToDo,
+        CancellationToken ct)
     {
+        if (run.Employees.Count == 0)
+            return [];
+
+        var data = await LoadAsync(run, run.Employees.Select(e => e.EmployeeId).ToList(), lookUpNames: false, ct);
+        foreach (var entry in run.Employees)
+        {
+            // RegularPay is what the offset left; the engine never takes more than there is.
+            var now = data.For(entry.EmployeeId, advanceRequested: false,
+                entry.RegularPay + entry.MaternityBenefitOffset, exempt);
+            if (now.Offset != entry.MaternityBenefitOffset || now.Differential != entry.MaternityDifferential)
+            {
+                var name = entry.Employee?.FullName
+                    ?? (await _employees.GetByIdAsync(entry.EmployeeId, ct))?.FullName
+                    ?? data.NameOf(entry.EmployeeId, null);
+                throw new DomainException($"{name}'s maternity claim has changed since this payroll was computed; {whatToDo}");
+            }
+        }
+
         var advancing = run.Employees.Where(e => AdvancedOn(e) is not null).ToList();
         if (advancing.Count == 0)
             return [];

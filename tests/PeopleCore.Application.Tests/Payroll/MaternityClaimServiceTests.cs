@@ -790,16 +790,20 @@ public class MaternityClaimServiceTests
     }
 
     [Fact]
-    public async Task MarkNotQualified_OnceAPaidRunNettedIt_IsRefused()
+    public async Task MarkNotQualified_OnceAPaidRunOffsetHerLeave_IsRefused()
     {
+        // PAY-2026-016 (Paid) took pay for her leave days off, against the SSS benefit - with this
+        // claim's allowance or, for an exempt employer, with no claim recorded at all. It is found
+        // by her and the leave's dates, not by the claim.
         var claim = AClaim(allowance: 666.67m, benefit: 70_000.35m);
-        _runs.Setup(r => r.GetPaidRunsNettingMaternityClaimAsync(claim.Id, It.IsAny<CancellationToken>()))
-             .ReturnsAsync(["PAY-2026-016"]);
+        _runs.Setup(r => r.GetPaidRunsOffsettingPeriodAsync(claim.EmployeeId, claim.LeaveRequest.StartDate,
+                    claim.LeaveRequest.EndDate, It.IsAny<CancellationToken>()))
+             .ReturnsAsync(["PAY-2026-016", "PAY-2026-017"]);
 
         var act = () => _sut.MarkNotQualifiedAsync(claim.Id, new NotQualifiedRequest("No contributions"));
 
         await act.Should().ThrowAsync<DomainException>()
-            .WithMessage("PAY-2026-016 already netted this allowance; it can't change now.");
+            .WithMessage("PAY-2026-016 already paid this leave against the SSS benefit; the claim can't be marked not qualified.");
         claim.Status.Should().Be(MaternityClaimStatus.Draft);
     }
 

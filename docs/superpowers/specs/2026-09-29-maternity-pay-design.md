@@ -65,8 +65,9 @@ Rules:
   allowed.
 - **Not SSS-qualified:** `PUT api/maternity-claims/{id}/not-qualified` with `{ note }`, for an
   employee on approved maternity leave who doesn't qualify for the SSS benefit. Only a Draft claim
-  ("Only a draft claim can be marked not SSS-qualified.") that no unpaid run advances and no Paid run
-  has netted; the note is required ("Explain why she doesn't qualify for the SSS benefit."). Her leave
+  ("Only a draft claim can be marked not SSS-qualified.") that no unpaid run advances, and while no
+  Paid run has an offset against days of its leave, exempt or not ("{RunNumber} already paid this
+  leave against the SSS benefit; the claim can't be marked not qualified."); the note is required ("Explain why she doesn't qualify for the SSS benefit."). Her leave
   days are then paid and taxed as ordinary salary: no advance, offset, differential or deferral - for
   an exempt employer too (the exemption is from the differential; without an SSS benefit she is paid
   her salary). Approval accepts the claim, no "not set up" or "not advanced" warning is given, and it
@@ -93,6 +94,10 @@ Rules:
 - The entry records `MaternityBenefitAdvance` = the claim's `Benefit` and the claim
   (`MaternityClaimId`). It is tax-free, stays out of the withholding base, the contribution base and
   the 13th month, and is added to gross pay (not to the employer's cost).
+- Approval and Mark Paid also work every entry's offset and differential out again from the claims
+  as they are now (allowance, status, the exemption) and refuse a difference: "{name}'s maternity
+  claim has changed since this payroll was computed; recompute it before approving." / "...; discard
+  this payroll and create it again."
 - Approval refuses a run whose advanced claim changed since it was computed; Mark Paid makes the
   claim `Advanced` with the run and the pay date, in the same single save as the run's other changes.
 

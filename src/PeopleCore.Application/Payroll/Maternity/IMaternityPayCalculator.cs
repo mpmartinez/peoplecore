@@ -43,7 +43,8 @@ public interface IMaternityPayCalculator
     /// (its benefit changed, or it was advanced elsewhere), while the run can still be recomputed.
     /// Changes nothing.
     /// </summary>
-    Task EnsureAdvancesCurrentAsync(PayrollRun run, CancellationToken ct = default);
+    /// <param name="exempt">The employer is exempt from the salary differential, as the offsets are now worked out.</param>
+    Task EnsureAdvancesCurrentAsync(PayrollRun run, bool exempt, CancellationToken ct = default);
 
     /// <summary>
     /// For approval: refuses a run in which an employee has maternity days in the period that no
@@ -57,5 +58,5 @@ public interface IMaternityPayCalculator
     /// with the run and its pay date, for the caller to save with the run. Refuses when a claim is no
     /// longer the one the run was computed with.
     /// </summary>
-    Task<IReadOnlyList<MaternityClaim>> SettleAdvancesAsync(PayrollRun run, CancellationToken ct = default);
+    Task<IReadOnlyList<MaternityClaim>> SettleAdvancesAsync(PayrollRun run, bool exempt, CancellationToken ct = default);
 }

@@ -302,11 +302,12 @@ public class PayrollRunService : IPayrollRunService
         // approved regular run can't be recomputed. A final pay's maternity is checked the same way.
         if (_maternityPay is not null)
         {
-            await _maternityPay.EnsureAdvancesCurrentAsync(run, ct);
+            bool exempt = (await _settingsRepo.GetDefaultAsync(ct))?.ExemptFromMaternityDifferential ?? false;
             // Maternity days no claim with an allowance covers were paid as ordinary, taxable salary
             // with nothing netted; they can't be approved that way unless the employer is exempt.
-            var settings = await _settingsRepo.GetDefaultAsync(ct);
-            await _maternityPay.EnsureClaimsSetUpAsync(run, settings?.ExemptFromMaternityDifferential ?? false, ct);
+            await _maternityPay.EnsureClaimsSetUpAsync(run, exempt, ct);
+            // The advances and every offset must still be what the claims give now.
+            await _maternityPay.EnsureAdvancesCurrentAsync(run, exempt, ct);
         }
 
         run.Status = PayrollRunStatus.Approved;
@@ -623,13 +624,16 @@ public class PayrollRunService : IPayrollRunService
             .GroupBy(o => o.EmployeeId)
             .ToDictionary(g => g.Key, g => g.Sum(o => o.Amount));
 
-    private Task<IReadOnlyList<MaternityClaim>> SettleMaternityAdvancesAsync(PayrollRun run, CancellationToken ct)
+    private async Task<IReadOnlyList<MaternityClaim>> SettleMaternityAdvancesAsync(PayrollRun run, CancellationToken ct)
     {
         if (_maternityPay is not null)
-            return _maternityPay.SettleAdvancesAsync(run, ct);
+        {
+            bool exempt = (await _settingsRepo.GetDefaultAsync(ct))?.ExemptFromMaternityDifferential ?? false;
+            return await _maternityPay.SettleAdvancesAsync(run, exempt, ct);
+        }
         if (run.Employees.Any(e => e.AdvanceMaternityBenefit && e.MaternityBenefitAdvance > 0m))
             throw new InvalidOperationException(NoMaternityPay);
-        return Task.FromResult<IReadOnlyList<MaternityClaim>>([]);
+        return [];
     }
 
     private const string NoMaternityPay =

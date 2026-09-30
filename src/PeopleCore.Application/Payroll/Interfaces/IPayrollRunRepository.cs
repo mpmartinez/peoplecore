@@ -216,6 +216,15 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
         CancellationToken ct = default);
 
     /// <summary>
+    /// The Paid runs, of any type, whose entry for the employee has a maternity offset above zero and
+    /// whose period overlaps [<paramref name="from"/>, <paramref name="to"/>]: run numbers, earliest pay
+    /// date first. Found by the employee and the dates, not the claim: an exempt employer's offset
+    /// records no claim.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetPaidRunsOffsettingPeriodAsync(Guid employeeId, DateOnly from, DateOnly to,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Year-end leave conversions already on file for the employees: one per entry with
     /// LeaveConversionPay above zero, on a Regular run - in any status - whose PeriodEnd falls in
     /// <paramref name="periodEndYear"/>, other than <paramref name="excludeRunId"/>. Final pays

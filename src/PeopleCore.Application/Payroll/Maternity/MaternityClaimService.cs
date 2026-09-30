@@ -188,10 +188,15 @@ public sealed class MaternityClaimService : IMaternityClaimService
         if (claim.Status != MaternityClaimStatus.Draft)
             throw new DomainException("Only a draft claim can be marked not SSS-qualified.");
         var note = Note(request.Note) ?? throw new DomainException("Explain why she doesn't qualify for the SSS benefit.");
-        // A run advancing the benefit, or a paid cutoff that netted the allowance, was computed as if
-        // SSS pays for her leave; neither can stand once she doesn't qualify.
+        // A run advancing the benefit, or a paid cutoff that took her leave days' pay off against it
+        // (with this claim's allowance, or an exempt employer's offset, which records no claim), was
+        // paid as if SSS pays for her leave; neither can stand once she doesn't qualify.
         await EnsureNoRunAdvancesAsync(claim, ct);
-        await EnsureNotNettedAsync(claim, ct);
+        var offset = await _runs.GetPaidRunsOffsettingPeriodAsync(claim.EmployeeId, claim.LeaveRequest.StartDate,
+            claim.LeaveRequest.EndDate, ct) ?? [];
+        if (offset.Count > 0)
+            throw new DomainException(
+                $"{offset[0]} already paid this leave against the SSS benefit; the claim can't be marked not qualified.");
 
         claim.Note = note;
         claim.Status = MaternityClaimStatus.NotQualified;

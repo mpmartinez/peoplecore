@@ -370,6 +370,59 @@ public class MaternityPayDbTests : DatabaseTestBase
             (await Claims(context).ReadyEmployeeIdsAsync()).Should().BeEmpty();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OnceAPaidRunOffsetHerLeave_TheClaimCantBeMarkedNotQualified(bool exempt)
+    {
+        // Not exempt: Aug 1-15 nets 666.67 x 6 = 4,000.02 of the allowance, recording the claim.
+        // Exempt: it takes the whole 15,000 x 6 / 15 = 6,000.00 off and records no claim; the run is
+        // found by her and the leave's dates all the same.
+        if (exempt)
+            await ExemptFromTheDifferentialAsync();
+        var (maria, claimId) = await MariaWithAReadyClaimAsync();
+        var august = await CreateAsync(Cutoff(maria.Id, 8, 1, 15, new DateOnly(2026, 8, 20), advance: false));
+        august.Employees.Single().MaternityBenefitOffset.Should().Be(exempt ? 6_000m : 4_000.02m);
+        await ApproveAndPayAsync(august.Id);
+
+        async Task MarkNotQualified()
+        {
+            await using var context = NewContext();
+            await Claims(context).MarkNotQualifiedAsync(claimId, new NotQualifiedRequest("Fewer than 3 contributions"));
+        }
+
+        await FluentActions.Awaiting(MarkNotQualified).Should().ThrowAsync<DomainException>()
+            .WithMessage($"{august.RunNumber} already paid this leave against the SSS benefit; the claim can't be marked not qualified.");
+        (await ClaimAsync(claimId)).Status.Should().Be(MaternityClaimStatus.Draft);
+    }
+
+    [Fact]
+    public async Task ApprovingARunComputedBeforeTheClaimWasMarkedNotQualified_IsRefused_UntilItIsRecomputed()
+    {
+        var (maria, claimId) = await MariaWithAReadyClaimAsync();
+        var august = await CreateAsync(Cutoff(maria.Id, 8, 1, 15, new DateOnly(2026, 8, 20), advance: false));
+        august.Employees.Single().MaternityBenefitOffset.Should().Be(4_000.02m);
+        await using (var context = NewContext())
+            await Claims(context).MarkNotQualifiedAsync(claimId, new NotQualifiedRequest("Fewer than 3 contributions"));
+
+        async Task Approve()
+        {
+            await using var context = NewContext();
+            await Payroll(context).ApproveAsync(august.Id);
+        }
+        await FluentActions.Awaiting(Approve).Should().ThrowAsync<DomainException>().WithMessage(
+            "Maria Santos's maternity claim has changed since this payroll was computed; recompute it before approving.");
+
+        // Recomputed, her 15,000 is ordinary salary, and approval goes through.
+        await using (var context = NewContext())
+            await Payroll(context).ComputeAsync(august.Id);
+        await Approve();
+        await using var reader = NewContext();
+        var entry = await reader.PayrollRunEmployees.SingleAsync(e => e.PayrollRunId == august.Id);
+        entry.MaternityBenefitOffset.Should().Be(0m);
+        entry.RegularPay.Should().Be(15_000m);
+    }
+
     [Fact]
     public async Task PaidRunsCoveringAPeriod_AreHerPaidRunsOverlappingIt()
     {

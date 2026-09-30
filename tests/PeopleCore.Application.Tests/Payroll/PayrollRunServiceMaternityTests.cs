@@ -276,6 +276,50 @@ public partial class PayrollRunServiceTests
     }
 
     [Fact]
+    public async Task ApproveAsync_AfterTheClaimWasMarkedNotQualified_IsRefused_AndARecomputeClearsIt()
+    {
+        // Computed with the 4,000.02 offset; the claim was then marked not qualified, so the run
+        // would still take her leave days' pay off against a benefit that won't come.
+        var (maria, _, claim, savedRun) = MariaOnMaternityLeave();
+        await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: false));
+        claim!.Status = MaternityClaimStatus.NotQualified;
+        savedRun()!.Employees.Single().Employee = maria;
+        RecomputesInPlace();
+
+        var act = () => MaternitySut.ApproveAsync(savedRun()!.Id);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Maria Santos's maternity claim has changed since this payroll was computed; recompute it before approving.");
+        savedRun()!.Status.Should().Be(PayrollRunStatus.Draft);
+
+        await MaternitySut.ComputeAsync(savedRun()!.Id);
+        await MaternitySut.ApproveAsync(savedRun()!.Id);
+
+        savedRun()!.Employees.Single().MaternityBenefitOffset.Should().Be(0m);
+        savedRun()!.Status.Should().Be(PayrollRunStatus.Approved);
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenTheAllowanceChangedUnderAnOffset_IsRefused_AndSettlesNothing()
+    {
+        // No advance on this run - only the 4,000.02 offset, netting 666.67 a day. At 600 a day it
+        // would be 3,600.00: the run no longer matches its claim.
+        var (maria, _, claim, savedRun) = MariaOnMaternityLeave();
+        await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: false));
+        savedRun()!.Status = PayrollRunStatus.Approved;
+        savedRun()!.Employees.Single().Employee = maria;
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        claim!.DailyAllowance = 600m;
+        claim.Benefit = 63_000m;
+
+        var act = () => MaternitySut.MarkPaidAsync(savedRun()!.Id);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Maria Santos's maternity claim has changed since this payroll was computed; discard this payroll and create it again.");
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
     public async Task ApproveAsync_WithTheClaimAsComputed_Approves()
     {
         var (maria, _, claim, savedRun) = MariaOnMaternityLeave();
@@ -545,8 +589,12 @@ public partial class PayrollRunServiceTests
         run.Employees.Clear();
         run.Employees.Add(new PayrollRunEmployee
         {
-            PayrollRunId = run.Id, EmployeeId = maria.Id, Employee = maria, RegularPay = 10_999.98m,
-            MaternityBenefitOffset = 4_000.02m, MaternityClaimId = claim?.Id,
+            // As computed: with the claim, 4,000.02 of the 6,000.00 leave days' pay is offset and
+            // 1,999.98 is differential; without one, the 15,000 is paid as salary.
+            PayrollRunId = run.Id, EmployeeId = maria.Id, Employee = maria,
+            RegularPay = claim is null ? 15_000m : 10_999.98m,
+            MaternityBenefitOffset = claim is null ? 0m : 4_000.02m,
+            MaternityDifferential = claim is null ? 0m : 1_999.98m, MaternityClaimId = claim?.Id,
             AdvanceMaternityBenefit = advancing, MaternityBenefitAdvance = advancing ? 70_000.35m : 0m
         });
         _runRepo.Setup(r => r.GetWithEntriesAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);

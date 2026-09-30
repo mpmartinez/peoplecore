@@ -583,7 +583,7 @@ public class MaternityPayCalculatorTests
         run.Employees[0].AdvanceMaternityBenefit = true;
         run.Employees[0].MaternityBenefitAdvance = 70_000.35m;
         run.Employees[0].MaternityClaimId = claim.Id;
-        var settled = await _sut.SettleAdvancesAsync(run);
+        var settled = await _sut.SettleAdvancesAsync(run, exempt: false);
 
         // Aug 10-15: 6 days, 666.67 x 6 = 4,000.02 of the 6,000.00 those days' pay.
         pay.Advance.Should().Be(70_000.35m);
@@ -625,7 +625,7 @@ public class MaternityPayCalculatorTests
         });
         run.Employees.Add(new PayrollRunEmployee { EmployeeId = Guid.NewGuid() });
 
-        var settled = await _sut.SettleAdvancesAsync(run);
+        var settled = await _sut.SettleAdvancesAsync(run, exempt: false);
 
         settled.Should().Equal(claim);
         claim.Status.Should().Be(MaternityClaimStatus.Advanced);
@@ -644,7 +644,7 @@ public class MaternityPayCalculatorTests
             MaternityClaimId = claim.Id
         });
 
-        var act = () => _sut.SettleAdvancesAsync(run);
+        var act = () => _sut.SettleAdvancesAsync(run, exempt: false);
 
         await act.Should().ThrowAsync<DomainException>()
             .WithMessage("Maria Santos's maternity claim has changed since this payroll was computed; " +
@@ -663,7 +663,7 @@ public class MaternityPayCalculatorTests
             MaternityClaimId = claim.Id
         });
 
-        var act = () => _sut.SettleAdvancesAsync(run);
+        var act = () => _sut.SettleAdvancesAsync(run, exempt: false);
 
         await act.Should().ThrowAsync<DomainException>()
             .WithMessage("Maria Santos's maternity benefit was already advanced on PAY-2026-015.");
@@ -681,7 +681,7 @@ public class MaternityPayCalculatorTests
             MaternityClaimId = claim.Id
         });
 
-        var act = () => _sut.EnsureAdvancesCurrentAsync(run);
+        var act = () => _sut.EnsureAdvancesCurrentAsync(run, exempt: false);
 
         await act.Should().ThrowAsync<DomainException>()
             .WithMessage("Maria Santos's maternity claim has changed since this payroll was computed; recompute it before approving.");
@@ -698,19 +698,58 @@ public class MaternityPayCalculatorTests
             EmployeeId = _maria.Id, AdvanceMaternityBenefit = true, MaternityBenefitAdvance = 70_000.35m, MaternityClaimId = claim.Id
         });
 
-        await _sut.EnsureAdvancesCurrentAsync(run);
+        await _sut.EnsureAdvancesCurrentAsync(run, exempt: false);
 
         claim.Status.Should().Be(MaternityClaimStatus.Draft);
         claim.AdvanceRunId.Should().BeNull();
     }
 
-    [Fact]
-    public async Task Settling_ARunWithNoAdvance_ReadsNoClaims()
+    /// <summary>Maria's Aug 1-15 entry as computed with the 666.67 allowance: 4,000.02 offset, 1,999.98 differential.</summary>
+    private PayrollRun AugustFirstHalfAsComputed()
     {
         var run = Cutoff(8, 1, 15);
-        run.Employees.Add(new PayrollRunEmployee { EmployeeId = _maria.Id, MaternityBenefitOffset = 4_000.02m });
+        run.Employees.Add(new PayrollRunEmployee
+        {
+            EmployeeId = _maria.Id, Employee = _maria, RegularPay = 10_999.98m,
+            MaternityBenefitOffset = 4_000.02m, MaternityDifferential = 1_999.98m
+        });
+        return run;
+    }
 
-        (await _sut.SettleAdvancesAsync(run)).Should().BeEmpty();
-        _claims.VerifyNoOtherCalls();
+    [Fact]
+    public async Task Settling_ARunWhoseOffsetStillHolds_WithNoAdvance_SettlesNothing()
+    {
+        AClaim();
+
+        (await _sut.SettleAdvancesAsync(AugustFirstHalfAsComputed(), exempt: false)).Should().BeEmpty();
+        await _sut.EnsureAdvancesCurrentAsync(AugustFirstHalfAsComputed(), exempt: false);
+    }
+
+    public static TheoryData<string> ClaimChanges => new() { "allowance", "not qualified", "no claim", "exempt now" };
+
+    [Theory]
+    [MemberData(nameof(ClaimChanges))]
+    public async Task AnOffsetTheClaimNoLongerGives_IsRefusedAtApprovalAndAtMarkPaid(string change)
+    {
+        // The offset is worked out again from the entry's regular pay before it (10,999.98 +
+        // 4,000.02 = 15,000) and the claim as it is now:
+        //   600 a day: 3,600.00 offset, 2,400.00 differential - not the 4,000.02 / 1,999.98 stored;
+        //   not qualified or no claim: nothing offset;
+        //   exempt since: the whole 6,000.00.
+        var claim = AClaim(allowance: change == "allowance" ? 600m : 666.67m,
+            status: change == "not qualified" ? MaternityClaimStatus.NotQualified : MaternityClaimStatus.Draft);
+        if (change == "no claim")
+            _claims.Setup(c => c.GetForEmployeesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync([]);
+        bool exempt = change == "exempt now";
+
+        var approve = () => _sut.EnsureAdvancesCurrentAsync(AugustFirstHalfAsComputed(), exempt);
+        var pay = () => _sut.SettleAdvancesAsync(AugustFirstHalfAsComputed(), exempt);
+
+        await approve.Should().ThrowAsync<DomainException>().WithMessage(
+            "Maria Santos's maternity claim has changed since this payroll was computed; recompute it before approving.");
+        await pay.Should().ThrowAsync<DomainException>().WithMessage(
+            "Maria Santos's maternity claim has changed since this payroll was computed; discard this payroll and create it again.");
+        claim.Status.Should().Be(change == "not qualified" ? MaternityClaimStatus.NotQualified : MaternityClaimStatus.Draft);
     }
 }
