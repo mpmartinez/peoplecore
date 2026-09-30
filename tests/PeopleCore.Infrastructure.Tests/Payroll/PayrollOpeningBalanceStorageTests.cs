@@ -244,7 +244,7 @@ public class PayrollOpeningBalanceStorageTests : DatabaseTestBase
         await using (var writer = NewContext())
         {
             var repository = new PayrollOpeningBalanceRepository(writer);
-            var loaded = (await repository.GetForEmployeesAsync([jose.Id], 2026)).Single();
+            var loaded = (await repository.GetForEmployeesForUpdateAsync([jose.Id], 2026)).Single();
             loaded.BasicSalary = 80_000m;
             await repository.SaveAllAsync([ABalance(maria)]);
         }
@@ -273,6 +273,26 @@ public class PayrollOpeningBalanceStorageTests : DatabaseTestBase
         // The refused inserts are not retried by the next save on that context.
         await other.SaveChangesAsync();
         (await NewContext().Set<PayrollOpeningBalance>().CountAsync()).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ForUpdate_LoadsTheEmployeesBalancesForTheYear_Tracked()
+    {
+        var maria = await AnEmployeeAsync();
+        var jose = await AnEmployeeAsync("Cruz", "Jose");
+        await Sut.AddNewAsync(ABalance(maria));
+        await Sut.AddNewAsync(ABalance(maria, 2025));
+        await Sut.AddNewAsync(ABalance(jose));
+
+        await using var reader = NewContext();
+        reader.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
+        var loaded = await new PayrollOpeningBalanceRepository(reader).GetForEmployeesForUpdateAsync([maria.Id], 2026);
+
+        var balance = loaded.Should().ContainSingle().Subject;
+        balance.EmployeeId.Should().Be(maria.Id);
+        balance.Year.Should().Be(2026);
+        reader.Entry(balance).State.Should().Be(EntityState.Unchanged, "the import saves its changes to what it loaded");
+        (await Sut.GetForEmployeesForUpdateAsync([], 2026)).Should().BeEmpty();
     }
 
     [Fact]

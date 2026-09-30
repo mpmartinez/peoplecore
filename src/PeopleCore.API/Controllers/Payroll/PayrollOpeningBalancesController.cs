@@ -64,7 +64,8 @@ public class PayrollOpeningBalancesController : ControllerBase
     /// <summary>
     /// Imports a filled-in template (multipart field <c>file</c>). All or nothing: any problem
     /// refuses the whole file with 400, a problem whose <c>detail</c> is every problem on its own
-    /// line and whose <c>errors</c> lists them ("Row {n}: {message}"). Otherwise 200 with the counts.
+    /// line and whose <c>errors</c> lists them ("Row {n}: {message}"). Otherwise 200 with the counts and
+    /// each saved balance's warnings.
     /// </summary>
     [HttpPost("import")]
     [RequestSizeLimit(MaxImportRequestBytes)]
@@ -81,7 +82,7 @@ public class PayrollOpeningBalancesController : ControllerBase
 
         return result.Errors.Count > 0
             ? NotImported(result.Errors)
-            : Ok(new OpeningBalanceImportDto(result.Created, result.Updated));
+            : Ok(new OpeningBalanceImportDto(result.Created, result.Updated, result.Warnings));
     }
 
     private BadRequestObjectResult NotImported(IReadOnlyList<string> errors) => BadRequest(new ProblemDetails

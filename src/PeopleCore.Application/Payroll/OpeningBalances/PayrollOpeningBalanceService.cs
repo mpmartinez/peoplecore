@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Payroll.Interfaces;
+using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Exceptions;
 
@@ -19,6 +20,9 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
 
     /// <summary>Every amount must be below this: ₱10 billion, well inside numeric(18,2).</summary>
     private const decimal AmountLimit = 10_000_000_000m;
+
+    /// <summary>The most problems an import lists before saying how many more there are.</summary>
+    private const int MaxImportErrors = 200;
 
     private readonly IPayrollOpeningBalanceRepository _balances;
     private readonly IEmployeeRepository _employees;
@@ -39,14 +43,14 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
         if (balances.Count == 0) return [];
 
         var runs = await _runs.GetPaidRunsInYearAsync(year, ct);
-        return balances.Select(b => ToDto(b, DoubleCountWarnings(b, RunsOf(b, runs)))).ToList();
+        return balances.Select(b => ToDto(b, DoubleCountWarnings(b, b.Employee.FullName, RunsOf(b, runs)))).ToList();
     }
 
     public async Task<OpeningBalanceDto> GetAsync(Guid id, CancellationToken ct = default)
     {
         var balance = await FindAsync(id, ct);
         var runs = RunsOf(balance, await _runs.GetPaidRunsInYearAsync(balance.Year, ct));
-        return ToDto(balance, DoubleCountWarnings(balance, runs));
+        return ToDto(balance, DoubleCountWarnings(balance, balance.Employee.FullName, runs));
     }
 
     public async Task<OpeningBalanceDto> CreateAsync(OpeningBalanceRequest request, CancellationToken ct = default)
@@ -99,20 +103,20 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
             return Refused([file.Problem]);
 
         var numbers = file.Rows.Select(r => r.EmployeeNumber).Where(n => n.Length > 0).Distinct(StringComparer.Ordinal).ToList();
-        var employeeIds = (await _employees.GetByNumbersAsync(numbers, ct))
-            .ToDictionary(e => e.EmployeeNumber, e => e.Id, StringComparer.Ordinal);
+        var employees = (await _employees.GetByNumbersAsync(numbers, ct))
+            .ToDictionary(e => e.EmployeeNumber, StringComparer.Ordinal);
 
         // Every row is checked before anything is loaded for saving, so a refused file changes nothing.
         var errors = new List<string>();
-        var requests = new List<OpeningBalanceRequest>();
+        var requests = new List<(Employee Employee, OpeningBalanceRequest Request)>();
         var seen = new HashSet<(string EmployeeNumber, int Year)>();
         foreach (var row in file.Rows)
         {
             var problems = new List<string>();
-            var employeeId = Guid.Empty;
+            Employee? employee = null;
             if (row.EmployeeNumber.Length == 0)
                 problems.Add("Enter an employee number.");
-            else if (!employeeIds.TryGetValue(row.EmployeeNumber, out employeeId))
+            else if (!employees.TryGetValue(row.EmployeeNumber, out employee))
                 problems.Add($"Unknown employee number {OpeningBalanceCsv.Echo(row.EmployeeNumber)}.");
             if (row.EmployeeNumber.Length > 0 && row.Year is { } year && !seen.Add((row.EmployeeNumber, year)))
                 problems.Add($"{OpeningBalanceCsv.Echo(row.EmployeeNumber)} appears more than once for {year}.");
@@ -122,55 +126,81 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
             if (row.Problems.Count == 0)
             {
                 var n = row.Numbers;
-                var request = new OpeningBalanceRequest(employeeId, row.Year!.Value, row.ThroughDate!.Value,
-                    n[0], n[1], n[2], n[3], n[4], n[5], n[6], n[7], n[8]);
+                var request = new OpeningBalanceRequest(employee?.Id ?? Guid.Empty, row.Year!.Value,
+                    row.ThroughDate!.Value, n[0], n[1], n[2], n[3], n[4], n[5], n[6], n[7], n[8]);
                 if (ProblemWith(request) is { } problem)
                     problems.Add(problem);
                 else if (problems.Count == 0)
-                    requests.Add(request);
+                    requests.Add((employee!, request));
             }
 
             errors.AddRange(problems.Select(p => $"Row {row.Row}: {p}"));
         }
+        if (errors.Count > MaxImportErrors)
+        {
+            var more = errors.Count - MaxImportErrors;
+            errors = [.. errors.Take(MaxImportErrors), $"…and {more} more {(more == 1 ? "problem" : "problems")}."];
+        }
         if (errors.Count > 0)
             return Refused(errors);
 
-        var added = new List<PayrollOpeningBalance>();
-        var updated = 0;
-        foreach (var yearsRequests in requests.GroupBy(r => r.Year))
+        var years = requests.Select(r => r.Request.Year).Distinct().ToList();
+        var existing = new Dictionary<(Guid EmployeeId, int Year), PayrollOpeningBalance>();
+        foreach (var year in years)
         {
-            var existing = (await _balances.GetForEmployeesAsync(yearsRequests.Select(r => r.EmployeeId).ToList(),
-                    yearsRequests.Key, ct))
-                .ToDictionary(b => b.EmployeeId);
-            foreach (var request in yearsRequests)
+            var ids = requests.Where(r => r.Request.Year == year).Select(r => r.Request.EmployeeId).ToList();
+            foreach (var balance in await _balances.GetForEmployeesForUpdateAsync(ids, year, ct))
+                existing[(balance.EmployeeId, year)] = balance;
+        }
+
+        var added = new List<PayrollOpeningBalance>();
+        var saved = new List<(Employee Employee, PayrollOpeningBalance Balance)>();
+        foreach (var (employee, request) in requests)
+        {
+            // An existing balance keeps its employee and year; only its through date and figures change.
+            if (!existing.TryGetValue((request.EmployeeId, request.Year), out var balance))
             {
-                // An existing balance keeps its employee and year; only its through date and figures change.
-                if (existing.TryGetValue(request.EmployeeId, out var balance))
-                    updated++;
-                else
-                {
-                    balance = new PayrollOpeningBalance { EmployeeId = request.EmployeeId, Year = request.Year };
-                    added.Add(balance);
-                }
-                Apply(balance, request);
+                // Only the id: the employee was read untracked, and a navigation to it would insert it.
+                balance = new PayrollOpeningBalance { EmployeeId = request.EmployeeId, Year = request.Year };
+                added.Add(balance);
             }
+            Apply(balance, request);
+            saved.Add((employee, balance));
         }
         await _balances.SaveAllAsync(added, ct);
-        return new OpeningBalanceImportResult(added.Count, updated, []);
 
-        static OpeningBalanceImportResult Refused(IReadOnlyList<string> problems) => new(0, 0, problems);
+        // Each year's Paid runs once, for every saved balance's warnings, in file order.
+        var paidRuns = new Dictionary<int, IReadOnlyList<PayrollRun>?>();
+        foreach (var year in years)
+            paidRuns[year] = await _runs.GetPaidRunsInYearAsync(year, ct);
+        var warnings = saved
+            .SelectMany(s => SaveWarnings(s.Balance, s.Employee.FullName, RunsOf(s.Balance, paidRuns[s.Balance.Year]))
+                .Select(w => $"{s.Employee.EmployeeNumber} {s.Employee.FullName}: {w}"))
+            .ToList();
+        return new OpeningBalanceImportResult(added.Count, saved.Count - added.Count, [], warnings);
+
+        static OpeningBalanceImportResult Refused(IReadOnlyList<string> problems) => new(0, 0, problems, []);
     }
 
     /// <summary>The saved balance with its double-count warnings, then the edit warnings.</summary>
     private async Task<OpeningBalanceDto> SavedAsync(PayrollOpeningBalance balance, CancellationToken ct)
     {
         var runs = RunsOf(balance, await _runs.GetPaidRunsInYearAsync(balance.Year, ct));
-        var warnings = DoubleCountWarnings(balance, runs);
+        return ToDto(balance, SaveWarnings(balance, balance.Employee.FullName, runs));
+    }
+
+    /// <summary>
+    /// What a save warns of: the double-count warnings, then one edit warning per Paid run of hers
+    /// paid after the through date, which used the figures and won't be recomputed.
+    /// </summary>
+    private static List<string> SaveWarnings(PayrollOpeningBalance balance, string name, List<PayrollRun> runs)
+    {
+        var warnings = DoubleCountWarnings(balance, name, runs);
         warnings.AddRange(runs
             .Where(r => r.PayDate > balance.ThroughDate)
             .Select(r => $"{r.RunNumber} used these figures; its 13th month and tax won't change. " +
                          "Reissue her 2316 to pick up the change."));
-        return ToDto(balance, warnings);
+        return warnings;
     }
 
     /// <summary>The Paid runs in the balance's year that paid its employee, earliest pay date first.</summary>
@@ -182,9 +212,9 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
             .ToList();
 
     /// <summary>One warning per Paid run of hers paid on or before the through date: pay the balance already covers.</summary>
-    private static List<string> DoubleCountWarnings(PayrollOpeningBalance balance, IEnumerable<PayrollRun> runs)
+    private static List<string> DoubleCountWarnings(PayrollOpeningBalance balance, string name, IEnumerable<PayrollRun> runs)
         => runs.Where(r => r.PayDate <= balance.ThroughDate)
-            .Select(r => $"{balance.Employee.FullName}'s opening balance already covers pay through " +
+            .Select(r => $"{name}'s opening balance already covers pay through " +
                          $"{Date(balance.ThroughDate)}; {r.RunNumber} was paid on {Date(r.PayDate)}.")
             .ToList();
 

@@ -23,11 +23,16 @@ public record OpeningBalanceRequest(Guid EmployeeId, int Year, DateOnly ThroughD
     decimal OtherNonTaxable, decimal EmployeeContributions, decimal TaxWithheld, decimal DeMinimisLeaveDays);
 
 /// <summary>What an opening-balance import saved: the balances it created and the ones it updated.</summary>
-public record OpeningBalanceImportDto(int Created, int Updated);
+/// <param name="Warnings">
+/// For each saved balance, in file order, its double-count warnings then its edit warnings (as on
+/// <see cref="OpeningBalanceDto.Warnings"/> after a save), each prefixed "{EmployeeNumber} {name}: ".
+/// </param>
+public record OpeningBalanceImportDto(int Created, int Updated, IReadOnlyList<string> Warnings);
 
 /// <summary>
-/// An opening-balance import's outcome. With any <paramref name="Errors"/> nothing was saved and
-/// the counts are 0: each error is "Row {n}: {message}" (the header is row 1), or one problem
-/// with the whole file.
+/// An opening-balance import's outcome. With any <paramref name="Errors"/> nothing was saved, the
+/// counts are 0 and there are no warnings: each error is "Row {n}: {message}" (the header is row
+/// 1), or one problem with the whole file; past 200, the list ends "…and {n} more problems.".
 /// </summary>
-public record OpeningBalanceImportResult(int Created, int Updated, IReadOnlyList<string> Errors);
+public record OpeningBalanceImportResult(int Created, int Updated, IReadOnlyList<string> Errors,
+    IReadOnlyList<string> Warnings);

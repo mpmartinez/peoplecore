@@ -67,11 +67,16 @@ public static class OpeningBalanceCsv
             : new OpeningBalanceCsvFile(null, rows);
     }
 
+    /// <summary>The most of a value from the file that a problem shows back.</summary>
+    private const int MaxEchoLength = 50;
+
     /// <summary>
-    /// A value from the file, safe to show back: through the same formula-injection neutraliser the
-    /// CSV exports use, so a page that exports the problems can't be made to run it.
+    /// A value from the file, safe to show back: cut to <see cref="MaxEchoLength"/> characters
+    /// (then "…"), and through the same formula-injection neutraliser the CSV exports use, so a
+    /// page that exports the problems can't be made to run it.
     /// </summary>
-    internal static string Echo(string value) => GovernmentReportCsv.Neutralize(value);
+    internal static string Echo(string value) => GovernmentReportCsv.Neutralize(
+        value.Length > MaxEchoLength ? value[..MaxEchoLength] + "…" : value);
 
     private static bool IsBlank(List<string> record) => record.All(string.IsNullOrWhiteSpace);
 
@@ -131,7 +136,8 @@ public static class OpeningBalanceCsv
     /// <summary>
     /// The file's records per RFC 4180: cells split on commas, a quoted cell may hold commas,
     /// doubled quotes and line breaks; records end at CRLF, LF or CR. A final line break doesn't
-    /// start another record.
+    /// start another record. Only a quote that opens a cell starts a quoted section; one anywhere
+    /// else in an unquoted cell is an ordinary character.
     /// </summary>
     private static List<List<string>> Records(string text)
     {
@@ -140,11 +146,13 @@ public static class OpeningBalanceCsv
         var cell = new StringBuilder();
         var quoted = false;
         var any = false; // whether the current record has begun
+        var cellStart = true; // nothing read yet for the current cell
 
         void EndCell()
         {
             record.Add(cell.ToString());
             cell.Clear();
+            cellStart = true;
         }
 
         void EndRecord()
@@ -174,9 +182,10 @@ public static class OpeningBalanceCsv
 
             switch (c)
             {
-                case '"':
+                case '"' when cellStart:
                     quoted = true;
                     any = true;
+                    cellStart = false;
                     break;
                 case ',':
                     EndCell();
@@ -193,6 +202,7 @@ public static class OpeningBalanceCsv
                 default:
                     cell.Append(c);
                     any = true;
+                    cellStart = false;
                     break;
             }
         }

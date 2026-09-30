@@ -72,6 +72,17 @@ public class PayrollOpeningBalanceRepository : Repository<PayrollOpeningBalance>
             .ToListAsync(ct);
     }
 
+    public async Task<IReadOnlyList<PayrollOpeningBalance>> GetForEmployeesForUpdateAsync(
+        IReadOnlyCollection<Guid> employeeIds, int year, CancellationToken ct = default)
+    {
+        var ids = employeeIds.Distinct().ToList();
+        if (ids.Count == 0) return [];
+        return await Context.PayrollOpeningBalances
+            .AsTracking()
+            .Where(b => b.Year == year && ids.Contains(b.EmployeeId))
+            .ToListAsync(ct);
+    }
+
     public async Task<IReadOnlyList<PayrollOpeningBalance>> GetForYearAsync(int year, CancellationToken ct = default)
         => await Context.PayrollOpeningBalances
             .Where(b => b.Year == year)

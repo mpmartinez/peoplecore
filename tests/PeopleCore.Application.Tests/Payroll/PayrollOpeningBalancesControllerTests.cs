@@ -162,15 +162,16 @@ public class PayrollOpeningBalancesControllerTests
     }
 
     [Fact]
-    public async Task Import_ReturnsTheCounts()
+    public async Task Import_ReturnsTheCounts_AndTheWarnings()
     {
+        IReadOnlyList<string> warnings = ["E-001 Maria Santos: PAY-2026-007 used these figures; ..."];
         _service.Setup(s => s.ImportAsync(It.IsAny<Stream>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new OpeningBalanceImportResult(3, 2, []));
+                .ReturnsAsync(new OpeningBalanceImportResult(3, 2, [], warnings));
 
         var result = await Controller().Import(AFile(), CancellationToken.None);
 
         result.Result.Should().BeOfType<OkObjectResult>()
-              .Which.Value.Should().Be(new OpeningBalanceImportDto(3, 2));
+              .Which.Value.Should().Be(new OpeningBalanceImportDto(3, 2, warnings));
     }
 
     [Fact]
@@ -179,7 +180,7 @@ public class PayrollOpeningBalancesControllerTests
         string? read = null;
         _service.Setup(s => s.ImportAsync(It.IsAny<Stream>(), It.IsAny<CancellationToken>()))
                 .Callback((Stream stream, CancellationToken _) => read = new StreamReader(stream).ReadToEnd())
-                .ReturnsAsync(new OpeningBalanceImportResult(0, 0, []));
+                .ReturnsAsync(new OpeningBalanceImportResult(0, 0, [], []));
 
         await Controller().Import(AFile("hello,world"), CancellationToken.None);
 
@@ -191,7 +192,7 @@ public class PayrollOpeningBalancesControllerTests
     {
         _service.Setup(s => s.ImportAsync(It.IsAny<Stream>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new OpeningBalanceImportResult(0, 0,
-                    ["Row 2: Unknown employee number E-9.", "Row 3: Enter a year."]));
+                    ["Row 2: Unknown employee number E-9.", "Row 3: Enter a year."], []));
 
         var result = await Controller().Import(AFile(), CancellationToken.None);
 
