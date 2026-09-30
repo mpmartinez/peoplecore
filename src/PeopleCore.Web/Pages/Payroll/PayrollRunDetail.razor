@@ -274,6 +274,11 @@ else
                     </TableBody>
                 </Table>
                 </div>
+                @if (CollectsDeferredShares)
+                {
+                    @* The shares a maternity-covered cutoff deferred come out of this pay (in the deductions shown). *@
+                    <p class="text-xs text-muted-foreground px-4 py-2" data-deferred-collected-note>Deferred contributions from her maternity leave are collected here.</p>
+                }
             }
         </CardContent>
     </Card>
@@ -351,6 +356,8 @@ else
     private bool ShowsMaternityOffset => _run?.Employees.Any(e => e.MaternityBenefitOffset > 0m) == true;
     // The salary differential: the pay for the leave days the offset leaves, tax-exempt.
     private bool ShowsMaternityDifferential => _run?.Employees.Any(e => e.MaternityDifferential > 0m) == true;
+    // Someone on the run has contribution shares deferred during maternity leave collected here.
+    private bool CollectsDeferredShares => _run?.Employees.Any(e => e.DeferredContributionsCollected > 0m) == true;
 
     // The API includes or leaves out the 13th month on a regular run that isn't paid, in any month
     // (an advance nets out of the 13th month paid later). A final pay works out its own.

@@ -1173,6 +1173,31 @@ public class PayrollRunDetailTests : BunitContext
         "While her leave is covered by SSS, her contribution shares are deferred and collected from the advance or her next pay.";
 
     [Fact]
+    public void AnEntryCollectingDeferredShares_GetsTheNoteUnderTheTable()
+    {
+        var jose = $$"""
+            {"id":"{{Guid.NewGuid()}}","employeeId":"{{JoseId}}","employeeName":"Jose Reyes","employeeNumber":"EMP-0043",
+             "grossPay":15000,"totalDeductions":1728.75,"netPay":12046.25,"deferredContributionsCollected":1225}
+            """;
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", employees: jose));
+
+        var cut = RenderPage();
+
+        cut.Find("[data-deferred-collected-note]").TextContent.Trim()
+            .Should().Be("Deferred contributions from her maternity leave are collected here.");
+    }
+
+    [Fact]
+    public void ARunCollectingNoDeferredShares_HasNoSuchNote()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft"));
+
+        var cut = RenderPage();
+
+        cut.FindAll("[data-deferred-collected-note]").Should().BeEmpty();
+    }
+
+    [Fact]
     public void DeferredAndCollectedShares_KeepGrossLessDeductionsEqualToNet()
     {
         // Maria's mostly covered cutoff: gross 400, shares 1,225 of which 825 deferred, net 0 - her
