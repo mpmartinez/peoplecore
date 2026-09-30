@@ -129,14 +129,15 @@ public partial class PayrollRunServiceTests
     [Fact]
     public async Task CreateAsync_WithoutAnAdvance_OffsetsTheLeave_AndWarnsTheBenefitIsNotAdvancedYet()
     {
-        var (maria, _, _, savedRun) = MariaOnMaternityLeave();
+        var (maria, _, claim, savedRun) = MariaOnMaternityLeave();
 
         var dto = await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: false));
 
         var entry = savedRun()!.Employees.Single();
         entry.AdvanceMaternityBenefit.Should().BeFalse();
         entry.MaternityBenefitAdvance.Should().Be(0m);
-        entry.MaternityClaimId.Should().BeNull();
+        // The entry records the claim its offset nets, so the allowance can be locked once paid.
+        entry.MaternityClaimId.Should().Be(claim!.Id);
         entry.MaternityBenefitOffset.Should().Be(4_000.02m);
         dto.Warnings.Should().Equal("Maternity benefit not advanced yet for Maria Santos.");
     }
@@ -222,6 +223,33 @@ public partial class PayrollRunServiceTests
             .WithMessage("Maria Santos's maternity claim has changed since this payroll was computed; recompute it before approving.");
         savedRun()!.Status.Should().Be(PayrollRunStatus.Draft);
         _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ApproveAsync_WithMaternityDaysAndNoClaim_IsRefused_AndNothingIsSaved()
+    {
+        var (maria, _, _, savedRun) = MariaOnMaternityLeave(withClaim: false);
+        await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: false));
+
+        var act = () => MaternitySut.ApproveAsync(savedRun()!.Id);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Set up Maria Santos's maternity claim before approving; this payroll covers 6 maternity day(s).");
+        savedRun()!.Status.Should().Be(PayrollRunStatus.Draft);
+        _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ApproveAsync_WithMaternityDaysAndNoClaim_ForAnExemptEmployer_Approves()
+    {
+        var (maria, _, _, savedRun) = MariaOnMaternityLeave(withClaim: false);
+        _settingsRepo.Setup(r => r.GetDefaultAsync(It.IsAny<CancellationToken>()))
+                     .ReturnsAsync(new PayrollSettings { ExemptFromMaternityDifferential = true });
+        await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: false));
+
+        await MaternitySut.ApproveAsync(savedRun()!.Id);
+
+        savedRun()!.Status.Should().Be(PayrollRunStatus.Approved);
     }
 
     [Fact]

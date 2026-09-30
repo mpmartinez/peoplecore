@@ -6,7 +6,11 @@ namespace PeopleCore.Application.Payroll.Maternity;
 /// One employee's maternity figures for a regular run: the SSS benefit the entry advances, the part
 /// of regular pay SSS covers (taken off regular pay), what HR still has to do, and the claim advanced.
 /// </summary>
-/// <param name="ClaimId">The claim <paramref name="Advance"/> advances; null when nothing is advanced.</param>
+/// <param name="ClaimId">
+/// The claim the entry records: the one <paramref name="Advance"/> advances, or else the one whose
+/// allowance <paramref name="Offset"/> nets (so the allowance can be locked once a paid run netted
+/// it). Null when the entry does neither.
+/// </param>
 public sealed record MaternityPay(decimal Advance, decimal Offset, IReadOnlyList<string> Warnings, Guid? ClaimId,
     decimal Differential = 0m)
 {
@@ -46,6 +50,13 @@ public interface IMaternityPayCalculator
     /// Changes nothing.
     /// </summary>
     Task EnsureAdvancesCurrentAsync(PayrollRun run, CancellationToken ct = default);
+
+    /// <summary>
+    /// For approval: refuses a run in which an employee has maternity days in the period that no
+    /// claim with an allowance covers - the offset would be missing and the days taxed as salary -
+    /// unless the employer is exempt from the differential, whose offset needs no claim. Changes nothing.
+    /// </summary>
+    Task EnsureClaimsSetUpAsync(PayrollRun run, bool exempt, CancellationToken ct = default);
 
     /// <summary>
     /// For Mark Paid: every claim the run advances, marked <see cref="Domain.Enums.MaternityClaimStatus.Advanced"/>

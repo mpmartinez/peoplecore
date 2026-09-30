@@ -59,4 +59,14 @@ public class MaternityClaimsController : ControllerBase
     [HttpPut("{id:guid}/deny")]
     public async Task<ActionResult<MaternityClaimDto>> Deny(Guid id, DenyRequest request, CancellationToken ct = default)
         => Ok(await _service.DenyAsync(id, request, ct));
+
+    /// <summary>Voids a Draft claim no unpaid run advances; the note says why.</summary>
+    [HttpPut("{id:guid}/void")]
+    public async Task<ActionResult<MaternityClaimDto>> Void(Guid id, VoidRequest request, CancellationToken ct = default)
+        => Ok(await _service.VoidAsync(id, request, ct));
+
+    /// <summary>Moves a claim whose leave was cancelled or rejected to the employee's refiled maternity leave.</summary>
+    [HttpPut("{id:guid}/relink")]
+    public async Task<ActionResult<MaternityClaimDto>> Relink(Guid id, RelinkRequest request, CancellationToken ct = default)
+        => Ok(await _service.RelinkAsync(id, request, ct));
 }

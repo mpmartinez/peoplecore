@@ -194,6 +194,14 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
         IReadOnlyCollection<Guid> employeeIds, CancellationToken ct = default);
 
     /// <summary>
+    /// The Paid runs whose entries netted the claim's allowance off regular pay: an entry that
+    /// records the claim (<see cref="PayrollRunEmployee.MaternityClaimId"/>) with a
+    /// <see cref="PayrollRunEmployee.MaternityBenefitOffset"/> above zero. Run numbers, earliest pay
+    /// date first.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetPaidRunsNettingMaternityClaimAsync(Guid claimId, CancellationToken ct = default);
+
+    /// <summary>
     /// Year-end leave conversions already on file for the employees: one per entry with
     /// LeaveConversionPay above zero, on a Regular run - in any status - whose PeriodEnd falls in
     /// <paramref name="periodEndYear"/>, other than <paramref name="excludeRunId"/>. Final pays

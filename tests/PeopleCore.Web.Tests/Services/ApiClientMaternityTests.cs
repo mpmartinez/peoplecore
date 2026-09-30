@@ -31,7 +31,7 @@ public class ApiClientMaternityTests
         "id", "leaveRequestId", "employeeId", "employeeName",
         "leaveStart", "leaveEnd", "days", "dailyAllowance", "benefit",
         "status", "advanceRunId", "advanceRunNumber", "advancedAt",
-        "reimbursedOn", "reimbursedAmount", "note", "carriedByRunNumber",
+        "reimbursedOn", "reimbursedAmount", "note", "carriedByRunNumber", "leaveCancelled",
     ];
 
     private static readonly string[] SuggestionFields = ["dailyAllowance", "monthsFound", "windowFrom", "windowTo", "ratesOverridden"];
@@ -54,7 +54,7 @@ public class ApiClientMaternityTests
          "leaveStart":"2026-08-10","leaveEnd":"2026-11-22","days":105,"dailyAllowance":666.67,"benefit":70000.35,
          "status":"Reimbursed","advanceRunId":"{{RunId}}","advanceRunNumber":"PR-2026-0015","advancedAt":"2026-08-05",
          "reimbursedOn":"2026-10-01","reimbursedAmount":70000,"note":"SSS rounded down",
-         "carriedByRunNumber":"PR-2026-0016"}
+         "carriedByRunNumber":"PR-2026-0016","leaveCancelled":true}
         """;
 
     private const string SettingsJson = """
@@ -81,10 +81,12 @@ public class ApiClientMaternityTests
         MembersOf<SetAllowanceRequest>().Should().Equal("dailyAllowance");
         MembersOf<ReimburseRequest>().Should().Equal(ReimburseFields);
         MembersOf<DenyRequest>().Should().Equal("note");
+        MembersOf<VoidRequest>().Should().Equal("note");
+        MembersOf<RelinkRequest>().Should().Equal("leaveRequestId");
         MembersOf<MaternityClaimsSummaryDto>().Should().Equal("claims", "outstanding");
         MembersOf<EligibleMaternityLeaveDto>().Should().Equal(EligibleFields);
         MembersOf<PayrollSettingsDto>().Should().Equal(SettingsFields);
-        Enum.GetNames<MaternityClaimStatus>().Should().Equal("Draft", "Advanced", "Reimbursed", "Denied");
+        Enum.GetNames<MaternityClaimStatus>().Should().Equal("Draft", "Advanced", "Reimbursed", "Denied", "Voided");
     }
 
     [Fact]
@@ -114,7 +116,7 @@ public class ApiClientMaternityTests
             ClaimId, LeaveId, MariaId, "Maria Santos",
             new DateOnly(2026, 8, 10), new DateOnly(2026, 11, 22), 105m, 666.67m, 70000.35m,
             MaternityClaimStatus.Reimbursed, RunId, "PR-2026-0015", new DateOnly(2026, 8, 5),
-            new DateOnly(2026, 10, 1), 70000m, "SSS rounded down", "PR-2026-0016"));
+            new DateOnly(2026, 10, 1), 70000m, "SSS rounded down", "PR-2026-0016", true));
     }
 
     [Fact]
@@ -200,6 +202,26 @@ public class ApiClientMaternityTests
         await CreateClient().DenyMaternityClaimAsync(ClaimId, "No MAT-1 on file");
 
         _api.RequestBodies.Single().Should().Be("""{"note":"No MAT-1 on file"}""");
+    }
+
+    [Fact]
+    public async Task VoidMaternityClaim_PutsTheNote()
+    {
+        _api.On(HttpMethod.Put, $"/api/maternity-claims/{ClaimId}/void", HttpStatusCode.OK, ClaimJson);
+
+        await CreateClient().VoidMaternityClaimAsync(ClaimId, "Leave refiled");
+
+        _api.RequestBodies.Single().Should().Be("""{"note":"Leave refiled"}""");
+    }
+
+    [Fact]
+    public async Task RelinkMaternityClaim_PutsTheLeaveRequest()
+    {
+        _api.On(HttpMethod.Put, $"/api/maternity-claims/{ClaimId}/relink", HttpStatusCode.OK, ClaimJson);
+
+        await CreateClient().RelinkMaternityClaimAsync(ClaimId, LeaveId);
+
+        _api.RequestBodies.Single().Should().Be($$"""{"leaveRequestId":"{{LeaveId}}"}""");
     }
 
     [Fact]

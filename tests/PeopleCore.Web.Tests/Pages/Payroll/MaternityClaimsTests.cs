@@ -40,14 +40,14 @@ public class MaternityClaimsTests : BunitContext
     private static string Claim(Guid? id = null, string name = "Maria Santos", string status = "Draft",
         decimal? allowance = null, decimal benefit = 0m, string? runNumber = null, string? advancedAt = null,
         string? reimbursedOn = null, decimal? reimbursedAmount = null, string? note = null, string? carriedBy = null,
-        Guid? employeeId = null) =>
+        Guid? employeeId = null, bool leaveCancelled = false) =>
         $$"""
         {"id":"{{id ?? MariaClaimId}}","leaveRequestId":"{{MariaLeaveId}}","employeeId":"{{employeeId ?? MariaId}}","employeeName":"{{name}}",
          "leaveStart":"2026-08-10","leaveEnd":"2026-11-22","days":105,"dailyAllowance":{{Num(allowance)}},"benefit":{{benefit}},
          "status":"{{status}}","advanceRunId":{{(runNumber is null ? "null" : $"\"{Guid.NewGuid()}\"")}},
          "advanceRunNumber":{{Str(runNumber)}},"advancedAt":{{Str(advancedAt)}},
          "reimbursedOn":{{Str(reimbursedOn)}},"reimbursedAmount":{{Num(reimbursedAmount)}},"note":{{Str(note)}},
-         "carriedByRunNumber":{{Str(carriedBy)}}}
+         "carriedByRunNumber":{{Str(carriedBy)}},"leaveCancelled":{{(leaveCancelled ? "true" : "false")}}}
         """;
 
     private static string Num(decimal? value) => value is null ? "null" : value.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -115,6 +115,7 @@ public class MaternityClaimsTests : BunitContext
     [InlineData("Advanced", "Advanced")]
     [InlineData("Reimbursed", "Reimbursed")]
     [InlineData("Denied", "Denied")]
+    [InlineData("Voided", "Voided")]
     public void EachStatus_ReadsAsAWord(string status, string label)
     {
         var cut = RenderPage(Summary(0m, Claim(status: status)));
@@ -131,15 +132,16 @@ public class MaternityClaimsTests : BunitContext
     }
 
     [Theory]
-    [InlineData("Draft", new[] { "set-allowance" })]
+    [InlineData("Draft", new[] { "set-allowance", "void" })]
     [InlineData("Advanced", new[] { "reimburse", "deny" })]
     [InlineData("Reimbursed", new string[0])]
     [InlineData("Denied", new string[0])]
+    [InlineData("Voided", new string[0])]
     public void OnlyTheActionsTheApiAcceptsForTheStatus_AreOffered(string status, string[] expected)
     {
         var cut = RenderPage(Summary(0m, Claim(status: status, allowance: 666.67m, benefit: 70000.35m)));
 
-        var offered = new[] { "set-allowance", "reimburse", "deny" }
+        var offered = new[] { "set-allowance", "void", "reimburse", "deny", "move" }
             .Where(a => Row(cut, MariaClaimId).QuerySelector($"[data-{a}]") is not null);
         offered.Should().Equal(expected);
     }
@@ -155,6 +157,7 @@ public class MaternityClaimsTests : BunitContext
         var maria = Row(cut, MariaClaimId);
         maria.QuerySelector("[data-carried-by]")!.TextContent.Trim().Should().Be("Advancing on PR-2026-0015");
         maria.QuerySelector("[data-set-allowance]").Should().BeNull();
+        maria.QuerySelector("[data-void]").Should().BeNull("the API won't void a claim a run advances");
         Row(cut, AnaClaimId).QuerySelector("[data-set-allowance]").Should().NotBeNull();
         Row(cut, AnaClaimId).QuerySelector("[data-carried-by]").Should().BeNull();
     }
@@ -565,6 +568,100 @@ public class MaternityClaimsTests : BunitContext
         cut.WaitForAssertion(() => cut.Find("[data-outstanding]").TextContent.Trim().Should().Be("₱0.00"));
         Row(cut, MariaClaimId).QuerySelector("[data-status]")!.TextContent.Trim().Should().Be("Denied");
         BodyOf(HttpMethod.Put, $"/api/maternity-claims/{MariaClaimId}/deny").GetProperty("note").GetString().Should().Be("No MAT-1 on file");
+    }
+
+    // ---------- Voiding and moving a claim ----------
+
+    [Fact]
+    public void AVoid_NeedsANote_AndPutsIt()
+    {
+        var loads = 0;
+        _api.On(HttpMethod.Get, ListPath, () => Json(++loads == 1
+                ? Summary(0m, Claim(allowance: 666.67m, benefit: 70000.35m))
+                : Summary(0m, Claim(status: "Voided", allowance: 666.67m, benefit: 70000.35m, note: "Leave refiled"))))
+            .On(HttpMethod.Put, $"/api/maternity-claims/{MariaClaimId}/void", HttpStatusCode.OK,
+                Claim(status: "Voided", allowance: 666.67m, benefit: 70000.35m, note: "Leave refiled"));
+        var cut = RenderPage();
+        Row(cut, MariaClaimId).QuerySelector("[data-void]")!.Click();
+
+        cut.Find("#void-note").Input("  ");
+        cut.Find("[data-submit-void]").Click();
+        cut.Find("[data-void-error]").TextContent.Should().Contain("Explain why the claim is voided.");
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Put);
+
+        cut.Find("#void-note").Input("Leave refiled");
+        cut.Find("[data-submit-void]").Click();
+
+        cut.WaitForAssertion(() => Row(cut, MariaClaimId).QuerySelector("[data-status]")!.TextContent.Trim().Should().Be("Voided"));
+        cut.FindAll("[data-void-dialog]").Should().BeEmpty();
+        BodyOf(HttpMethod.Put, $"/api/maternity-claims/{MariaClaimId}/void").GetProperty("note").GetString().Should().Be("Leave refiled");
+    }
+
+    [Fact]
+    public void ARefusedVoid_ShowsTheApisReason()
+    {
+        _api.On(HttpMethod.Put, $"/api/maternity-claims/{MariaClaimId}/void",
+            () => Problem("PR-2026-0015 advances this benefit; discard it or pay it first."));
+        var cut = RenderPage(Summary(0m, Claim(allowance: 666.67m, benefit: 70000.35m)));
+        Row(cut, MariaClaimId).QuerySelector("[data-void]")!.Click();
+
+        cut.Find("#void-note").Input("Leave refiled");
+        cut.Find("[data-submit-void]").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[data-void-error]").TextContent
+            .Should().Contain("PR-2026-0015 advances this benefit; discard it or pay it first."));
+    }
+
+    [Fact]
+    public void AClaimWhoseLeaveWasCancelled_OffersAMove()
+    {
+        var cut = RenderPage(Summary(0m,
+            Claim(allowance: 666.67m, benefit: 70000.35m, leaveCancelled: true),
+            Claim(AnaClaimId, "Ana Cruz", allowance: 600m, benefit: 63000m, employeeId: AnaId)));
+
+        Row(cut, MariaClaimId).QuerySelector("[data-move]").Should().NotBeNull();
+        Row(cut, MariaClaimId).TextContent.Should().Contain("Leave cancelled");
+        Row(cut, AnaClaimId).QuerySelector("[data-move]").Should().BeNull();
+    }
+
+    [Fact]
+    public void AMove_OffersOnlyHerApprovedMaternityLeaveWithoutAClaim_AndPutsTheChoice()
+    {
+        var refiled = Guid.Parse("1ea0e000-0000-0000-0000-000000000003");
+        var loads = 0;
+        _api.On(HttpMethod.Get, ListPath, () => Json(++loads == 1
+                ? Summary(0m, Claim(allowance: 666.67m, benefit: 70000.35m, leaveCancelled: true))
+                : Summary(0m, Claim(allowance: 666.67m, benefit: 80000.40m))))
+            .On(HttpMethod.Get, "/api/maternity-claims/eligible", HttpStatusCode.OK,
+                $"[{Eligible(refiled, MariaId, "Maria Santos", "2026-08-17", "2026-12-14", 120m)},{Eligible(AnaLeaveId, AnaId, "Ana Cruz", "2026-09-01", "2026-12-14", 105m)}]")
+            .On(HttpMethod.Put, $"/api/maternity-claims/{MariaClaimId}/relink", HttpStatusCode.OK,
+                Claim(allowance: 666.67m, benefit: 80000.40m));
+        var cut = RenderPage();
+        Row(cut, MariaClaimId).QuerySelector("[data-move]")!.Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("#move-leave option").Should().NotBeEmpty());
+        var options = cut.FindAll("#move-leave option").Where(o => !string.IsNullOrEmpty(o.GetAttribute("value"))).ToList();
+        options.Should().ContainSingle().Which.TextContent.Should().Contain("Aug 17, 2026").And.Contain("120");
+        cut.Find("#move-leave").Change(refiled.ToString());
+        cut.Find("[data-submit-move]").Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[data-move-dialog]").Should().BeEmpty());
+        Guid.Parse(BodyOf(HttpMethod.Put, $"/api/maternity-claims/{MariaClaimId}/relink").GetProperty("leaveRequestId").GetString()!)
+            .Should().Be(refiled);
+        cut.WaitForAssertion(() => Row(cut, MariaClaimId).TextContent.Should().Contain("₱80,000.40"));
+    }
+
+    [Fact]
+    public void AMove_WithNoRefiledLeave_SaysSo()
+    {
+        _api.On(HttpMethod.Get, "/api/maternity-claims/eligible", HttpStatusCode.OK,
+            $"[{Eligible(AnaLeaveId, AnaId, "Ana Cruz", "2026-09-01", "2026-12-14", 105m)}]");
+        var cut = RenderPage(Summary(0m, Claim(allowance: 666.67m, benefit: 70000.35m, leaveCancelled: true)));
+        Row(cut, MariaClaimId).QuerySelector("[data-move]")!.Click();
+
+        cut.WaitForAssertion(() => cut.Find("[data-move-dialog]").TextContent
+            .Should().Contain("Maria Santos has no approved maternity leave waiting for a claim."));
+        cut.Find("[data-submit-move]").HasAttribute("disabled").Should().BeTrue();
     }
 
     [Fact]

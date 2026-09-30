@@ -211,6 +211,46 @@ public class MaternityPayCalculatorTests
             .WithMessage("Maria Santos's maternity benefit was already advanced on PAY-2026-016.");
     }
 
+    [Theory]
+    [InlineData(LeaveStatus.Cancelled)]
+    [InlineData(LeaveStatus.Rejected)]
+    public async Task TheAdvance_OnAClaimWhoseLeaveIsNoLongerApproved_IsRefused_AsNoneReady(LeaveStatus status)
+    {
+        // Refiled leave: the claim is still Draft with its allowance, but its leave was withdrawn.
+        AClaim();
+        _leaveRequest.Status = status;
+
+        var act = () => _sut.ForAsync(Cutoff(7, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Maria Santos has no maternity claim ready to advance.");
+    }
+
+    [Fact]
+    public async Task AVoidedClaim_IsNeverReady_NeverOffsets_AndHrIsToldToSetOneUp()
+    {
+        AClaim(status: MaternityClaimStatus.Voided);
+
+        var advance = () => _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+        var pay = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, advanceRequested: false, 15_000m, exempt: false);
+
+        await advance.Should().ThrowAsync<DomainException>().WithMessage("Maria Santos has no maternity claim ready to advance.");
+        pay.Offset.Should().Be(0m);
+        pay.Differential.Should().Be(0m);
+        pay.ClaimId.Should().BeNull();
+        pay.Warnings.Should().Equal("Maternity benefit not set up yet for Maria Santos.");
+    }
+
+    [Fact]
+    public async Task AnOffset_RecordsTheClaimWhoseAllowanceItNets()
+    {
+        var claim = AClaim(status: MaternityClaimStatus.Advanced, advanceRun: new PayrollRun { RunNumber = "PAY-2026-015" });
+
+        var pay = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, advanceRequested: false, 15_000m, exempt: false);
+
+        pay.Offset.Should().Be(4_000.02m);
+        pay.ClaimId.Should().Be(claim.Id);
+    }
+
     [Fact]
     public async Task NoAdvanceRequested_AdvancesNothing()
     {
@@ -417,6 +457,62 @@ public class MaternityPayCalculatorTests
         run.Employees.Add(new PayrollRunEmployee { EmployeeId = _maria.Id, Employee = _maria });
 
         (await _sut.WarningsAsync(run)).Should().Equal("Maternity benefit not set up yet for Maria Santos.");
+    }
+
+    // ---- approving -----------------------------------------------------------------------------
+
+    private PayrollRun AugustFirstHalfWithMaria()
+    {
+        var run = Cutoff(8, 1, 15);
+        run.Employees.Add(new PayrollRunEmployee { EmployeeId = _maria.Id, Employee = _maria });
+        return run;
+    }
+
+    [Fact]
+    public async Task Approving_WithMaternityDaysAndNoClaim_IsRefused_CountingTheDays()
+    {
+        // Aug 10-15: 6 days of her leave in the Aug 1-15 cutoff.
+        var act = () => _sut.EnsureClaimsSetUpAsync(AugustFirstHalfWithMaria(), exempt: false);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Set up Maria Santos's maternity claim before approving; this payroll covers 6 maternity day(s).");
+    }
+
+    [Fact]
+    public async Task Approving_WithAClaimThatHasNoAllowance_IsRefused()
+    {
+        AClaim(allowance: null);
+
+        var act = () => _sut.EnsureClaimsSetUpAsync(AugustFirstHalfWithMaria(), exempt: false);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Set up Maria Santos's maternity claim*");
+    }
+
+    [Fact]
+    public async Task Approving_WithAVoidedClaim_IsRefused()
+    {
+        AClaim(status: MaternityClaimStatus.Voided);
+
+        var act = () => _sut.EnsureClaimsSetUpAsync(AugustFirstHalfWithMaria(), exempt: false);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Set up Maria Santos's maternity claim*");
+    }
+
+    [Fact]
+    public async Task Approving_WithAClaimThatHasAnAllowance_OrForAnExemptEmployer_IsFine()
+    {
+        await _sut.EnsureClaimsSetUpAsync(AugustFirstHalfWithMaria(), exempt: true);
+        AClaim();
+        await _sut.EnsureClaimsSetUpAsync(AugustFirstHalfWithMaria(), exempt: false);
+    }
+
+    [Fact]
+    public async Task Approving_ACutoffOutsideTheLeave_NeedsNoClaim()
+    {
+        var run = Cutoff(7, 16, 31);
+        run.Employees.Add(new PayrollRunEmployee { EmployeeId = _maria.Id, Employee = _maria });
+
+        await _sut.EnsureClaimsSetUpAsync(run, exempt: false);
     }
 
     // ---- final pay -----------------------------------------------------------------------------

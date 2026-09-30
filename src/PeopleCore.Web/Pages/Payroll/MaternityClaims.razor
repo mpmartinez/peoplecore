@@ -93,6 +93,10 @@ else
                                 </TableCell>
                                 <TableCell Class="px-4 py-3">
                                     <Badge Variant="@MaternityLabels.StatusVariant(c.Status)" data-status>@MaternityLabels.StatusOf(c.Status)</Badge>
+                                    @if (c.LeaveCancelled)
+                                    {
+                                        <div class="text-xs text-muted-foreground mt-1" data-leave-cancelled>Leave cancelled</div>
+                                    }
                                 </TableCell>
                                 <TableCell Class="px-4 py-3">
                                     @if (c.AdvanceRunNumber is null)
@@ -129,11 +133,18 @@ else
                                         else if (c.Status == MaternityClaimStatus.Draft)
                                         {
                                             <Button Variant="outline" Size="sm" OnClick="@(() => OpenAllowance(c))" data-set-allowance>Set allowance</Button>
+                                            @* A Draft claim no run advances can be voided. *@
+                                            <Button Variant="outline" Size="sm" OnClick="@(() => OpenVoid(c))" data-void>Void</Button>
                                         }
                                         else if (c.Status == MaternityClaimStatus.Advanced)
                                         {
                                             <Button Variant="outline" Size="sm" OnClick="@(() => OpenReimburse(c))" data-reimburse>Record reimbursement</Button>
                                             <Button Variant="outline" Size="sm" OnClick="@(() => OpenDeny(c))" data-deny>Record denial</Button>
+                                        }
+                                        @if (c.LeaveCancelled)
+                                        {
+                                            @* The API moves a claim only when its leave was cancelled or rejected. *@
+                                            <Button Variant="outline" Size="sm" OnClick="@(() => OpenMove(c))" data-move>Move</Button>
                                         }
                                     </div>
                                 </TableCell>
@@ -275,6 +286,66 @@ else
     </FooterContent>
 </Dialog>
 
+<Dialog IsOpen="@(_voidClaim is not null)" Title="@($"Void {_voidClaim?.EmployeeName}'s claim")"
+        Description="A voided claim is never advanced and never nets her pay." OnClose="CloseDialogs"
+        BodyClass="space-y-4" data-void-dialog>
+    <ChildContent>
+        @if (_formError is not null)
+        {
+            <Alert Variant="destructive" data-void-error>@_formError</Alert>
+        }
+        <FormField LabelText="Why it is voided" Id="void-note" Required="true">
+            <Textarea TValue="string" Id="void-note" @bind-Value="_note" MaxLength="@NoteMaxLength" Disabled="@_saving" />
+        </FormField>
+    </ChildContent>
+    <FooterContent>
+        <div class="flex justify-end gap-2">
+            <Button Variant="outline" OnClick="CloseDialogs" Disabled="@_saving">Cancel</Button>
+            <Button Variant="destructive" OnClick="Void" Loading="@_saving" data-submit-void>Void claim</Button>
+        </div>
+    </FooterContent>
+</Dialog>
+
+<Dialog IsOpen="@(_moveClaim is not null)" Title="@($"Move {_moveClaim?.EmployeeName}'s claim")"
+        Description="Her leave was cancelled. Move the claim to the maternity leave she refiled." OnClose="CloseDialogs"
+        BodyClass="space-y-4" data-move-dialog>
+    <ChildContent>
+        @if (_formError is not null)
+        {
+            <Alert Variant="destructive" data-move-error>@_formError</Alert>
+        }
+        @if (_eligibleError is not null)
+        {
+            <Alert Variant="destructive" data-eligible-error>Approved maternity leave could not be loaded: @_eligibleError</Alert>
+        }
+        else if (_moveTargets is null)
+        {
+            <div class="p-4 flex justify-center"><Spinner Size="sm" /></div>
+        }
+        else if (_moveTargets.Count == 0)
+        {
+            <p class="text-sm text-muted-foreground">@_moveClaim?.EmployeeName has no approved maternity leave waiting for a claim.</p>
+        }
+        else
+        {
+            <FormField LabelText="Refiled maternity leave" Id="move-leave" Required="true">
+                <Select TValue="Guid?" Id="move-leave" @bind-Value="_chosenLeave" Placeholder="Select..." Disabled="@_saving">
+                    @foreach (var leave in _moveTargets)
+                    {
+                        <option value="@leave.LeaveRequestId">@MaternityLabels.Date(leave.StartDate) – @MaternityLabels.Date(leave.EndDate) (@MaternityLabels.Days(leave.Days) days)</option>
+                    }
+                </Select>
+            </FormField>
+        }
+    </ChildContent>
+    <FooterContent>
+        <div class="flex justify-end gap-2">
+            <Button Variant="outline" OnClick="CloseDialogs" Disabled="@_saving">Cancel</Button>
+            <Button Variant="primary" OnClick="Move" Loading="@_saving" Disabled="@(_moveTargets is not { Count: > 0 })" data-submit-move>Move claim</Button>
+        </div>
+    </FooterContent>
+</Dialog>
+
 @code {
     private const int NoteMaxLength = 500;
 
@@ -308,6 +379,11 @@ else
     private MaternityClaimDto? _denyClaim;
     private string? _note;
 
+    private MaternityClaimDto? _voidClaim;
+
+    private MaternityClaimDto? _moveClaim;
+    private List<EligibleMaternityLeaveDto>? _moveTargets;
+
     protected override async Task OnInitializedAsync() => await LoadClaims();
 
     private async Task LoadClaims()
@@ -333,7 +409,7 @@ else
     {
         _dialogVersion++;
         _createOpen = false;
-        _allowanceClaim = _reimburseClaim = _denyClaim = null;
+        _allowanceClaim = _reimburseClaim = _denyClaim = _voidClaim = _moveClaim = null;
     }
 
     private void ResetForm()
@@ -484,6 +560,66 @@ else
         if (_formError is not null) return;
 
         if (await SendAsync(() => Api.DenyMaternityClaimAsync(claim.Id, note)))
+            await LoadClaims();
+    }
+
+    private void OpenVoid(MaternityClaimDto claim)
+    {
+        ResetForm();
+        _voidClaim = claim;
+    }
+
+    private async Task Void()
+    {
+        if (_saving || _voidClaim is not { } claim) return;
+        _formError = null;
+        var note = Note();
+        if (note is null)
+            _formError = "Explain why the claim is voided.";
+        else if (note.Length > NoteMaxLength)
+            _formError = "Keep the note to 500 characters.";
+        if (_formError is not null) return;
+
+        if (await SendAsync(() => Api.VoidMaternityClaimAsync(claim.Id, note)))
+            await LoadClaims();
+    }
+
+    /// <summary>
+    /// Opens the move form with the employee's own approved maternity leave that has no claim - the
+    /// only leave the API moves a claim to.
+    /// </summary>
+    private async Task OpenMove(MaternityClaimDto claim)
+    {
+        ResetForm();
+        var version = _dialogVersion;
+        _moveClaim = claim;
+        _moveTargets = null;
+        _eligibleError = null;
+        _chosenLeave = null;
+        try
+        {
+            var eligible = await Api.GetEligibleMaternityLeaveAsync();
+            if (version != _dialogVersion) return;
+            _moveTargets = (eligible ?? []).Where(l => l.EmployeeId == claim.EmployeeId).ToList();
+        }
+        catch (Exception ex)
+        {
+            if (version != _dialogVersion) return;
+            _eligibleError = ex.Message;
+        }
+    }
+
+    private async Task Move()
+    {
+        if (_saving || _moveClaim is not { } claim) return;
+        _formError = null;
+        if (_chosenLeave is not { } leaveRequestId)
+        {
+            _formError = "Choose the maternity leave she refiled.";
+            return;
+        }
+
+        if (await SendAsync(() => Api.RelinkMaternityClaimAsync(claim.Id, leaveRequestId)))
             await LoadClaims();
     }
 

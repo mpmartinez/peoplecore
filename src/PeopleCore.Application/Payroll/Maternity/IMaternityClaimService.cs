@@ -25,9 +25,22 @@ public interface IMaternityClaimService
     /// <summary>Records that SSS denied an Advanced claim.</summary>
     Task<MaternityClaimDto> DenyAsync(Guid claimId, DenyRequest request, CancellationToken ct = default);
 
+    /// <summary>Voids a Draft claim that no unpaid run advances, with a note saying why.</summary>
+    Task<MaternityClaimDto> VoidAsync(Guid claimId, VoidRequest request, CancellationToken ct = default);
+
+    /// <summary>
+    /// Moves a claim whose leave was cancelled or rejected to the employee's refiled maternity leave:
+    /// an approved one with no claim. The claim takes its days; a Draft claim's benefit follows them,
+    /// while one already advanced keeps the benefit that was paid.
+    /// </summary>
+    Task<MaternityClaimDto> RelinkAsync(Guid claimId, RelinkRequest request, CancellationToken ct = default);
+
     /// <summary>Approved maternity leave requests that have no claim yet, earliest leave first.</summary>
     Task<IReadOnlyList<EligibleMaternityLeaveDto>> EligibleAsync(CancellationToken ct = default);
 
-    /// <summary>The employees with a Draft claim that has an allowance: the ones a payroll can advance the benefit to.</summary>
+    /// <summary>
+    /// The employees with a claim ready to advance - Draft, with an allowance, for leave that is still
+    /// Approved - that no run already advances.
+    /// </summary>
     Task<IReadOnlyList<Guid>> ReadyEmployeeIdsAsync(CancellationToken ct = default);
 }

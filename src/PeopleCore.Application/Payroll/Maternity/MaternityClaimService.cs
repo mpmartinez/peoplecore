@@ -120,9 +120,12 @@ public sealed class MaternityClaimService : IMaternityClaimService
         // A run advancing the benefit was computed with it; changed, the run would advance the old
         // figure, and once approved it can't be recomputed. A paid run made the claim Advanced, so
         // the run found here is unpaid.
-        var carrying = await _runs.GetMaternityAdvancesAsync([claim.Id], Guid.Empty, ct) ?? [];
-        if (carrying.Count > 0)
-            throw new DomainException($"{carrying[0].RunNumber} advances this benefit; discard it or pay it first.");
+        await EnsureNoRunAdvancesAsync(claim, ct);
+        // A paid cutoff already took the SSS benefit for its leave days off her pay at this
+        // allowance; it can't be recomputed, so the allowance can't change under it.
+        var netted = await _runs.GetPaidRunsNettingMaternityClaimAsync(claim.Id, ct) ?? [];
+        if (netted.Count > 0)
+            throw new DomainException($"{netted[0]} already netted this allowance; it can't change now.");
 
         // Stored to 2 dp (numeric(18,2)), and the benefit is worked from what is stored.
         claim.DailyAllowance = Math.Round(request.DailyAllowance, 2, MidpointRounding.AwayFromZero);
@@ -167,6 +170,55 @@ public sealed class MaternityClaimService : IMaternityClaimService
         return ToDto(claim);
     }
 
+    public async Task<MaternityClaimDto> VoidAsync(Guid claimId, VoidRequest request, CancellationToken ct = default)
+    {
+        var claim = await GetAsync(claimId, ct);
+        if (claim.Status != MaternityClaimStatus.Draft)
+            throw new DomainException("Only a draft claim can be voided.");
+        var note = Note(request.Note) ?? throw new DomainException("Explain why the claim is voided.");
+        await EnsureNoRunAdvancesAsync(claim, ct);
+
+        claim.Note = note;
+        claim.Status = MaternityClaimStatus.Voided;
+        await _claims.UpdateAsync(claim, ct);
+        return ToDto(claim);
+    }
+
+    public async Task<MaternityClaimDto> RelinkAsync(Guid claimId, RelinkRequest request, CancellationToken ct = default)
+    {
+        var claim = await GetAsync(claimId, ct);
+        if (!IsWithdrawn(claim.LeaveRequest))
+            throw new DomainException("Only a claim whose leave was cancelled can be moved.");
+
+        var target = await _leaveRequests.GetByIdAsync(request.LeaveRequestId, ct);
+        if (target is null || target.EmployeeId != claim.EmployeeId || target.Status != LeaveStatus.Approved
+            || target.LeaveType is not { IsMaternity: true }
+            || await _claims.GetByLeaveRequestAsync(target.Id, ct) is not null)
+            throw new DomainException("Choose an approved maternity leave of the same employee that has no claim.");
+
+        claim.LeaveRequestId = target.Id;
+        claim.LeaveRequest = target;
+        claim.Days = target.TotalDays;
+        // A Draft claim's benefit is still to be advanced, so it follows the refiled leave's days; one
+        // already advanced keeps the benefit that was paid - what SSS is asked to reimburse.
+        if (claim.Status == MaternityClaimStatus.Draft)
+            claim.Benefit = claim.DailyAllowance is decimal allowance ? MaternityMath.Benefit(allowance, claim.Days) : 0m;
+        await _claims.UpdateAsync(claim, ct);
+        return ToDto(claim);
+    }
+
+    /// <summary>Refuses while an unpaid run advances the claim's benefit (a paid one made it Advanced).</summary>
+    private async Task EnsureNoRunAdvancesAsync(MaternityClaim claim, CancellationToken ct)
+    {
+        var carrying = await _runs.GetMaternityAdvancesAsync([claim.Id], Guid.Empty, ct) ?? [];
+        if (carrying.Count > 0)
+            throw new DomainException($"{carrying[0].RunNumber} advances this benefit; discard it or pay it first.");
+    }
+
+    /// <summary>The leave was cancelled or rejected after the claim was opened for it.</summary>
+    private static bool IsWithdrawn(Domain.Entities.Leave.LeaveRequest? leave)
+        => leave is { Status: LeaveStatus.Cancelled or LeaveStatus.Rejected };
+
     public async Task<IReadOnlyList<EligibleMaternityLeaveDto>> EligibleAsync(CancellationToken ct = default)
         => (await _claims.GetUnclaimedApprovedRequestsAsync(ct))
             .Select(r => new EligibleMaternityLeaveDto(r.Id, r.EmployeeId, r.Employee.FullName, r.StartDate, r.EndDate, r.TotalDays))
@@ -174,8 +226,11 @@ public sealed class MaternityClaimService : IMaternityClaimService
 
     public async Task<IReadOnlyList<Guid>> ReadyEmployeeIdsAsync(CancellationToken ct = default)
     {
+        // Ready means the claim's leave is still Approved: a claim for leave cancelled or rejected
+        // since, awaiting a move to the refiled leave, isn't.
         var ready = (await _claims.GetAllAsync(ct))
-            .Where(c => c.Status == MaternityClaimStatus.Draft && c.DailyAllowance is not null)
+            .Where(c => c.Status == MaternityClaimStatus.Draft && c.DailyAllowance is not null
+                        && c.LeaveRequest is { Status: LeaveStatus.Approved })
             .ToList();
         if (ready.Count == 0)
             return [];
@@ -210,5 +265,5 @@ public sealed class MaternityClaimService : IMaternityClaimService
         c.Id, c.LeaveRequestId, c.EmployeeId, c.Employee.FullName,
         c.LeaveRequest.StartDate, c.LeaveRequest.EndDate, c.Days, c.DailyAllowance, c.Benefit,
         c.Status, c.AdvanceRunId, c.AdvanceRunId is null ? null : c.AdvanceRun?.RunNumber, c.AdvancedAt,
-        c.ReimbursedOn, c.ReimbursedAmount, c.Note);
+        c.ReimbursedOn, c.ReimbursedAmount, c.Note, LeaveCancelled: IsWithdrawn(c.LeaveRequest));
 }

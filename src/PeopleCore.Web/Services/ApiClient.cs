@@ -695,6 +695,14 @@ public class ApiClient
     public Task<MaternityClaimDto?> DenyMaternityClaimAsync(Guid claimId, string? note)
         => SendJsonAsync<MaternityClaimDto>(HttpMethod.Put, $"api/maternity-claims/{claimId}/deny", new DenyRequest(note));
 
+    /// <summary>Voids a Draft claim no unpaid run advances; the note says why.</summary>
+    public Task<MaternityClaimDto?> VoidMaternityClaimAsync(Guid claimId, string? note)
+        => SendJsonAsync<MaternityClaimDto>(HttpMethod.Put, $"api/maternity-claims/{claimId}/void", new VoidRequest(note));
+
+    /// <summary>Moves a claim whose leave was cancelled or rejected to the employee's refiled maternity leave.</summary>
+    public Task<MaternityClaimDto?> RelinkMaternityClaimAsync(Guid claimId, Guid leaveRequestId)
+        => SendJsonAsync<MaternityClaimDto>(HttpMethod.Put, $"api/maternity-claims/{claimId}/relink", new RelinkRequest(leaveRequestId));
+
     // Payroll settings (payroll.manage): the row payroll computes from, whichever company it belongs
     // to. The PUT is a full replacement and answers 204 with no body.
     public Task<PayrollSettingsDto?> GetPayrollSettingsAsync()
@@ -1257,7 +1265,8 @@ public record PayrollRunSummaryDto(
 // Maternity claims - copies of PeopleCore.Application.Payroll.Maternity.MaternityDtos, field by field
 // and in the same order. The status travels as its name (JsonOptions' JsonStringEnumConverter);
 // MaternityLabels turns it into words.
-public enum MaternityClaimStatus { Draft, Advanced, Reimbursed, Denied }
+// Voided: a Draft claim HR withdrew; it counts for nothing.
+public enum MaternityClaimStatus { Draft, Advanced, Reimbursed, Denied, Voided }
 
 public record MaternityClaimDto(Guid Id, Guid LeaveRequestId, Guid EmployeeId, string EmployeeName,
     DateOnly LeaveStart, DateOnly LeaveEnd, decimal Days, decimal? DailyAllowance, decimal Benefit,
@@ -1265,7 +1274,9 @@ public record MaternityClaimDto(Guid Id, Guid LeaveRequestId, Guid EmployeeId, s
     DateOnly? ReimbursedOn, decimal? ReimbursedAmount, string? Note,
     // On a Draft claim in the list, the unpaid run advancing its benefit (the allowance is locked until
     // that run is paid or discarded).
-    string? CarriedByRunNumber = null);
+    string? CarriedByRunNumber = null,
+    // The claim's leave was cancelled or rejected, so it can be moved to the refiled leave.
+    bool LeaveCancelled = false);
 
 // DailyAllowance is null when no month in the window has a paid payroll, or when RatesOverridden:
 // the payroll settings override both SSS rates, so the salary credit can't be worked back.
@@ -1275,6 +1286,8 @@ public record SuggestedAllowanceDto(decimal? DailyAllowance, int MonthsFound, Da
 public record SetAllowanceRequest(decimal DailyAllowance);
 public record ReimburseRequest(DateOnly ReimbursedOn, decimal ReimbursedAmount, string? Note);
 public record DenyRequest(string? Note);
+public record VoidRequest(string? Note);
+public record RelinkRequest(Guid LeaveRequestId);
 public record MaternityClaimsSummaryDto(IReadOnlyList<MaternityClaimDto> Claims, decimal Outstanding);
 public record EligibleMaternityLeaveDto(Guid LeaveRequestId, Guid EmployeeId, string EmployeeName,
     DateOnly StartDate, DateOnly EndDate, decimal Days);

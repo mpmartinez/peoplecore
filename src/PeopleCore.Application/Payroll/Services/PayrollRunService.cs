@@ -301,7 +301,13 @@ public class PayrollRunService : IPayrollRunService
         // Likewise a maternity claim the run advances, while a recompute can still put it right: an
         // approved regular run can't be recomputed.
         if (run.RunType == PayrollRunType.Regular && _maternityPay is not null)
+        {
             await _maternityPay.EnsureAdvancesCurrentAsync(run, ct);
+            // Maternity days no claim with an allowance covers were paid as ordinary, taxable salary
+            // with nothing netted; they can't be approved that way unless the employer is exempt.
+            var settings = await _settingsRepo.GetDefaultAsync(ct);
+            await _maternityPay.EnsureClaimsSetUpAsync(run, settings?.ExemptFromMaternityDifferential ?? false, ct);
+        }
 
         run.Status = PayrollRunStatus.Approved;
         run.UpdatedAt = _clock.GetUtcNow().UtcDateTime;

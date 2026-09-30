@@ -51,6 +51,8 @@ public class MaternityClaimsControllerTests
     [InlineData(nameof(MaternityClaimsController.SetAllowance), "PUT", "{id:guid}/allowance")]
     [InlineData(nameof(MaternityClaimsController.Reimburse), "PUT", "{id:guid}/reimburse")]
     [InlineData(nameof(MaternityClaimsController.Deny), "PUT", "{id:guid}/deny")]
+    [InlineData(nameof(MaternityClaimsController.Void), "PUT", "{id:guid}/void")]
+    [InlineData(nameof(MaternityClaimsController.Relink), "PUT", "{id:guid}/relink")]
     public void EachActionHasItsRoute(string action, string verb, string? template)
     {
         var attribute = typeof(MaternityClaimsController).GetMethod(action)!.GetCustomAttribute<HttpMethodAttribute>()!;
@@ -148,6 +150,37 @@ public class MaternityClaimsControllerTests
         var result = await Controller().Deny(ClaimId, request, CancellationToken.None);
 
         result.Result.Should().BeOfType<OkObjectResult>().Which.Value.Should().Be(Claim);
+    }
+
+    [Fact]
+    public async Task Void_ReturnsTheClaim()
+    {
+        var request = new VoidRequest("Leave refiled");
+        _service.Setup(s => s.VoidAsync(ClaimId, request, It.IsAny<CancellationToken>())).ReturnsAsync(Claim);
+
+        var result = await Controller().Void(ClaimId, request, CancellationToken.None);
+
+        result.Result.Should().BeOfType<OkObjectResult>().Which.Value.Should().Be(Claim);
+    }
+
+    [Fact]
+    public async Task Relink_ReturnsTheClaim()
+    {
+        var request = new RelinkRequest(Guid.NewGuid());
+        _service.Setup(s => s.RelinkAsync(ClaimId, request, It.IsAny<CancellationToken>())).ReturnsAsync(Claim);
+
+        var result = await Controller().Relink(ClaimId, request, CancellationToken.None);
+
+        result.Result.Should().BeOfType<OkObjectResult>().Which.Value.Should().Be(Claim);
+    }
+
+    [Fact]
+    public void VoidRequest_NoteIsNullable_SoTheServiceExplainsAMissingOne()
+    {
+        var nullability = new NullabilityInfoContext();
+        var property = typeof(VoidRequest).GetProperty(nameof(VoidRequest.Note))!;
+
+        nullability.Create(property).ReadState.Should().Be(NullabilityState.Nullable);
     }
 
     [Fact]

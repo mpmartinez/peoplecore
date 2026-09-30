@@ -237,6 +237,23 @@ public class MaternityClaimServiceTests
     }
 
     [Fact]
+    public async Task SetAllowance_OnceAPaidRunNettedIt_IsRefused()
+    {
+        // PAY-2026-016 (Paid) took 4,000.02 off Maria's Aug 1-15 pay with this allowance; changing
+        // it now would leave that cutoff netted at a figure the claim no longer has.
+        var claim = AClaim(allowance: 666.67m, benefit: 70_000.35m);
+        _runs.Setup(r => r.GetPaidRunsNettingMaternityClaimAsync(claim.Id, It.IsAny<CancellationToken>()))
+             .ReturnsAsync(["PAY-2026-016", "PAY-2026-017"]);
+
+        var act = () => _sut.SetAllowanceAsync(claim.Id, new SetAllowanceRequest(600m));
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("PAY-2026-016 already netted this allowance; it can't change now.");
+        claim.DailyAllowance.Should().Be(666.67m);
+        _claims.Verify(c => c.UpdateAsync(It.IsAny<MaternityClaim>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task SetAllowance_UnknownClaim_IsNotFound()
     {
         var act = () => _sut.SetAllowanceAsync(Guid.NewGuid(), new SetAllowanceRequest(900m));
@@ -495,6 +512,18 @@ public class MaternityClaimServiceTests
         ids.Should().Equal(Maria.Id);
     }
 
+    [Theory]
+    [InlineData(LeaveStatus.Cancelled)]
+    [InlineData(LeaveStatus.Rejected)]
+    [InlineData(LeaveStatus.Pending)]
+    public async Task ReadyEmployeeIds_LeaveOutAClaimWhoseLeaveIsNoLongerApproved(LeaveStatus status)
+    {
+        var claim = AClaim(MaternityClaimStatus.Draft, 666.67m, 70_000.35m, ARequest(status: status));
+        _claims.Setup(c => c.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync([claim]);
+
+        (await _sut.ReadyEmployeeIdsAsync()).Should().BeEmpty();
+    }
+
     [Fact]
     public async Task ReadyEmployeeIds_LeaveOutAClaimARunAlreadyAdvances()
     {
@@ -549,6 +578,167 @@ public class MaternityClaimServiceTests
 
     private void RunsIn(int year, int month, params PayrollRun[] runs)
         => _runs.Setup(r => r.GetPaidRunsByPeriodEndMonthAsync(year, month, It.IsAny<CancellationToken>())).ReturnsAsync(runs);
+
+    // ── Voiding ──────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Void_ADraftClaimNoRunCarries_WithANote_IsVoided()
+    {
+        var claim = AClaim(allowance: 666.67m, benefit: 70_000.35m);
+
+        var dto = await _sut.VoidAsync(claim.Id, new VoidRequest("  Leave refiled under a new request.  "));
+
+        claim.Status.Should().Be(MaternityClaimStatus.Voided);
+        claim.Note.Should().Be("Leave refiled under a new request.");
+        dto.Status.Should().Be(MaternityClaimStatus.Voided);
+        _claims.Verify(c => c.UpdateAsync(claim, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task Void_WithoutANote_IsRefused(string? note)
+    {
+        var claim = AClaim();
+
+        var act = () => _sut.VoidAsync(claim.Id, new VoidRequest(note));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Explain why the claim is voided.");
+        claim.Status.Should().Be(MaternityClaimStatus.Draft);
+    }
+
+    [Theory]
+    [InlineData(MaternityClaimStatus.Advanced)]
+    [InlineData(MaternityClaimStatus.Reimbursed)]
+    [InlineData(MaternityClaimStatus.Denied)]
+    [InlineData(MaternityClaimStatus.Voided)]
+    public async Task Void_AClaimNoLongerDraft_IsRefused(MaternityClaimStatus status)
+    {
+        var claim = AClaim(status, 666.67m, 70_000.35m);
+
+        var act = () => _sut.VoidAsync(claim.Id, new VoidRequest("Refiled"));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Only a draft claim can be voided.");
+        claim.Status.Should().Be(status);
+    }
+
+    [Fact]
+    public async Task Void_WhileAnUnpaidRunAdvancesIt_IsRefused()
+    {
+        var claim = AClaim(allowance: 666.67m, benefit: 70_000.35m);
+        AdvancedOn(claim, "PAY-2026-017");
+
+        var act = () => _sut.VoidAsync(claim.Id, new VoidRequest("Refiled"));
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("PAY-2026-017 advances this benefit; discard it or pay it first.");
+        claim.Status.Should().Be(MaternityClaimStatus.Draft);
+    }
+
+    [Fact]
+    public async Task List_LeavesAVoidedClaimOutOfOutstanding_AndTellsWhichClaimsLeaveWasCancelled()
+    {
+        var voided = AClaim(MaternityClaimStatus.Voided, 666.67m, 70_000.35m, ARequest(status: LeaveStatus.Cancelled));
+        var advanced = AClaim(MaternityClaimStatus.Advanced, 600m, 63_000m);
+        _claims.Setup(c => c.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync([voided, advanced]);
+
+        var summary = await _sut.ListAsync();
+
+        summary.Outstanding.Should().Be(63_000m);
+        summary.Claims.Single(c => c.Id == voided.Id).LeaveCancelled.Should().BeTrue();
+        summary.Claims.Single(c => c.Id == advanced.Id).LeaveCancelled.Should().BeFalse();
+    }
+
+    // ── Moving a claim to refiled leave ──────────────────────────────────────
+
+    private LeaveRequest Refiled(Employee? employee = null, LeaveStatus status = LeaveStatus.Approved, bool maternity = true,
+        bool hasClaim = false)
+    {
+        var request = ARequest(maternity, status, new DateOnly(2026, 8, 17), employee);
+        request.TotalDays = 120m;
+        _leaveRequests.Setup(r => r.GetByIdAsync(request.Id, It.IsAny<CancellationToken>())).ReturnsAsync(request);
+        _claims.Setup(c => c.GetByLeaveRequestAsync(request.Id, It.IsAny<CancellationToken>()))
+               .ReturnsAsync(hasClaim ? new MaternityClaim { LeaveRequestId = request.Id } : null);
+        return request;
+    }
+
+    [Theory]
+    [InlineData(LeaveStatus.Cancelled)]
+    [InlineData(LeaveStatus.Rejected)]
+    public async Task Relink_ADraftClaim_MovesToTheRefiledLeave_TakesItsDays_AndRecomputesTheBenefit(LeaveStatus ownLeave)
+    {
+        var claim = AClaim(allowance: 666.67m, benefit: 70_000.35m, request: ARequest(status: ownLeave));
+        var refiled = Refiled();
+
+        var dto = await _sut.RelinkAsync(claim.Id, new RelinkRequest(refiled.Id));
+
+        // 666.67 x 120 = 80,000.40.
+        claim.LeaveRequestId.Should().Be(refiled.Id);
+        claim.LeaveRequest.Should().BeSameAs(refiled);
+        claim.Days.Should().Be(120m);
+        claim.Benefit.Should().Be(80_000.40m);
+        dto.LeaveStart.Should().Be(new DateOnly(2026, 8, 17));
+        dto.Days.Should().Be(120m);
+        dto.LeaveCancelled.Should().BeFalse();
+        _claims.Verify(c => c.UpdateAsync(claim, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(MaternityClaimStatus.Advanced)]
+    [InlineData(MaternityClaimStatus.Reimbursed)]
+    public async Task Relink_AClaimAlreadyPaidOut_KeepsTheBenefitThatWasPaid(MaternityClaimStatus status)
+    {
+        var claim = AClaim(status, 666.67m, 70_000.35m, ARequest(status: LeaveStatus.Cancelled));
+        var refiled = Refiled();
+
+        await _sut.RelinkAsync(claim.Id, new RelinkRequest(refiled.Id));
+
+        claim.LeaveRequestId.Should().Be(refiled.Id);
+        claim.Days.Should().Be(120m);
+        claim.Benefit.Should().Be(70_000.35m);
+    }
+
+    [Theory]
+    [InlineData(LeaveStatus.Approved)]
+    [InlineData(LeaveStatus.Pending)]
+    public async Task Relink_AClaimWhoseLeaveStands_IsRefused(LeaveStatus ownLeave)
+    {
+        var claim = AClaim(allowance: 666.67m, benefit: 70_000.35m, request: ARequest(status: ownLeave));
+        var refiled = Refiled();
+
+        var act = () => _sut.RelinkAsync(claim.Id, new RelinkRequest(refiled.Id));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Only a claim whose leave was cancelled can be moved.");
+        claim.LeaveRequestId.Should().NotBe(refiled.Id);
+    }
+
+    public static TheoryData<string> UnsuitableTargets => new()
+    {
+        "another employee's", "not approved", "not maternity", "already claimed", "missing"
+    };
+
+    [Theory]
+    [MemberData(nameof(UnsuitableTargets))]
+    public async Task Relink_ToLeaveThatIsNotAnUnclaimedApprovedMaternityLeaveOfHers_IsRefused(string target)
+    {
+        var claim = AClaim(allowance: 666.67m, benefit: 70_000.35m, request: ARequest(status: LeaveStatus.Cancelled));
+        var targetId = target switch
+        {
+            "another employee's" => Refiled(employee: new Employee { FirstName = "Ana", LastName = "Cruz" }).Id,
+            "not approved" => Refiled(status: LeaveStatus.Pending).Id,
+            "not maternity" => Refiled(maternity: false).Id,
+            "already claimed" => Refiled(hasClaim: true).Id,
+            _ => Guid.NewGuid()
+        };
+
+        var act = () => _sut.RelinkAsync(claim.Id, new RelinkRequest(targetId));
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("Choose an approved maternity leave of the same employee that has no claim.");
+        claim.Days.Should().Be(105m);
+        _claims.Verify(c => c.UpdateAsync(It.IsAny<MaternityClaim>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 
     [Fact]
     public async Task Suggest_ReadsEachMonthOfTheWindowBeforeTheSemesterOfContingency()

@@ -171,6 +171,9 @@ public class PermissionEquivalenceTests
         ["MaternityClaimsController.SetAllowance"] = [Permissions.PayrollManage],
         ["MaternityClaimsController.Reimburse"] = [Permissions.PayrollManage],
         ["MaternityClaimsController.Deny"] = [Permissions.PayrollManage],
+        // Voiding a draft claim, and moving a claim to the leave refiled after its own was cancelled.
+        ["MaternityClaimsController.Void"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.Relink"] = [Permissions.PayrollManage],
 
         // GET and PUT api/payroll-settings/default: the settings row payroll computes from, read and
         // changed without naming its company - managing payroll settings, like the per-company pair.

@@ -7,10 +7,15 @@ namespace PeopleCore.Application.Payroll.Maternity;
 /// On a Draft claim in the list, the unpaid run that advances its benefit (its allowance is locked
 /// until that run is paid or discarded). Null otherwise, and on the claim a command answers with.
 /// </param>
+/// <param name="LeaveCancelled">
+/// The claim's leave request was cancelled or rejected, so the claim can be moved to the leave the
+/// employee refiled (<see cref="RelinkRequest"/>).
+/// </param>
 public record MaternityClaimDto(Guid Id, Guid LeaveRequestId, Guid EmployeeId, string EmployeeName,
     DateOnly LeaveStart, DateOnly LeaveEnd, decimal Days, decimal? DailyAllowance, decimal Benefit,
     MaternityClaimStatus Status, Guid? AdvanceRunId, string? AdvanceRunNumber, DateOnly? AdvancedAt,
-    DateOnly? ReimbursedOn, decimal? ReimbursedAmount, string? Note, string? CarriedByRunNumber = null);
+    DateOnly? ReimbursedOn, decimal? ReimbursedAmount, string? Note, string? CarriedByRunNumber = null,
+    bool LeaveCancelled = false);
 
 /// <summary>
 /// The SSS daily maternity allowance worked out from paid payroll: the 6 highest monthly salary
@@ -30,6 +35,12 @@ public record ReimburseRequest(DateOnly ReimbursedOn, decimal ReimbursedAmount, 
 /// non-nullable one would be [Required] to MVC, answered with a validation error that has no detail.
 /// </summary>
 public record DenyRequest(string? Note);
+
+/// <summary>Why a Draft claim is voided. Nullable for the same reason as <see cref="DenyRequest"/>.</summary>
+public record VoidRequest(string? Note);
+
+/// <summary>The approved maternity leave, of the same employee and with no claim, to move a claim to.</summary>
+public record RelinkRequest(Guid LeaveRequestId);
 
 /// <summary>Every claim, newest first, and the benefit advanced but not yet reimbursed or denied.</summary>
 public record MaternityClaimsSummaryDto(IReadOnlyList<MaternityClaimDto> Claims, decimal Outstanding);

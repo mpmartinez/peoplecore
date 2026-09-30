@@ -10,6 +10,7 @@ public class MaternityLabelsTests
     [InlineData(MaternityClaimStatus.Advanced, "Advanced", "warning")]
     [InlineData(MaternityClaimStatus.Reimbursed, "Reimbursed", "success")]
     [InlineData(MaternityClaimStatus.Denied, "Denied", "destructive")]
+    [InlineData(MaternityClaimStatus.Voided, "Voided", "outline")]
     public void EachStatus_HasAWord_AndABadge(MaternityClaimStatus status, string label, string variant)
     {
         MaternityLabels.StatusOf(status).Should().Be(label);

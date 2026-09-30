@@ -53,6 +53,21 @@ public sealed class MaternityPayCalculator : IMaternityPayCalculator
     public async Task EnsureAdvancesCurrentAsync(PayrollRun run, CancellationToken ct = default)
         => await AdvancedClaimsAsync(run, "recompute it before approving.", ct);
 
+    public async Task EnsureClaimsSetUpAsync(PayrollRun run, bool exempt, CancellationToken ct = default)
+    {
+        if (exempt || run.Employees.Count == 0)
+            return;
+        var data = await LoadAsync(run, run.Employees.Select(e => e.EmployeeId).ToList(), lookUpNames: false, ct);
+        foreach (var entry in run.Employees.OrderBy(e => data.NameOf(e.EmployeeId, e.Employee?.FullName), StringComparer.CurrentCulture))
+        {
+            int days = data.DaysWithoutAllowance(entry.EmployeeId);
+            if (days > 0)
+                throw new DomainException(
+                    $"Set up {data.NameOf(entry.EmployeeId, entry.Employee?.FullName)}'s maternity claim before approving; " +
+                    $"this payroll covers {days} maternity day(s).");
+        }
+    }
+
     public async Task<IReadOnlyList<MaternityClaim>> SettleAdvancesAsync(PayrollRun run, CancellationToken ct = default)
     {
         // An approved regular run can't be recomputed, so the way out is a new run. The allowance
@@ -173,9 +188,13 @@ public sealed class MaternityRun
         _names = names;
     }
 
-    /// <summary>A claim that can be advanced: Draft, with the SSS daily allowance set.</summary>
+    /// <summary>
+    /// A claim that can be advanced: Draft, with the SSS daily allowance set, for leave that is still
+    /// Approved - a claim whose leave was cancelled or rejected waits to be moved to the refiled leave.
+    /// </summary>
     internal static bool IsReady(MaternityClaim claim)
-        => claim.Status == MaternityClaimStatus.Draft && claim.DailyAllowance is not null;
+        => claim.Status == MaternityClaimStatus.Draft && claim.DailyAllowance is not null
+           && claim.LeaveRequest is { Status: LeaveStatus.Approved };
 
     /// <summary>
     /// One employee's figures. The advance is the benefit of their ready claim, earliest leave first,
@@ -189,9 +208,9 @@ public sealed class MaternityRun
             return MaternityPay.None;
 
         var advanced = advanceRequested ? ClaimToAdvance(employeeId) : null;
-        var (offset, differential) = Offset(employeeId, regularPayBeforeOffset, exempt);
-        return new MaternityPay(advanced?.Benefit ?? 0m, offset, WarningsFor(employeeId, advanced?.Id), advanced?.Id,
-            differential);
+        var (offset, differential, offsetClaim) = Offset(employeeId, regularPayBeforeOffset, exempt);
+        return new MaternityPay(advanced?.Benefit ?? 0m, offset, WarningsFor(employeeId, advanced?.Id),
+            advanced?.Id ?? (offset > 0m ? offsetClaim : null), differential);
     }
 
     /// <summary>
@@ -236,7 +255,7 @@ public sealed class MaternityRun
         // that ended earlier is an earlier pregnancy's, and a denied claim no run advanced has no run
         // to name: then there is simply nothing ready.
         var advancedForCurrentLeave = claims
-            .Where(c => c.Status != MaternityClaimStatus.Draft
+            .Where(c => c.Status is not (MaternityClaimStatus.Draft or MaternityClaimStatus.Voided)
                         && (c.LeaveRequest is null || c.LeaveRequest.EndDate >= _run!.PeriodStart)
                         && c.AdvanceRun is not null)
             .OrderByDescending(c => c.AdvancedAt)
@@ -255,30 +274,41 @@ public sealed class MaternityRun
     /// there is no differential. Otherwise the days are the ones a claim with an allowance covers:
     /// SSS covers each claim's daily allowance for its days, never more than those days' pay, so the
     /// pay for days outside the leave is never reduced. Days whose claim has no allowance yet are
-    /// left as ordinary pay - no offset and no differential - and warned about.
+    /// left as ordinary pay - no offset and no differential - and warned about. The claim returned is
+    /// the one whose leave the offset nets first (by start date), for the entry to record.
     /// </summary>
-    private (decimal Offset, decimal Differential) Offset(Guid employeeId, decimal regularPay, bool exempt)
+    private (decimal Offset, decimal Differential, Guid? ClaimId) Offset(Guid employeeId, decimal regularPay, bool exempt)
     {
         var days = OwnDaysInPeriod(employeeId);
         int periodDays = _run!.PeriodEnd.DayNumber - _run.PeriodStart.DayNumber + 1;
         if (exempt)
-            return (MaternityMath.ExemptOffset(regularPay, days.Sum(d => d.Days), periodDays), 0m);
+            return (MaternityMath.ExemptOffset(regularPay, days.Sum(d => d.Days), periodDays), 0m,
+                days.Where(d => d.Days > 0).Select(d => ClaimFor(d.Request)?.Id).FirstOrDefault(id => id is not null));
 
         int coveredDays = 0;
         decimal covered = 0m;
+        Guid? claimId = null;
         foreach (var (request, own) in days)
-            if (own > 0 && ClaimFor(request)?.DailyAllowance is decimal allowance)
+            if (own > 0 && ClaimFor(request) is { DailyAllowance: decimal allowance } claim)
             {
                 coveredDays += own;
                 covered += MaternityMath.Benefit(allowance, own);
+                claimId ??= claim.Id;
             }
         if (coveredDays == 0)
-            return (0m, 0m);
+            return (0m, 0m, null);
 
         var pay = MaternityMath.MaternityDaysPay(regularPay, coveredDays, periodDays);
         var offset = Math.Min(pay, covered);
-        return (offset, MaternityMath.Differential(pay, offset));
+        return (offset, MaternityMath.Differential(pay, offset), claimId);
     }
+
+    /// <summary>
+    /// The employee's maternity days in the period that no claim with an allowance covers - the days
+    /// approval refuses to pay as ordinary salary.
+    /// </summary>
+    internal int DaysWithoutAllowance(Guid employeeId)
+        => _run is null ? 0 : OwnDaysInPeriod(employeeId).Where(d => ClaimFor(d.Request)?.DailyAllowance is null).Sum(d => d.Days);
 
     /// <summary>
     /// Each request's leave days in the period that no earlier request (by start date) already
@@ -302,8 +332,10 @@ public sealed class MaternityRun
         return result;
     }
 
+    /// <summary>The request's claim, unless it was voided: a voided claim covers nothing.</summary>
     private MaternityClaim? ClaimFor(LeaveRequest request)
-        => _claims[request.EmployeeId].FirstOrDefault(c => c.LeaveRequestId == request.Id);
+        => _claims[request.EmployeeId].FirstOrDefault(c => c.LeaveRequestId == request.Id
+                                                           && c.Status != MaternityClaimStatus.Voided);
 
     private int DaysInPeriod(LeaveRequest request)
         => MaternityMath.DaysInPeriod(request.StartDate, request.EndDate, _run!.PeriodStart, _run.PeriodEnd);

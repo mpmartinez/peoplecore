@@ -22,15 +22,20 @@ public static class MaternityLabels
         MaternityClaimStatus.Advanced => "Advanced",
         MaternityClaimStatus.Reimbursed => "Reimbursed",
         MaternityClaimStatus.Denied => "Denied",
+        MaternityClaimStatus.Voided => "Voided",
         _ => status.ToString()
     };
 
-    /// <summary>Advanced is money SSS still owes; Reimbursed is settled; Denied is money that won't come back.</summary>
+    /// <summary>
+    /// Advanced is money SSS still owes; Reimbursed is settled; Denied is money that won't come back;
+    /// Voided was withdrawn and counts for nothing.
+    /// </summary>
     public static string StatusVariant(MaternityClaimStatus status) => status switch
     {
         MaternityClaimStatus.Advanced => "warning",
         MaternityClaimStatus.Reimbursed => "success",
         MaternityClaimStatus.Denied => "destructive",
+        MaternityClaimStatus.Voided => "outline",
         _ => "secondary"
     };
 

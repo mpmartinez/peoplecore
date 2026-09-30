@@ -366,6 +366,73 @@ public class MaternityPayDbTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task TheAllowance_IsLockedOnceAPaidRunNettedIt()
+    {
+        var (maria, claimId) = await MariaWithAReadyClaimAsync();
+        // Aug 1-15 nets 4,000.02 of the allowance off her pay and records the claim it netted.
+        var august = await CreateAsync(Cutoff(maria.Id, 8, 1, 15, new DateOnly(2026, 8, 20), advance: false));
+        await using (var reader = NewContext())
+            (await reader.PayrollRunEmployees.SingleAsync(e => e.PayrollRunId == august.Id)).MaternityClaimId.Should().Be(claimId);
+
+        async Task SetAllowance()
+        {
+            await using var context = NewContext();
+            await Claims(context).SetAllowanceAsync(claimId, new SetAllowanceRequest(600m));
+        }
+
+        // Unpaid, the run can still be recomputed with a new allowance.
+        await SetAllowance();
+        await using (var context = NewContext())
+            await Claims(context).SetAllowanceAsync(claimId, new SetAllowanceRequest(666.67m));
+        await using (var context = NewContext())
+            await Payroll(context).ComputeAsync(august.Id);
+        await ApproveAndPayAsync(august.Id);
+
+        await FluentActions.Awaiting(SetAllowance).Should().ThrowAsync<DomainException>()
+            .WithMessage($"{august.RunNumber} already netted this allowance; it can't change now.");
+        (await ClaimAsync(claimId)).DailyAllowance.Should().Be(666.67m);
+    }
+
+    [Fact]
+    public async Task AClaimWhoseLeaveWasCancelled_MovesToTheRefiledLeave_AndIsReadyAgain()
+    {
+        var (maria, claimId) = await MariaWithAReadyClaimAsync();
+        var claim = await ClaimAsync(claimId);
+        LeaveRequest refiled;
+        await using (var context = NewContext())
+        {
+            var original = await context.LeaveRequests.SingleAsync(r => r.Id == claim.LeaveRequestId);
+            original.Status = LeaveStatus.Cancelled;
+            refiled = new LeaveRequest
+            {
+                EmployeeId = maria.Id, LeaveTypeId = original.LeaveTypeId, StartDate = new DateOnly(2026, 8, 17),
+                EndDate = new DateOnly(2026, 12, 14), TotalDays = 120m, Status = LeaveStatus.Approved
+            };
+            context.LeaveRequests.Add(refiled);
+            await context.SaveChangesAsync();
+        }
+        await using (var context = NewContext())
+            (await Claims(context).ReadyEmployeeIdsAsync()).Should().BeEmpty("her claim's leave was cancelled");
+
+        await using (var context = NewContext())
+        {
+            var moved = await Claims(context).RelinkAsync(claimId, new RelinkRequest(refiled.Id));
+            moved.LeaveStart.Should().Be(new DateOnly(2026, 8, 17));
+        }
+
+        // 666.67 x 120 = 80,000.40, recomputed for a Draft claim.
+        var after = await ClaimAsync(claimId);
+        after.LeaveRequestId.Should().Be(refiled.Id);
+        after.Days.Should().Be(120m);
+        after.Benefit.Should().Be(80_000.40m);
+        await using (var context = NewContext())
+        {
+            (await Claims(context).ReadyEmployeeIdsAsync()).Should().Equal(maria.Id);
+            (await Claims(context).EligibleAsync()).Should().BeEmpty("the refiled leave has the claim now");
+        }
+    }
+
+    [Fact]
     public async Task TheRunsWarnings_AreRebuiltOnEveryLoad()
     {
         var (maria, _) = await MariaWithAReadyClaimAsync();
