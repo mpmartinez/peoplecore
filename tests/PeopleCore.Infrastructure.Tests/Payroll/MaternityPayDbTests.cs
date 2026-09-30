@@ -402,10 +402,6 @@ public class MaternityPayDbTests : DatabaseTestBase
         var (maria, claimId) = await MariaWithAReadyClaimAsync();
         var august = await CreateAsync(Cutoff(maria.Id, 8, 1, 15, new DateOnly(2026, 8, 20), advance: false));
         august.Employees.Single().MaternityBenefitOffset.Should().Be(4_000.02m);
-        // While it nets the allowance, the claim can't be marked not qualified either.
-        await using (var context = NewContext())
-            await FluentActions.Awaiting(() => Claims(context).MarkNotQualifiedAsync(claimId, new NotQualifiedRequest("No contributions")))
-                .Should().ThrowAsync<DomainException>().WithMessage($"{august.RunNumber} nets this allowance; discard it or pay it first.");
         await using (var context = NewContext())
             await Payroll(context).ApproveAsync(august.Id);
 
@@ -553,14 +549,35 @@ public class MaternityPayDbTests : DatabaseTestBase
             await Claims(context).SetAllowanceAsync(claimId, new SetAllowanceRequest(600m));
         }
 
-        // While the run is unpaid its offset stands on this allowance: pay it (or discard it) first.
-        await FluentActions.Awaiting(SetAllowance).Should().ThrowAsync<DomainException>()
-            .WithMessage($"{august.RunNumber} nets this allowance; discard it or pay it first.");
+        // Approved, but not paid: the allowance can still be corrected (a typo, say). The run's
+        // 4,000.02 offset then no longer matches, so Mark Paid sends it back for a recompute.
+        await using (var context = NewContext())
+            await Payroll(context).ApproveAsync(august.Id);
+        await SetAllowance();
+        async Task Pay()
+        {
+            await using var context = NewContext();
+            await Payroll(context).MarkPaidAsync(august.Id);
+        }
+        await FluentActions.Awaiting(Pay).Should().ThrowAsync<DomainException>().WithMessage(
+            "Maria Santos's maternity claim has changed since this payroll was computed; recompute it before paying.");
+
+        // Recomputed at 600 a day: 600 x 6 = 3,600.00 offset, 6,000.00 - 3,600.00 = 2,400.00
+        // differential, 15,000 - 3,600 = 11,400.00 regular pay. Then approved and paid.
+        await using (var context = NewContext())
+            await Payroll(context).ComputeAsync(august.Id);
+        await using (var reader = NewContext())
+        {
+            var entry = await reader.PayrollRunEmployees.SingleAsync(e => e.PayrollRunId == august.Id);
+            entry.MaternityBenefitOffset.Should().Be(3_600m);
+            entry.MaternityDifferential.Should().Be(2_400m);
+            entry.RegularPay.Should().Be(11_400m);
+        }
         await ApproveAndPayAsync(august.Id);
 
         await FluentActions.Awaiting(SetAllowance).Should().ThrowAsync<DomainException>()
             .WithMessage($"{august.RunNumber} already netted this allowance; it can't change now.");
-        (await ClaimAsync(claimId)).DailyAllowance.Should().Be(666.67m);
+        (await ClaimAsync(claimId)).DailyAllowance.Should().Be(600m);
     }
 
     [Fact]

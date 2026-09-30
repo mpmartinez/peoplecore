@@ -150,7 +150,10 @@ public sealed class MaternityPayCalculator : IMaternityPayCalculator
             claims.TryGetValue(entry.MaternityClaimId!.Value, out var claim);
             if (claim is { Status: not MaternityClaimStatus.Draft })
                 continue;
-            if (claim is null || claim.DailyAllowance is null || claim.Benefit != entry.MaternityBenefitAdvance)
+            // Its leave cancelled or rejected since: the run would pay a benefit for leave that no
+            // longer stands.
+            if (claim is null || claim.DailyAllowance is null || claim.Benefit != entry.MaternityBenefitAdvance
+                || MaternityRun.IsWithdrawn(claim))
                 return (entry, await NameAsync(entry, claim?.Employee?.FullName, ct));
         }
         return null;
@@ -316,6 +319,12 @@ public sealed class MaternityRun
         if (advancedForCurrentLeave is not null)
             throw MaternityPayCalculator.AlreadyAdvanced(name, advancedForCurrentLeave.AdvanceRun!.RunNumber);
 
+        // A claim that would be ready but for its leave, cancelled or rejected since: the way on is to
+        // move it to the leave she refiled, or to take her off this payroll.
+        if (claims.Any(c => c.Status == MaternityClaimStatus.Draft && c.DailyAllowance is not null && IsWithdrawn(c)))
+            throw new DomainException(
+                $"{name}'s maternity leave was cancelled; move her claim to the refiled leave, or take her off this payroll.");
+
         throw new DomainException($"{name} has no maternity claim ready to advance.");
     }
 
@@ -397,6 +406,10 @@ public sealed class MaternityRun
         }
         return result;
     }
+
+    /// <summary>The claim's leave was cancelled or rejected after the claim was opened for it.</summary>
+    internal static bool IsWithdrawn(MaternityClaim claim)
+        => claim.LeaveRequest is { Status: LeaveStatus.Cancelled or LeaveStatus.Rejected };
 
     /// <summary>The request's claim, unless it was voided: a voided claim covers nothing.</summary>
     private MaternityClaim? ClaimFor(LeaveRequest request)

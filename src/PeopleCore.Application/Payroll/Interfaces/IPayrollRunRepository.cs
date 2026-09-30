@@ -202,12 +202,6 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     Task<IReadOnlyList<string>> GetPaidRunsNettingMaternityClaimAsync(Guid claimId, CancellationToken ct = default);
 
     /// <summary>
-    /// The runs not yet Paid whose entries record the claim with an offset above zero - its allowance
-    /// is what they net. Run numbers, earliest pay date first.
-    /// </summary>
-    Task<IReadOnlyList<string>> GetUnpaidRunsNettingMaternityClaimAsync(Guid claimId, CancellationToken ct = default);
-
-    /// <summary>
     /// <see cref="GetPaidRunsNettingMaternityClaimAsync"/> for many claims at once: one row per claim
     /// and Paid run that netted it, earliest pay date first.
     /// </summary>

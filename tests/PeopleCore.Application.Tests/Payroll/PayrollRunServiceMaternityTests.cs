@@ -317,6 +317,42 @@ public partial class PayrollRunServiceTests
         await act.Should().ThrowAsync<DomainException>().WithMessage(
             "Maria Santos's maternity claim has changed since this payroll was computed; recompute it before paying.");
         VerifyNothingSavedAsPaid();
+
+        // The way out: recompute (back to Draft, now 600 x 6 = 3,600.00 off), approve, pay.
+        RecomputesInPlace();
+        await MaternitySut.ComputeAsync(savedRun()!.Id);
+        savedRun()!.Status.Should().Be(PayrollRunStatus.Draft);
+        savedRun()!.Employees.Single().MaternityBenefitOffset.Should().Be(3_600m);
+        await MaternitySut.ApproveAsync(savedRun()!.Id);
+        await MaternitySut.MarkPaidAsync(savedRun()!.Id);
+        savedRun()!.Status.Should().Be(PayrollRunStatus.Paid);
+    }
+
+    [Fact]
+    public async Task AnAdvanceOnARunWhoseClaimsLeaveWasCancelled_IsRefusedAtMarkPaid_AndTheRecomputeSaysTheWayOut()
+    {
+        // Jul 16-31 advances her 70,000.35 and is approved; then her leave is cancelled. The run
+        // can't pay an advance for leave that no longer stands, and a recompute can't advance it
+        // either: HR moves the claim to the refiled leave, or takes her off the payroll.
+        var (maria, _, claim, savedRun) = MariaOnMaternityLeave();
+        await MaternitySut.CreateAsync(new CreatePayrollRunRequest(
+            new DateOnly(2026, 7, 16), new DateOnly(2026, 7, 31), new DateOnly(2026, 8, 5), PayFrequency.SemiMonthly,
+            [new PayrollRunEmployeeInput(maria.Id, AdvanceMaternityBenefit: true)]));
+        savedRun()!.Status = PayrollRunStatus.Approved;
+        savedRun()!.Employees.Single().Employee = maria;
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        RecomputesInPlace();
+        claim!.LeaveRequest.Status = LeaveStatus.Cancelled;
+
+        var pay = () => MaternitySut.MarkPaidAsync(savedRun()!.Id);
+        var recompute = () => MaternitySut.ComputeAsync(savedRun()!.Id);
+
+        await pay.Should().ThrowAsync<DomainException>().WithMessage(
+            "Maria Santos's maternity claim has changed since this payroll was computed; recompute it before paying.");
+        await recompute.Should().ThrowAsync<DomainException>().WithMessage(
+            "Maria Santos's maternity leave was cancelled; move her claim to the refiled leave, or take her off this payroll.");
+        claim.Status.Should().Be(MaternityClaimStatus.Draft);
+        VerifyNothingSavedAsPaid();
     }
 
     [Fact]

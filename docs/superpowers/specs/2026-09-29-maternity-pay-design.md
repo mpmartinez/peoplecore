@@ -45,10 +45,10 @@ Rules:
 - **Setting the allowance:** only while `Draft`; must be > 0; rounded to 2 dp; never above the
   statutory maximum, 20,000 x 6 / 180 = 666.67 ("The SSS daily maternity allowance can't exceed
   ₱666.67."). Refused while an unpaid run advances the benefit ("{RunNumber} advances this benefit;
-  discard it or pay it first."), while an unpaid run records an offset for the claim ("{RunNumber}
-  nets this allowance; discard it or pay it first.") and once any Paid run has netted an offset for
-  the claim ("{RunNumber} already netted this allowance; it can't change now."). Marking the claim not
-  SSS-qualified has the same unpaid-run lock.
+  discard it or pay it first.") and once any Paid run has netted an offset for the claim ("{RunNumber}
+  already netted this allowance; it can't change now."). Under an unpaid run that offsets the claim
+  the allowance can still be corrected: that run's offset no longer matches, so approval and Mark
+  Paid refuse it until it is recomputed (as they do after marking the claim not SSS-qualified).
 - **Suggested allowance:** the SSS formula - the 6 highest monthly salary credits (MSC) in the 12
   months before the semester of contingency, divided by 180. The semester is the two quarters
   ending with the quarter of the leave's start date. MSCs come from the employee's Paid runs (final
@@ -92,7 +92,10 @@ Rules:
 - A regular payroll (`PayrollRunEmployeeInput.AdvanceMaternityBenefit`) or a final pay
   (`FinalPayRequest.AdvanceMaternityBenefit`, default false) can advance an employee's benefit.
 - It is refused unless the employee has a ready claim: "{name} has no maternity claim ready to
-  advance." And only once: "{name}'s maternity benefit was already advanced on {RunNumber}."
+  advance." - or, when her only would-be ready claim's leave was cancelled or rejected, "{name}'s
+  maternity leave was cancelled; move her claim to the refiled leave, or take her off this payroll."
+  (what a recompute of a run carrying that advance answers; approval and Mark Paid treat the advance
+  as changed). And only once: "{name}'s maternity benefit was already advanced on {RunNumber}."
 - The entry records `MaternityBenefitAdvance` = the claim's `Benefit` and the claim
   (`MaternityClaimId`). It is tax-free, stays out of the withholding base, the contribution base and
   the 13th month, and is added to gross pay (not to the employer's cost).

@@ -238,33 +238,6 @@ public class MaternityClaimServiceTests
     }
 
     [Fact]
-    public async Task SetAllowance_WhileAnUnpaidRunNetsIt_IsRefused()
-    {
-        // PAY-2026-017 (not paid yet) offsets her Aug 1-15 leave days at this allowance.
-        var claim = AClaim(allowance: 666.67m, benefit: 70_000.35m);
-        _runs.Setup(r => r.GetUnpaidRunsNettingMaternityClaimAsync(claim.Id, It.IsAny<CancellationToken>()))
-             .ReturnsAsync(["PAY-2026-017"]);
-
-        var act = () => _sut.SetAllowanceAsync(claim.Id, new SetAllowanceRequest(600m));
-
-        await act.Should().ThrowAsync<DomainException>().WithMessage("PAY-2026-017 nets this allowance; discard it or pay it first.");
-        claim.DailyAllowance.Should().Be(666.67m);
-    }
-
-    [Fact]
-    public async Task MarkNotQualified_WhileAnUnpaidRunNetsIt_IsRefused()
-    {
-        var claim = AClaim(allowance: 666.67m, benefit: 70_000.35m);
-        _runs.Setup(r => r.GetUnpaidRunsNettingMaternityClaimAsync(claim.Id, It.IsAny<CancellationToken>()))
-             .ReturnsAsync(["PAY-2026-017"]);
-
-        var act = () => _sut.MarkNotQualifiedAsync(claim.Id, new NotQualifiedRequest("No contributions"));
-
-        await act.Should().ThrowAsync<DomainException>().WithMessage("PAY-2026-017 nets this allowance; discard it or pay it first.");
-        claim.Status.Should().Be(MaternityClaimStatus.Draft);
-    }
-
-    [Fact]
     public async Task SetAllowance_OnceAPaidRunNettedIt_IsRefused()
     {
         // PAY-2026-016 (Paid) took 4,000.02 off Maria's Aug 1-15 pay with this allowance; changing

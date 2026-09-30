@@ -219,7 +219,7 @@ public class MaternityPayCalculatorTests
     [Theory]
     [InlineData(LeaveStatus.Cancelled)]
     [InlineData(LeaveStatus.Rejected)]
-    public async Task TheAdvance_OnAClaimWhoseLeaveIsNoLongerApproved_IsRefused_AsNoneReady(LeaveStatus status)
+    public async Task TheAdvance_OnAClaimWhoseLeaveIsNoLongerApproved_IsRefused_PointingAtTheWayOut(LeaveStatus status)
     {
         // Refiled leave: the claim is still Draft with its allowance, but its leave was withdrawn.
         AClaim();
@@ -227,7 +227,23 @@ public class MaternityPayCalculatorTests
 
         var act = () => ForAsync(Cutoff(7, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
 
-        await act.Should().ThrowAsync<DomainException>().WithMessage("Maria Santos has no maternity claim ready to advance.");
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Maria Santos's maternity leave was cancelled; move her claim to the refiled leave, or take her off this payroll.");
+    }
+
+    [Fact]
+    public async Task AnEntryAdvancingAClaimWhoseLeaveWasCancelled_IsStale()
+    {
+        var claim = AClaim();
+        _leaveRequest.Status = LeaveStatus.Cancelled;
+        var run = Cutoff(7, 16, 31);
+        run.Employees.Add(new PayrollRunEmployee
+        {
+            EmployeeId = _maria.Id, Employee = _maria, AdvanceMaternityBenefit = true, MaternityBenefitAdvance = 70_000.35m,
+            MaternityClaimId = claim.Id
+        });
+
+        (await _sut.EntryNotMatchingClaimsAsync(run, exempt: false))!.EmployeeId.Should().Be(_maria.Id);
     }
 
     [Fact]
