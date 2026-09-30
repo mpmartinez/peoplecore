@@ -68,7 +68,7 @@ on that run's page. It is a warning, not a block.
 
 - Create, edit and delete at any time (`payroll.manage`).
 - On save, when a Paid run of that year for her has already relied on the figures (any Paid run of
-  hers in `Year` with a `PayDate` after `ThroughDate`), the page warns: "{RunNumber} used these figures; its 13th month and tax won't change. Reissue her
+  hers in `Year` with a `PayDate` after `ThroughDate`), the page warns: "{RunNumber} used these figures; its 13th month and tax won't change. Reissue the
   2316 to pick up the change." Paid runs are never recomputed.
 - Validation: "Enter a year." / "The through date must fall in {Year}." / "Amounts can't be
   negative." / "Contributions can't be more than the basic salary." / "De minimis leave days must

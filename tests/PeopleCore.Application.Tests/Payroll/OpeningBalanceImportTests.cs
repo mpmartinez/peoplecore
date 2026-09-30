@@ -464,9 +464,9 @@ public class OpeningBalanceImportTests
         result.Errors.Should().BeEmpty();
         result.Warnings.Should().Equal(
             "E-001: Maria Santos's opening balance already covers pay through Mar 31, 2026; PAY-2026-005 was paid on Mar 20, 2026.",
-            "E-001 Maria Santos: PAY-2026-007 used these figures; its 13th month and tax won't change. Reissue her 2316 to pick up the change.",
-            "E-002 Jose Cruz: PAY-2026-005 used these figures; its 13th month and tax won't change. Reissue her 2316 to pick up the change.",
-            "E-002 Jose Cruz: PAY-2026-007 used these figures; its 13th month and tax won't change. Reissue her 2316 to pick up the change.");
+            "E-001 Maria Santos: PAY-2026-007 used these figures; its 13th month and tax won't change. Reissue the 2316 to pick up the change.",
+            "E-002 Jose Cruz: PAY-2026-005 used these figures; its 13th month and tax won't change. Reissue the 2316 to pick up the change.",
+            "E-002 Jose Cruz: PAY-2026-007 used these figures; its 13th month and tax won't change. Reissue the 2316 to pick up the change.");
     }
 
     [Fact]

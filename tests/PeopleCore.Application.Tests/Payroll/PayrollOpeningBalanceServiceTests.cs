@@ -279,8 +279,8 @@ public class PayrollOpeningBalanceServiceTests
         var dto = await _sut.CreateAsync(ARequest());
 
         dto.Warnings.Should().Equal(
-            "PAY-2026-007 used these figures; its 13th month and tax won't change. Reissue her 2316 to pick up the change.",
-            "PAY-2026-008 used these figures; its 13th month and tax won't change. Reissue her 2316 to pick up the change.");
+            "PAY-2026-007 used these figures; its 13th month and tax won't change. Reissue the 2316 to pick up the change.",
+            "PAY-2026-008 used these figures; its 13th month and tax won't change. Reissue the 2316 to pick up the change.");
     }
 
     [Fact]
@@ -292,7 +292,7 @@ public class PayrollOpeningBalanceServiceTests
         var dto = await _sut.UpdateAsync(balance.Id, ARequest(tax: 5_000m));
 
         dto.Warnings.Should().Equal(
-            "PAY-2026-007 used these figures; its 13th month and tax won't change. Reissue her 2316 to pick up the change.");
+            "PAY-2026-007 used these figures; its 13th month and tax won't change. Reissue the 2316 to pick up the change.");
     }
 
     [Fact]
@@ -360,7 +360,7 @@ public class PayrollOpeningBalanceServiceTests
 
         dto.Warnings.Should().Equal(
             "Maria Reyes Santos's opening balance already covers pay through Mar 31, 2026; PAY-2026-005 was paid on Mar 15, 2026.",
-            "PAY-2026-007 used these figures; its 13th month and tax won't change. Reissue her 2316 to pick up the change.");
+            "PAY-2026-007 used these figures; its 13th month and tax won't change. Reissue the 2316 to pick up the change.");
     }
 
     // ── Get, update, delete ──────────────────────────────────────────────────

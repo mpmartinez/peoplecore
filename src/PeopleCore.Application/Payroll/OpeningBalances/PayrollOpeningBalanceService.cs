@@ -206,7 +206,7 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
     private static IEnumerable<string> EditWarnings(PayrollOpeningBalance balance, IEnumerable<PayrollRun> runs)
         => runs.Where(r => r.PayDate > balance.ThroughDate)
             .Select(r => $"{r.RunNumber} used these figures; its 13th month and tax won't change. " +
-                         "Reissue her 2316 to pick up the change.");
+                         "Reissue the 2316 to pick up the change.");
 
     /// <summary>The Paid runs in the balance's year that paid its employee, earliest pay date first.</summary>
     private static List<PayrollRun> RunsOf(PayrollOpeningBalance balance, IReadOnlyList<PayrollRun>? paidRuns)

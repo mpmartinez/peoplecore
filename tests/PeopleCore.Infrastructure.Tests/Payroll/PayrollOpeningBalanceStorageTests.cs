@@ -216,15 +216,15 @@ public class PayrollOpeningBalanceStorageTests : DatabaseTestBase
         created.EmployeeNumber.Should().Be(employee.EmployeeNumber);
         created.Warnings.Should().Equal(
             "Maria Santos's opening balance already covers pay through Mar 31, 2026; PAY-2026-005 was paid on Mar 20, 2026.",
-            "PAY-2026-007 used these figures; its 13th month and tax won't change. Reissue her 2316 to pick up the change.");
+            "PAY-2026-007 used these figures; its 13th month and tax won't change. Reissue the 2316 to pick up the change.");
 
         var updated = await Service(NewContext()).UpdateAsync(created.Id, new OpeningBalanceRequest(
             employee.Id, 2026, new DateOnly(2026, 2, 28), 100_000m, 0m, 0m, 0m, 0m, 0m, 4_000m, 3_000m, 1m));
 
         updated.BasicSalary.Should().Be(100_000m);
         updated.Warnings.Should().Equal(
-            "PAY-2026-005 used these figures; its 13th month and tax won't change. Reissue her 2316 to pick up the change.",
-            "PAY-2026-007 used these figures; its 13th month and tax won't change. Reissue her 2316 to pick up the change.");
+            "PAY-2026-005 used these figures; its 13th month and tax won't change. Reissue the 2316 to pick up the change.",
+            "PAY-2026-007 used these figures; its 13th month and tax won't change. Reissue the 2316 to pick up the change.");
 
         var listed = await Service(NewContext()).ListAsync(2026);
         listed.Should().ContainSingle().Which.ThroughDate.Should().Be(new DateOnly(2026, 2, 28));
