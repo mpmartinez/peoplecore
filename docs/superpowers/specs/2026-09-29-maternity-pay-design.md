@@ -78,7 +78,9 @@ Rules:
   leave was cancelled can be moved."), to an Approved maternity request of the same employee with no
   claim ("Choose an approved maternity leave of the same employee that has no claim."). `Days` takes
   the new request's `TotalDays`; a Draft claim's `Benefit` is recomputed, an Advanced or Reimbursed
-  claim keeps the `Benefit` that was paid. The claim list says when a claim's leave was cancelled
+  claim keeps the `Benefit` that was paid - and when its days change, the answer carries a `Warning`:
+  "The benefit of ₱{Benefit} was paid for {old} days; this leave has {new}. Payroll will net {new}
+  days.", which the page shows. The claim list says when a claim's leave was cancelled
   (`LeaveCancelled`). A move racing another claim for the same leave gets the same readable refusal
   (the unique index on the leave request is the guard).
 

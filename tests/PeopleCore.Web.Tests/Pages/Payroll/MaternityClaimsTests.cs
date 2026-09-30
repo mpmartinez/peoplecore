@@ -40,7 +40,7 @@ public class MaternityClaimsTests : BunitContext
     private static string Claim(Guid? id = null, string name = "Maria Santos", string status = "Draft",
         decimal? allowance = null, decimal benefit = 0m, string? runNumber = null, string? advancedAt = null,
         string? reimbursedOn = null, decimal? reimbursedAmount = null, string? note = null, string? carriedBy = null,
-        Guid? employeeId = null, bool leaveCancelled = false, string? nettedBy = null) =>
+        Guid? employeeId = null, bool leaveCancelled = false, string? nettedBy = null, string? warning = null) =>
         $$"""
         {"id":"{{id ?? MariaClaimId}}","leaveRequestId":"{{MariaLeaveId}}","employeeId":"{{employeeId ?? MariaId}}","employeeName":"{{name}}",
          "leaveStart":"2026-08-10","leaveEnd":"2026-11-22","days":105,"dailyAllowance":{{Num(allowance)}},"benefit":{{benefit}},
@@ -48,7 +48,7 @@ public class MaternityClaimsTests : BunitContext
          "advanceRunNumber":{{Str(runNumber)}},"advancedAt":{{Str(advancedAt)}},
          "reimbursedOn":{{Str(reimbursedOn)}},"reimbursedAmount":{{Num(reimbursedAmount)}},"note":{{Str(note)}},
          "carriedByRunNumber":{{Str(carriedBy)}},"leaveCancelled":{{(leaveCancelled ? "true" : "false")}},
-         "nettedByRunNumber":{{Str(nettedBy)}}}
+         "nettedByRunNumber":{{Str(nettedBy)}},"warning":{{Str(warning)}}}
         """;
 
     private static string Num(decimal? value) => value is null ? "null" : value.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -734,6 +734,29 @@ public class MaternityClaimsTests : BunitContext
         Guid.Parse(BodyOf(HttpMethod.Put, $"/api/maternity-claims/{MariaClaimId}/relink").GetProperty("leaveRequestId").GetString()!)
             .Should().Be(refiled);
         cut.WaitForAssertion(() => Row(cut, MariaClaimId).TextContent.Should().Contain("₱80,000.40"));
+    }
+
+    [Fact]
+    public void AMoveThatChangesAPaidClaimsDays_ShowsTheApisWarning()
+    {
+        const string warning = "The benefit of ₱70,000.35 was paid for 105 days; this leave has 120. Payroll will net 120 days.";
+        var refiled = Guid.Parse("1ea0e000-0000-0000-0000-000000000003");
+        var loads = 0;
+        _api.On(HttpMethod.Get, ListPath, () => Json(++loads == 1
+                ? Summary(70000.35m, Claim(status: "Advanced", allowance: 666.67m, benefit: 70000.35m, leaveCancelled: true))
+                : Summary(70000.35m, Claim(status: "Advanced", allowance: 666.67m, benefit: 70000.35m))))
+            .On(HttpMethod.Get, "/api/maternity-claims/eligible", HttpStatusCode.OK,
+                $"[{Eligible(refiled, MariaId, "Maria Santos", "2026-08-17", "2026-12-14", 120m)}]")
+            .On(HttpMethod.Put, $"/api/maternity-claims/{MariaClaimId}/relink", HttpStatusCode.OK,
+                Claim(status: "Advanced", allowance: 666.67m, benefit: 70000.35m, warning: warning));
+        var cut = RenderPage();
+        Row(cut, MariaClaimId).QuerySelector("[data-move]")!.Click();
+        cut.WaitForAssertion(() => cut.FindAll("#move-leave option").Should().NotBeEmpty());
+        cut.Find("#move-leave").Change(refiled.ToString());
+
+        cut.Find("[data-submit-move]").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[data-claim-notice]").TextContent.Should().Contain(warning));
     }
 
     [Fact]

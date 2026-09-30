@@ -251,6 +251,7 @@ public sealed class MaternityClaimService : IMaternityClaimService
             || await _claims.GetByLeaveRequestAsync(target.Id, ct) is not null)
             throw new DomainException("Choose an approved maternity leave of the same employee that has no claim.");
 
+        decimal paidForDays = claim.Days;
         claim.LeaveRequestId = target.Id;
         claim.LeaveRequest = target;
         claim.Days = target.TotalDays;
@@ -261,7 +262,14 @@ public sealed class MaternityClaimService : IMaternityClaimService
         // A rival claim for the same leave that commits between the check above and this save is
         // refused by the unique index, and SaveRelinkAsync turns that into the same message.
         await _claims.SaveRelinkAsync(claim, ct);
-        return ToDto(claim);
+
+        // A benefit already paid doesn't follow the new days, but payroll's offset does: say so.
+        string? warning = null;
+        if (claim.Status is MaternityClaimStatus.Advanced or MaternityClaimStatus.Reimbursed && claim.Days != paidForDays)
+            warning = string.Create(CultureInfo.InvariantCulture,
+                $"The benefit of ₱{claim.Benefit:N2} was paid for {paidForDays:0.##} days; this leave has {claim.Days:0.##}. " +
+                $"Payroll will net {claim.Days:0.##} days.");
+        return ToDto(claim) with { Warning = warning };
     }
 
     /// <summary>Refuses once a Paid run netted the claim's allowance off regular pay.</summary>

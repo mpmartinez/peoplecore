@@ -35,6 +35,11 @@ else
     {
         <Alert Variant="destructive" Class="mb-4" data-action-error>@_actionError</Alert>
     }
+    @if (_notice is not null)
+    {
+        @* What the API said about a command that went through, such as a move changing a paid claim's days. *@
+        <Alert Variant="warning" Class="mb-4" data-claim-notice>@_notice</Alert>
+    }
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <Card>
             <CardContent Class="pt-4">
@@ -421,6 +426,7 @@ else
     private MaternityClaimDto? _notQualifiedClaim;
     // A command sent from the list itself (Reopen), with no form to show its refusal in.
     private string? _actionError;
+    private string? _notice;
 
     private MaternityClaimDto? _moveClaim;
     private List<EligibleMaternityLeaveDto>? _moveTargets;
@@ -458,6 +464,7 @@ else
         CloseDialogs();
         _formError = _createError = null;
         _note = null;
+        _notice = null;
     }
 
     private async Task OpenCreate()
@@ -660,8 +667,12 @@ else
             return;
         }
 
-        if (await SendAsync(() => Api.RelinkMaternityClaimAsync(claim.Id, leaveRequestId)))
+        MaternityClaimDto? moved = null;
+        if (await SendAsync(async () => moved = await Api.RelinkMaternityClaimAsync(claim.Id, leaveRequestId)))
+        {
+            _notice = moved?.Warning;
             await LoadClaims();
+        }
     }
 
     private void OpenNotQualified(MaternityClaimDto claim)

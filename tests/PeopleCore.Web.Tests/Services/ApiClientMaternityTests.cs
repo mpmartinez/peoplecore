@@ -32,6 +32,7 @@ public class ApiClientMaternityTests
         "leaveStart", "leaveEnd", "days", "dailyAllowance", "benefit",
         "status", "advanceRunId", "advanceRunNumber", "advancedAt",
         "reimbursedOn", "reimbursedAmount", "note", "carriedByRunNumber", "leaveCancelled", "nettedByRunNumber",
+        "warning",
     ];
 
     private static readonly string[] SuggestionFields = ["dailyAllowance", "monthsFound", "windowFrom", "windowTo", "ratesOverridden"];
@@ -54,7 +55,8 @@ public class ApiClientMaternityTests
          "leaveStart":"2026-08-10","leaveEnd":"2026-11-22","days":105,"dailyAllowance":666.67,"benefit":70000.35,
          "status":"Reimbursed","advanceRunId":"{{RunId}}","advanceRunNumber":"PR-2026-0015","advancedAt":"2026-08-05",
          "reimbursedOn":"2026-10-01","reimbursedAmount":70000,"note":"SSS rounded down",
-         "carriedByRunNumber":"PR-2026-0016","leaveCancelled":true,"nettedByRunNumber":"PR-2026-0014"}
+         "carriedByRunNumber":"PR-2026-0016","leaveCancelled":true,"nettedByRunNumber":"PR-2026-0014",
+         "warning":"Check the days"}
         """;
 
     private const string SettingsJson = """
@@ -127,7 +129,7 @@ public class ApiClientMaternityTests
             ClaimId, LeaveId, MariaId, "Maria Santos",
             new DateOnly(2026, 8, 10), new DateOnly(2026, 11, 22), 105m, 666.67m, 70000.35m,
             MaternityClaimStatus.Reimbursed, RunId, "PR-2026-0015", new DateOnly(2026, 8, 5),
-            new DateOnly(2026, 10, 1), 70000m, "SSS rounded down", "PR-2026-0016", true, "PR-2026-0014"));
+            new DateOnly(2026, 10, 1), 70000m, "SSS rounded down", "PR-2026-0016", true, "PR-2026-0014", "Check the days"));
     }
 
     [Fact]

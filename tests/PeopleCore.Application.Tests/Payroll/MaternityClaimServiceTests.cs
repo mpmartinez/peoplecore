@@ -903,11 +903,32 @@ public class MaternityClaimServiceTests
         var claim = AClaim(status, 666.67m, 70_000.35m, ARequest(status: LeaveStatus.Cancelled));
         var refiled = Refiled();
 
-        await _sut.RelinkAsync(claim.Id, new RelinkRequest(refiled.Id));
+        var dto = await _sut.RelinkAsync(claim.Id, new RelinkRequest(refiled.Id));
 
         claim.LeaveRequestId.Should().Be(refiled.Id);
         claim.Days.Should().Be(120m);
         claim.Benefit.Should().Be(70_000.35m);
+        // 666.67 x 105 = 70,000.35 was paid; the refiled leave has 120 days, which payroll nets.
+        dto.Warning.Should().Be("The benefit of ₱70,000.35 was paid for 105 days; this leave has 120. Payroll will net 120 days.");
+    }
+
+    [Fact]
+    public async Task Relink_AClaimAlreadyPaidOut_ToLeaveOfTheSameDays_HasNoWarning()
+    {
+        var claim = AClaim(MaternityClaimStatus.Advanced, 666.67m, 70_000.35m, ARequest(status: LeaveStatus.Cancelled));
+        var refiled = Refiled();
+        refiled.TotalDays = 105m;
+
+        (await _sut.RelinkAsync(claim.Id, new RelinkRequest(refiled.Id))).Warning.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Relink_ADraftClaimWhoseDaysChange_HasNoWarning_ForItsBenefitFollowsThem()
+    {
+        var claim = AClaim(allowance: 666.67m, benefit: 70_000.35m, request: ARequest(status: LeaveStatus.Cancelled));
+        var refiled = Refiled();
+
+        (await _sut.RelinkAsync(claim.Id, new RelinkRequest(refiled.Id))).Warning.Should().BeNull();
     }
 
     [Theory]

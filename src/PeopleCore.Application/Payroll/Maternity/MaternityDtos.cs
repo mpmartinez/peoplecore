@@ -15,11 +15,15 @@ namespace PeopleCore.Application.Payroll.Maternity;
 /// On a Draft claim in the list, the first Paid run whose offset netted its allowance: the allowance
 /// is then locked and the claim can't be voided. Null otherwise, and on the claim a command answers with.
 /// </param>
+/// <param name="Warning">
+/// On the claim a re-link answers with: when an Advanced or Reimbursed claim moves to leave of a
+/// different length, the benefit paid stays as it was while payroll nets the new days - HR is told.
+/// </param>
 public record MaternityClaimDto(Guid Id, Guid LeaveRequestId, Guid EmployeeId, string EmployeeName,
     DateOnly LeaveStart, DateOnly LeaveEnd, decimal Days, decimal? DailyAllowance, decimal Benefit,
     MaternityClaimStatus Status, Guid? AdvanceRunId, string? AdvanceRunNumber, DateOnly? AdvancedAt,
     DateOnly? ReimbursedOn, decimal? ReimbursedAmount, string? Note, string? CarriedByRunNumber = null,
-    bool LeaveCancelled = false, string? NettedByRunNumber = null);
+    bool LeaveCancelled = false, string? NettedByRunNumber = null, string? Warning = null);
 
 /// <summary>
 /// The SSS daily maternity allowance worked out from paid payroll: the 6 highest monthly salary

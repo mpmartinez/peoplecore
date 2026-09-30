@@ -1303,7 +1303,9 @@ public record MaternityClaimDto(Guid Id, Guid LeaveRequestId, Guid EmployeeId, s
     bool LeaveCancelled = false,
     // On a Draft claim in the list, the Paid run that netted its allowance: the allowance is locked
     // and the claim can't be voided.
-    string? NettedByRunNumber = null);
+    string? NettedByRunNumber = null,
+    // On the claim a re-link answers with, when a paid benefit no longer matches the leave's days.
+    string? Warning = null);
 
 // DailyAllowance is null when no month in the window has a paid payroll, or when RatesOverridden:
 // the payroll settings override both SSS rates, so the salary credit can't be worked back.
