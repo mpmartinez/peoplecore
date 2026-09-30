@@ -327,15 +327,12 @@ public class PayrollRunService : IPayrollRunService
         // that includes the year-end conversion: what each converted is checked against the
         // balances now, before anything changes, and recorded as used below.
         IReadOnlyList<LeavePaidOut> leavePaidOut = [];
-        IReadOnlyList<MaternityClaim> maternityClaims = [];
         if (run.RunType == PayrollRunType.FinalPay)
         {
             await EnsureClearanceCompleteAsync(run, ct);
             var finalPay = _finalPay ?? throw new InvalidOperationException(
                 "PayrollRunService was built without an IFinalPayService, so it can't pay a final-pay run.");
             leavePaidOut = await finalPay.LeavePaidOutAsync(run, ct);
-            // A final pay can advance the maternity benefit too; its claim is settled the same way.
-            maternityClaims = await SettleMaternityAdvancesAsync(run, ct);
         }
         else
         {
@@ -343,13 +340,15 @@ public class PayrollRunService : IPayrollRunService
             await EnsureThirteenthMonthNotPaidSinceAsync(run, ct);
             if (run.IncludesLeaveConversion)
                 leavePaidOut = await YearEndLeavePaidOutAsync(run, ct);
-            // The claims this run advances become Advanced, paid on this run's pay date. Discarding
-            // the run instead never gets here, so its claims stay Draft.
-            maternityClaims = await SettleMaternityAdvancesAsync(run, ct);
         }
         // Contributions deferred while maternity leave was covered by SSS: what each entry collects
         // must still match what the employee has outstanding.
         await EnsureDeferredContributionsCurrentAsync(run, ct);
+
+        // Every check has passed, so only now are the claims this run advances - a regular run's or a
+        // final pay's - marked Advanced, paid on this run's pay date: a refusal above leaves nothing
+        // modified. Discarding the run instead never gets here, so its claims stay Draft.
+        var maternityClaims = await SettleMaternityAdvancesAsync(run, ct);
 
         var loanIds = run.Employees
             .SelectMany(e => e.LoanDeductionLines)

@@ -462,6 +462,27 @@ public partial class PayrollRunServiceTests
     }
 
     [Fact]
+    public async Task MarkPaidAsync_RefusedOverDeferredContributions_LeavesTheAdvancedClaimUntouched()
+    {
+        // The run advances her claim and was computed with nothing outstanding; a covered cutoff
+        // paid since deferred 1,225, which this run's cash would collect. The refusal must come
+        // before the claim is settled, so nothing is left modified in the context.
+        var (maria, _, claim, savedRun) = MariaOnMaternityLeave();
+        await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: true));
+        savedRun()!.Status = PayrollRunStatus.Approved;
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        Outstanding(maria.Id, 1_225m);
+
+        var act = () => MaternitySut.MarkPaidAsync(savedRun()!.Id);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("*deferred contributions have changed*");
+        claim!.Status.Should().Be(MaternityClaimStatus.Draft);
+        claim.AdvanceRunId.Should().BeNull();
+        claim.AdvancedAt.Should().BeNull();
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
     public async Task MarkPaidAsync_WithHerDeferredContributionsAsComputed_Pays()
     {
         var (maria, _, _, savedRun) = MariaOnMaternityLeave();
