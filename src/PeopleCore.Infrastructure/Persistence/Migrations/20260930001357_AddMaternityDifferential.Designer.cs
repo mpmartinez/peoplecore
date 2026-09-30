@@ -12,7 +12,7 @@ using PeopleCore.Infrastructure.Persistence;
 namespace PeopleCore.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260930000311_AddMaternityDifferential")]
+    [Migration("20260930001357_AddMaternityDifferential")]
     partial class AddMaternityDifferential
     {
         /// <inheritdoc />
@@ -2340,6 +2340,12 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(false)
                         .HasColumnName("advance_maternity_benefit");
 
+                    b.Property<decimal>("ContributionsDeferred")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(18,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("contributions_deferred");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -2359,6 +2365,12 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("DaysWorked")
                         .HasColumnType("numeric(6,2)")
                         .HasColumnName("days_worked");
+
+                    b.Property<decimal>("DeferredContributionsCollected")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(18,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("deferred_contributions_collected");
 
                     b.Property<Guid>("EmployeeId")
                         .HasColumnType("uuid")

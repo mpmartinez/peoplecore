@@ -626,6 +626,12 @@ public sealed class FinalPayService : IFinalPayService
                 .Where(r => r.Id != run.Id)
                 .SelectMany(r => r.Employees.Where(e => e.EmployeeId == employeeId)));
 
+        // Contributions deferred while her maternity leave was covered by SSS, still to collect:
+        // her last pay collects what its cash allows.
+        decimal deferredOutstanding = (await _runs.GetDeferredContributionsOutstandingAsync([employeeId], ct) ?? [])
+            .Where(o => o.EmployeeId == employeeId)
+            .Sum(o => o.Amount);
+
         // Only what the pay year left of the ten de minimis days: they are a tax year's.
         var figures = await FiguresAsync(separation, inputs, compensation.BasicSalary, dailyRate,
             await DeMinimisDaysLeftAsync(employeeId, run, ct), ct);
@@ -650,7 +656,8 @@ public sealed class FinalPayService : IFinalPayService
             thirteenthMonthPaidEarlierInYear: thirteenthEarlier,
             basicEarnedEarlierInYear: basicEarlier,
             isThirteenthMonthEligible: employee.Is13thMonthEligible,
-            finalPay: finalPay);
+            finalPay: finalPay,
+            deferredContributionsOutstanding: deferredOutstanding);
 
         var draft = Compute(extras);
 

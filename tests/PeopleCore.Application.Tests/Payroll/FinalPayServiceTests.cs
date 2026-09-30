@@ -324,6 +324,23 @@ public class FinalPayServiceTests
     }
 
     [Fact]
+    public async Task CreateAsync_CollectsContributionsDeferredOnHerEarlierPay()
+    {
+        // The worked example's net before collecting is 204,579.17; 2,450 was deferred on her
+        // earlier Paid pay and is collected here: 204,579.17 - 2,450 = 202,129.17. The tax settle
+        // is unchanged: the shares were counted in full when they were deducted.
+        _runs.Setup(r => r.GetDeferredContributionsOutstandingAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+             .ReturnsAsync([new DeferredContributionsOutstanding(_employee.Id, 2_450m)]);
+
+        var summary = await _sut.CreateAsync(_separation.Id, Request());
+
+        SavedEntry.DeferredContributionsCollected.Should().Be(2_450m);
+        SavedEntry.WithholdingTax.Should().Be(-2_000m);
+        SavedEntry.NetPay.Should().Be(202_129.17m);
+        summary.NetPay.Should().Be(202_129.17m);
+    }
+
+    [Fact]
     public async Task CreateAsync_SettledTax_MakesTheYearsCertificateBalance()
     {
         await _sut.CreateAsync(_separation.Id, Request());

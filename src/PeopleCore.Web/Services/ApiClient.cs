@@ -1200,7 +1200,11 @@ public record PayrollRunEmployeeDto(
     decimal MaternityBenefitOffset = 0m,
     // The salary differential: the pay for the leave days the offset leaves. Still in RegularPay,
     // but non-taxable (RMC 105-2019).
-    decimal MaternityDifferential = 0m);
+    decimal MaternityDifferential = 0m,
+    // Shares a maternity-covered cutoff couldn't pay, deferred (added back to NetPay), and earlier
+    // deferred shares this entry collects (taken from NetPay; not in TotalDeductions).
+    decimal ContributionsDeferred = 0m,
+    decimal DeferredContributionsCollected = 0m);
 
 public record PayrollRunDto(
     Guid Id,

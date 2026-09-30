@@ -97,6 +97,21 @@ public class PayrollRunEmployee : AuditableEntity
     /// 2316 reports it in Item 37, not the taxable basic, and the 1601-C as other non-taxable.
     /// </summary>
     public decimal MaternityDifferential { get; set; }
+
+    /// <summary>
+    /// The part of this entry's employee shares (SSS, PhilHealth, Pag-IBIG) not collected here: a
+    /// period SSS maternity covers can have too little pay for them. The shares stay in full in
+    /// their own fields - the employer remits them - and this part is collected on a later entry.
+    /// Only an entry with a <see cref="MaternityBenefitOffset"/> defers.
+    /// </summary>
+    public decimal ContributionsDeferred { get; set; }
+
+    /// <summary>
+    /// Shares deferred on the employee's earlier Paid entries that this entry collects, out of the
+    /// cash it has left after its own deductions (the maternity advance counts for this). Not one of
+    /// <see cref="TotalDeductions"/>: it comes off <see cref="NetPay"/> on its own.
+    /// </summary>
+    public decimal DeferredContributionsCollected { get; set; }
     /// <summary>
     /// The claim whose benefit <see cref="MaternityBenefitAdvance"/> advances, when there is one. It
     /// is how a claim is advanced on one payroll only, and which claim Mark Paid settles.
@@ -168,7 +183,11 @@ public class PayrollRunEmployee : AuditableEntity
 
     public decimal TotalDeductions =>
         SSSEmployee + PhilHealthEmployee + PagIbigEmployee + WithholdingTax + LoanDeductions + OtherDeductions;
-    public decimal NetPay => GrossPay - TotalDeductions;
+    /// <summary>
+    /// What the employee takes home: gross less this entry's deductions, with the shares it
+    /// deferred left in her pay and the earlier deferred shares it collects taken out.
+    /// </summary>
+    public decimal NetPay => GrossPay - TotalDeductions + ContributionsDeferred - DeferredContributionsCollected;
 
     /// <summary>
     /// What the entry costs the employer. The maternity advance is left out: SSS reimburses it, so

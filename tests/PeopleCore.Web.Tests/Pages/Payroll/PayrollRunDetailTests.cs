@@ -1170,7 +1170,35 @@ public class PayrollRunDetailTests : BunitContext
     }
 
     private const string NetCashNote =
-        "In a fully covered cutoff, the net cash is the advance less that cutoff's SSS, PhilHealth and Pag-IBIG shares.";
+        "While her leave is covered by SSS, her contribution shares are deferred and collected from the advance or her next pay.";
+
+    [Fact]
+    public void DeferredAndCollectedShares_KeepGrossLessDeductionsEqualToNet()
+    {
+        // Maria's mostly covered cutoff: gross 400, shares 1,225 of which 825 deferred, net 0 - her
+        // deductions show 1,225 - 825 = 400. Jose collects 1,225 deferred earlier: gross 15,000, own
+        // deductions 1,728.75, net 12,046.25 - his show 1,728.75 + 1,225 = 2,953.75. The run's own
+        // deductions total 2,953.75; shown as 2,953.75 - 825 + 1,225 = 3,353.75, and
+        // 15,400 - 3,353.75 = 12,046.25, the run's net.
+        var maria = $$"""
+            {"id":"{{Guid.NewGuid()}}","employeeId":"{{MariaId}}","employeeName":"Maria Santos","employeeNumber":"EMP-0042",
+             "grossPay":400,"totalDeductions":1225,"netPay":0,"contributionsDeferred":825}
+            """;
+        var jose = $$"""
+            {"id":"{{Guid.NewGuid()}}","employeeId":"{{JoseId}}","employeeName":"Jose Reyes","employeeNumber":"EMP-0043",
+             "grossPay":15000,"totalDeductions":1728.75,"netPay":12046.25,"deferredContributionsCollected":1225}
+            """;
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", employees: $"{maria},{jose}", totalDeductions: 2953.75m));
+
+        var cut = RenderPage();
+
+        var rows = cut.FindAll("tbody tr");
+        rows.Single(r => r.TextContent.Contains("Maria Santos")).QuerySelector("[data-employee-deductions]")!
+            .TextContent.Should().Contain("400.00");
+        rows.Single(r => r.TextContent.Contains("Jose Reyes")).QuerySelector("[data-employee-deductions]")!
+            .TextContent.Should().Contain("2,953.75");
+        cut.Find("[data-run-deductions]").TextContent.Should().Contain("3,353.75");
+    }
 
     [Fact]
     public void AnAdvanceAndAnOffset_GetTheirOwnColumns_WithTheNetCashNote()

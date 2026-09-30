@@ -240,6 +240,46 @@ public class PayslipLineBuilderTests
     }
 
     [Fact]
+    public void Deferred_shares_show_as_a_negative_deduction_and_the_payslip_still_foots()
+    {
+        // Fully covered cutoff: gross 0, shares 1,500 + 750 + 200 = 2,450 all deferred. The
+        // deductions column: 2,450 of shares, 0 tax, -2,450 deferred = 0; 0 - 0 = 0 net.
+        var e = Maternity() with
+        {
+            RegularPay = 0m, MaternityBenefitOffset = 30_000m, MaternityBenefitAdvance = 0m, GrossPay = 0m,
+            WithholdingTax = 0m, TotalDeductions = 2_450m, ContributionsDeferred = 2_450m, NetPay = 0m
+        };
+
+        var deductions = PayslipLineBuilder.Deductions(e).Where(l => !l.IsEmployer).ToList();
+
+        deductions.Should().ContainSingle(l => l.Description == "Contributions deferred (collected later)")
+            .Which.Amount.Should().Be(-2_450m);
+        deductions.Sum(l => l.Amount).Should().Be(PayslipLineBuilder.DeductionsTotal(e)).And.Be(0m);
+        (PayslipLineBuilder.Earnings(e).Sum(l => l.Amount) - PayslipLineBuilder.DeductionsTotal(e)).Should().Be(e.NetPay);
+    }
+
+    [Fact]
+    public void Collected_shares_show_as_a_deduction_and_the_payslip_still_foots()
+    {
+        // An ordinary 30,000 month that collects 2,450 deferred earlier: deductions 2,450 + 1,007.50
+        // + 2,450 = 5,907.50; net 30,000 - 5,907.50 = 24,092.50.
+        var e = Clean() with
+        {
+            RegularPay = 30_000m, GrossPay = 30_000m, SSSEmployee = 1_500m, PhilHealthEmployee = 750m,
+            PagIbigEmployee = 200m, WithholdingTax = 1_007.50m, TotalDeductions = 3_457.50m,
+            DeferredContributionsCollected = 2_450m, NetPay = 24_092.50m
+        };
+
+        var deductions = PayslipLineBuilder.Deductions(e).Where(l => !l.IsEmployer).ToList();
+
+        deductions.Should().ContainSingle(l => l.Description == "Deferred contributions collected")
+            .Which.Amount.Should().Be(2_450m);
+        PayslipLineBuilder.DeductionsTotal(e).Should().Be(5_907.50m);
+        deductions.Sum(l => l.Amount).Should().Be(5_907.50m);
+        (e.GrossPay - PayslipLineBuilder.DeductionsTotal(e)).Should().Be(e.NetPay);
+    }
+
+    [Fact]
     public void A_regular_run_has_no_maternity_lines()
     {
         PayslipLineBuilder.Earnings(FullyLoaded()).Should().NotContain(l => l.Description.Contains("maternity"));

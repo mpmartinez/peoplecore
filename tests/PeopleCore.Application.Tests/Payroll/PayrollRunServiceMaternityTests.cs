@@ -307,6 +307,138 @@ public partial class PayrollRunServiceTests
         VerifyNothingSavedAsPaid();
     }
 
+    // ---- deferred contributions ----------------------------------------------------------------
+
+    private static CreatePayrollRunRequest MariasCutoff(Guid employeeId, int month, int first, int last) => new(
+        new DateOnly(2026, month, first), new DateOnly(2026, month, last), new DateOnly(2026, month, last),
+        PayFrequency.SemiMonthly, [new PayrollRunEmployeeInput(employeeId)]);
+
+    private void Outstanding(Guid employeeId, decimal amount)
+        => _runRepo.Setup(r => r.GetDeferredContributionsOutstandingAsync(It.IsAny<IReadOnlyCollection<Guid>>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync([new DeferredContributionsOutstanding(employeeId, amount)]);
+
+    [Fact]
+    public async Task CreateAsync_AFullyCoveredCutoff_DefersTheSharesItCantPay_SoNetPayIsNeverNegative()
+    {
+        // An exempt employer: Aug 16-31 is all leave, so the offset is the whole 15,000 and the
+        // cutoff pays nothing. Shares on the 30,000 basic, halved: 750 + 375 + 100 = 1,225 - kept on
+        // the entry for remittance, all deferred. Net 0 - 1,225 + 1,225 = 0.
+        var (maria, _, _, savedRun) = MariaOnMaternityLeave(withClaim: false);
+        _settingsRepo.Setup(r => r.GetDefaultAsync(It.IsAny<CancellationToken>()))
+                     .ReturnsAsync(new PayrollSettings { ExemptFromMaternityDifferential = true });
+
+        var dto = await MaternitySut.CreateAsync(MariasCutoff(maria.Id, 8, 16, 31));
+
+        var entry = savedRun()!.Employees.Single();
+        entry.MaternityBenefitOffset.Should().Be(15_000m);
+        (entry.SSSEmployee + entry.PhilHealthEmployee + entry.PagIbigEmployee).Should().Be(1_225m);
+        entry.ContributionsDeferred.Should().Be(1_225m);
+        entry.NetPay.Should().Be(0m);
+        dto.Employees.Single().ContributionsDeferred.Should().Be(1_225m);
+    }
+
+    [Fact]
+    public async Task CreateAsync_ALaterCutoff_CollectsWhatHerPaidRunsDeferred()
+    {
+        // Dec 1-15, after the leave: 15,000 of pay. Base 15,000 - 1,225 = 13,775 a cutoff,
+        // 330,600 a year -> 12,090 -> 503.75 withheld. Net before collecting 15,000 - 1,225 - 503.75
+        // = 13,271.25 covers the 1,225 outstanding: net 12,046.25.
+        var (maria, _, _, savedRun) = MariaOnMaternityLeave();
+        Outstanding(maria.Id, 1_225m);
+
+        var dto = await MaternitySut.CreateAsync(MariasCutoff(maria.Id, 12, 1, 15));
+
+        var entry = savedRun()!.Employees.Single();
+        entry.WithholdingTax.Should().Be(503.75m);
+        entry.DeferredContributionsCollected.Should().Be(1_225m);
+        entry.NetPay.Should().Be(12_046.25m);
+        dto.Employees.Single().DeferredContributionsCollected.Should().Be(1_225m);
+        _runRepo.Verify(r => r.GetDeferredContributionsOutstandingAsync(
+            It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(maria.Id)), It.IsAny<CancellationToken>()));
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenHerDeferredContributionsChangedSinceCompute_IsRefused_AndSavesNothing()
+    {
+        // Computed collecting the 1,225 outstanding; another run has since been paid that collected
+        // it, so nothing is outstanding now and this run would collect it twice.
+        var (maria, _, _, savedRun) = MariaOnMaternityLeave();
+        Outstanding(maria.Id, 1_225m);
+        await MaternitySut.CreateAsync(MariasCutoff(maria.Id, 12, 1, 15));
+        savedRun()!.Status = PayrollRunStatus.Approved;
+        savedRun()!.Employees.Single().Employee = maria;
+        Outstanding(maria.Id, 0m);
+
+        var act = () => MaternitySut.MarkPaidAsync(savedRun()!.Id);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Maria Santos's deferred contributions have changed since this payroll was computed; recompute it before paying.");
+        savedRun()!.Status.Should().Be(PayrollRunStatus.Approved);
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenAShareWasDeferredSinceCompute_IsRefused_ForTheCashCouldCollectIt()
+    {
+        // Computed with nothing outstanding; a covered cutoff paid since deferred 1,225, which this
+        // cutoff's 13,271.25 of cash would have collected.
+        var (maria, _, _, savedRun) = MariaOnMaternityLeave();
+        await MaternitySut.CreateAsync(MariasCutoff(maria.Id, 12, 1, 15));
+        savedRun()!.Status = PayrollRunStatus.Approved;
+        Outstanding(maria.Id, 1_225m);
+
+        var act = () => MaternitySut.MarkPaidAsync(savedRun()!.Id);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("*deferred contributions have changed*");
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WithHerDeferredContributionsAsComputed_Pays()
+    {
+        var (maria, _, _, savedRun) = MariaOnMaternityLeave();
+        Outstanding(maria.Id, 1_225m);
+        await MaternitySut.CreateAsync(MariasCutoff(maria.Id, 12, 1, 15));
+        savedRun()!.Status = PayrollRunStatus.Approved;
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+
+        await MaternitySut.MarkPaidAsync(savedRun()!.Id);
+
+        savedRun()!.Status.Should().Be(PayrollRunStatus.Paid);
+    }
+
+    [Fact]
+    public async Task ComputeAsync_AnApprovedRunWhoseDeferredContributionsChanged_CanBeRecomputed_BackToDraft()
+    {
+        var (maria, _, _, savedRun) = MariaOnMaternityLeave();
+        Outstanding(maria.Id, 1_225m);
+        await MaternitySut.CreateAsync(MariasCutoff(maria.Id, 12, 1, 15));
+        savedRun()!.Status = PayrollRunStatus.Approved;
+        RecomputesInPlace();
+        Outstanding(maria.Id, 0m);
+
+        await MaternitySut.ComputeAsync(savedRun()!.Id);
+
+        // 13,271.25 net with nothing left to collect.
+        savedRun()!.Status.Should().Be(PayrollRunStatus.Draft);
+        savedRun()!.Employees.Single().DeferredContributionsCollected.Should().Be(0m);
+        savedRun()!.Employees.Single().NetPay.Should().Be(13_271.25m);
+    }
+
+    [Fact]
+    public async Task ComputeAsync_AnApprovedRunWhoseDeferredContributionsStillHold_IsStillRefused()
+    {
+        var (maria, _, _, savedRun) = MariaOnMaternityLeave();
+        Outstanding(maria.Id, 1_225m);
+        await MaternitySut.CreateAsync(MariasCutoff(maria.Id, 12, 1, 15));
+        savedRun()!.Status = PayrollRunStatus.Approved;
+
+        var act = () => MaternitySut.ComputeAsync(savedRun()!.Id);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Only draft or for-approval payroll runs can be recomputed.");
+    }
+
     [Fact]
     public async Task AFinalPay_GetsNoMaternityHandling()
     {

@@ -71,7 +71,8 @@ public static class PayslipLineBuilder
     /// <see cref="PayrollRunEmployeeDto.TotalDeductions"/> nets a refund in, so it is added back
     /// here. Never negative. The stored figures are untouched.
     /// </summary>
-    public static decimal DeductionsTotal(PayrollRunEmployeeDto e) => e.TotalDeductions + TaxRefund(e);
+    public static decimal DeductionsTotal(PayrollRunEmployeeDto e)
+        => e.TotalDeductions + TaxRefund(e) - e.ContributionsDeferred + e.DeferredContributionsCollected;
 
     public static List<PayrollDeductionLineDto> Deductions(PayrollRunEmployeeDto e)
     {
@@ -87,6 +88,11 @@ public static class PayslipLineBuilder
 
         if (e.LoanDeductions > 0) lines.Add(new("Loan Deduction", e.LoanDeductions));
         if (e.OtherDeductions > 0) lines.Add(new("Other Deductions", e.OtherDeductions));
+        // While maternity leave is covered by SSS the shares are deducted in full above, but what
+        // the period's pay couldn't cover is deferred - shown here as taken back - and collected
+        // on a later payslip.
+        if (e.ContributionsDeferred > 0) lines.Add(new("Contributions deferred (collected later)", -e.ContributionsDeferred));
+        if (e.DeferredContributionsCollected > 0) lines.Add(new("Deferred contributions collected", e.DeferredContributionsCollected));
 
         lines.Add(new("SSS (Employer)", e.SSSEmployer, IsEmployer: true));
         lines.Add(new("PhilHealth (Employer)", e.PhilHealthEmployer, IsEmployer: true));

@@ -245,6 +245,118 @@ public class PayrollComputationServiceMaternityTests
         act.Should().Throw<ArgumentOutOfRangeException>();
     }
 
+    // ---- deferred contributions (no negative net pay) ------------------------------------------
+
+    [Fact]
+    public void A_fully_covered_period_defers_the_employee_shares_instead_of_going_below_zero()
+    {
+        // All 30,000 covered by SSS (an exempt employer), no advance: gross 0, nothing withheld, no
+        // cash for the 2,450 of shares. They stay on the entry - the employer remits them - and all
+        // 2,450 is deferred, collected later. Net 0 - 2,450 + 2,450 = 0.
+        var result = _sut.Compute(NewEmployee(), JanuaryRun(), maternity: new MaternityInput(0m, 30_000m));
+
+        (result.SSSEmployee + result.PhilHealthEmployee + result.PagIbigEmployee).Should().Be(EmployeeShares);
+        result.ContributionsDeferred.Should().Be(2_450m);
+        result.DeferredContributionsCollected.Should().Be(0m);
+        result.TotalDeductions.Should().Be(2_450m);
+        result.NetPay.Should().Be(0m);
+    }
+
+    [Fact]
+    public void A_partly_covered_period_defers_only_the_shares_its_pay_cant_cover()
+    {
+        // 29,000 covered leaves 1,000 of pay: withholding base 1,000 - 2,450 < 0, so no tax. The
+        // 1,000 goes to the shares and 2,450 - 1,000 = 1,450 is deferred. Net 1,000 - 2,450 + 1,450 = 0.
+        var result = _sut.Compute(NewEmployee(), JanuaryRun(), maternity: new MaternityInput(0m, 29_000m));
+
+        result.ContributionsDeferred.Should().Be(1_450m);
+        result.NetPay.Should().Be(0m);
+    }
+
+    [Fact]
+    public void The_advance_pays_the_shares_so_nothing_is_deferred()
+    {
+        // Fully covered, but the 70,000.35 advance is on the entry: gross 70,000.35 covers the 2,450.
+        // Net 70,000.35 - 2,450 = 67,550.35.
+        var result = _sut.Compute(NewEmployee(), JanuaryRun(), maternity: new MaternityInput(70_000.35m, 30_000m));
+
+        result.ContributionsDeferred.Should().Be(0m);
+        result.NetPay.Should().Be(67_550.35m);
+    }
+
+    [Fact]
+    public void Without_a_maternity_offset_nothing_is_deferred()
+    {
+        // Absent the whole month: 31 x 986.30 = 30,575.30 floors regular pay at 0. Without an
+        // offset the shares aren't deferred: net 0 - 2,450 = -2,450, as before.
+        var result = _sut.Compute(NewEmployee(), JanuaryRun(), attendance: new PayrollAttendanceInput { AbsenceDays = 31m });
+
+        result.RegularPay.Should().Be(0m);
+        result.ContributionsDeferred.Should().Be(0m);
+        result.NetPay.Should().Be(-2_450m);
+    }
+
+    [Fact]
+    public void A_later_period_collects_what_was_deferred_from_the_cash_left_after_its_own_deductions()
+    {
+        // An ordinary month: net before collecting = 30,000 - 2,450 - 1,007.50 = 26,542.50, which
+        // covers the 2,450 outstanding. Net 26,542.50 - 2,450 = 24,092.50.
+        var result = _sut.Compute(NewEmployee(), JanuaryRun(), deferredContributionsOutstanding: 2_450m);
+
+        result.DeferredContributionsCollected.Should().Be(2_450m);
+        result.ContributionsDeferred.Should().Be(0m);
+        result.TotalDeductions.Should().Be(3_457.50m, "the collection isn't one of this entry's own deductions");
+        result.NetPay.Should().Be(24_092.50m);
+    }
+
+    [Fact]
+    public void A_collection_takes_no_more_than_the_cash_left()
+    {
+        // 27,000 covered leaves 3,000: base 3,000 - 2,450 = 550 a month, 6,600 a year, no tax. Net
+        // before collecting 3,000 - 2,450 = 550, so only 550 of the 2,450 outstanding is collected.
+        var result = _sut.Compute(NewEmployee(), JanuaryRun(), maternity: new MaternityInput(0m, 27_000m),
+            deferredContributionsOutstanding: 2_450m);
+
+        result.ContributionsDeferred.Should().Be(0m);
+        result.DeferredContributionsCollected.Should().Be(550m);
+        result.NetPay.Should().Be(0m);
+    }
+
+    [Fact]
+    public void The_advance_counts_as_cash_for_collecting_deferred_shares()
+    {
+        // Fully covered with the 70,000.35 advance: net before collecting 67,550.35 covers the
+        // 2,450 outstanding. Net 67,550.35 - 2,450 = 65,100.35.
+        var result = _sut.Compute(NewEmployee(), JanuaryRun(), maternity: new MaternityInput(70_000.35m, 30_000m),
+            deferredContributionsOutstanding: 2_450m);
+
+        result.DeferredContributionsCollected.Should().Be(2_450m);
+        result.NetPay.Should().Be(65_100.35m);
+    }
+
+    [Fact]
+    public void An_entry_that_defers_collects_nothing()
+    {
+        // Fully covered, no advance: nothing left after its own shares, so none of an earlier
+        // cutoff's 1,225 is collected, and this cutoff's 2,450 is deferred too.
+        var result = _sut.Compute(NewEmployee(), JanuaryRun(), maternity: new MaternityInput(0m, 30_000m),
+            deferredContributionsOutstanding: 1_225m);
+
+        result.ContributionsDeferred.Should().Be(2_450m);
+        result.DeferredContributionsCollected.Should().Be(0m);
+        result.NetPay.Should().Be(0m);
+    }
+
+    [Fact]
+    public void An_entrys_net_pay_adds_back_what_it_defers_and_takes_what_it_collects()
+    {
+        var deferring = new PayrollRunEmployee { RegularPay = 1_000m, SSSEmployee = 1_500m, ContributionsDeferred = 500m };
+        var collecting = new PayrollRunEmployee { RegularPay = 30_000m, SSSEmployee = 1_500m, DeferredContributionsCollected = 500m };
+
+        deferring.NetPay.Should().Be(0m);            // 1,000 - 1,500 + 500
+        collecting.NetPay.Should().Be(28_000m);      // 30,000 - 1,500 - 500
+    }
+
     [Fact]
     public void An_entrys_gross_pay_includes_the_advance()
     {

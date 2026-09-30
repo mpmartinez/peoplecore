@@ -185,6 +185,15 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
         IReadOnlyCollection<Guid> claimIds, Guid excludeRunId, CancellationToken ct = default);
 
     /// <summary>
+    /// Each employee's deferred contributions still to collect: over their entries on Paid runs of
+    /// any type, the sum of <see cref="PayrollRunEmployee.ContributionsDeferred"/> less the sum of
+    /// <see cref="PayrollRunEmployee.DeferredContributionsCollected"/>. Employees with nothing
+    /// outstanding are left out.
+    /// </summary>
+    Task<IReadOnlyList<DeferredContributionsOutstanding>> GetDeferredContributionsOutstandingAsync(
+        IReadOnlyCollection<Guid> employeeIds, CancellationToken ct = default);
+
+    /// <summary>
     /// Year-end leave conversions already on file for the employees: one per entry with
     /// LeaveConversionPay above zero, on a Regular run - in any status - whose PeriodEnd falls in
     /// <paramref name="periodEndYear"/>, other than <paramref name="excludeRunId"/>. Final pays
@@ -220,6 +229,13 @@ public sealed record ThirteenthMonthInRun(Guid EmployeeId, string RunNumber);
 
 /// <summary>An employee on the unpaid run numbered <paramref name="RunNumber"/>, paid before the one being computed.</summary>
 public sealed record EarlierUnpaidRun(Guid EmployeeId, string RunNumber);
+
+/// <summary>
+/// The employee shares deferred on an employee's Paid entries and not yet collected:
+/// <see cref="PayrollRunEmployee.ContributionsDeferred"/> less
+/// <see cref="PayrollRunEmployee.DeferredContributionsCollected"/>.
+/// </summary>
+public sealed record DeferredContributionsOutstanding(Guid EmployeeId, decimal Amount);
 
 /// <summary>A maternity claim whose benefit the run numbered <paramref name="RunNumber"/> advances.</summary>
 public sealed record MaternityAdvanceInRun(Guid ClaimId, string RunNumber);

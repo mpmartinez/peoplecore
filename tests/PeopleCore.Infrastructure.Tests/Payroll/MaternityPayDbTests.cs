@@ -229,6 +229,142 @@ public class MaternityPayDbTests : DatabaseTestBase
         (await ClaimAsync(claimId)).DailyAllowance.Should().Be(666.67m);
     }
 
+    private async Task ExemptFromTheDifferentialAsync()
+    {
+        var company = ACompany();
+        Context.Companies.Add(company);
+        Context.PayrollSettings.Add(new PayrollSettings { CompanyId = company.Id, ExemptFromMaternityDifferential = true });
+        await Context.SaveChangesAsync();
+    }
+
+    private async Task ApproveAndPayAsync(Guid runId)
+    {
+        await using (var context = NewContext())
+            await Payroll(context).ApproveAsync(runId);
+        await using (var context = NewContext())
+            await Payroll(context).MarkPaidAsync(runId);
+    }
+
+    [Fact]
+    public async Task ACoveredCutoffDefersHerShares_ALaterOneCollectsThem_AndAChangeSinceComputeIsCaughtAtMarkPaid()
+    {
+        await ExemptFromTheDifferentialAsync();
+        var (maria, _) = await MariaWithAReadyClaimAsync();
+
+        // Aug 16-31 is all leave and the employer is exempt: the offset takes the whole 15,000.
+        // Shares 750 + 375 + 100 = 1,225 stay on the entry and are all deferred: net 0.
+        var august = await CreateAsync(Cutoff(maria.Id, 8, 16, 31, new DateOnly(2026, 9, 5), advance: false));
+        var augustLine = august.Employees.Single();
+        augustLine.MaternityBenefitOffset.Should().Be(15_000m);
+        augustLine.ContributionsDeferred.Should().Be(1_225m);
+        augustLine.NetPay.Should().Be(0m);
+
+        // Dec 1-15 computed while August is unpaid: nothing outstanding yet, nothing collected.
+        // Net 15,000 - 1,225 - 503.75 (13,775 a cutoff, 330,600 a year) = 13,271.25.
+        var december = await CreateAsync(Cutoff(maria.Id, 12, 1, 15, new DateOnly(2026, 12, 20), advance: false));
+        december.Employees.Single().DeferredContributionsCollected.Should().Be(0m);
+        december.Employees.Single().NetPay.Should().Be(13_271.25m);
+        await using (var context = NewContext())
+            await Payroll(context).ApproveAsync(december.Id);
+
+        await ApproveAndPayAsync(august.Id);
+        await using (var reader = NewContext())
+            (await new PayrollRunRepository(reader).GetDeferredContributionsOutstandingAsync([maria.Id]))
+                .Should().Equal(new DeferredContributionsOutstanding(maria.Id, 1_225m));
+
+        // December was computed before August deferred anything: paying it now would leave the
+        // 1,225 uncollected though it has the cash, so it is refused until recomputed.
+        async Task PayDecember()
+        {
+            await using var context = NewContext();
+            await Payroll(context).MarkPaidAsync(december.Id);
+        }
+        await FluentActions.Awaiting(PayDecember).Should().ThrowAsync<DomainException>().WithMessage(
+            "Maria Santos's deferred contributions have changed since this payroll was computed; recompute it before paying.");
+
+        // Approved, but recomputable for this: it goes back to Draft and collects the 1,225.
+        // Net 13,271.25 - 1,225 = 12,046.25.
+        await using (var context = NewContext())
+            await Payroll(context).ComputeAsync(december.Id);
+        await using (var context = NewContext())
+        {
+            var recomputed = (await Payroll(context).GetAsync(december.Id))!;
+            recomputed.Status.Should().Be(PayrollRunStatus.Draft);
+            recomputed.Employees.Single().DeferredContributionsCollected.Should().Be(1_225m);
+            recomputed.Employees.Single().NetPay.Should().Be(12_046.25m);
+        }
+        await ApproveAndPayAsync(december.Id);
+
+        await using var after = NewContext();
+        (await new PayrollRunRepository(after).GetDeferredContributionsOutstandingAsync([maria.Id]))
+            .Should().BeEmpty("everything deferred was collected");
+    }
+
+    [Fact]
+    public async Task Outstanding_IsWhatHerPaidEntriesDeferred_LessWhatTheyCollected()
+    {
+        var maria = AnEmployee("Santos", "Maria");
+        var ana = AnEmployee("Cruz", "Ana");
+        Context.Employees.AddRange(maria, ana);
+        await Context.SaveChangesAsync();
+
+        async Task RunAsync(string number, PayrollRunStatus status, params PayrollRunEmployee[] entries)
+        {
+            var run = new PayrollRun
+            {
+                RunNumber = number, PeriodStart = new DateOnly(2026, 8, 1), PeriodEnd = new DateOnly(2026, 8, 15),
+                PayDate = new DateOnly(2026, 8, 20), Frequency = PayFrequency.SemiMonthly, Status = status
+            };
+            foreach (var entry in entries)
+                entry.PayrollRunId = run.Id;
+            run.Employees = entries.ToList();
+            await using var context = NewContext();
+            await new PayrollRunRepository(context).AddWithEntriesAsync(run);
+        }
+
+        // Maria: 1,225 deferred, then 500 deferred and 300 collected on Paid runs = 1,425. An
+        // Approved run's 999 doesn't count until it is paid. Ana: 100 on a Paid run.
+        await RunAsync("PAY-2026-D01", PayrollRunStatus.Paid,
+            new PayrollRunEmployee { EmployeeId = maria.Id, ContributionsDeferred = 1_225m },
+            new PayrollRunEmployee { EmployeeId = ana.Id, ContributionsDeferred = 100m });
+        await RunAsync("PAY-2026-D02", PayrollRunStatus.Paid,
+            new PayrollRunEmployee { EmployeeId = maria.Id, ContributionsDeferred = 500m, DeferredContributionsCollected = 300m });
+        await RunAsync("PAY-2026-D03", PayrollRunStatus.Approved,
+            new PayrollRunEmployee { EmployeeId = maria.Id, ContributionsDeferred = 999m });
+
+        await using var reader = NewContext();
+        var repository = new PayrollRunRepository(reader);
+        (await repository.GetDeferredContributionsOutstandingAsync([maria.Id]))
+            .Should().Equal(new DeferredContributionsOutstanding(maria.Id, 1_425m));
+        (await repository.GetDeferredContributionsOutstandingAsync([maria.Id, ana.Id]))
+            .Should().BeEquivalentTo([new DeferredContributionsOutstanding(maria.Id, 1_425m),
+                new DeferredContributionsOutstanding(ana.Id, 100m)]);
+    }
+
+    [Fact]
+    public async Task AnEntry_RoundTripsWhatItDeferredAndCollected()
+    {
+        var maria = AnEmployee("Santos", "Maria");
+        Context.Employees.Add(maria);
+        await Context.SaveChangesAsync();
+        var run = new PayrollRun
+        {
+            RunNumber = "PAY-2026-D04", PeriodStart = new DateOnly(2026, 8, 1), PeriodEnd = new DateOnly(2026, 8, 15),
+            PayDate = new DateOnly(2026, 8, 20), Frequency = PayFrequency.SemiMonthly
+        };
+        run.Employees = [new PayrollRunEmployee
+        {
+            PayrollRunId = run.Id, EmployeeId = maria.Id, ContributionsDeferred = 825.5m, DeferredContributionsCollected = 400.25m
+        }];
+        await using (var context = NewContext())
+            await new PayrollRunRepository(context).AddWithEntriesAsync(run);
+
+        await using var reader = NewContext();
+        var entry = await reader.PayrollRunEmployees.SingleAsync(e => e.PayrollRunId == run.Id);
+        entry.ContributionsDeferred.Should().Be(825.5m);
+        entry.DeferredContributionsCollected.Should().Be(400.25m);
+    }
+
     [Fact]
     public async Task TheRunsWarnings_AreRebuiltOnEveryLoad()
     {

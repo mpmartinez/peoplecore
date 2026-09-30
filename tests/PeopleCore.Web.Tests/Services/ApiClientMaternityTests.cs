@@ -91,9 +91,10 @@ public class ApiClientMaternityTests
     public void TheRunMirrors_EndWithTheMaternityFigures_AndTheWarnings()
     {
         // PayrollRunEmployeeDto's maternity members and PayrollRunDto's last one, as the API has them.
-        MembersOf<PayrollRunEmployeeDto>().TakeLast(8).Should().Equal(
+        MembersOf<PayrollRunEmployeeDto>().TakeLast(10).Should().Equal(
             "leaveConversionPay", "leaveConversionNonTaxable", "separationPay", "retirementPay", "finalPayNonTaxable",
-            "maternityBenefitAdvance", "maternityBenefitOffset", "maternityDifferential");
+            "maternityBenefitAdvance", "maternityBenefitOffset", "maternityDifferential",
+            "contributionsDeferred", "deferredContributionsCollected");
         MembersOf<PayrollRunDto>().TakeLast(4).Should().Equal(
             "runType", "includesLeaveConversion", "includesThirteenthMonth", "warnings");
     }

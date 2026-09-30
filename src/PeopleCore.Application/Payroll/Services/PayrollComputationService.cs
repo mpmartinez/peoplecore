@@ -187,13 +187,20 @@ public class PayrollComputationService
     /// covers (RA 11210). The offset comes off regular pay before anything reads it; the advance
     /// joins gross pay only. Null for an entry with neither.
     /// </param>
+    /// <param name="deferredContributionsOutstanding">
+    /// The employee shares deferred on the employee's earlier Paid entries and not yet collected
+    /// (<see cref="PayrollRunEmployee.ContributionsDeferred"/> less
+    /// <see cref="PayrollRunEmployee.DeferredContributionsCollected"/>). This entry collects as much
+    /// of it as its cash left after its own deductions allows.
+    /// </param>
     public PayrollRunEmployee Compute(EmployeeCompensation compensation, PayrollRun run, decimal daysWorked = 0,
         decimal overtimeHours = 0, decimal holidayDays = 0, bool includeThirteenthMonth = false,
         ContributionRates? rates = null, PayrollAttendanceInput? attendance = null,
         decimal? dailyRateFactor = null, decimal thirteenthMonthPaidEarlierInYear = 0m,
         decimal basicEarnedEarlierInYear = 0m, bool isThirteenthMonthEligible = true,
         FinalPayExtras? finalPay = null, LeaveConversionInput? leaveConversion = null,
-        decimal otherBenefitsExemptUsedEarlierInYear = 0m, MaternityInput? maternity = null)
+        decimal otherBenefitsExemptUsedEarlierInYear = 0m, MaternityInput? maternity = null,
+        decimal deferredContributionsOutstanding = 0m)
     {
         // One leave-conversion path: a final pay's leave becomes the same input a year-end
         // conversion passes, so the two are recorded and taxed identically.
@@ -474,7 +481,7 @@ public class PayrollComputationService
 
         decimal otherDeductions = Math.Min(customDeductions, Math.Max(0m, discretionaryBudget - loanDeductions));
 
-        return new PayrollRunEmployee
+        var entry = new PayrollRunEmployee
         {
             PayrollRunId = run.Id,
             EmployeeId = compensation.EmployeeId,
@@ -529,7 +536,33 @@ public class PayrollComputationService
                 })
                 .ToList()
         };
+
+        // Contributions while maternity leave is covered by SSS. The shares stay on the entry in
+        // full - the employer remits them as usual - but a covered period may have too little pay
+        // for them. Rather than a negative net pay, the part its cash can't cover (gross less every
+        // other deduction) is deferred and collected later. Loans and HR's deductions still never
+        // come out of the advance; they gave way above.
+        if (maternityOffset > 0m)
+        {
+            decimal cashForShares = Math.Max(0m,
+                entry.GrossPay - entry.WithholdingTax - entry.LoanDeductions - entry.OtherDeductions);
+            entry.ContributionsDeferred = Math.Max(0m, sssEmp + phEmp + piEmp - cashForShares);
+        }
+
+        // Shares deferred on the employee's earlier Paid entries are collected from what this entry
+        // has left after its own deductions - the net pay so far, which counts the advance too.
+        entry.DeferredContributionsCollected = DeferredContributionsToCollect(deferredContributionsOutstanding, entry.NetPay);
+        return entry;
     }
+
+    /// <summary>
+    /// What an entry collects of the contributions deferred on the employee's earlier Paid entries:
+    /// the outstanding amount, never more than the cash the entry has left after its own deductions
+    /// (<paramref name="cashLeft"/>, the net pay before collecting), and never less than zero. Mark
+    /// Paid works it out again against what is outstanding then, to tell whether it has changed.
+    /// </summary>
+    public static decimal DeferredContributionsToCollect(decimal outstanding, decimal cashLeft)
+        => Math.Max(0m, Math.Min(outstanding, cashLeft));
 
     private static bool IsRestDay(WorkDayType day) => day is WorkDayType.RestDay
         or WorkDayType.SpecialNonWorkingOnRestDay or WorkDayType.DoubleSpecialNonWorkingOnRestDay

@@ -9,11 +9,12 @@ namespace PeopleCore.Web.Services;
 public static class MaternityLabels
 {
     /// <summary>
-    /// What a net pay looks like on a cutoff the leave covers in full: the offset takes the whole
-    /// basic, but the contributions stay on the monthly basic, so they come out of the advance.
+    /// What happens to the contributions on a cutoff the leave covers: the offset can take the
+    /// basic, but the shares stay on the monthly basic, so the part the cutoff can't pay is
+    /// deferred and collected later.
     /// </summary>
     public const string NetCashNote =
-        "In a fully covered cutoff, the net cash is the advance less that cutoff's SSS, PhilHealth and Pag-IBIG shares.";
+        "While her leave is covered by SSS, her contribution shares are deferred and collected from the advance or her next pay.";
 
     public static string StatusOf(MaternityClaimStatus status) => status switch
     {

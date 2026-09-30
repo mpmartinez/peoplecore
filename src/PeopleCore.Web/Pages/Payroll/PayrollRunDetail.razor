@@ -363,9 +363,13 @@ else
     // "Refund"), as the payslip does; net pay is unchanged. Mirrors PayslipLineBuilder's
     // TaxRefund and DeductionsTotal.
     private static decimal TaxRefund(PayrollRunEmployeeDto e) => Math.Max(-e.WithholdingTax, 0m);
-    private static decimal DeductionsTaken(PayrollRunEmployeeDto e) => e.TotalDeductions + TaxRefund(e);
+    // Contributions a maternity-covered cutoff deferred are taken back, and earlier deferred ones an
+    // entry collects are added, so gross less deductions is still net, as on the payslip.
+    private static decimal DeductionsTaken(PayrollRunEmployeeDto e)
+        => e.TotalDeductions + TaxRefund(e) - e.ContributionsDeferred + e.DeferredContributionsCollected;
     private decimal RunTaxRefund => _run?.Employees.Sum(TaxRefund) ?? 0m;
-    private decimal RunDeductions => (_run?.TotalDeductions ?? 0m) + RunTaxRefund;
+    private decimal RunDeductions => (_run?.TotalDeductions ?? 0m) + RunTaxRefund
+        - (_run?.Employees.Sum(e => e.ContributionsDeferred - e.DeferredContributionsCollected) ?? 0m);
 
     // A final pay is built for its one employee from their separation, a paid run has already
     // retired loan balances, and a run needs at least one employee - the API refuses all three,

@@ -162,6 +162,23 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
             .ToListAsync(ct);
     }
 
+    public async Task<IReadOnlyList<DeferredContributionsOutstanding>> GetDeferredContributionsOutstandingAsync(
+        IReadOnlyCollection<Guid> employeeIds, CancellationToken ct = default)
+    {
+        var ids = employeeIds.Distinct().ToList();
+        if (ids.Count == 0) return [];
+        var sums = await Context.PayrollRunEmployees
+            .Where(e => ids.Contains(e.EmployeeId) && e.PayrollRun.Status == PayrollRunStatus.Paid
+                        && (e.ContributionsDeferred != 0m || e.DeferredContributionsCollected != 0m))
+            .GroupBy(e => e.EmployeeId)
+            .Select(g => new { EmployeeId = g.Key, Amount = g.Sum(e => e.ContributionsDeferred - e.DeferredContributionsCollected) })
+            .ToListAsync(ct);
+        return sums
+            .Where(s => s.Amount != 0m)
+            .Select(s => new DeferredContributionsOutstanding(s.EmployeeId, s.Amount))
+            .ToList();
+    }
+
     private void Attach<TEntity>(TEntity entity) where TEntity : class
     {
         if (Context.Entry(entity).State == EntityState.Detached)

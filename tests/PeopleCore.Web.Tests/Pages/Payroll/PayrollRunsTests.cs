@@ -569,7 +569,7 @@ public class PayrollRunsTests : BunitContext
         cut.FindAll($"[data-advance-maternity='{employeeId}']").SingleOrDefault();
 
     private const string NetCashNote =
-        "In a fully covered cutoff, the net cash is the advance less that cutoff's SSS, PhilHealth and Pag-IBIG shares.";
+        "While her leave is covered by SSS, her contribution shares are deferred and collected from the advance or her next pay.";
 
     [Fact]
     public void TheAdvanceBox_IsOfferedOnlyForEmployeesWithAClaimReadyToAdvance_WithTheNetCashNote()

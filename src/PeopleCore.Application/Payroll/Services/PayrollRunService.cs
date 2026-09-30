@@ -141,11 +141,14 @@ public class PayrollRunService : IPayrollRunService
         // request filed, rejected or cancelled), Mark Paid then refuses it, and a recompute - back
         // to Draft, to be approved again - is the way to pay it. So is one that includes the 13th
         // month: another run can pay some of it after approval, which Mark Paid refuses the same way.
+        // And so is one whose deferred maternity contributions another run's payment changed since
+        // it was computed, which Mark Paid refuses too.
         if (run.RunType == PayrollRunType.FinalPay && run.Status == PayrollRunStatus.Paid)
             throw new DomainException("A paid final pay can't be recomputed.");
         if (run.RunType != PayrollRunType.FinalPay
             && (run.Status == PayrollRunStatus.Paid
-                || (run.Status == PayrollRunStatus.Approved && !run.IncludesLeaveConversion && !IncludesThirteenthMonth(run))))
+                || (run.Status == PayrollRunStatus.Approved && !run.IncludesLeaveConversion && !IncludesThirteenthMonth(run)
+                    && await EntryWithStaleDeferredContributionsAsync(run, ct) is null)))
             throw new DomainException("Only draft or for-approval payroll runs can be recomputed.");
 
         if (run.Employees.Count == 0)
@@ -336,6 +339,9 @@ public class PayrollRunService : IPayrollRunService
             // the run instead never gets here, so its claims stay Draft.
             maternityClaims = await SettleMaternityAdvancesAsync(run, ct);
         }
+        // Contributions deferred while maternity leave was covered by SSS: what each entry collects
+        // must still match what the employee has outstanding.
+        await EnsureDeferredContributionsCurrentAsync(run, ct);
 
         var loanIds = run.Employees
             .SelectMany(e => e.LoanDeductionLines)
@@ -560,6 +566,50 @@ public class PayrollRunService : IPayrollRunService
                 $"The {year} 13th month must be paid by Dec 24, {year}; leave it out of this payroll and include it on one paid in {year}."));
     }
 
+    /// <summary>
+    /// Refuses a run whose collection of deferred contributions no longer holds: another run was
+    /// paid since this one was computed, so what the employee has outstanding changed, and the entry
+    /// would collect too much (what that run already collected) or too little (what it deferred).
+    /// Changes nothing. See <see cref="EntryWithStaleDeferredContributionsAsync"/>.
+    /// </summary>
+    private async Task EnsureDeferredContributionsCurrentAsync(PayrollRun run, CancellationToken ct)
+    {
+        var stale = await EntryWithStaleDeferredContributionsAsync(run, ct);
+        if (stale is null)
+            return;
+        var name = stale.Employee?.FullName
+            ?? (await _employeeRepo.GetByIdAsync(stale.EmployeeId, ct))?.FullName
+            ?? stale.EmployeeId.ToString();
+        throw new DomainException(
+            $"{name}'s deferred contributions have changed since this payroll was computed; recompute it before paying.");
+    }
+
+    /// <summary>
+    /// The first entry whose collection of deferred contributions no longer matches what the
+    /// employee has outstanding now, or null. Nothing extra is stored for this: an entry collects
+    /// <see cref="PayrollComputationService.DeferredContributionsToCollect"/> of what was outstanding
+    /// when it was computed and the cash it had left, and that cash is still on the entry (its net
+    /// pay plus what it collected). So the collection is worked out again against the outstanding
+    /// amount now; when it differs, a Paid run has deferred or collected some since. A change that
+    /// wouldn't alter the collection - the entry had no cash for more anyway - isn't one.
+    /// </summary>
+    private async Task<PayrollRunEmployee?> EntryWithStaleDeferredContributionsAsync(PayrollRun run, CancellationToken ct)
+    {
+        if (run.Employees.Count == 0)
+            return null;
+        var outstanding = await DeferredContributionsOutstandingAsync(run.Employees.Select(e => e.EmployeeId).ToList(), ct);
+        return run.Employees.FirstOrDefault(e =>
+            PayrollComputationService.DeferredContributionsToCollect(
+                outstanding.GetValueOrDefault(e.EmployeeId), e.NetPay + e.DeferredContributionsCollected)
+            != e.DeferredContributionsCollected);
+    }
+
+    private async Task<Dictionary<Guid, decimal>> DeferredContributionsOutstandingAsync(IReadOnlyCollection<Guid> employeeIds,
+        CancellationToken ct)
+        => (await _runRepo.GetDeferredContributionsOutstandingAsync(employeeIds, ct) ?? [])
+            .GroupBy(o => o.EmployeeId)
+            .ToDictionary(g => g.Key, g => g.Sum(o => o.Amount));
+
     private Task<IReadOnlyList<MaternityClaim>> SettleMaternityAdvancesAsync(PayrollRun run, CancellationToken ct)
     {
         if (_maternityPay is not null)
@@ -762,6 +812,10 @@ public class PayrollRunService : IPayrollRunService
                 throw new InvalidOperationException(NoMaternityPay);
         }
 
+        // Contributions deferred on the employees' earlier Paid entries (a period SSS maternity
+        // covered), which this run collects as far as each entry's pay allows.
+        var deferredOutstanding = await DeferredContributionsOutstandingAsync(employeeIds, ct);
+
         var entries = new List<PayrollRunEmployee>();
         foreach (var employee in employees)
         {
@@ -811,7 +865,8 @@ public class PayrollRunService : IPayrollRunService
                 otherBenefitsExemptUsedEarlierInYear:
                     earlierInYear.GetValueOrDefault(employee.EmployeeId).ExemptUsed,
                 leaveConversion: leaveConversion,
-                maternity: maternityInput);
+                maternity: maternityInput,
+                deferredContributionsOutstanding: deferredOutstanding.GetValueOrDefault(employee.EmployeeId));
 
             // The offset is worked out against the regular pay after absences and tardiness and
             // before the offset itself - the entry's RegularPay without a maternity input, since the
@@ -993,5 +1048,6 @@ public class PayrollRunService : IPayrollRunService
         e.SSSEmployee, e.SSSEmployer, e.PhilHealthEmployee, e.PhilHealthEmployer,
         e.PagIbigEmployee, e.PagIbigEmployer, e.WithholdingTax, e.LoanDeductions, e.OtherDeductions,
         e.LeaveConversionPay, e.LeaveConversionNonTaxable, e.SeparationPay, e.RetirementPay, e.FinalPayNonTaxable,
-        e.MaternityBenefitAdvance, e.MaternityBenefitOffset, e.MaternityDifferential);
+        e.MaternityBenefitAdvance, e.MaternityBenefitOffset, e.MaternityDifferential,
+        e.ContributionsDeferred, e.DeferredContributionsCollected);
 }
