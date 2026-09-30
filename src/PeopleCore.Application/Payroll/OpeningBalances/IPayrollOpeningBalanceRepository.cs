@@ -1,0 +1,25 @@
+using PeopleCore.Application.Common.Interfaces;
+using PeopleCore.Domain.Entities.Payroll;
+
+namespace PeopleCore.Application.Payroll.OpeningBalances;
+
+public interface IPayrollOpeningBalanceRepository : IRepository<PayrollOpeningBalance>
+{
+    /// <summary>The employee's opening balance for the year, with its <see cref="PayrollOpeningBalance.Employee"/>, or null when she has none.</summary>
+    Task<PayrollOpeningBalance?> GetAsync(Guid employeeId, int year, CancellationToken ct = default);
+
+    /// <summary>The employees' opening balances for the year (at most one each), each with its <see cref="PayrollOpeningBalance.Employee"/>.</summary>
+    Task<IReadOnlyList<PayrollOpeningBalance>> GetForEmployeesAsync(IReadOnlyCollection<Guid> employeeIds, int year,
+        CancellationToken ct = default);
+
+    /// <summary>Every opening balance for the year, each with its <see cref="PayrollOpeningBalance.Employee"/>, by last then first name.</summary>
+    Task<IReadOnlyList<PayrollOpeningBalance>> GetForYearAsync(int year, CancellationToken ct = default);
+
+    /// <summary>
+    /// Adds a new opening balance. Two creates for the same employee and year at once both pass the
+    /// service's "already has one" check, so the unique index on (employee, year) is the real guard:
+    /// the loser gets the check's own <see cref="Domain.Exceptions.DomainException"/>
+    /// ("{name} already has an opening balance for {Year}."), not a constraint-violation 500.
+    /// </summary>
+    Task<PayrollOpeningBalance> AddNewAsync(PayrollOpeningBalance balance, CancellationToken ct = default);
+}
