@@ -224,7 +224,7 @@ public sealed class MaternityRun
 
         var warnings = new List<string>();
         var name = NameOf(employeeId, knownName);
-        if (_requests[employeeId].Any(r => DaysInPeriod(r) > 0 && ClaimFor(r)?.DailyAllowance is null))
+        if (_requests[employeeId].Any(r => DaysInPeriod(r) > 0 && !IsNotQualified(r) && ClaimFor(r)?.DailyAllowance is null))
             warnings.Add($"Maternity benefit not set up yet for {name}.");
         if (_claims[employeeId].Any(c => IsReady(c) && c.Id != claimAdvancedHere && !_advancedElsewhere.ContainsKey(c.Id)))
             warnings.Add($"Maternity benefit not advanced yet for {name}.");
@@ -254,7 +254,7 @@ public sealed class MaternityRun
         // that ended earlier is an earlier pregnancy's, and a denied claim no run advanced has no run
         // to name: then there is simply nothing ready.
         var advancedForCurrentLeave = claims
-            .Where(c => c.Status is not (MaternityClaimStatus.Draft or MaternityClaimStatus.Voided)
+            .Where(c => c.Status is not (MaternityClaimStatus.Draft or MaternityClaimStatus.Voided or MaternityClaimStatus.NotQualified)
                         && (c.LeaveRequest is null || c.LeaveRequest.EndDate >= _run!.PeriodStart)
                         && c.AdvanceRun is not null)
             .OrderByDescending(c => c.AdvancedAt)
@@ -284,13 +284,15 @@ public sealed class MaternityRun
         // The exempt offset doesn't use any claim's allowance, so the entry records no claim for it:
         // it must never lock the allowance (or the void) of a claim still being set up.
         if (exempt)
-            return (MaternityMath.ExemptOffset(regularPay, days.Sum(d => d.Days), periodDays), 0m, null);
+            // Leave whose claim isn't SSS-qualified has no benefit behind it: she is paid her salary.
+            return (MaternityMath.ExemptOffset(regularPay, days.Where(d => !IsNotQualified(d.Request)).Sum(d => d.Days),
+                periodDays), 0m, null);
 
         int coveredDays = 0;
         decimal covered = 0m;
         Guid? claimId = null;
         foreach (var (request, own) in days)
-            if (own > 0 && ClaimFor(request) is { DailyAllowance: decimal allowance } claim)
+            if (own > 0 && !IsNotQualified(request) && ClaimFor(request) is { DailyAllowance: decimal allowance } claim)
             {
                 coveredDays += own;
                 covered += MaternityMath.Benefit(allowance, own);
@@ -309,7 +311,17 @@ public sealed class MaternityRun
     /// approval refuses to pay as ordinary salary.
     /// </summary>
     internal int DaysWithoutAllowance(Guid employeeId)
-        => _run is null ? 0 : OwnDaysInPeriod(employeeId).Where(d => ClaimFor(d.Request)?.DailyAllowance is null).Sum(d => d.Days);
+        => _run is null
+            ? 0
+            : OwnDaysInPeriod(employeeId)
+                .Where(d => !IsNotQualified(d.Request) && ClaimFor(d.Request)?.DailyAllowance is null)
+                .Sum(d => d.Days);
+
+    /// <summary>
+    /// The request's claim is marked not SSS-qualified: its days are ordinary salary - nothing to
+    /// offset, set up or warn about.
+    /// </summary>
+    private bool IsNotQualified(LeaveRequest request) => ClaimFor(request)?.Status == MaternityClaimStatus.NotQualified;
 
     /// <summary>
     /// Each request's leave days in the period that no earlier request (by start date) already

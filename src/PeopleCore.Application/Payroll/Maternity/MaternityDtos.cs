@@ -43,6 +43,9 @@ public record DenyRequest(string? Note);
 /// <summary>Why a Draft claim is voided. Nullable for the same reason as <see cref="DenyRequest"/>.</summary>
 public record VoidRequest(string? Note);
 
+/// <summary>Why she doesn't qualify for the SSS benefit. Nullable for the same reason as <see cref="DenyRequest"/>.</summary>
+public record NotQualifiedRequest(string? Note);
+
 /// <summary>The approved maternity leave, of the same employee and with no claim, to move a claim to.</summary>
 public record RelinkRequest(Guid LeaveRequestId);
 

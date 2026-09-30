@@ -245,6 +245,36 @@ public class MaternityPayCalculatorTests
         pay.Warnings.Should().Equal("Maternity benefit not set up yet for Maria Santos.");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ANotQualifiedClaim_LeavesTheLeaveDaysAsOrdinarySalary_EvenForAnExemptEmployer(bool exempt)
+    {
+        // She doesn't qualify for the SSS benefit, so there is nothing to offset: her leave days are
+        // paid as salary. The exemption is from the differential; without a benefit she gets her pay.
+        AClaim(status: MaternityClaimStatus.NotQualified);
+
+        var pay = await ForAsync(Cutoff(8, 1, 15), _maria.Id, advanceRequested: false, 15_000m, exempt);
+
+        pay.Offset.Should().Be(0m);
+        pay.Differential.Should().Be(0m);
+        pay.ClaimId.Should().BeNull();
+        pay.Warnings.Should().BeEmpty("the claim is settled as not qualifying; there is nothing to set up or advance");
+    }
+
+    [Fact]
+    public async Task ANotQualifiedClaim_CannotBeAdvanced_ButApprovalAcceptsIt()
+    {
+        AClaim(status: MaternityClaimStatus.NotQualified);
+        var run = Cutoff(8, 1, 15);
+        run.Employees.Add(new PayrollRunEmployee { EmployeeId = _maria.Id, Employee = _maria });
+
+        var advance = () => ForAsync(Cutoff(8, 1, 15), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+
+        await advance.Should().ThrowAsync<DomainException>().WithMessage("Maria Santos has no maternity claim ready to advance.");
+        await _sut.EnsureClaimsSetUpAsync(run, exempt: false);
+    }
+
     [Fact]
     public async Task AnOffset_RecordsTheClaimWhoseAllowanceItNets()
     {

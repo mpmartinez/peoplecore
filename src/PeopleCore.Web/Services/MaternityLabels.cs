@@ -23,6 +23,7 @@ public static class MaternityLabels
         MaternityClaimStatus.Reimbursed => "Reimbursed",
         MaternityClaimStatus.Denied => "Denied",
         MaternityClaimStatus.Voided => "Voided",
+        MaternityClaimStatus.NotQualified => "Not SSS-qualified",
         _ => status.ToString()
     };
 
@@ -36,6 +37,7 @@ public static class MaternityLabels
         MaternityClaimStatus.Reimbursed => "success",
         MaternityClaimStatus.Denied => "destructive",
         MaternityClaimStatus.Voided => "outline",
+        MaternityClaimStatus.NotQualified => "accent",
         _ => "secondary"
     };
 

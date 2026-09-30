@@ -182,6 +182,42 @@ public sealed class MaternityClaimService : IMaternityClaimService
         return ToDto(claim);
     }
 
+    public async Task<MaternityClaimDto> MarkNotQualifiedAsync(Guid claimId, NotQualifiedRequest request, CancellationToken ct = default)
+    {
+        var claim = await GetAsync(claimId, ct);
+        if (claim.Status != MaternityClaimStatus.Draft)
+            throw new DomainException("Only a draft claim can be marked not SSS-qualified.");
+        var note = Note(request.Note) ?? throw new DomainException("Explain why she doesn't qualify for the SSS benefit.");
+        // A run advancing the benefit, or a paid cutoff that netted the allowance, was computed as if
+        // SSS pays for her leave; neither can stand once she doesn't qualify.
+        await EnsureNoRunAdvancesAsync(claim, ct);
+        await EnsureNotNettedAsync(claim, ct);
+
+        claim.Note = note;
+        claim.Status = MaternityClaimStatus.NotQualified;
+        await _claims.UpdateAsync(claim, ct);
+        return ToDto(claim);
+    }
+
+    public async Task<MaternityClaimDto> ReopenAsync(Guid claimId, CancellationToken ct = default)
+    {
+        var claim = await GetAsync(claimId, ct);
+        if (claim.Status != MaternityClaimStatus.NotQualified)
+            throw new DomainException("Only a claim marked not SSS-qualified can be reopened.");
+        // A paid cutoff over her leave paid those days as ordinary salary; it can't be recomputed, so
+        // the claim can't start netting them now.
+        var paid = await _runs.GetPaidRunsCoveringPeriodAsync(claim.EmployeeId, claim.LeaveRequest.StartDate,
+            claim.LeaveRequest.EndDate, ct) ?? [];
+        if (paid.Count > 0)
+            throw new DomainException($"{paid[0]} already paid this leave as ordinary salary; the claim can't be reopened.");
+
+        // The note explained a status the claim no longer has.
+        claim.Note = null;
+        claim.Status = MaternityClaimStatus.Draft;
+        await _claims.UpdateAsync(claim, ct);
+        return ToDto(claim);
+    }
+
     public async Task<MaternityClaimDto> VoidAsync(Guid claimId, VoidRequest request, CancellationToken ct = default)
     {
         var claim = await GetAsync(claimId, ct);

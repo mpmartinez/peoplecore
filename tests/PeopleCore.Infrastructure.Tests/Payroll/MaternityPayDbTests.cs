@@ -339,6 +339,71 @@ public class MaternityPayDbTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task ANotQualifiedClaim_PaysTheLeaveAsSalary_AndCanBeReopenedOnlyUntilARunPaysIt()
+    {
+        var (maria, claimId) = await MariaWithAReadyClaimAsync();
+        await using (var context = NewContext())
+            await Claims(context).MarkNotQualifiedAsync(claimId, new NotQualifiedRequest("Fewer than 3 contributions"));
+
+        // Reopened and marked again while nothing is paid.
+        await using (var context = NewContext())
+            (await Claims(context).ReopenAsync(claimId)).Status.Should().Be(MaternityClaimStatus.Draft);
+        await using (var context = NewContext())
+            await Claims(context).MarkNotQualifiedAsync(claimId, new NotQualifiedRequest("Fewer than 3 contributions"));
+
+        // Aug 1-15 pays her 15,000 in full: no offset, no warnings, and approval accepts it.
+        var august = await CreateAsync(Cutoff(maria.Id, 8, 1, 15, new DateOnly(2026, 8, 20), advance: false));
+        august.Employees.Single().MaternityBenefitOffset.Should().Be(0m);
+        august.Employees.Single().RegularPay.Should().Be(15_000m);
+        august.Warnings.Should().BeEmpty();
+        await ApproveAndPayAsync(august.Id);
+
+        async Task Reopen()
+        {
+            await using var context = NewContext();
+            await Claims(context).ReopenAsync(claimId);
+        }
+        await FluentActions.Awaiting(Reopen).Should().ThrowAsync<DomainException>()
+            .WithMessage($"{august.RunNumber} already paid this leave as ordinary salary; the claim can't be reopened.");
+        (await ClaimAsync(claimId)).Status.Should().Be(MaternityClaimStatus.NotQualified);
+        await using (var context = NewContext())
+            (await Claims(context).ReadyEmployeeIdsAsync()).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task PaidRunsCoveringAPeriod_AreHerPaidRunsOverlappingIt()
+    {
+        var maria = AnEmployee("Santos", "Maria");
+        var ana = AnEmployee("Cruz", "Ana");
+        Context.Employees.AddRange(maria, ana);
+        await Context.SaveChangesAsync();
+
+        async Task RunAsync(string number, DateOnly start, DateOnly end, PayrollRunStatus status, Guid employeeId)
+        {
+            var run = new PayrollRun
+            {
+                RunNumber = number, PeriodStart = start, PeriodEnd = end, PayDate = end.AddDays(5),
+                Frequency = PayFrequency.SemiMonthly, Status = status
+            };
+            run.Employees = [new PayrollRunEmployee { PayrollRunId = run.Id, EmployeeId = employeeId }];
+            await using var context = NewContext();
+            await new PayrollRunRepository(context).AddWithEntriesAsync(run);
+        }
+
+        // Her leave: Aug 10 - Nov 22. Overlapping and Paid: Aug 1-15 and Nov 16-30.
+        await RunAsync("PAY-2026-C01", new(2026, 7, 16), new(2026, 7, 31), PayrollRunStatus.Paid, maria.Id);
+        await RunAsync("PAY-2026-C02", new(2026, 8, 1), new(2026, 8, 15), PayrollRunStatus.Paid, maria.Id);
+        await RunAsync("PAY-2026-C03", new(2026, 8, 16), new(2026, 8, 31), PayrollRunStatus.Approved, maria.Id);
+        await RunAsync("PAY-2026-C04", new(2026, 9, 1), new(2026, 9, 15), PayrollRunStatus.Paid, ana.Id);
+        await RunAsync("PAY-2026-C05", new(2026, 11, 16), new(2026, 11, 30), PayrollRunStatus.Paid, maria.Id);
+        await RunAsync("PAY-2026-C06", new(2026, 11, 23), new(2026, 11, 30), PayrollRunStatus.Paid, maria.Id);
+
+        await using var reader = NewContext();
+        (await new PayrollRunRepository(reader).GetPaidRunsCoveringPeriodAsync(maria.Id, new(2026, 8, 10), new(2026, 11, 22)))
+            .Should().Equal("PAY-2026-C02", "PAY-2026-C05");
+    }
+
+    [Fact]
     public async Task Outstanding_IsWhatHerPaidEntriesDeferred_LessWhatTheyCollected()
     {
         var maria = AnEmployee("Santos", "Maria");

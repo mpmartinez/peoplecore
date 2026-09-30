@@ -205,6 +205,18 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
             .ToList();
     }
 
+    public async Task<IReadOnlyList<string>> GetPaidRunsCoveringPeriodAsync(Guid employeeId, DateOnly from, DateOnly to,
+        CancellationToken ct = default)
+    {
+        var runs = await Context.PayrollRunEmployees
+            .Where(e => e.EmployeeId == employeeId && e.PayrollRun.Status == PayrollRunStatus.Paid
+                        && e.PayrollRun.PeriodStart <= to && e.PayrollRun.PeriodEnd >= from)
+            .Select(e => new { e.PayrollRun.RunNumber, e.PayrollRun.PayDate })
+            .Distinct()
+            .ToListAsync(ct);
+        return runs.OrderBy(r => r.PayDate).ThenBy(r => r.RunNumber).Select(r => r.RunNumber).ToList();
+    }
+
     private void Attach<TEntity>(TEntity entity) where TEntity : class
     {
         if (Context.Entry(entity).State == EntityState.Detached)

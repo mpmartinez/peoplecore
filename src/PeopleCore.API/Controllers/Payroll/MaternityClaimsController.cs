@@ -60,6 +60,17 @@ public class MaternityClaimsController : ControllerBase
     public async Task<ActionResult<MaternityClaimDto>> Deny(Guid id, DenyRequest request, CancellationToken ct = default)
         => Ok(await _service.DenyAsync(id, request, ct));
 
+    /// <summary>Marks a Draft claim not SSS-qualified: her leave days are paid as ordinary salary.</summary>
+    [HttpPut("{id:guid}/not-qualified")]
+    public async Task<ActionResult<MaternityClaimDto>> MarkNotQualified(Guid id, NotQualifiedRequest request,
+        CancellationToken ct = default)
+        => Ok(await _service.MarkNotQualifiedAsync(id, request, ct));
+
+    /// <summary>Sets a claim marked not SSS-qualified back to Draft, while no paid payroll covered her leave.</summary>
+    [HttpPut("{id:guid}/reopen")]
+    public async Task<ActionResult<MaternityClaimDto>> Reopen(Guid id, CancellationToken ct = default)
+        => Ok(await _service.ReopenAsync(id, ct));
+
     /// <summary>Voids a Draft claim no unpaid run advances; the note says why.</summary>
     [HttpPut("{id:guid}/void")]
     public async Task<ActionResult<MaternityClaimDto>> Void(Guid id, VoidRequest request, CancellationToken ct = default)

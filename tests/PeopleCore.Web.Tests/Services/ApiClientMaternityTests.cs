@@ -83,10 +83,11 @@ public class ApiClientMaternityTests
         MembersOf<DenyRequest>().Should().Equal("note");
         MembersOf<VoidRequest>().Should().Equal("note");
         MembersOf<RelinkRequest>().Should().Equal("leaveRequestId");
+        MembersOf<NotQualifiedRequest>().Should().Equal("note");
         MembersOf<MaternityClaimsSummaryDto>().Should().Equal("claims", "outstanding");
         MembersOf<EligibleMaternityLeaveDto>().Should().Equal(EligibleFields);
         MembersOf<PayrollSettingsDto>().Should().Equal(SettingsFields);
-        Enum.GetNames<MaternityClaimStatus>().Should().Equal("Draft", "Advanced", "Reimbursed", "Denied", "Voided");
+        Enum.GetNames<MaternityClaimStatus>().Should().Equal("Draft", "Advanced", "Reimbursed", "Denied", "Voided", "NotQualified");
     }
 
     [Fact]
@@ -222,6 +223,26 @@ public class ApiClientMaternityTests
         await CreateClient().VoidMaternityClaimAsync(ClaimId, "Leave refiled");
 
         _api.RequestBodies.Single().Should().Be("""{"note":"Leave refiled"}""");
+    }
+
+    [Fact]
+    public async Task MarkMaternityClaimNotQualified_PutsTheNote()
+    {
+        _api.On(HttpMethod.Put, $"/api/maternity-claims/{ClaimId}/not-qualified", HttpStatusCode.OK, ClaimJson);
+
+        await CreateClient().MarkMaternityClaimNotQualifiedAsync(ClaimId, "No contributions");
+
+        _api.RequestBodies.Single().Should().Be("""{"note":"No contributions"}""");
+    }
+
+    [Fact]
+    public async Task ReopenMaternityClaim_PutsNothing()
+    {
+        _api.On(HttpMethod.Put, $"/api/maternity-claims/{ClaimId}/reopen", HttpStatusCode.OK, ClaimJson);
+
+        (await CreateClient().ReopenMaternityClaimAsync(ClaimId))!.Id.Should().Be(ClaimId);
+
+        _api.RequestBodies.Single().Should().BeNull();
     }
 
     [Fact]

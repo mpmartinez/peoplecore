@@ -174,6 +174,9 @@ public class PermissionEquivalenceTests
         // Voiding a draft claim, and moving a claim to the leave refiled after its own was cancelled.
         ["MaternityClaimsController.Void"] = [Permissions.PayrollManage],
         ["MaternityClaimsController.Relink"] = [Permissions.PayrollManage],
+        // Marking a claim not SSS-qualified (her leave days paid as salary), and reopening it.
+        ["MaternityClaimsController.MarkNotQualified"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.Reopen"] = [Permissions.PayrollManage],
 
         // GET and PUT api/payroll-settings/default: the settings row payroll computes from, read and
         // changed without naming its company - managing payroll settings, like the per-company pair.

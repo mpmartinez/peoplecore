@@ -28,7 +28,7 @@ differential is part of the maternity benefit (RMC 105-2019).
 - `DailyAllowance` (decimal?, set by HR).
 - `Days` - the request's `TotalDays` (the maternity case's days, less any allocated to the father).
 - `Benefit` = round(`DailyAllowance` x `Days`, 2), stored when the allowance is set.
-- `Status`: `Draft`, `Advanced`, `Reimbursed`, `Denied`, `Voided`.
+- `Status`: `Draft`, `Advanced`, `Reimbursed`, `Denied`, `Voided`, `NotQualified`.
 - `AdvanceRunId` (Guid?), `AdvancedAt` (DateOnly?).
 - `ReimbursedOn` (DateOnly?), `ReimbursedAmount` (decimal?), `Note` (string?, up to 500).
 
@@ -63,6 +63,16 @@ Rules:
   Voided claim is never ready, never offsets, and isn't outstanding. The claim list names the Paid
   run that netted a Draft claim (`NettedByRunNumber`), and the page offers Void only where it is
   allowed.
+- **Not SSS-qualified:** `PUT api/maternity-claims/{id}/not-qualified` with `{ note }`, for an
+  employee on approved maternity leave who doesn't qualify for the SSS benefit. Only a Draft claim
+  ("Only a draft claim can be marked not SSS-qualified.") that no unpaid run advances and no Paid run
+  has netted; the note is required ("Explain why she doesn't qualify for the SSS benefit."). Her leave
+  days are then paid and taxed as ordinary salary: no advance, offset, differential or deferral - for
+  an exempt employer too (the exemption is from the differential; without an SSS benefit she is paid
+  her salary). Approval accepts the claim, no "not set up" or "not advanced" warning is given, and it
+  is never ready or outstanding. `PUT api/maternity-claims/{id}/reopen` sets it back to Draft (the
+  note cleared) while no Paid run covers days of its leave ("{RunNumber} already paid this leave as
+  ordinary salary; the claim can't be reopened.").
 - **Re-link:** `PUT api/maternity-claims/{id}/relink` with `{ leaveRequestId }`, for leave that was
   cancelled and refiled. Only when the claim's own leave is Cancelled or Rejected ("Only a claim whose
   leave was cancelled can be moved."), to an Approved maternity request of the same employee with no
@@ -147,8 +157,8 @@ once across overlapping requests):
 - **Maternity claims** (`/maternity-claims`, `payroll.manage`): the list with employee, leave
   dates, days, benefit, status and run, and the outstanding total; create a claim from an approved
   maternity request; set the allowance (showing the suggestion and months found); record
-  reimbursement or denial; void a Draft claim; move a claim whose leave was cancelled to the refiled
-  leave.
+  reimbursement or denial; void a Draft claim; mark a Draft claim not SSS-qualified, and reopen it;
+  move a claim whose leave was cancelled to the refiled leave.
 - **Create payroll:** "Advance maternity benefit" per employee, offered only for employees with a
   claim ready to advance, with the note "While her leave is covered by SSS, her contribution shares
   are deferred and collected from the advance or her next pay."

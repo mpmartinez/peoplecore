@@ -25,6 +25,15 @@ public interface IMaternityClaimService
     /// <summary>Records that SSS denied an Advanced claim.</summary>
     Task<MaternityClaimDto> DenyAsync(Guid claimId, DenyRequest request, CancellationToken ct = default);
 
+    /// <summary>
+    /// Marks a Draft claim not SSS-qualified - no unpaid run advancing it, no Paid run netting it - with
+    /// a note: her leave days are then paid and taxed as ordinary salary.
+    /// </summary>
+    Task<MaternityClaimDto> MarkNotQualifiedAsync(Guid claimId, NotQualifiedRequest request, CancellationToken ct = default);
+
+    /// <summary>Sets a claim marked not SSS-qualified back to Draft, while no Paid run covers days of its leave.</summary>
+    Task<MaternityClaimDto> ReopenAsync(Guid claimId, CancellationToken ct = default);
+
     /// <summary>Voids a Draft claim that no unpaid run advances, with a note saying why.</summary>
     Task<MaternityClaimDto> VoidAsync(Guid claimId, VoidRequest request, CancellationToken ct = default);
 

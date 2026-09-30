@@ -699,6 +699,14 @@ public class ApiClient
     public Task<MaternityClaimDto?> VoidMaternityClaimAsync(Guid claimId, string? note)
         => SendJsonAsync<MaternityClaimDto>(HttpMethod.Put, $"api/maternity-claims/{claimId}/void", new VoidRequest(note));
 
+    /// <summary>Marks a Draft claim not SSS-qualified: her leave days are paid as ordinary salary.</summary>
+    public Task<MaternityClaimDto?> MarkMaternityClaimNotQualifiedAsync(Guid claimId, string? note)
+        => SendJsonAsync<MaternityClaimDto>(HttpMethod.Put, $"api/maternity-claims/{claimId}/not-qualified", new NotQualifiedRequest(note));
+
+    /// <summary>Sets a claim marked not SSS-qualified back to Draft, while no paid payroll covered her leave.</summary>
+    public Task<MaternityClaimDto?> ReopenMaternityClaimAsync(Guid claimId)
+        => SendJsonAsync<MaternityClaimDto>(HttpMethod.Put, $"api/maternity-claims/{claimId}/reopen");
+
     /// <summary>Moves a claim whose leave was cancelled or rejected to the employee's refiled maternity leave.</summary>
     public Task<MaternityClaimDto?> RelinkMaternityClaimAsync(Guid claimId, Guid leaveRequestId)
         => SendJsonAsync<MaternityClaimDto>(HttpMethod.Put, $"api/maternity-claims/{claimId}/relink", new RelinkRequest(leaveRequestId));
@@ -1280,8 +1288,9 @@ public record PayrollRunSummaryDto(
 // Maternity claims - copies of PeopleCore.Application.Payroll.Maternity.MaternityDtos, field by field
 // and in the same order. The status travels as its name (JsonOptions' JsonStringEnumConverter);
 // MaternityLabels turns it into words.
-// Voided: a Draft claim HR withdrew; it counts for nothing.
-public enum MaternityClaimStatus { Draft, Advanced, Reimbursed, Denied, Voided }
+// Voided: a Draft claim HR withdrew; it counts for nothing. NotQualified: she doesn't qualify for the
+// SSS benefit, so her leave days are paid as ordinary salary.
+public enum MaternityClaimStatus { Draft, Advanced, Reimbursed, Denied, Voided, NotQualified }
 
 public record MaternityClaimDto(Guid Id, Guid LeaveRequestId, Guid EmployeeId, string EmployeeName,
     DateOnly LeaveStart, DateOnly LeaveEnd, decimal Days, decimal? DailyAllowance, decimal Benefit,
@@ -1306,6 +1315,7 @@ public record ReimburseRequest(DateOnly ReimbursedOn, decimal ReimbursedAmount, 
 public record DenyRequest(string? Note);
 public record VoidRequest(string? Note);
 public record RelinkRequest(Guid LeaveRequestId);
+public record NotQualifiedRequest(string? Note);
 public record MaternityClaimsSummaryDto(IReadOnlyList<MaternityClaimDto> Claims, decimal Outstanding);
 public record EligibleMaternityLeaveDto(Guid LeaveRequestId, Guid EmployeeId, string EmployeeName,
     DateOnly StartDate, DateOnly EndDate, decimal Days);

@@ -209,6 +209,13 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
         IReadOnlyCollection<Guid> claimIds, CancellationToken ct = default);
 
     /// <summary>
+    /// The Paid runs, of any type, that include the employee and whose period overlaps
+    /// [<paramref name="from"/>, <paramref name="to"/>]: run numbers, earliest pay date first.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetPaidRunsCoveringPeriodAsync(Guid employeeId, DateOnly from, DateOnly to,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Year-end leave conversions already on file for the employees: one per entry with
     /// LeaveConversionPay above zero, on a Regular run - in any status - whose PeriodEnd falls in
     /// <paramref name="periodEndYear"/>, other than <paramref name="excludeRunId"/>. Final pays

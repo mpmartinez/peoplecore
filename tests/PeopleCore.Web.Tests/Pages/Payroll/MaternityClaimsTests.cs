@@ -117,6 +117,7 @@ public class MaternityClaimsTests : BunitContext
     [InlineData("Reimbursed", "Reimbursed")]
     [InlineData("Denied", "Denied")]
     [InlineData("Voided", "Voided")]
+    [InlineData("NotQualified", "Not SSS-qualified")]
     public void EachStatus_ReadsAsAWord(string status, string label)
     {
         var cut = RenderPage(Summary(0m, Claim(status: status)));
@@ -133,16 +134,17 @@ public class MaternityClaimsTests : BunitContext
     }
 
     [Theory]
-    [InlineData("Draft", new[] { "set-allowance" })]
+    [InlineData("Draft", new[] { "set-allowance", "not-qualified" })]
     [InlineData("Advanced", new[] { "reimburse", "deny" })]
     [InlineData("Reimbursed", new string[0])]
     [InlineData("Denied", new string[0])]
     [InlineData("Voided", new string[0])]
+    [InlineData("NotQualified", new[] { "reopen" })]
     public void OnlyTheActionsTheApiAcceptsForTheStatus_AreOffered(string status, string[] expected)
     {
         var cut = RenderPage(Summary(0m, Claim(status: status, allowance: 666.67m, benefit: 70000.35m)));
 
-        var offered = new[] { "set-allowance", "void", "reimburse", "deny", "move" }
+        var offered = new[] { "set-allowance", "not-qualified", "void", "reimburse", "deny", "move", "reopen" }
             .Where(a => Row(cut, MariaClaimId).QuerySelector($"[data-{a}]") is not null);
         offered.Should().Equal(expected);
     }
@@ -153,9 +155,9 @@ public class MaternityClaimsTests : BunitContext
         // The API voids a Draft claim only once its leave is no longer approved.
         var cut = RenderPage(Summary(0m, Claim(allowance: 666.67m, benefit: 70000.35m, leaveCancelled: true)));
 
-        var offered = new[] { "set-allowance", "void", "move" }
+        var offered = new[] { "set-allowance", "not-qualified", "void", "move" }
             .Where(a => Row(cut, MariaClaimId).QuerySelector($"[data-{a}]") is not null);
-        offered.Should().Equal("set-allowance", "void", "move");
+        offered.Should().Equal("set-allowance", "not-qualified", "void", "move");
     }
 
     [Fact]
@@ -169,6 +171,7 @@ public class MaternityClaimsTests : BunitContext
         maria.QuerySelector("[data-netted-by]")!.TextContent.Trim().Should().Be("Netted on PR-2026-0014");
         maria.QuerySelector("[data-set-allowance]").Should().BeNull();
         maria.QuerySelector("[data-void]").Should().BeNull();
+        maria.QuerySelector("[data-not-qualified]").Should().BeNull("the API won't mark a netted claim not qualified");
         maria.QuerySelector("[data-move]").Should().NotBeNull("its leave was cancelled, so it can still move");
     }
 
@@ -184,6 +187,7 @@ public class MaternityClaimsTests : BunitContext
         maria.QuerySelector("[data-carried-by]")!.TextContent.Trim().Should().Be("Advancing on PR-2026-0015");
         maria.QuerySelector("[data-set-allowance]").Should().BeNull();
         maria.QuerySelector("[data-void]").Should().BeNull("the API won't void a claim a run advances");
+        maria.QuerySelector("[data-not-qualified]").Should().BeNull("nor mark it not qualified");
         Row(cut, AnaClaimId).QuerySelector("[data-set-allowance]").Should().NotBeNull();
         Row(cut, AnaClaimId).QuerySelector("[data-carried-by]").Should().BeNull();
     }
@@ -636,6 +640,61 @@ public class MaternityClaimsTests : BunitContext
 
         cut.WaitForAssertion(() => cut.Find("[data-void-error]").TextContent
             .Should().Contain("PR-2026-0015 advances this benefit; discard it or pay it first."));
+    }
+
+    [Fact]
+    public void MarkingNotQualified_NeedsANote_AndPutsIt()
+    {
+        var loads = 0;
+        _api.On(HttpMethod.Get, ListPath, () => Json(++loads == 1
+                ? Summary(0m, Claim(allowance: 666.67m, benefit: 70000.35m))
+                : Summary(0m, Claim(status: "NotQualified", allowance: 666.67m, benefit: 70000.35m, note: "No contributions"))))
+            .On(HttpMethod.Put, $"/api/maternity-claims/{MariaClaimId}/not-qualified", HttpStatusCode.OK,
+                Claim(status: "NotQualified", allowance: 666.67m, benefit: 70000.35m, note: "No contributions"));
+        var cut = RenderPage();
+        Row(cut, MariaClaimId).QuerySelector("[data-not-qualified]")!.Click();
+
+        cut.Find("#not-qualified-note").Input(" ");
+        cut.Find("[data-submit-not-qualified]").Click();
+        cut.Find("[data-not-qualified-error]").TextContent.Should().Contain("Explain why she doesn't qualify for the SSS benefit.");
+        _api.Requests.Should().NotContain(r => r.Method == HttpMethod.Put);
+
+        cut.Find("#not-qualified-note").Input("No contributions");
+        cut.Find("[data-submit-not-qualified]").Click();
+
+        cut.WaitForAssertion(() => Row(cut, MariaClaimId).QuerySelector("[data-status]")!.TextContent.Trim().Should().Be("Not SSS-qualified"));
+        cut.FindAll("[data-not-qualified-dialog]").Should().BeEmpty();
+        BodyOf(HttpMethod.Put, $"/api/maternity-claims/{MariaClaimId}/not-qualified").GetProperty("note").GetString()
+            .Should().Be("No contributions");
+    }
+
+    [Fact]
+    public void Reopening_PutsIt_AndAReasonToRefuseShows()
+    {
+        var loads = 0;
+        _api.On(HttpMethod.Get, ListPath, () => Json(++loads == 1
+                ? Summary(0m, Claim(status: "NotQualified", allowance: 666.67m, benefit: 70000.35m))
+                : Summary(0m, Claim(allowance: 666.67m, benefit: 70000.35m))))
+            .On(HttpMethod.Put, $"/api/maternity-claims/{MariaClaimId}/reopen", HttpStatusCode.OK, Claim(allowance: 666.67m));
+        var cut = RenderPage();
+
+        Row(cut, MariaClaimId).QuerySelector("[data-reopen]")!.Click();
+
+        cut.WaitForAssertion(() => Row(cut, MariaClaimId).QuerySelector("[data-status]")!.TextContent.Trim().Should().Be("Draft"));
+        _api.Requests.Should().ContainSingle(r => r.Method == HttpMethod.Put);
+    }
+
+    [Fact]
+    public void ARefusedReopen_ShowsTheApisReason()
+    {
+        _api.On(HttpMethod.Put, $"/api/maternity-claims/{MariaClaimId}/reopen",
+            () => Problem("PR-2026-0016 already paid this leave as ordinary salary; the claim can't be reopened."));
+        var cut = RenderPage(Summary(0m, Claim(status: "NotQualified", allowance: 666.67m, benefit: 70000.35m)));
+
+        Row(cut, MariaClaimId).QuerySelector("[data-reopen]")!.Click();
+
+        cut.WaitForAssertion(() => cut.Find("[data-action-error]").TextContent
+            .Should().Contain("PR-2026-0016 already paid this leave as ordinary salary; the claim can't be reopened."));
     }
 
     [Fact]

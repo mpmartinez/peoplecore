@@ -731,6 +731,133 @@ public class MaternityClaimServiceTests
         summary.Claims.Single(c => c.Id == advanced.Id).LeaveCancelled.Should().BeFalse();
     }
 
+    // ── Not SSS-qualified ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task MarkNotQualified_ADraftClaim_WithANote_IsMarked()
+    {
+        var claim = AClaim(allowance: 666.67m, benefit: 70_000.35m);
+
+        var dto = await _sut.MarkNotQualifiedAsync(claim.Id, new NotQualifiedRequest("  Fewer than 3 contributions in the window.  "));
+
+        claim.Status.Should().Be(MaternityClaimStatus.NotQualified);
+        claim.Note.Should().Be("Fewer than 3 contributions in the window.");
+        dto.Status.Should().Be(MaternityClaimStatus.NotQualified);
+        _claims.Verify(c => c.UpdateAsync(claim, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("  ")]
+    public async Task MarkNotQualified_WithoutANote_IsRefused(string? note)
+    {
+        var claim = AClaim();
+
+        var act = () => _sut.MarkNotQualifiedAsync(claim.Id, new NotQualifiedRequest(note));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Explain why she doesn't qualify for the SSS benefit.");
+        claim.Status.Should().Be(MaternityClaimStatus.Draft);
+    }
+
+    [Theory]
+    [InlineData(MaternityClaimStatus.Advanced)]
+    [InlineData(MaternityClaimStatus.Reimbursed)]
+    [InlineData(MaternityClaimStatus.Denied)]
+    [InlineData(MaternityClaimStatus.Voided)]
+    [InlineData(MaternityClaimStatus.NotQualified)]
+    public async Task MarkNotQualified_AClaimNoLongerDraft_IsRefused(MaternityClaimStatus status)
+    {
+        var claim = AClaim(status, 666.67m, 70_000.35m);
+
+        var act = () => _sut.MarkNotQualifiedAsync(claim.Id, new NotQualifiedRequest("No contributions"));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Only a draft claim can be marked not SSS-qualified.");
+        claim.Status.Should().Be(status);
+    }
+
+    [Fact]
+    public async Task MarkNotQualified_WhileAnUnpaidRunAdvancesIt_IsRefused()
+    {
+        var claim = AClaim(allowance: 666.67m, benefit: 70_000.35m);
+        AdvancedOn(claim, "PAY-2026-017");
+
+        var act = () => _sut.MarkNotQualifiedAsync(claim.Id, new NotQualifiedRequest("No contributions"));
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("PAY-2026-017 advances this benefit; discard it or pay it first.");
+        claim.Status.Should().Be(MaternityClaimStatus.Draft);
+    }
+
+    [Fact]
+    public async Task MarkNotQualified_OnceAPaidRunNettedIt_IsRefused()
+    {
+        var claim = AClaim(allowance: 666.67m, benefit: 70_000.35m);
+        _runs.Setup(r => r.GetPaidRunsNettingMaternityClaimAsync(claim.Id, It.IsAny<CancellationToken>()))
+             .ReturnsAsync(["PAY-2026-016"]);
+
+        var act = () => _sut.MarkNotQualifiedAsync(claim.Id, new NotQualifiedRequest("No contributions"));
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("PAY-2026-016 already netted this allowance; it can't change now.");
+        claim.Status.Should().Be(MaternityClaimStatus.Draft);
+    }
+
+    [Fact]
+    public async Task Reopen_ANotQualifiedClaim_NoPaidRunCovered_IsDraftAgain()
+    {
+        var claim = AClaim(MaternityClaimStatus.NotQualified, 666.67m, 70_000.35m);
+        claim.Note = "No contributions";
+
+        var dto = await _sut.ReopenAsync(claim.Id);
+
+        claim.Status.Should().Be(MaternityClaimStatus.Draft);
+        claim.Note.Should().BeNull("the note explained a status the claim no longer has");
+        dto.Status.Should().Be(MaternityClaimStatus.Draft);
+        // Asked about her Paid runs over the leave's own dates.
+        _runs.Verify(r => r.GetPaidRunsCoveringPeriodAsync(claim.EmployeeId, claim.LeaveRequest.StartDate,
+            claim.LeaveRequest.EndDate, It.IsAny<CancellationToken>()));
+        _claims.Verify(c => c.UpdateAsync(claim, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Reopen_OnceAPaidRunPaidTheLeaveAsOrdinarySalary_IsRefused()
+    {
+        var claim = AClaim(MaternityClaimStatus.NotQualified, 666.67m, 70_000.35m);
+        _runs.Setup(r => r.GetPaidRunsCoveringPeriodAsync(claim.EmployeeId, It.IsAny<DateOnly>(), It.IsAny<DateOnly>(),
+                    It.IsAny<CancellationToken>()))
+             .ReturnsAsync(["PAY-2026-016", "PAY-2026-017"]);
+
+        var act = () => _sut.ReopenAsync(claim.Id);
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("PAY-2026-016 already paid this leave as ordinary salary; the claim can't be reopened.");
+        claim.Status.Should().Be(MaternityClaimStatus.NotQualified);
+    }
+
+    [Theory]
+    [InlineData(MaternityClaimStatus.Draft)]
+    [InlineData(MaternityClaimStatus.Advanced)]
+    [InlineData(MaternityClaimStatus.Voided)]
+    public async Task Reopen_AClaimNotMarkedNotQualified_IsRefused(MaternityClaimStatus status)
+    {
+        var claim = AClaim(status, 666.67m, 70_000.35m);
+
+        var act = () => _sut.ReopenAsync(claim.Id);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Only a claim marked not SSS-qualified can be reopened.");
+    }
+
+    [Fact]
+    public async Task ANotQualifiedClaim_IsNeverReady_NorOutstanding()
+    {
+        var claim = AClaim(MaternityClaimStatus.NotQualified, 666.67m, 70_000.35m);
+        _claims.Setup(c => c.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync([claim]);
+
+        (await _sut.ReadyEmployeeIdsAsync()).Should().BeEmpty();
+        (await _sut.ListAsync()).Outstanding.Should().Be(0m);
+    }
+
     // ── Moving a claim to refiled leave ──────────────────────────────────────
 
     private LeaveRequest Refiled(Employee? employee = null, LeaveStatus status = LeaveStatus.Approved, bool maternity = true,

@@ -166,6 +166,29 @@ public partial class PayrollRunServiceTests
     }
 
     [Fact]
+    public async Task CreateAsync_ForAClaimNotSssQualified_PaysAndTaxesTheLeaveDaysAsOrdinarySalary_AndApprovalAcceptsIt()
+    {
+        var (maria, _, claim, savedRun) = MariaOnMaternityLeave();
+        claim!.Status = MaternityClaimStatus.NotQualified;
+
+        var dto = await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: false));
+        await MaternitySut.ApproveAsync(savedRun()!.Id);
+
+        // No offset: 15,000 of regular pay. Base 15,000 - 1,225 = 13,775 a cutoff, 330,600 a year
+        // -> 12,090 -> 503.75 withheld. Net 15,000 - 1,225 - 503.75 = 13,271.25; nothing deferred.
+        var entry = savedRun()!.Employees.Single();
+        entry.RegularPay.Should().Be(15_000m);
+        entry.MaternityBenefitOffset.Should().Be(0m);
+        entry.MaternityDifferential.Should().Be(0m);
+        entry.MaternityClaimId.Should().BeNull();
+        entry.WithholdingTax.Should().Be(503.75m);
+        entry.ContributionsDeferred.Should().Be(0m);
+        entry.NetPay.Should().Be(13_271.25m);
+        dto.Warnings.Should().BeEmpty();
+        savedRun()!.Status.Should().Be(PayrollRunStatus.Approved);
+    }
+
+    [Fact]
     public async Task CreateAsync_ForAnExemptEmployer_OffsetsTheRegularPayForTheLeaveDays_EvenWithoutAClaim()
     {
         var (maria, _, _, savedRun) = MariaOnMaternityLeave(withClaim: false);

@@ -31,6 +31,10 @@ else if (_summary is null)
 }
 else
 {
+    @if (_actionError is not null)
+    {
+        <Alert Variant="destructive" Class="mb-4" data-action-error>@_actionError</Alert>
+    }
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <Card>
             <CardContent Class="pt-4">
@@ -138,11 +142,17 @@ else
                                         else if (c.Status == MaternityClaimStatus.Draft)
                                         {
                                             <Button Variant="outline" Size="sm" OnClick="@(() => OpenAllowance(c))" data-set-allowance>Set allowance</Button>
+                                            <Button Variant="outline" Size="sm" OnClick="@(() => OpenNotQualified(c))" data-not-qualified>Mark not SSS-qualified</Button>
                                             @* Voiding is for a Draft claim whose leave was cancelled or rejected. *@
                                             @if (c.LeaveCancelled)
                                             {
                                                 <Button Variant="outline" Size="sm" OnClick="@(() => OpenVoid(c))" data-void>Void</Button>
                                             }
+                                        }
+                                        else if (c.Status == MaternityClaimStatus.NotQualified)
+                                        {
+                                            @* The API reopens it while no paid payroll has covered her leave. *@
+                                            <Button Variant="outline" Size="sm" OnClick="@(() => Reopen(c))" Disabled="@_saving" data-reopen>Reopen</Button>
                                         }
                                         else if (c.Status == MaternityClaimStatus.Advanced)
                                         {
@@ -294,6 +304,26 @@ else
     </FooterContent>
 </Dialog>
 
+<Dialog IsOpen="@(_notQualifiedClaim is not null)" Title="@($"{_notQualifiedClaim?.EmployeeName} doesn't qualify for the SSS benefit")"
+        Description="Her maternity leave days are then paid and taxed as ordinary salary." OnClose="CloseDialogs"
+        BodyClass="space-y-4" data-not-qualified-dialog>
+    <ChildContent>
+        @if (_formError is not null)
+        {
+            <Alert Variant="destructive" data-not-qualified-error>@_formError</Alert>
+        }
+        <FormField LabelText="Why she doesn't qualify" Id="not-qualified-note" Required="true">
+            <Textarea TValue="string" Id="not-qualified-note" @bind-Value="_note" MaxLength="@NoteMaxLength" Disabled="@_saving" />
+        </FormField>
+    </ChildContent>
+    <FooterContent>
+        <div class="flex justify-end gap-2">
+            <Button Variant="outline" OnClick="CloseDialogs" Disabled="@_saving">Cancel</Button>
+            <Button Variant="primary" OnClick="MarkNotQualified" Loading="@_saving" data-submit-not-qualified>Mark not SSS-qualified</Button>
+        </div>
+    </FooterContent>
+</Dialog>
+
 <Dialog IsOpen="@(_voidClaim is not null)" Title="@($"Void {_voidClaim?.EmployeeName}'s claim")"
         Description="A voided claim is never advanced and never nets her pay." OnClose="CloseDialogs"
         BodyClass="space-y-4" data-void-dialog>
@@ -388,6 +418,9 @@ else
     private string? _note;
 
     private MaternityClaimDto? _voidClaim;
+    private MaternityClaimDto? _notQualifiedClaim;
+    // A command sent from the list itself (Reopen), with no form to show its refusal in.
+    private string? _actionError;
 
     private MaternityClaimDto? _moveClaim;
     private List<EligibleMaternityLeaveDto>? _moveTargets;
@@ -417,7 +450,7 @@ else
     {
         _dialogVersion++;
         _createOpen = false;
-        _allowanceClaim = _reimburseClaim = _denyClaim = _voidClaim = _moveClaim = null;
+        _allowanceClaim = _reimburseClaim = _denyClaim = _voidClaim = _moveClaim = _notQualifiedClaim = null;
     }
 
     private void ResetForm()
@@ -629,6 +662,49 @@ else
 
         if (await SendAsync(() => Api.RelinkMaternityClaimAsync(claim.Id, leaveRequestId)))
             await LoadClaims();
+    }
+
+    private void OpenNotQualified(MaternityClaimDto claim)
+    {
+        ResetForm();
+        _notQualifiedClaim = claim;
+    }
+
+    private async Task MarkNotQualified()
+    {
+        if (_saving || _notQualifiedClaim is not { } claim) return;
+        _formError = null;
+        var note = Note();
+        if (note is null)
+            _formError = "Explain why she doesn't qualify for the SSS benefit.";
+        else if (note.Length > NoteMaxLength)
+            _formError = "Keep the note to 500 characters.";
+        if (_formError is not null) return;
+
+        if (await SendAsync(() => Api.MarkMaternityClaimNotQualifiedAsync(claim.Id, note)))
+            await LoadClaims();
+    }
+
+    /// <summary>Reopens a claim marked not SSS-qualified straight from the list; a refusal shows above it.</summary>
+    private async Task Reopen(MaternityClaimDto claim)
+    {
+        if (_saving) return;
+        _actionError = null;
+        _saving = true;
+        try
+        {
+            await Api.ReopenMaternityClaimAsync(claim.Id);
+        }
+        catch (Exception ex)
+        {
+            _actionError = ex.Message;
+            return;
+        }
+        finally
+        {
+            _saving = false;
+        }
+        await LoadClaims();
     }
 
     private string? Note() => string.IsNullOrWhiteSpace(_note) ? null : _note.Trim();
