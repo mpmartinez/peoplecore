@@ -151,6 +151,46 @@ public class MaternityClaimServiceDbTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task Relink_WhenARivalClaimForTheTargetCommitsFirst_GivesTheReadableMessage()
+    {
+        var maria = AnEmployee("Santos", "Maria");
+        Context.Employees.Add(maria);
+        await Context.SaveChangesAsync();
+        var type = await MaternityTypeAsync();
+        var original = await ARequestAsync(maria, type, new DateOnly(2026, 8, 10));
+        var refiled = await ARequestAsync(maria, type, new DateOnly(2026, 8, 17));
+        var claim = await Service(Context).CreateAsync(original.Id);
+        await using (var cancel = NewContext())
+        {
+            (await cancel.LeaveRequests.SingleAsync(r => r.Id == original.Id)).Status = LeaveStatus.Cancelled;
+            await cancel.SaveChangesAsync();
+        }
+
+        // The check finds no claim for the refiled leave; then a rival opens one, through a second
+        // context, before the move saves.
+        async Task Rival()
+        {
+            await using var second = NewContext();
+            second.MaternityClaims.Add(new MaternityClaim { LeaveRequestId = refiled.Id, EmployeeId = maria.Id, Days = 105m });
+            await second.SaveChangesAsync();
+        }
+        await using var context = NewContext();
+        var service = new MaternityClaimService(new RacingClaimRepository(context, Rival), new LeaveRequestRepository(context),
+            new PayrollRunRepository(context), new PayrollSettingsRepository(context));
+
+        var act = () => service.RelinkAsync(claim.Id, new RelinkRequest(refiled.Id));
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("Choose an approved maternity leave of the same employee that has no claim.");
+        // The refused move is dropped from the context, so a later save there doesn't try it again,
+        // and the claim still has its own leave.
+        context.ChangeTracker.Entries<MaternityClaim>().Should().NotContain(e => e.State == EntityState.Modified);
+        await using var reader = NewContext();
+        (await reader.MaternityClaims.SingleAsync(c => c.Id == claim.Id)).LeaveRequestId.Should().Be(original.Id);
+        (await reader.MaternityClaims.CountAsync(c => c.LeaveRequestId == refiled.Id)).Should().Be(1);
+    }
+
+    [Fact]
     public async Task Eligible_IsTheApprovedMaternityRequestsWithoutAClaim()
     {
         var maria = AnEmployee("Santos", "Maria");

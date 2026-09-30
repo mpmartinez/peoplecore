@@ -189,6 +189,22 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
         return runs.OrderBy(r => r.PayDate).ThenBy(r => r.RunNumber).Select(r => r.RunNumber).ToList();
     }
 
+    public async Task<IReadOnlyList<MaternityNettingInRun>> GetPaidRunsNettingMaternityClaimsAsync(
+        IReadOnlyCollection<Guid> claimIds, CancellationToken ct = default)
+    {
+        var ids = claimIds.Distinct().ToList();
+        if (ids.Count == 0) return [];
+        var rows = await Context.PayrollRunEmployees
+            .Where(e => e.MaternityClaimId != null && ids.Contains(e.MaternityClaimId.Value)
+                        && e.MaternityBenefitOffset > 0m && e.PayrollRun.Status == PayrollRunStatus.Paid)
+            .Select(e => new { ClaimId = e.MaternityClaimId!.Value, e.PayrollRun.RunNumber, e.PayrollRun.PayDate })
+            .Distinct()
+            .ToListAsync(ct);
+        return rows.OrderBy(r => r.PayDate).ThenBy(r => r.RunNumber)
+            .Select(r => new MaternityNettingInRun(r.ClaimId, r.RunNumber))
+            .ToList();
+    }
+
     private void Attach<TEntity>(TEntity entity) where TEntity : class
     {
         if (Context.Entry(entity).State == EntityState.Detached)

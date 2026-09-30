@@ -394,6 +394,32 @@ public class MaternityPayDbTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task AClaimNettedByAPaidRun_CannotBeVoided_EvenOnceItsLeaveIsCancelled_AndTheListSaysWhichRun()
+    {
+        var (maria, claimId) = await MariaWithAReadyClaimAsync();
+        var august = await CreateAsync(Cutoff(maria.Id, 8, 1, 15, new DateOnly(2026, 8, 20), advance: false));
+        await ApproveAndPayAsync(august.Id);
+        await using (var context = NewContext())
+        {
+            var claim = await context.MaternityClaims.SingleAsync(c => c.Id == claimId);
+            (await context.LeaveRequests.SingleAsync(r => r.Id == claim.LeaveRequestId)).Status = LeaveStatus.Cancelled;
+            await context.SaveChangesAsync();
+        }
+
+        async Task Void()
+        {
+            await using var context = NewContext();
+            await Claims(context).VoidAsync(claimId, new VoidRequest("Refiled"));
+        }
+
+        await FluentActions.Awaiting(Void).Should().ThrowAsync<DomainException>()
+            .WithMessage($"{august.RunNumber} already netted this allowance; it can't change now.");
+        (await ClaimAsync(claimId)).Status.Should().Be(MaternityClaimStatus.Draft);
+        await using (var context = NewContext())
+            (await Claims(context).ListAsync()).Claims.Single().NettedByRunNumber.Should().Be(august.RunNumber);
+    }
+
+    [Fact]
     public async Task AClaimWhoseLeaveWasCancelled_MovesToTheRefiledLeave_AndIsReadyAgain()
     {
         var (maria, claimId) = await MariaWithAReadyClaimAsync();

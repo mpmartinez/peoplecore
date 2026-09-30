@@ -32,6 +32,20 @@ public class MaternityClaimRepository : Repository<MaternityClaim>, IMaternityCl
         }
     }
 
+    public async Task SaveRelinkAsync(MaternityClaim claim, CancellationToken ct = default)
+    {
+        try
+        {
+            await UpdateAsync(claim, ct);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: UniqueViolation })
+        {
+            // Detached so a later save on this context doesn't try the move again.
+            Context.Entry(claim).State = EntityState.Detached;
+            throw new DomainException("Choose an approved maternity leave of the same employee that has no claim.");
+        }
+    }
+
     /// <summary>The claim with its employee, leave request and advance run loaded.</summary>
     public override async Task<MaternityClaim?> GetByIdAsync(Guid id, CancellationToken ct = default)
         => await Context.MaternityClaims

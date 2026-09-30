@@ -130,11 +130,19 @@ else
                                             @* The allowance is locked while an unpaid run advances the benefit. *@
                                             <span class="text-xs text-muted-foreground whitespace-nowrap" data-carried-by>Advancing on @carriedBy</span>
                                         }
+                                        else if (c.Status == MaternityClaimStatus.Draft && c.NettedByRunNumber is { } nettedBy)
+                                        {
+                                            @* A paid payroll netted the allowance: it is locked, and the claim can't be voided. *@
+                                            <span class="text-xs text-muted-foreground whitespace-nowrap" data-netted-by>Netted on @nettedBy</span>
+                                        }
                                         else if (c.Status == MaternityClaimStatus.Draft)
                                         {
                                             <Button Variant="outline" Size="sm" OnClick="@(() => OpenAllowance(c))" data-set-allowance>Set allowance</Button>
-                                            @* A Draft claim no run advances can be voided. *@
-                                            <Button Variant="outline" Size="sm" OnClick="@(() => OpenVoid(c))" data-void>Void</Button>
+                                            @* Voiding is for a Draft claim whose leave was cancelled or rejected. *@
+                                            @if (c.LeaveCancelled)
+                                            {
+                                                <Button Variant="outline" Size="sm" OnClick="@(() => OpenVoid(c))" data-void>Void</Button>
+                                            }
                                         }
                                         else if (c.Status == MaternityClaimStatus.Advanced)
                                         {

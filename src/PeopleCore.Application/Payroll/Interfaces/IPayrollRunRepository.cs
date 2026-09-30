@@ -202,6 +202,13 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     Task<IReadOnlyList<string>> GetPaidRunsNettingMaternityClaimAsync(Guid claimId, CancellationToken ct = default);
 
     /// <summary>
+    /// <see cref="GetPaidRunsNettingMaternityClaimAsync"/> for many claims at once: one row per claim
+    /// and Paid run that netted it, earliest pay date first.
+    /// </summary>
+    Task<IReadOnlyList<MaternityNettingInRun>> GetPaidRunsNettingMaternityClaimsAsync(
+        IReadOnlyCollection<Guid> claimIds, CancellationToken ct = default);
+
+    /// <summary>
     /// Year-end leave conversions already on file for the employees: one per entry with
     /// LeaveConversionPay above zero, on a Regular run - in any status - whose PeriodEnd falls in
     /// <paramref name="periodEndYear"/>, other than <paramref name="excludeRunId"/>. Final pays
@@ -244,6 +251,9 @@ public sealed record EarlierUnpaidRun(Guid EmployeeId, string RunNumber);
 /// <see cref="PayrollRunEmployee.DeferredContributionsCollected"/>.
 /// </summary>
 public sealed record DeferredContributionsOutstanding(Guid EmployeeId, decimal Amount);
+
+/// <summary>A maternity claim whose allowance the Paid run numbered <paramref name="RunNumber"/> netted off regular pay.</summary>
+public sealed record MaternityNettingInRun(Guid ClaimId, string RunNumber);
 
 /// <summary>A maternity claim whose benefit the run numbered <paramref name="RunNumber"/> advances.</summary>
 public sealed record MaternityAdvanceInRun(Guid ClaimId, string RunNumber);

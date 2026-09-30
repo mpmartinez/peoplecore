@@ -520,6 +520,27 @@ public class MaternityClaimServiceTests
         (await _sut.ListAsync()).Claims.Single().CarriedByRunNumber.Should().BeNull();
 
         _runs.Verify(r => r.GetMaternityAdvancesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        _runs.Verify(r => r.GetPaidRunsNettingMaternityClaimsAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task List_NamesThePaidRunThatNettedADraftClaim_AndAsksOnlyAboutDraftClaims()
+    {
+        // Its allowance is locked and it can't be voided; the page says why instead.
+        var netted = AClaim(allowance: 666.67m, benefit: 70_000.35m);
+        var free = AClaim(allowance: 600m, benefit: 63_000m);
+        var advanced = AClaim(MaternityClaimStatus.Advanced, 600m, 63_000m);
+        _claims.Setup(c => c.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync([netted, free, advanced]);
+        _runs.Setup(r => r.GetPaidRunsNettingMaternityClaimsAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
+             .ReturnsAsync([new MaternityNettingInRun(netted.Id, "PAY-2026-016"), new MaternityNettingInRun(netted.Id, "PAY-2026-017")]);
+
+        var claims = (await _sut.ListAsync()).Claims;
+
+        claims.Single(c => c.Id == netted.Id).NettedByRunNumber.Should().Be("PAY-2026-016");
+        claims.Single(c => c.Id == free.Id).NettedByRunNumber.Should().BeNull();
+        _runs.Verify(r => r.GetPaidRunsNettingMaternityClaimsAsync(
+            It.Is<IReadOnlyCollection<Guid>>(ids => ids.Count == 2 && ids.Contains(netted.Id) && ids.Contains(free.Id)),
+            It.IsAny<CancellationToken>()));
     }
 
     [Fact]
@@ -608,10 +629,14 @@ public class MaternityClaimServiceTests
 
     // ── Voiding ──────────────────────────────────────────────────────────────
 
+    /// <summary>A Draft claim whose leave was cancelled - the claim void is for.</summary>
+    private MaternityClaim AClaimForCancelledLeave(decimal? allowance = 666.67m, decimal benefit = 70_000.35m)
+        => AClaim(allowance: allowance, benefit: benefit, request: ARequest(status: LeaveStatus.Cancelled));
+
     [Fact]
     public async Task Void_ADraftClaimNoRunCarries_WithANote_IsVoided()
     {
-        var claim = AClaim(allowance: 666.67m, benefit: 70_000.35m);
+        var claim = AClaimForCancelledLeave();
 
         var dto = await _sut.VoidAsync(claim.Id, new VoidRequest("  Leave refiled under a new request.  "));
 
@@ -627,7 +652,7 @@ public class MaternityClaimServiceTests
     [InlineData("   ")]
     public async Task Void_WithoutANote_IsRefused(string? note)
     {
-        var claim = AClaim();
+        var claim = AClaimForCancelledLeave();
 
         var act = () => _sut.VoidAsync(claim.Id, new VoidRequest(note));
 
@@ -651,9 +676,38 @@ public class MaternityClaimServiceTests
     }
 
     [Fact]
+    public async Task Void_AClaimWhoseLeaveIsStillApproved_IsRefused()
+    {
+        // Voided, the leave would be left with no usable claim: another can't be opened for it.
+        var claim = AClaim(allowance: 666.67m, benefit: 70_000.35m);
+
+        var act = () => _sut.VoidAsync(claim.Id, new VoidRequest("Wrong allowance"));
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("This leave is still approved; cancel the leave first, or correct the allowance.");
+        claim.Status.Should().Be(MaternityClaimStatus.Draft);
+        _claims.Verify(c => c.UpdateAsync(It.IsAny<MaternityClaim>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Void_OnceAPaidRunNettedIt_IsRefused()
+    {
+        // PAY-2026-016 took the SSS benefit for her leave days off her pay under this claim.
+        var claim = AClaimForCancelledLeave();
+        _runs.Setup(r => r.GetPaidRunsNettingMaternityClaimAsync(claim.Id, It.IsAny<CancellationToken>()))
+             .ReturnsAsync(["PAY-2026-016"]);
+
+        var act = () => _sut.VoidAsync(claim.Id, new VoidRequest("Refiled"));
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("PAY-2026-016 already netted this allowance; it can't change now.");
+        claim.Status.Should().Be(MaternityClaimStatus.Draft);
+    }
+
+    [Fact]
     public async Task Void_WhileAnUnpaidRunAdvancesIt_IsRefused()
     {
-        var claim = AClaim(allowance: 666.67m, benefit: 70_000.35m);
+        var claim = AClaimForCancelledLeave();
         AdvancedOn(claim, "PAY-2026-017");
 
         var act = () => _sut.VoidAsync(claim.Id, new VoidRequest("Refiled"));
@@ -708,7 +762,10 @@ public class MaternityClaimServiceTests
         dto.LeaveStart.Should().Be(new DateOnly(2026, 8, 17));
         dto.Days.Should().Be(120m);
         dto.LeaveCancelled.Should().BeFalse();
-        _claims.Verify(c => c.UpdateAsync(claim, It.IsAny<CancellationToken>()), Times.Once);
+        // Saved through the move's own save, which turns a racing claim for the same leave into
+        // the readable refusal.
+        _claims.Verify(c => c.SaveRelinkAsync(claim, It.IsAny<CancellationToken>()), Times.Once);
+        _claims.Verify(c => c.UpdateAsync(It.IsAny<MaternityClaim>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]
@@ -764,7 +821,7 @@ public class MaternityClaimServiceTests
         await act.Should().ThrowAsync<DomainException>()
             .WithMessage("Choose an approved maternity leave of the same employee that has no claim.");
         claim.Days.Should().Be(105m);
-        _claims.Verify(c => c.UpdateAsync(It.IsAny<MaternityClaim>(), It.IsAny<CancellationToken>()), Times.Never);
+        _claims.Verify(c => c.SaveRelinkAsync(It.IsAny<MaternityClaim>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

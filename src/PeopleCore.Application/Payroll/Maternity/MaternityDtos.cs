@@ -11,11 +11,15 @@ namespace PeopleCore.Application.Payroll.Maternity;
 /// The claim's leave request was cancelled or rejected, so the claim can be moved to the leave the
 /// employee refiled (<see cref="RelinkRequest"/>).
 /// </param>
+/// <param name="NettedByRunNumber">
+/// On a Draft claim in the list, the first Paid run whose offset netted its allowance: the allowance
+/// is then locked and the claim can't be voided. Null otherwise, and on the claim a command answers with.
+/// </param>
 public record MaternityClaimDto(Guid Id, Guid LeaveRequestId, Guid EmployeeId, string EmployeeName,
     DateOnly LeaveStart, DateOnly LeaveEnd, decimal Days, decimal? DailyAllowance, decimal Benefit,
     MaternityClaimStatus Status, Guid? AdvanceRunId, string? AdvanceRunNumber, DateOnly? AdvancedAt,
     DateOnly? ReimbursedOn, decimal? ReimbursedAmount, string? Note, string? CarriedByRunNumber = null,
-    bool LeaveCancelled = false);
+    bool LeaveCancelled = false, string? NettedByRunNumber = null);
 
 /// <summary>
 /// The SSS daily maternity allowance worked out from paid payroll: the 6 highest monthly salary

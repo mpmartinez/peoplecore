@@ -18,6 +18,15 @@ public interface IMaternityClaimRepository : IRepository<MaternityClaim>
     Task<MaternityClaim> AddNewAsync(MaternityClaim claim, CancellationToken ct = default);
 
     /// <summary>
+    /// Saves a claim moved to another leave request. Two moves (or a move and a create) for the same
+    /// request at once both pass the service's "has no claim" check, so the unique index on
+    /// <see cref="MaternityClaim.LeaveRequestId"/> is the real guard: the loser gets the check's own
+    /// <see cref="Domain.Exceptions.DomainException"/> ("Choose an approved maternity leave of the same
+    /// employee that has no claim."), not a constraint-violation 500.
+    /// </summary>
+    Task SaveRelinkAsync(MaternityClaim claim, CancellationToken ct = default);
+
+    /// <summary>
     /// All of the employees' claims, tracked, each with its <see cref="MaternityClaim.Employee"/>,
     /// <see cref="MaternityClaim.LeaveRequest"/> and <see cref="MaternityClaim.AdvanceRun"/> loaded.
     /// </summary>

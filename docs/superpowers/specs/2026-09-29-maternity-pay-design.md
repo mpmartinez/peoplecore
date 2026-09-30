@@ -55,16 +55,22 @@ Rules:
   to the Regular SS ceiling of 20,000 (SSS Circular 2024-006). The suggestion states how many months
   it found. When the payroll settings override both SSS rates, no suggestion is given
   (`RatesOverridden`).
-- **Void:** `PUT api/maternity-claims/{id}/void` with `{ note }`. Only a Draft claim no unpaid run
-  advances ("Only a draft claim can be voided."); the note is required ("Explain why the claim is
-  voided."). A Voided claim is never ready, never offsets, and isn't outstanding.
+- **Void:** `PUT api/maternity-claims/{id}/void` with `{ note }`. Only a Draft claim ("Only a draft
+  claim can be voided.") whose leave is no longer approved ("This leave is still approved; cancel the
+  leave first, or correct the allowance."), that no unpaid run advances ("{RunNumber} advances this
+  benefit; discard it or pay it first.") and no Paid run has netted ("{RunNumber} already netted this
+  allowance; it can't change now."); the note is required ("Explain why the claim is voided."). A
+  Voided claim is never ready, never offsets, and isn't outstanding. The claim list names the Paid
+  run that netted a Draft claim (`NettedByRunNumber`), and the page offers Void only where it is
+  allowed.
 - **Re-link:** `PUT api/maternity-claims/{id}/relink` with `{ leaveRequestId }`, for leave that was
   cancelled and refiled. Only when the claim's own leave is Cancelled or Rejected ("Only a claim whose
   leave was cancelled can be moved."), to an Approved maternity request of the same employee with no
   claim ("Choose an approved maternity leave of the same employee that has no claim."). `Days` takes
   the new request's `TotalDays`; a Draft claim's `Benefit` is recomputed, an Advanced or Reimbursed
   claim keeps the `Benefit` that was paid. The claim list says when a claim's leave was cancelled
-  (`LeaveCancelled`).
+  (`LeaveCancelled`). A move racing another claim for the same leave gets the same readable refusal
+  (the unique index on the leave request is the guard).
 
 ## The advance
 

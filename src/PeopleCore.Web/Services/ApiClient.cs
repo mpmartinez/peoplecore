@@ -1291,7 +1291,10 @@ public record MaternityClaimDto(Guid Id, Guid LeaveRequestId, Guid EmployeeId, s
     // that run is paid or discarded).
     string? CarriedByRunNumber = null,
     // The claim's leave was cancelled or rejected, so it can be moved to the refiled leave.
-    bool LeaveCancelled = false);
+    bool LeaveCancelled = false,
+    // On a Draft claim in the list, the Paid run that netted its allowance: the allowance is locked
+    // and the claim can't be voided.
+    string? NettedByRunNumber = null);
 
 // DailyAllowance is null when no month in the window has a paid payroll, or when RatesOverridden:
 // the payroll settings override both SSS rates, so the salary credit can't be worked back.

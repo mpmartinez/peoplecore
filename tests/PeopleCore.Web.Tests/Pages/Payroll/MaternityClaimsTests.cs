@@ -40,14 +40,15 @@ public class MaternityClaimsTests : BunitContext
     private static string Claim(Guid? id = null, string name = "Maria Santos", string status = "Draft",
         decimal? allowance = null, decimal benefit = 0m, string? runNumber = null, string? advancedAt = null,
         string? reimbursedOn = null, decimal? reimbursedAmount = null, string? note = null, string? carriedBy = null,
-        Guid? employeeId = null, bool leaveCancelled = false) =>
+        Guid? employeeId = null, bool leaveCancelled = false, string? nettedBy = null) =>
         $$"""
         {"id":"{{id ?? MariaClaimId}}","leaveRequestId":"{{MariaLeaveId}}","employeeId":"{{employeeId ?? MariaId}}","employeeName":"{{name}}",
          "leaveStart":"2026-08-10","leaveEnd":"2026-11-22","days":105,"dailyAllowance":{{Num(allowance)}},"benefit":{{benefit}},
          "status":"{{status}}","advanceRunId":{{(runNumber is null ? "null" : $"\"{Guid.NewGuid()}\"")}},
          "advanceRunNumber":{{Str(runNumber)}},"advancedAt":{{Str(advancedAt)}},
          "reimbursedOn":{{Str(reimbursedOn)}},"reimbursedAmount":{{Num(reimbursedAmount)}},"note":{{Str(note)}},
-         "carriedByRunNumber":{{Str(carriedBy)}},"leaveCancelled":{{(leaveCancelled ? "true" : "false")}}}
+         "carriedByRunNumber":{{Str(carriedBy)}},"leaveCancelled":{{(leaveCancelled ? "true" : "false")}},
+         "nettedByRunNumber":{{Str(nettedBy)}}}
         """;
 
     private static string Num(decimal? value) => value is null ? "null" : value.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -132,7 +133,7 @@ public class MaternityClaimsTests : BunitContext
     }
 
     [Theory]
-    [InlineData("Draft", new[] { "set-allowance", "void" })]
+    [InlineData("Draft", new[] { "set-allowance" })]
     [InlineData("Advanced", new[] { "reimburse", "deny" })]
     [InlineData("Reimbursed", new string[0])]
     [InlineData("Denied", new string[0])]
@@ -144,6 +145,31 @@ public class MaternityClaimsTests : BunitContext
         var offered = new[] { "set-allowance", "void", "reimburse", "deny", "move" }
             .Where(a => Row(cut, MariaClaimId).QuerySelector($"[data-{a}]") is not null);
         offered.Should().Equal(expected);
+    }
+
+    [Fact]
+    public void ADraftClaimWhoseLeaveWasCancelled_CanBeVoidedOrMoved()
+    {
+        // The API voids a Draft claim only once its leave is no longer approved.
+        var cut = RenderPage(Summary(0m, Claim(allowance: 666.67m, benefit: 70000.35m, leaveCancelled: true)));
+
+        var offered = new[] { "set-allowance", "void", "move" }
+            .Where(a => Row(cut, MariaClaimId).QuerySelector($"[data-{a}]") is not null);
+        offered.Should().Equal("set-allowance", "void", "move");
+    }
+
+    [Fact]
+    public void ADraftClaimAPaidRunNetted_NamesTheRun_AndOffersNeitherTheAllowanceNorVoid()
+    {
+        // The API locks the allowance and refuses to void once a paid payroll netted it.
+        var cut = RenderPage(Summary(0m,
+            Claim(allowance: 666.67m, benefit: 70000.35m, leaveCancelled: true, nettedBy: "PR-2026-0014")));
+
+        var maria = Row(cut, MariaClaimId);
+        maria.QuerySelector("[data-netted-by]")!.TextContent.Trim().Should().Be("Netted on PR-2026-0014");
+        maria.QuerySelector("[data-set-allowance]").Should().BeNull();
+        maria.QuerySelector("[data-void]").Should().BeNull();
+        maria.QuerySelector("[data-move]").Should().NotBeNull("its leave was cancelled, so it can still move");
     }
 
     [Fact]
@@ -577,7 +603,7 @@ public class MaternityClaimsTests : BunitContext
     {
         var loads = 0;
         _api.On(HttpMethod.Get, ListPath, () => Json(++loads == 1
-                ? Summary(0m, Claim(allowance: 666.67m, benefit: 70000.35m))
+                ? Summary(0m, Claim(allowance: 666.67m, benefit: 70000.35m, leaveCancelled: true))
                 : Summary(0m, Claim(status: "Voided", allowance: 666.67m, benefit: 70000.35m, note: "Leave refiled"))))
             .On(HttpMethod.Put, $"/api/maternity-claims/{MariaClaimId}/void", HttpStatusCode.OK,
                 Claim(status: "Voided", allowance: 666.67m, benefit: 70000.35m, note: "Leave refiled"));
@@ -602,7 +628,7 @@ public class MaternityClaimsTests : BunitContext
     {
         _api.On(HttpMethod.Put, $"/api/maternity-claims/{MariaClaimId}/void",
             () => Problem("PR-2026-0015 advances this benefit; discard it or pay it first."));
-        var cut = RenderPage(Summary(0m, Claim(allowance: 666.67m, benefit: 70000.35m)));
+        var cut = RenderPage(Summary(0m, Claim(allowance: 666.67m, benefit: 70000.35m, leaveCancelled: true)));
         Row(cut, MariaClaimId).QuerySelector("[data-void]")!.Click();
 
         cut.Find("#void-note").Input("Leave refiled");

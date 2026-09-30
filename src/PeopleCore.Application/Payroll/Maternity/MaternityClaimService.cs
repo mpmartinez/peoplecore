@@ -39,16 +39,24 @@ public sealed class MaternityClaimService : IMaternityClaimService
 
         // The unpaid run advancing each Draft claim, by the query ReadyEmployeeIdsAsync uses. (A paid
         // run made its claim Advanced.) The earliest pay date comes first; that one is named.
+        // And the first Paid run that netted it: its allowance is locked and it can't be voided.
         var drafts = claims.Where(c => c.Status == MaternityClaimStatus.Draft).Select(c => c.Id).ToList();
         var carriedBy = new Dictionary<Guid, string>();
+        var nettedBy = new Dictionary<Guid, string>();
         if (drafts.Count > 0)
         {
             foreach (var advance in await _runs.GetMaternityAdvancesAsync(drafts, Guid.Empty, ct) ?? [])
                 carriedBy.TryAdd(advance.ClaimId, advance.RunNumber);
+            foreach (var netting in await _runs.GetPaidRunsNettingMaternityClaimsAsync(drafts, ct) ?? [])
+                nettedBy.TryAdd(netting.ClaimId, netting.RunNumber);
         }
 
         return new MaternityClaimsSummaryDto(
-            claims.Select(c => ToDto(c) with { CarriedByRunNumber = carriedBy.GetValueOrDefault(c.Id) }).ToList(),
+            claims.Select(c => ToDto(c) with
+            {
+                CarriedByRunNumber = carriedBy.GetValueOrDefault(c.Id),
+                NettedByRunNumber = nettedBy.GetValueOrDefault(c.Id)
+            }).ToList(),
             outstanding);
     }
 
@@ -129,9 +137,7 @@ public sealed class MaternityClaimService : IMaternityClaimService
         await EnsureNoRunAdvancesAsync(claim, ct);
         // A paid cutoff already took the SSS benefit for its leave days off her pay at this
         // allowance; it can't be recomputed, so the allowance can't change under it.
-        var netted = await _runs.GetPaidRunsNettingMaternityClaimAsync(claim.Id, ct) ?? [];
-        if (netted.Count > 0)
-            throw new DomainException($"{netted[0]} already netted this allowance; it can't change now.");
+        await EnsureNotNettedAsync(claim, ct);
 
         // The benefit is worked from what is stored.
         claim.DailyAllowance = allowance;
@@ -181,8 +187,15 @@ public sealed class MaternityClaimService : IMaternityClaimService
         var claim = await GetAsync(claimId, ct);
         if (claim.Status != MaternityClaimStatus.Draft)
             throw new DomainException("Only a draft claim can be voided.");
+        // Voiding is for a claim whose leave is gone. While the leave stands, a voided claim would
+        // leave it with none usable (another can't be opened for the same leave).
+        if (claim.LeaveRequest is { Status: LeaveStatus.Approved })
+            throw new DomainException("This leave is still approved; cancel the leave first, or correct the allowance.");
         var note = Note(request.Note) ?? throw new DomainException("Explain why the claim is voided.");
         await EnsureNoRunAdvancesAsync(claim, ct);
+        // A paid cutoff took the SSS benefit off her pay under this claim; voided, nothing would
+        // stand behind that.
+        await EnsureNotNettedAsync(claim, ct);
 
         claim.Note = note;
         claim.Status = MaternityClaimStatus.Voided;
@@ -209,8 +222,18 @@ public sealed class MaternityClaimService : IMaternityClaimService
         // already advanced keeps the benefit that was paid - what SSS is asked to reimburse.
         if (claim.Status == MaternityClaimStatus.Draft)
             claim.Benefit = claim.DailyAllowance is decimal allowance ? MaternityMath.Benefit(allowance, claim.Days) : 0m;
-        await _claims.UpdateAsync(claim, ct);
+        // A rival claim for the same leave that commits between the check above and this save is
+        // refused by the unique index, and SaveRelinkAsync turns that into the same message.
+        await _claims.SaveRelinkAsync(claim, ct);
         return ToDto(claim);
+    }
+
+    /// <summary>Refuses once a Paid run netted the claim's allowance off regular pay.</summary>
+    private async Task EnsureNotNettedAsync(MaternityClaim claim, CancellationToken ct)
+    {
+        var netted = await _runs.GetPaidRunsNettingMaternityClaimAsync(claim.Id, ct) ?? [];
+        if (netted.Count > 0)
+            throw new DomainException($"{netted[0]} already netted this allowance; it can't change now.");
     }
 
     /// <summary>Refuses while an unpaid run advances the claim's benefit (a paid one made it Advanced).</summary>
