@@ -160,6 +160,49 @@ public class PayrollOpeningBalanceServiceTests
         dto.DeMinimisLeaveDays.Should().Be(days);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    [InlineData(6)]
+    [InlineData(7)]
+    public async Task Create_WithAnAmountOfTenBillionOrMore_IsRefused(int which)
+    {
+        // Past numeric(18,2)'s reach would fail the save as a 500; a typo this big is refused first.
+        var amounts = new decimal[8];
+        amounts[which] = 10_000_000_000m;
+        amounts[0] = Math.Max(amounts[0], amounts[6]); // contributions can't pass the basic
+        var request = new OpeningBalanceRequest(Maria.Id, 2026, new DateOnly(2026, 3, 31),
+            amounts[0], amounts[1], amounts[2], amounts[3], amounts[4], amounts[5], amounts[6], amounts[7], 0m);
+
+        var act = () => _sut.CreateAsync(request);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Enter an amount below ₱10,000,000,000.");
+        _balances.Verify(b => b.AddNewAsync(It.IsAny<PayrollOpeningBalance>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Create_WithAnAmountJustBelowTenBillion_IsAccepted()
+    {
+        var dto = await _sut.CreateAsync(ARequest(basic: 9_999_999_999.99m));
+
+        dto.BasicSalary.Should().Be(9_999_999_999.99m);
+    }
+
+    [Fact]
+    public async Task Update_WithAnAmountOfTenBillionOrMore_IsRefused()
+    {
+        var balance = ABalance();
+
+        var act = () => _sut.UpdateAsync(balance.Id, ARequest(tax: 12_000_000_000m));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Enter an amount below ₱10,000,000,000.");
+        _balances.Verify(b => b.UpdateAsync(It.IsAny<PayrollOpeningBalance>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task Create_ForAnUnknownEmployee_IsNotFound()
     {

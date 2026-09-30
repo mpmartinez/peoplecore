@@ -1,3 +1,4 @@
+using System.Text;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using PeopleCore.Application.Payroll.OpeningBalances;
@@ -231,6 +232,94 @@ public class PayrollOpeningBalanceStorageTests : DatabaseTestBase
 
         await Service(NewContext()).DeleteAsync(created.Id);
         (await Service(NewContext()).ListAsync(2026)).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SaveAll_AddsTheNewBalances_AndSavesTheLoadedOnesChanges_Together()
+    {
+        var maria = await AnEmployeeAsync();
+        var jose = await AnEmployeeAsync("Cruz", "Jose");
+        await Sut.AddNewAsync(ABalance(jose));
+
+        await using (var writer = NewContext())
+        {
+            var repository = new PayrollOpeningBalanceRepository(writer);
+            var loaded = (await repository.GetForEmployeesAsync([jose.Id], 2026)).Single();
+            loaded.BasicSalary = 80_000m;
+            await repository.SaveAllAsync([ABalance(maria)]);
+        }
+
+        await using var reader = NewContext();
+        var stored = await reader.Set<PayrollOpeningBalance>().ToListAsync();
+        stored.Should().HaveCount(2);
+        stored.Single(b => b.EmployeeId == jose.Id).BasicSalary.Should().Be(80_000m);
+        stored.Single(b => b.EmployeeId == maria.Id).Year.Should().Be(2026);
+    }
+
+    [Fact]
+    public async Task SaveAll_WhenARivalAddedOneOfTheBalances_SavesNone_AndSaysToImportAgain()
+    {
+        var maria = await AnEmployeeAsync();
+        var jose = await AnEmployeeAsync("Cruz", "Jose");
+        await Sut.AddNewAsync(ABalance(maria));
+
+        await using var other = NewContext();
+        var repository = new PayrollOpeningBalanceRepository(other);
+        var act = async () => await repository.SaveAllAsync([ABalance(jose), ABalance(maria)]);
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("Someone else added an opening balance for an employee in this file. Import it again.");
+        (await NewContext().Set<PayrollOpeningBalance>().CountAsync()).Should().Be(1);
+        // The refused inserts are not retried by the next save on that context.
+        await other.SaveChangesAsync();
+        (await NewContext().Set<PayrollOpeningBalance>().CountAsync()).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task EmployeesByNumber_AreFoundExactly()
+    {
+        var maria = await AnEmployeeAsync();
+        var jose = await AnEmployeeAsync("Cruz", "Jose");
+        await AnEmployeeAsync("Reyes", "Ana");
+
+        var found = await new EmployeeRepository(NewContext())
+            .GetByNumbersAsync([maria.EmployeeNumber, jose.EmployeeNumber.ToLowerInvariant(), "nobody"]);
+
+        found.Select(e => e.Id).Should().Equal(maria.Id);
+        (await new EmployeeRepository(NewContext()).GetByNumbersAsync([])).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task TheImportOverPostgres_CreatesAndUpdates_OrSavesNothing()
+    {
+        var maria = await AnEmployeeAsync();
+        var jose = await AnEmployeeAsync("Cruz", "Jose");
+        await Sut.AddNewAsync(ABalance(jose));
+
+        static Stream Csv(params string[] rows) => new MemoryStream(Encoding.UTF8.GetBytes(string.Join("\r\n",
+            ["EmployeeNumber,Year,ThroughDate,BasicSalary,ThirteenthMonthPaid,OtherBenefitsPaid,OtherTaxablePay," +
+             "DeMinimis,OtherNonTaxable,EmployeeContributions,TaxWithheld,DeMinimisLeaveDays", .. rows])));
+
+        var refused = await Service(NewContext()).ImportAsync(Csv(
+            $"{maria.EmployeeNumber},2026,2026-03-31,150000,0,0,0,0,0,6000,4500,0",
+            $"{jose.EmployeeNumber},2026,2026-02-28,80000,0,0,0,0,0,90000,0,0"));
+
+        refused.Errors.Should().Equal("Row 3: Contributions can't be more than the basic salary.");
+        (await NewContext().Set<PayrollOpeningBalance>().CountAsync()).Should().Be(1);
+
+        var imported = await Service(NewContext()).ImportAsync(Csv(
+            $"{maria.EmployeeNumber},2026,2026-03-31,150000,0,0,0,0,0,6000,4500,0",
+            $"{jose.EmployeeNumber},2026,2026-02-28,80000,0,0,0,0,0,3200,1500,1"));
+
+        imported.Errors.Should().BeEmpty();
+        imported.Created.Should().Be(1);
+        imported.Updated.Should().Be(1);
+        var listed = await Service(NewContext()).ListAsync(2026);
+        listed.Select(b => (b.EmployeeId, b.BasicSalary, b.TaxWithheld)).Should().BeEquivalentTo(new[]
+        {
+            (maria.Id, 150_000m, 4_500m),
+            (jose.Id, 80_000m, 1_500m),
+        });
     }
 
     private static PayrollOpeningBalanceService Service(AppDbContext context) => new(

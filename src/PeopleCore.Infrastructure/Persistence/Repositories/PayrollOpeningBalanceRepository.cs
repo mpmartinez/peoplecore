@@ -31,6 +31,25 @@ public class PayrollOpeningBalanceRepository : Repository<PayrollOpeningBalance>
         }
     }
 
+    public async Task SaveAllAsync(IReadOnlyCollection<PayrollOpeningBalance> added, CancellationToken ct = default)
+    {
+        Context.PayrollOpeningBalances.AddRange(added);
+        try
+        {
+            // One SaveChanges: EF sends its inserts and updates in one transaction.
+            await Context.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: UniqueViolation })
+        {
+            // Dropped, so a later save on this context doesn't try the inserts again. The loaded
+            // balances' changes stay pending; nothing else saves in an import's scope.
+            foreach (var balance in added)
+                Context.Entry(balance).State = EntityState.Detached;
+            throw new DomainException(
+                "Someone else added an opening balance for an employee in this file. Import it again.");
+        }
+    }
+
     /// <summary>The balance with its employee loaded.</summary>
     public override async Task<PayrollOpeningBalance?> GetByIdAsync(Guid id, CancellationToken ct = default)
         => await Context.PayrollOpeningBalances

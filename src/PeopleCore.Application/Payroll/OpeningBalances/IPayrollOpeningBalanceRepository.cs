@@ -22,4 +22,12 @@ public interface IPayrollOpeningBalanceRepository : IRepository<PayrollOpeningBa
     /// ("{name} already has an opening balance for {Year}."), not a constraint-violation 500.
     /// </summary>
     Task<PayrollOpeningBalance> AddNewAsync(PayrollOpeningBalance balance, CancellationToken ct = default);
+
+    /// <summary>
+    /// Adds <paramref name="added"/> and saves them together with every change to balances this
+    /// repository loaded, in one save: all of it or none. A balance a rival save added meanwhile
+    /// trips the unique index; nothing is saved, the new balances are dropped from the context, and
+    /// a <see cref="Domain.Exceptions.DomainException"/> says to import again.
+    /// </summary>
+    Task SaveAllAsync(IReadOnlyCollection<PayrollOpeningBalance> added, CancellationToken ct = default);
 }

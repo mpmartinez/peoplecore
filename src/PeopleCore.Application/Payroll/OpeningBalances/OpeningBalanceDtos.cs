@@ -21,3 +21,13 @@ public record OpeningBalanceDto(Guid Id, Guid EmployeeId, string EmployeeName, s
 public record OpeningBalanceRequest(Guid EmployeeId, int Year, DateOnly ThroughDate, decimal BasicSalary,
     decimal ThirteenthMonthPaid, decimal OtherBenefitsPaid, decimal OtherTaxablePay, decimal DeMinimis,
     decimal OtherNonTaxable, decimal EmployeeContributions, decimal TaxWithheld, decimal DeMinimisLeaveDays);
+
+/// <summary>What an opening-balance import saved: the balances it created and the ones it updated.</summary>
+public record OpeningBalanceImportDto(int Created, int Updated);
+
+/// <summary>
+/// An opening-balance import's outcome. With any <paramref name="Errors"/> nothing was saved and
+/// the counts are 0: each error is "Row {n}: {message}" (the header is row 1), or one problem
+/// with the whole file.
+/// </summary>
+public record OpeningBalanceImportResult(int Created, int Updated, IReadOnlyList<string> Errors);

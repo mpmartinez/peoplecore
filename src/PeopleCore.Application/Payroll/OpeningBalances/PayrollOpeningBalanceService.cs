@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Domain.Entities.Payroll;
@@ -15,6 +16,9 @@ namespace PeopleCore.Application.Payroll.OpeningBalances;
 public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
 {
     private const decimal MaxDeMinimisLeaveDays = 10m;
+
+    /// <summary>Every amount must be below this: ₱10 billion, well inside numeric(18,2).</summary>
+    private const decimal AmountLimit = 10_000_000_000m;
 
     private readonly IPayrollOpeningBalanceRepository _balances;
     private readonly IEmployeeRepository _employees;
@@ -84,6 +88,79 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
         await _balances.DeleteAsync(balance, ct);
     }
 
+    public async Task<OpeningBalanceImportResult> ImportAsync(Stream csv, CancellationToken ct = default)
+    {
+        string text;
+        using (var reader = new StreamReader(csv, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true))
+            text = await reader.ReadToEndAsync(ct);
+
+        var file = OpeningBalanceCsv.Read(text);
+        if (file.Problem is not null)
+            return Refused([file.Problem]);
+
+        var numbers = file.Rows.Select(r => r.EmployeeNumber).Where(n => n.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+        var employeeIds = (await _employees.GetByNumbersAsync(numbers, ct))
+            .ToDictionary(e => e.EmployeeNumber, e => e.Id, StringComparer.Ordinal);
+
+        // Every row is checked before anything is loaded for saving, so a refused file changes nothing.
+        var errors = new List<string>();
+        var requests = new List<OpeningBalanceRequest>();
+        var seen = new HashSet<(string EmployeeNumber, int Year)>();
+        foreach (var row in file.Rows)
+        {
+            var problems = new List<string>();
+            var employeeId = Guid.Empty;
+            if (row.EmployeeNumber.Length == 0)
+                problems.Add("Enter an employee number.");
+            else if (!employeeIds.TryGetValue(row.EmployeeNumber, out employeeId))
+                problems.Add($"Unknown employee number {OpeningBalanceCsv.Echo(row.EmployeeNumber)}.");
+            if (row.EmployeeNumber.Length > 0 && row.Year is { } year && !seen.Add((row.EmployeeNumber, year)))
+                problems.Add($"{OpeningBalanceCsv.Echo(row.EmployeeNumber)} appears more than once for {year}.");
+            problems.AddRange(row.Problems);
+
+            // A row whose cells didn't all parse isn't validated: its figures aren't what was meant.
+            if (row.Problems.Count == 0)
+            {
+                var n = row.Numbers;
+                var request = new OpeningBalanceRequest(employeeId, row.Year!.Value, row.ThroughDate!.Value,
+                    n[0], n[1], n[2], n[3], n[4], n[5], n[6], n[7], n[8]);
+                if (ProblemWith(request) is { } problem)
+                    problems.Add(problem);
+                else if (problems.Count == 0)
+                    requests.Add(request);
+            }
+
+            errors.AddRange(problems.Select(p => $"Row {row.Row}: {p}"));
+        }
+        if (errors.Count > 0)
+            return Refused(errors);
+
+        var added = new List<PayrollOpeningBalance>();
+        var updated = 0;
+        foreach (var yearsRequests in requests.GroupBy(r => r.Year))
+        {
+            var existing = (await _balances.GetForEmployeesAsync(yearsRequests.Select(r => r.EmployeeId).ToList(),
+                    yearsRequests.Key, ct))
+                .ToDictionary(b => b.EmployeeId);
+            foreach (var request in yearsRequests)
+            {
+                // An existing balance keeps its employee and year; only its through date and figures change.
+                if (existing.TryGetValue(request.EmployeeId, out var balance))
+                    updated++;
+                else
+                {
+                    balance = new PayrollOpeningBalance { EmployeeId = request.EmployeeId, Year = request.Year };
+                    added.Add(balance);
+                }
+                Apply(balance, request);
+            }
+        }
+        await _balances.SaveAllAsync(added, ct);
+        return new OpeningBalanceImportResult(added.Count, updated, []);
+
+        static OpeningBalanceImportResult Refused(IReadOnlyList<string> problems) => new(0, 0, problems);
+    }
+
     /// <summary>The saved balance with its double-count warnings, then the edit warnings.</summary>
     private async Task<OpeningBalanceDto> SavedAsync(PayrollOpeningBalance balance, CancellationToken ct)
     {
@@ -115,29 +192,46 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
 
     private static void EnsureYear(int year)
     {
-        // DateOnly's range; anything earlier than 1900 is a typo, not a payroll year.
-        if (year is < 1900 or > 9999)
+        if (!IsYear(year))
             throw new DomainException("Enter a year.");
     }
 
+    // DateOnly's range; anything earlier than 1900 is a typo, not a payroll year.
+    private static bool IsYear(int year) => year is >= 1900 and <= 9999;
+
     private static void Validate(OpeningBalanceRequest request)
     {
-        EnsureYear(request.Year);
+        if (ProblemWith(request) is { } problem)
+            throw new DomainException(problem);
+    }
+
+    /// <summary>
+    /// The first thing wrong with the request's year, through date and figures, or null. The form
+    /// and the CSV import both go through it, so they refuse exactly the same things.
+    /// </summary>
+    private static string? ProblemWith(OpeningBalanceRequest request)
+    {
+        if (!IsYear(request.Year))
+            return "Enter a year.";
         if (request.ThroughDate.Year != request.Year)
-            throw new DomainException($"The through date must fall in {request.Year}.");
+            return $"The through date must fall in {request.Year}.";
         decimal[] amounts =
         [
             request.BasicSalary, request.ThirteenthMonthPaid, request.OtherBenefitsPaid, request.OtherTaxablePay,
             request.DeMinimis, request.OtherNonTaxable, request.EmployeeContributions, request.TaxWithheld,
         ];
         if (amounts.Any(a => a < 0m))
-            throw new DomainException("Amounts can't be negative.");
+            return "Amounts can't be negative.";
+        // A fat-fingered figure is refused here rather than failing the save past numeric(18,2).
+        if (amounts.Any(a => a >= AmountLimit))
+            return "Enter an amount below ₱10,000,000,000.";
         // The 2316 certifies the basic net of the contributions (Item 39); more contributions than
         // basic would certify a negative basic salary.
         if (request.EmployeeContributions > request.BasicSalary)
-            throw new DomainException("Contributions can't be more than the basic salary.");
+            return "Contributions can't be more than the basic salary.";
         if (request.DeMinimisLeaveDays is < 0m or > MaxDeMinimisLeaveDays)
-            throw new DomainException("De minimis leave days must be between 0 and 10.");
+            return "De minimis leave days must be between 0 and 10.";
+        return null;
     }
 
     /// <summary>The request's through date and figures, each rounded to the 2 dp it is stored to.</summary>

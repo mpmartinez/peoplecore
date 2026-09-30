@@ -21,4 +21,12 @@ public interface IPayrollOpeningBalanceService
 
     /// <summary>Removes an opening balance.</summary>
     Task DeleteAsync(Guid id, CancellationToken ct = default);
+
+    /// <summary>
+    /// Imports a CSV in the template's layout (<see cref="OpeningBalanceCsv"/>). Every row is
+    /// checked first, with the same validation as the form; any problem refuses the whole file and
+    /// comes back in <see cref="OpeningBalanceImportResult.Errors"/>. Otherwise each row's
+    /// (employee, year) balance is created, or updated in place, in one save.
+    /// </summary>
+    Task<OpeningBalanceImportResult> ImportAsync(Stream csv, CancellationToken ct = default);
 }

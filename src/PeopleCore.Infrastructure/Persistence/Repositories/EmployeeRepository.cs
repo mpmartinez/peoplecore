@@ -98,6 +98,17 @@ public class EmployeeRepository : Repository<Employee>, IEmployeeRepository
             .Include(e => e.Position)
             .FirstOrDefaultAsync(e => e.EmployeeNumber == employeeNumber, ct);
 
+    public async Task<IReadOnlyList<Employee>> GetByNumbersAsync(IReadOnlyCollection<string> employeeNumbers,
+        CancellationToken ct = default)
+    {
+        var numbers = employeeNumbers.Distinct().ToList();
+        if (numbers.Count == 0) return [];
+        return await Context.Employees
+            .AsNoTracking()
+            .Where(e => numbers.Contains(e.EmployeeNumber))
+            .ToListAsync(ct);
+    }
+
     public async Task<Employee?> GetByBiometricIdAsync(string biometricId, CancellationToken ct = default)
         => await Context.Employees.FirstOrDefaultAsync(e => e.BiometricId == biometricId, ct);
 

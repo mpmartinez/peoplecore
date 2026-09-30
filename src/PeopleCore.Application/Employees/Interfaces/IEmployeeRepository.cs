@@ -11,6 +11,13 @@ public interface IEmployeeRepository : IRepository<Employee>
     Task<bool> EmployeeNumberExistsAsync(string employeeNumber, CancellationToken ct = default);
     Task<Employee?> GetByNumberAsync(string employeeNumber, CancellationToken ct = default);
 
+    /// <summary>
+    /// The employees whose number is exactly one of <paramref name="employeeNumbers"/>, untracked
+    /// and with nothing else loaded - what an opening-balance import matches its rows against, in
+    /// one query rather than one per row.
+    /// </summary>
+    Task<IReadOnlyList<Employee>> GetByNumbersAsync(IReadOnlyCollection<string> employeeNumbers, CancellationToken ct = default);
+
     /// <summary>The employee enrolled on the time clock under <paramref name="biometricId"/>, if any.</summary>
     Task<Employee?> GetByBiometricIdAsync(string biometricId, CancellationToken ct = default);
 

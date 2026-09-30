@@ -1,10 +1,13 @@
 using System.Reflection;
+using System.Text;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Routing;
 using Moq;
 using PeopleCore.API.Authorization;
 using PeopleCore.API.Controllers.Payroll;
+using PeopleCore.API.Filters;
 using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Payroll.OpeningBalances;
 using Xunit;
@@ -45,6 +48,8 @@ public class PayrollOpeningBalancesControllerTests
     [InlineData(nameof(PayrollOpeningBalancesController.Create), "POST", null)]
     [InlineData(nameof(PayrollOpeningBalancesController.Update), "PUT", "{id:guid}")]
     [InlineData(nameof(PayrollOpeningBalancesController.Delete), "DELETE", "{id:guid}")]
+    [InlineData(nameof(PayrollOpeningBalancesController.Template), "GET", "template")]
+    [InlineData(nameof(PayrollOpeningBalancesController.Import), "POST", "import")]
     public void EachActionHasItsRoute(string action, string verb, string? template)
     {
         var attribute = typeof(PayrollOpeningBalancesController).GetMethod(action)!.GetCustomAttribute<HttpMethodAttribute>()!;
@@ -113,5 +118,112 @@ public class PayrollOpeningBalancesControllerTests
 
         result.Should().BeOfType<NoContentResult>();
         _service.Verify(s => s.DeleteAsync(BalanceId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── The CSV template and import ──────────────────────────────────────────
+
+    private static IFormFile AFile(string text = "EmployeeNumber", long? length = null)
+    {
+        var bytes = Encoding.UTF8.GetBytes(text);
+        return new FormFile(new MemoryStream(bytes), 0, length ?? bytes.Length, "file", "balances.csv");
+    }
+
+    [Fact]
+    public void Template_IsTheTemplatesCsv()
+    {
+        var result = Controller().Template();
+
+        var file = result.Should().BeOfType<FileContentResult>().Subject;
+        file.ContentType.Should().Be("text/csv");
+        file.FileDownloadName.Should().Be("opening-balances-template.csv");
+        file.FileContents.Should().Equal(OpeningBalanceCsv.Template());
+    }
+
+    [Fact]
+    public void Import_CapsTheRequestBody_AtTwoMegabytesAndFraming_AndRefusesMoreReadably()
+    {
+        var action = typeof(PayrollOpeningBalancesController).GetMethod(nameof(PayrollOpeningBalancesController.Import))!;
+        const long cap = 2 * 1024 * 1024 + 64 * 1024;
+
+        action.GetCustomAttributesData()
+              .Single(a => a.AttributeType == typeof(RequestSizeLimitAttribute))
+              .ConstructorArguments[0].Value.Should().Be(cap);
+        action.GetCustomAttribute<RequestFormLimitsAttribute>()!.MultipartBodyLengthLimit.Should().Be(cap);
+        action.GetCustomAttribute<RefuseOversizedFormAttribute>()!.Message.Should().Be("Choose a CSV file of at most 2 MB.");
+    }
+
+    [Fact]
+    public void Import_TakesTheFileFromTheForm()
+    {
+        var parameter = typeof(PayrollOpeningBalancesController).GetMethod(nameof(PayrollOpeningBalancesController.Import))!
+            .GetParameters().Single(p => p.Name == "file");
+
+        parameter.GetCustomAttribute<FromFormAttribute>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Import_ReturnsTheCounts()
+    {
+        _service.Setup(s => s.ImportAsync(It.IsAny<Stream>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new OpeningBalanceImportResult(3, 2, []));
+
+        var result = await Controller().Import(AFile(), CancellationToken.None);
+
+        result.Result.Should().BeOfType<OkObjectResult>()
+              .Which.Value.Should().Be(new OpeningBalanceImportDto(3, 2));
+    }
+
+    [Fact]
+    public async Task Import_PassesTheFilesContentToTheService()
+    {
+        string? read = null;
+        _service.Setup(s => s.ImportAsync(It.IsAny<Stream>(), It.IsAny<CancellationToken>()))
+                .Callback((Stream stream, CancellationToken _) => read = new StreamReader(stream).ReadToEnd())
+                .ReturnsAsync(new OpeningBalanceImportResult(0, 0, []));
+
+        await Controller().Import(AFile("hello,world"), CancellationToken.None);
+
+        read.Should().Be("hello,world");
+    }
+
+    [Fact]
+    public async Task Import_WithProblems_IsABadRequest_ListingThem()
+    {
+        _service.Setup(s => s.ImportAsync(It.IsAny<Stream>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new OpeningBalanceImportResult(0, 0,
+                    ["Row 2: Unknown employee number E-9.", "Row 3: Enter a year."]));
+
+        var result = await Controller().Import(AFile(), CancellationToken.None);
+
+        var problem = result.Result.Should().BeOfType<BadRequestObjectResult>()
+            .Which.Value.Should().BeOfType<ProblemDetails>().Subject;
+        problem.Status.Should().Be(400);
+        problem.Title.Should().Be("File not imported");
+        problem.Detail.Should().Be("Row 2: Unknown employee number E-9.\nRow 3: Enter a year.");
+        problem.Extensions.Should().ContainKey("errors")
+               .WhoseValue.Should().BeEquivalentTo(new[] { "Row 2: Unknown employee number E-9.", "Row 3: Enter a year." });
+    }
+
+    [Fact]
+    public async Task Import_WithoutAFile_IsRefused()
+    {
+        var result = await Controller().Import(null, CancellationToken.None);
+
+        var problem = result.Result.Should().BeOfType<BadRequestObjectResult>()
+            .Which.Value.Should().BeOfType<ProblemDetails>().Subject;
+        problem.Detail.Should().Be("Choose a CSV file of at most 2 MB.");
+        problem.Extensions["errors"].Should().BeEquivalentTo(new[] { "Choose a CSV file of at most 2 MB." });
+        _service.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Import_OfAFileOverTwoMegabytes_IsRefused()
+    {
+        var result = await Controller().Import(AFile(length: 2 * 1024 * 1024 + 1), CancellationToken.None);
+
+        result.Result.Should().BeOfType<BadRequestObjectResult>()
+              .Which.Value.Should().BeOfType<ProblemDetails>()
+              .Which.Detail.Should().Be("Choose a CSV file of at most 2 MB.");
+        _service.VerifyNoOtherCalls();
     }
 }

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
+using PeopleCore.API.Filters;
 using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Payroll.OpeningBalances;
 
@@ -48,4 +49,46 @@ public class PayrollOpeningBalancesController : ControllerBase
         await _service.DeleteAsync(id, ct);
         return NoContent();
     }
+
+    /// <summary>
+    /// The upload's body cap: the 2 MB file plus room for the multipart framing. Anything larger is
+    /// never read past this; a file between 2 MB and the cap is refused below.
+    /// </summary>
+    private const long MaxImportRequestBytes = OpeningBalanceCsv.MaxFileBytes + 64 * 1024;
+
+    /// <summary>The CSV to fill in: the header row the import expects.</summary>
+    [HttpGet("template")]
+    public IActionResult Template()
+        => File(OpeningBalanceCsv.Template(), OpeningBalanceCsv.ContentType, OpeningBalanceCsv.TemplateFileName);
+
+    /// <summary>
+    /// Imports a filled-in template (multipart field <c>file</c>). All or nothing: any problem
+    /// refuses the whole file with 400, a problem whose <c>detail</c> is every problem on its own
+    /// line and whose <c>errors</c> lists them ("Row {n}: {message}"). Otherwise 200 with the counts.
+    /// </summary>
+    [HttpPost("import")]
+    [RequestSizeLimit(MaxImportRequestBytes)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaxImportRequestBytes)]
+    [RefuseOversizedForm(OpeningBalanceCsv.FileRefusal)]
+    public async Task<ActionResult<OpeningBalanceImportDto>> Import([FromForm] IFormFile? file, CancellationToken ct = default)
+    {
+        if (file is null || file.Length > OpeningBalanceCsv.MaxFileBytes)
+            return NotImported([OpeningBalanceCsv.FileRefusal]);
+
+        OpeningBalanceImportResult result;
+        await using (var stream = file.OpenReadStream())
+            result = await _service.ImportAsync(stream, ct);
+
+        return result.Errors.Count > 0
+            ? NotImported(result.Errors)
+            : Ok(new OpeningBalanceImportDto(result.Created, result.Updated));
+    }
+
+    private BadRequestObjectResult NotImported(IReadOnlyList<string> errors) => BadRequest(new ProblemDetails
+    {
+        Title = "File not imported",
+        Detail = string.Join('\n', errors),
+        Status = StatusCodes.Status400BadRequest,
+        Extensions = { ["errors"] = errors },
+    });
 }
