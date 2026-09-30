@@ -6,6 +6,7 @@ using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.FinalPay;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Application.Payroll.Maternity;
+using PeopleCore.Application.Payroll.OpeningBalances;
 using PeopleCore.Application.Payroll.Validation;
 using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Enums;
@@ -31,6 +32,7 @@ public class PayrollRunService : IPayrollRunService
     private readonly TimeProvider _clock;
     private readonly IMaternityPayCalculator? _maternityPay;
     private readonly IPayrollYearToDate _yearToDate;
+    private readonly IPayrollOpeningBalanceRepository? _openingBalances;
 
     /// <param name="finalPay">
     /// Recomputes final-pay runs, which are built from a separation rather than from a list of
@@ -59,6 +61,11 @@ public class PayrollRunService : IPayrollRunService
     /// Optional so callers that never record an opening balance needn't supply one: without it the
     /// figures are the Paid runs' alone.
     /// </param>
+    /// <param name="openingBalances">
+    /// The opening balances, for a Paid run's double-count warning: an employee whose balance runs
+    /// through a date on or after the run's pay date has that pay counted twice. Optional: without
+    /// it a run has no such warning.
+    /// </param>
     public PayrollRunService(
         IPayrollRunRepository runRepo,
         IEmployeeCompensationRepository compensationRepo,
@@ -74,7 +81,8 @@ public class PayrollRunService : IPayrollRunService
         IYearEndLeaveConversion? yearEndLeave = null,
         TimeProvider? clock = null,
         IMaternityPayCalculator? maternityPay = null,
-        IPayrollYearToDate? yearToDate = null)
+        IPayrollYearToDate? yearToDate = null,
+        IPayrollOpeningBalanceRepository? openingBalances = null)
     {
         _runRepo = runRepo;
         _compensationRepo = compensationRepo;
@@ -91,6 +99,7 @@ public class PayrollRunService : IPayrollRunService
         _clock = clock ?? TimeProvider.System;
         _maternityPay = maternityPay;
         _yearToDate = yearToDate ?? new PayrollYearToDate(runRepo);
+        _openingBalances = openingBalances;
     }
 
     public async Task<PayrollRunDto> CreateAsync(CreatePayrollRunRequest request, CancellationToken ct = default)
@@ -1046,9 +1055,10 @@ public class PayrollRunService : IPayrollRunService
         };
 
     /// <summary>
-    /// The run as the API returns it. Its maternity warnings are worked out now rather than stored:
-    /// a claim set up or advanced since the run was computed changes what HR still has to do. A
-    /// payslip goes without them (<paramref name="withWarnings"/> false), and without their queries.
+    /// The run as the API returns it. Its warnings are worked out now rather than stored: a claim
+    /// set up or advanced, or an opening balance recorded, since the run was computed changes what
+    /// HR has to know. The maternity warnings come first, then the double-count ones. A payslip goes
+    /// without them (<paramref name="withWarnings"/> false), and without their queries.
     /// </summary>
     private async Task<PayrollRunDto> ToDtoAsync(PayrollRun run, CancellationToken ct, bool withWarnings = true) => new(
         run.Id, run.RunNumber, run.PeriodLabel,
@@ -1058,7 +1068,33 @@ public class PayrollRunService : IPayrollRunService
         run.CreatedAt, run.AttendancePeriodId, run.EmployeesMissingAttendance,
         run.Employees.Select(ToEmployeeDto).ToList(), run.RunType, run.IncludesLeaveConversion,
         IncludesThirteenthMonth(run),
-        _maternityPay is null || !withWarnings ? [] : await _maternityPay.WarningsAsync(run, ct));
+        withWarnings ? [.. await MaternityWarningsAsync(run, ct), .. await DoubleCountWarningsAsync(run, ct)] : []);
+
+    private async Task<IReadOnlyList<string>> MaternityWarningsAsync(PayrollRun run, CancellationToken ct)
+        => _maternityPay is null ? [] : await _maternityPay.WarningsAsync(run, ct);
+
+    /// <summary>
+    /// On a Paid run, one warning per employee on it whose opening balance for the pay year runs
+    /// through the pay date or later: the balance already covers the pay this run paid. In the run's
+    /// order of employees; the balances are read once.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> DoubleCountWarningsAsync(PayrollRun run, CancellationToken ct)
+    {
+        if (_openingBalances is null || run.Status != PayrollRunStatus.Paid || run.Employees.Count == 0)
+            return [];
+
+        var year = run.PayDate.Year;
+        var ids = run.Employees.Select(e => e.EmployeeId).Distinct().ToList();
+        var balances = await _openingBalances.GetForEmployeesAsync(ids, year, ct) ?? [];
+        return run.Employees
+            .Select(e => (Entry: e, Balance: balances.FirstOrDefault(b => b.EmployeeId == e.EmployeeId && b.Year == year)))
+            .Where(x => x.Balance is not null && run.PayDate <= x.Balance.ThroughDate)
+            .Select(x => PayrollOpeningBalanceService.DoubleCountWarning(
+                x.Entry.Employee?.FullName ?? x.Balance!.Employee?.FullName ?? string.Empty,
+                x.Balance!.ThroughDate, run.RunNumber, run.PayDate))
+            .Distinct()
+            .ToList();
+    }
 
     private static PayrollRunSummaryDto ToSummaryDto(PayrollRun run) => new(
         run.Id, run.RunNumber, run.PeriodLabel,

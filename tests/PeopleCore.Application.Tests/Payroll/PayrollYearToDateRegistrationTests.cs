@@ -79,4 +79,16 @@ public class PayrollYearToDateRegistrationTests
 
         Field(bir2316, "_balances").Should().BeAssignableTo<IPayrollOpeningBalanceRepository>();
     }
+
+    [Fact]
+    public void ThePayrollRunServiceTheAppResolves_ReadsTheOpeningBalancesForItsDoubleCountWarning()
+    {
+        using var provider = TheAppsServices();
+        using var scope = provider.CreateScope();
+
+        // Optional too (null: no double-count warning on a run's page), so only the field shows it.
+        var runs = scope.ServiceProvider.GetRequiredService<IPayrollRunService>();
+
+        Field(runs, "_openingBalances").Should().BeAssignableTo<IPayrollOpeningBalanceRepository>();
+    }
 }

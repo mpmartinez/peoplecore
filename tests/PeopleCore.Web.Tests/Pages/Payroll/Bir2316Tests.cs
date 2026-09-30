@@ -376,4 +376,27 @@ public class Bir2316Tests : BunitContext
             .Contain("No employee had a paid run in 2025. Nothing to download."));
         JSInterop.VerifyNotInvoke("downloadFileFromBytes");
     }
+
+    [Fact]
+    public void APreviewWithAnOpeningBalance_SaysItIncludesPayBeforePeopleCore()
+    {
+        _api.On(HttpMethod.Get, YearsPath(MariaId), HttpStatusCode.OK, "[2026]")
+            .On(HttpMethod.Get, PreviewPath(MariaId, 2026), HttpStatusCode.OK,
+                Preview(2026)[..^1] + ""","openingBalanceThrough":"2026-03-31","openingBalanceTaxWithheld":9000}""")
+            .On(HttpMethod.Get, InputsPath(MariaId, 2026), HttpStatusCode.OK, Inputs());
+        var cut = RenderPage();
+
+        cut.Find("#employee").Change(MariaId.ToString());
+
+        cut.WaitForAssertion(() => cut.Find("[data-opening-balance-note]").TextContent.Trim().Should()
+            .Be("Includes pay before PeopleCore through Mar 31, 2026."));
+    }
+
+    [Fact]
+    public void APreviewWithoutAnOpeningBalance_HasNoNote()
+    {
+        var cut = RenderWithMariasPreview();
+
+        cut.FindAll("[data-opening-balance-note]").Should().BeEmpty();
+    }
 }

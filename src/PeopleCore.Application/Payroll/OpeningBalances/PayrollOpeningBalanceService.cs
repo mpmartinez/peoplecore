@@ -219,9 +219,15 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
     /// <summary>One warning per Paid run of hers paid on or before the through date: pay the balance already covers.</summary>
     private static List<string> DoubleCountWarnings(PayrollOpeningBalance balance, string name, IEnumerable<PayrollRun> runs)
         => runs.Where(r => r.PayDate <= balance.ThroughDate)
-            .Select(r => $"{name}'s opening balance already covers pay through " +
-                         $"{Date(balance.ThroughDate)}; {r.RunNumber} was paid on {Date(r.PayDate)}.")
+            .Select(r => DoubleCountWarning(name, balance.ThroughDate, r.RunNumber, r.PayDate))
             .ToList();
+
+    /// <summary>
+    /// The double-count warning: her balance runs through <paramref name="throughDate"/>, and the run
+    /// was paid on or before it. The run's page shows the same words.
+    /// </summary>
+    internal static string DoubleCountWarning(string name, DateOnly throughDate, string runNumber, DateOnly payDate)
+        => $"{name}'s opening balance already covers pay through {Date(throughDate)}; {runNumber} was paid on {Date(payDate)}.";
 
     private static string Date(DateOnly date) => date.ToString("MMM d, yyyy", CultureInfo.InvariantCulture);
 
