@@ -36,6 +36,12 @@ public class PayrollYearToDateRegistrationTests
         using var provider = new ServiceCollection().AddLogging().AddInfrastructure(configuration).BuildServiceProvider();
         using var scope = provider.CreateScope();
 
+        // The wiring isn't visible through the services' interfaces, so this reads private fields by
+        // reflection: each service's _yearToDate (PayrollRunService, FinalPayService and
+        // GovernmentReportService fall back to a PayrollYearToDate over the Paid runs alone when
+        // none is injected, so its type alone doesn't prove the registration) and that
+        // PayrollYearToDate's _balances (null in the fallback, the opening-balance repository when
+        // DI built it). Renaming either field fails this test rather than silently passing.
         static object? Field(object target, string name)
             => target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(target);
 

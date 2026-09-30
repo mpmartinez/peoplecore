@@ -116,4 +116,23 @@ public partial class FinalPayServiceTests
         // 2026's 8 days would have left 2 (2,400).
         SavedEntry.LeaveConversionNonTaxable.Should().Be(6_000m);
     }
+
+    [Fact]
+    public async Task TheSummary_CountsTheOpeningBalancesOtherBenefitsAgainstTheExemptionLeftForTheLeave()
+    {
+        // 15 vacation days: 10 de minimis = 12,000; 5 beyond = 6,000 of other benefits. The 13th
+        // month is the worked example's 4,341.67. Before PeopleCore she was paid 80,000 of other
+        // benefits, so the exemption left for the leave is 90,000 - 80,000 - 4,341.67 = 5,658.33
+        // of the 6,000. (Without the balance: 85,658.33 left, all 6,000 exempt, 18,000 non-taxable.)
+        _balances.Clear();
+        _balances.Add(Balance("Vacation Leave", totalDays: 15m, convertible: true, countsAsVacation: true));
+        var sut = WithOpeningBalances(OpeningBalance(_employee.Id, otherBenefitsPaid: 80_000m));
+
+        var summary = await sut.CreateAsync(_separation.Id, Request());
+
+        SavedEntry.ThirteenthMonth.Should().Be(4_341.67m);
+        summary.LeaveConversionPay.Should().Be(18_000m);
+        summary.LeaveConversionNonTaxable.Should().Be(17_658.33m);   // 12,000 + 5,658.33
+        (await sut.GetAsync(_separation.Id))!.LeaveConversionNonTaxable.Should().Be(17_658.33m);
+    }
 }

@@ -799,8 +799,9 @@ public sealed class FinalPayService : IFinalPayService
 
     /// <summary>
     /// How much of the leave beyond de minimis the 90,000 "13th month and other benefits"
-    /// exemption covers, as the pay year's 2316 will split it: what the year's other Paid runs
-    /// left of it, after this entry's own 13th month (see <see cref="FinalPayMath.OtherBenefitsExempt"/>).
+    /// exemption covers, as the pay year's 2316 will split it: what the year's other Paid runs and
+    /// her opening balance for the year (<see cref="YearToDate.ExemptUsed"/>) left of it, after this
+    /// entry's own 13th month (see <see cref="FinalPayMath.OtherBenefitsExempt"/>).
     /// </summary>
     private async Task<decimal> LeaveOtherBenefitsExemptAsync(Guid employeeId, PayrollRun run,
         PayrollRunEmployee entry, CancellationToken ct)
@@ -808,11 +809,7 @@ public sealed class FinalPayService : IFinalPayService
         if (entry.LeaveConversionOtherBenefits <= 0m)
             return 0m;
 
-        int payYear = run.PayDate.Year;
-        decimal usedEarlier = (await _runs.GetPaidRunsForEmployeeInYearAsync(employeeId, payYear, ct))
-            .Where(r => r.Id != run.Id && r.Status == PayrollRunStatus.Paid && r.PayDate.Year == payYear)
-            .SelectMany(r => r.Employees.Where(e => e.EmployeeId == employeeId))
-            .Sum(e => e.ThirteenthMonthAndOtherBenefits);
+        decimal usedEarlier = (await _yearToDate.ForEmployeeAsync(employeeId, run.PayDate.Year, run.Id, ct)).ExemptUsed;
 
         return FinalPayMath.OtherBenefitsExempt(entry.LeaveConversionOtherBenefits, entry.ThirteenthMonth, usedEarlier);
     }

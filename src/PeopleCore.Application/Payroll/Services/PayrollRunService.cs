@@ -538,7 +538,8 @@ public class PayrollRunService : IPayrollRunService
     /// other Paid runs and on the employee's opening balance - must still be what the entry was
     /// netted of (<see cref="PayrollRunEmployee.ThirteenthMonthPaidEarlierInYear"/>). Paid runs
     /// can't be changed, so their part only grows; when the total has grown, the entry would pay
-    /// the difference twice. Entries computed before the figure was kept (null) aren't checked.
+    /// the difference twice. The balance can be edited either way; when it was lowered, the entry
+    /// would underpay. Entries computed before the figure was kept (null) aren't checked.
     /// Changes nothing.
     /// </summary>
     private async Task EnsureThirteenthMonthNotPaidSinceAsync(PayrollRun run, CancellationToken ct)
@@ -552,16 +553,20 @@ public class PayrollRunService : IPayrollRunService
 
         foreach (var entry in computed)
         {
-            if (earlierInYear[entry.EmployeeId].ThirteenthMonthPaid <= entry.ThirteenthMonthPaidEarlierInYear)
+            decimal paidNow = earlierInYear[entry.EmployeeId].ThirteenthMonthPaid;
+            if (paidNow == entry.ThirteenthMonthPaidEarlierInYear)
                 continue;
 
             // Which run paid it isn't recorded against the entry; the latest one marked Paid that
-            // paid any 13th month is the likeliest, and is the one to look at. With none, what grew
-            // is the 13th month on her opening balance.
-            var latest = (await _runRepo.GetPaidRunsInYearAsync(run.PayDate.Year, ct) ?? [])
-                .Where(r => r.Id != run.Id)
-                .Where(r => r.Employees.Any(e => e.EmployeeId == entry.EmployeeId && e.ThirteenthMonth > 0m))
-                .MaxBy(r => r.UpdatedAt);
+            // paid any 13th month is the likeliest, and is the one to look at. With none - or when
+            // the total fell, which a Paid run can't do - what changed is the 13th month on her
+            // opening balance.
+            var latest = paidNow < entry.ThirteenthMonthPaidEarlierInYear
+                ? null
+                : (await _runRepo.GetPaidRunsInYearAsync(run.PayDate.Year, ct) ?? [])
+                    .Where(r => r.Id != run.Id)
+                    .Where(r => r.Employees.Any(e => e.EmployeeId == entry.EmployeeId && e.ThirteenthMonth > 0m))
+                    .MaxBy(r => r.UpdatedAt);
             var name = entry.Employee?.FullName
                 ?? (await _employeeRepo.GetByIdAsync(entry.EmployeeId, ct))?.FullName
                 ?? entry.EmployeeId.ToString();

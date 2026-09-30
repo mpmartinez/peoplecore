@@ -190,4 +190,44 @@ public partial class PayrollRunServiceTests
             "Maria Santos's 13th month paid before PeopleCore has changed since this payroll was computed; recompute it before paying.");
         VerifyNothingSavedAsPaid();
     }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenTheOpeningBalances13thMonthWasLoweredSinceCompute_IsRefused()
+    {
+        // Computed with 10,000 paid earlier: 6,000 on PAY-2026-012 and 4,000 on her opening
+        // balance. HR has since corrected the balance to 1,000: 6,000 + 1,000 = 7,000, not the
+        // 10,000 the entry netted, so it would now underpay 3,000. PAY-2026-012 paid before the
+        // compute, so it isn't the run to name.
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: 10_000m);
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(
+            [PaidThirteenthMonth(maria.Id, "PAY-2026-012", 6_000m, paidAt: new DateTime(2026, 6, 30))]);
+        var balance = OpeningBalance(maria.Id, thirteenthMonthPaid: 4_000m);
+        var sut = WithOpeningBalances(balance);
+        balance.ThirteenthMonthPaid = 1_000m;
+
+        var act = () => sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos's 13th month paid before PeopleCore has changed since this payroll was computed; recompute it before paying.");
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenTheOpeningBalancesDeMinimisDaysChangedSinceCompute_IsRefused()
+    {
+        // The entry converted 3 SIL days as 3,600 of de minimis, computed with all ten days left.
+        // HR has since recorded 8 days converted before PeopleCore: only 2 are left, so the same
+        // 3 days now split 2,400 de minimis and 1,200 other benefits.
+        var (run, maria, loan) = ApprovedDecemberConversion();
+        ConvertibleDays(maria.Id, new LeavePaidOut(SilBalance(maria.Id, 3m), 3m));
+        var sut = WithOpeningBalances(OpeningBalance(maria.Id, deMinimisLeaveDays: 8m));
+
+        var act = () => sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos's convertible leave has changed since this payroll was computed; recompute it before paying.");
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+        loan.RemainingBalance.Should().Be(5_000m);
+    }
 }

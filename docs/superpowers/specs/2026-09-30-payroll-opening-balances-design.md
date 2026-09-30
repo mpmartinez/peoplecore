@@ -55,7 +55,7 @@ for that year:
 | De minimis leave-days cap | `DeMinimisLeaveDays` counts as already used |
 
 The year is the one each figure already uses (the pay-date year for tax and the 2316; the year the
-13th month is computed for). The 1601-C is unchanged: those months were filed outside PeopleCore.
+13th month is computed for). The 1601-C's monthly columns are unchanged; the 13th month it treats as already exempt earlier in the year adds the balance's `ThirteenthMonthPaid + OtherBenefitsPaid`.
 
 ## Double-count warning
 
