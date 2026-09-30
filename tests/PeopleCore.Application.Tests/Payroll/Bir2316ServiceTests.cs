@@ -15,7 +15,7 @@ using Xunit;
 
 namespace PeopleCore.Application.Tests.Payroll;
 
-public class Bir2316ServiceTests
+public partial class Bir2316ServiceTests
 {
     private readonly Guid _employeeId = Guid.NewGuid();
     private readonly Guid _otherEmployeeId = Guid.NewGuid();

@@ -19,8 +19,7 @@ namespace PeopleCore.Application.Tests.Payroll;
 /// </summary>
 public class PayrollYearToDateRegistrationTests
 {
-    [Fact]
-    public void TheServicesTheAppResolves_ReadTheOpeningBalances()
+    private static ServiceProvider TheAppsServices()
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -33,7 +32,17 @@ public class PayrollYearToDateRegistrationTests
             ["Minio:SecretKey"] = "minioadmin",
             ["Minio:UseSSL"] = "false"
         }).Build();
-        using var provider = new ServiceCollection().AddLogging().AddInfrastructure(configuration).BuildServiceProvider();
+        return new ServiceCollection().AddLogging().AddInfrastructure(configuration).BuildServiceProvider();
+    }
+
+    /// <summary>Reads a private field: the wiring isn't visible through the services' interfaces.</summary>
+    private static object? Field(object target, string name)
+        => target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(target);
+
+    [Fact]
+    public void TheServicesTheAppResolves_ReadTheOpeningBalances()
+    {
+        using var provider = TheAppsServices();
         using var scope = provider.CreateScope();
 
         // The wiring isn't visible through the services' interfaces, so this reads private fields by
@@ -42,9 +51,6 @@ public class PayrollYearToDateRegistrationTests
         // none is injected, so its type alone doesn't prove the registration) and that
         // PayrollYearToDate's _balances (null in the fallback, the opening-balance repository when
         // DI built it). Renaming either field fails this test rather than silently passing.
-        static object? Field(object target, string name)
-            => target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(target);
-
         object[] services =
         [
             scope.ServiceProvider.GetRequiredService<IPayrollRunService>(),
@@ -58,5 +64,19 @@ public class PayrollYearToDateRegistrationTests
             Field(yearToDate!, "_balances").Should().BeAssignableTo<IPayrollOpeningBalanceRepository>(
                 because: $"{service.GetType().Name}'s year-to-date adds the opening balances");
         }
+    }
+
+    [Fact]
+    public void The2316TheAppResolves_ReadsTheOpeningBalances()
+    {
+        using var provider = TheAppsServices();
+        using var scope = provider.CreateScope();
+
+        // Bir2316Service takes the repository as an optional argument too (null: no balances), so
+        // only its _balances field shows the registration reached it. The final pay's tax settle
+        // and the 1604-C go through this same registration.
+        var bir2316 = scope.ServiceProvider.GetRequiredService<IBir2316Service>();
+
+        Field(bir2316, "_balances").Should().BeAssignableTo<IPayrollOpeningBalanceRepository>();
     }
 }

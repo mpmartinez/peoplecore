@@ -3,6 +3,7 @@ using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Organization.Interfaces;
 using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.Interfaces;
+using PeopleCore.Application.Payroll.OpeningBalances;
 using PeopleCore.Application.Payroll.Validation;
 using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Organization;
@@ -43,17 +44,24 @@ public class Bir2316Service : IBir2316Service
     private readonly IEmployeeRepository _employeeRepo;
     private readonly ICompanyRepository _companyRepo;
     private readonly IBir2316InputsRepository _inputsRepo;
+    private readonly IPayrollOpeningBalanceRepository? _balances;
 
+    /// <param name="balances">
+    /// What each employee was paid before PeopleCore. Optional so the places that build the service
+    /// directly keep working; without it no opening balance is added. The app always injects it.
+    /// </param>
     public Bir2316Service(
         IPayrollRunRepository runRepo,
         IEmployeeRepository employeeRepo,
         ICompanyRepository companyRepo,
-        IBir2316InputsRepository inputsRepo)
+        IBir2316InputsRepository inputsRepo,
+        IPayrollOpeningBalanceRepository? balances = null)
     {
         _runRepo = runRepo;
         _employeeRepo = employeeRepo;
         _companyRepo = companyRepo;
         _inputsRepo = inputsRepo;
+        _balances = balances;
     }
 
     public async Task<IReadOnlyList<int>> GetAvailableYearsAsync(Guid employeeId, CancellationToken ct = default)
@@ -104,7 +112,7 @@ public class Bir2316Service : IBir2316Service
                 "No Company record is configured. The database seeder always creates one, so " +
                 "its absence means the database is misconfigured.");
 
-        return BuildDto(employee, company, runs, entries, year, manual);
+        return BuildDto(employee, company, runs, entries, year, manual, await BalanceAsync(employeeId, year, ct));
     }
 
     /// <summary>
@@ -119,7 +127,7 @@ public class Bir2316Service : IBir2316Service
     /// out of the run. This method instead fetches the year's paid runs ONCE, groups their entries
     /// by employee, batch-loads the employees that actually have one, and looks the company up
     /// once - four queries regardless of headcount instead of roughly three times the employee
-    /// count.
+    /// count. The year's opening balances are read the same way: once, for everyone built.
     /// </para>
     /// </summary>
     public async Task<IReadOnlyList<Bir2316Dto>> BuildAllAsync(int year, CancellationToken ct = default)
@@ -154,6 +162,14 @@ public class Bir2316Service : IBir2316Service
 
         var saved = await _inputsRepo.GetForYearAsync(year, ct);
 
+        // Re-matched on the year for the same reason BalanceAsync re-checks it.
+        var balances = _balances is null
+            ? new Dictionary<Guid, PayrollOpeningBalance>()
+            : (await _balances.GetForEmployeesAsync(employeeIds, year, ct))
+                .Where(b => b.Year == year)
+                .GroupBy(b => b.EmployeeId)
+                .ToDictionary(g => g.Key, g => g.First());
+
         var forms = new List<Bir2316Dto>(employeeIds.Count);
         foreach (var employeeId in employeeIds)
         {
@@ -169,7 +185,8 @@ public class Bir2316Service : IBir2316Service
             var employeeEntries = runsAndEntries.Select(x => x.Entry).ToList();
             var manual = saved.TryGetValue(employeeId, out var s) ? s.ToManualInputs() : new Bir2316ManualInputs();
 
-            forms.Add(BuildDto(employee, company, employeeRuns, employeeEntries, year, manual));
+            forms.Add(BuildDto(employee, company, employeeRuns, employeeEntries, year, manual,
+                balances.GetValueOrDefault(employeeId)));
         }
 
         return forms;
@@ -226,7 +243,21 @@ public class Bir2316Service : IBir2316Service
         // just because it does not route through BuildAsync.
         Bir2316ManualInputsValidator.Validate(manual);
 
-        return BuildDto(employee, company, runs, entries, year, manual);
+        return BuildDto(employee, company, runs, entries, year, manual, await BalanceAsync(employeeId, year, ct));
+    }
+
+    /// <summary>
+    /// The employee's opening balance for the year - what she was paid before PeopleCore - or null
+    /// when she has none (or the service was built without the repository). The employee and year
+    /// are re-checked, as the runs' filters are: another year's figures must never reach a
+    /// certificate because a query was widened.
+    /// </summary>
+    private async Task<PayrollOpeningBalance?> BalanceAsync(Guid employeeId, int year, CancellationToken ct)
+    {
+        if (_balances is null)
+            return null;
+        var balance = await _balances.GetAsync(employeeId, year, ct);
+        return balance is not null && balance.EmployeeId == employeeId && balance.Year == year ? balance : null;
     }
 
     /// <summary>
@@ -274,6 +305,14 @@ public class Bir2316Service : IBir2316Service
     /// <see cref="BuildAllAsync"/> (every employee, one shared query). Neither queries nor the
     /// "no entries" / "no company" checks belong here: both callers already did those before this
     /// point, for reasons specific to how each one fetches its data.
+    /// <para>
+    /// <paramref name="balance"/>, when she has one, is what she was paid in the year before
+    /// PeopleCore. Each of its figures lands in the box the same pay from a run would: the basic
+    /// net of the contributions in Item 39, the contributions in Item 36, the other taxable pay
+    /// in 51A, de minimis in 35, other non-taxable pay in 37, the 13th month and other benefits in
+    /// the pool split at the 90,000 (Items 34 and 48), the tax withheld in 25A. Item 19 therefore
+    /// grows by everything on it, and Items 21 and 23 by its taxable part.
+    /// </para>
     /// </summary>
     private static Bir2316Dto BuildDto(
         Employee employee,
@@ -281,7 +320,8 @@ public class Bir2316Service : IBir2316Service
         IReadOnlyList<PayrollRun> runs,
         IReadOnlyList<PayrollRunEmployee> entries,
         int year,
-        Bir2316ManualInputs manual)
+        Bir2316ManualInputs manual,
+        PayrollOpeningBalance? balance)
     {
         // "13th month and other benefits" (NIRC Sec. 32(B)(7)(e)): the 13th month plus the leave
         // converted beyond de minimis, which RR 5-2011 (as amended by RR 11-2018) treats as other
@@ -290,7 +330,10 @@ public class Bir2316Service : IBir2316Service
         // is the form's own box for exactly this - "13th month pay and other benefits" in excess
         // of the cap - and it is what the 1604-C alphalist reads as that column; 51B would file
         // the same money under "others" and misstate the alphalist.
-        decimal thirteenthMonthAndOtherBenefits = entries.Sum(e => e.ThirteenthMonthAndOtherBenefits);
+        // The opening balance's 13th month and other benefits join the same pool before the split:
+        // the exemption is the year's, however much of it was paid before PeopleCore.
+        decimal thirteenthMonthAndOtherBenefits = entries.Sum(e => e.ThirteenthMonthAndOtherBenefits)
+            + (balance is null ? 0m : balance.ThirteenthMonthPaid + balance.OtherBenefitsPaid);
         decimal thirteenthMonthNonTaxable = Math.Min(thirteenthMonthAndOtherBenefits, StatutoryCaps.ThirteenthMonthExemption);
         decimal thirteenthMonthTaxable = Math.Max(0m, thirteenthMonthAndOtherBenefits - StatutoryCaps.ThirteenthMonthExemption);
 
@@ -302,11 +345,30 @@ public class Bir2316Service : IBir2316Service
         decimal finalPayNonTaxable = entries.Sum(e => e.FinalPayNonTaxable);
         decimal finalPayTaxable = entries.Sum(e => e.FinalPayTaxable);
 
+        // The rest of the opening balance, box by box (zero without one).
+        decimal balanceBasicNetOfContributions = balance is null ? 0m : balance.BasicSalary - balance.EmployeeContributions;
+        decimal balanceContributions = balance?.EmployeeContributions ?? 0m;
+        decimal balanceOtherTaxable = balance?.OtherTaxablePay ?? 0m;
+        decimal balanceDeMinimis = balance?.DeMinimis ?? 0m;
+        decimal balanceOtherNonTaxable = balance?.OtherNonTaxable ?? 0m;
+        decimal balanceTaxWithheld = balance?.TaxWithheld ?? 0m;
+
+        // The period is the runs' - except that with an opening balance the certificate covers the
+        // months before PeopleCore too: from January, or from a hire date later in the year.
+        var periodFrom = runs.Min(r => r.PeriodStart);
+        if (balance is not null)
+        {
+            var yearStart = new DateOnly(year, 1, 1);
+            var employedFrom = employee.HireDate > yearStart ? employee.HireDate : yearStart;
+            if (employedFrom < periodFrom)
+                periodFrom = employedFrom;
+        }
+
         return new Bir2316Dto
         {
             EmployeeId = employee.Id,
             Year = year,
-            PeriodFrom = Format(runs.Min(r => r.PeriodStart)),
+            PeriodFrom = Format(periodFrom),
             PeriodTo = Format(runs.Max(r => r.PeriodEnd)),
 
             // Part I — the employee. TIN comes from the EmployeeGovernmentId row: the M2NET.Core
@@ -351,9 +413,9 @@ public class Bir2316Service : IBir2316Service
             // excluded from the run's withholding base. Item 35 is the form's de
             // minimis box, so it belongs there alongside whatever a human enters manually. The
             // leave beyond the ceiling is other benefits, in Item 34 (or 48) with the 13th month.
-            Item35_DeMinimis = manual.Item35_DeMinimis + leaveConversionNonTaxable,
+            Item35_DeMinimis = manual.Item35_DeMinimis + leaveConversionNonTaxable + balanceDeMinimis,
             Item36_SssPhicPagibigContributions =
-                entries.Sum(e => e.SSSEmployee + e.PhilHealthEmployee + e.PagIbigEmployee),
+                entries.Sum(e => e.SSSEmployee + e.PhilHealthEmployee + e.PagIbigEmployee) + balanceContributions,
             // NonTaxableAllowances is non-taxable compensation that is not de minimis, not a
             // contribution and not 13th-month pay - Item 37 ("Salaries and Other Forms of
             // Compensation") is Section A's catch-all for exactly that: everything non-taxable
@@ -368,7 +430,8 @@ public class Bir2316Service : IBir2316Service
             // with no box of its own, so it lands here as well, and Item 39 leaves it out.
             Item37_SalariesOtherForms = entries.Sum(e => e.NonTaxableAllowances) +
                                          (finalPayNonTaxable - leaveConversionNonTaxable) +
-                                         entries.Sum(e => e.MaternityDifferential),
+                                         entries.Sum(e => e.MaternityDifferential) +
+                                         balanceOtherNonTaxable,
 
             // Part IV-B Section B and the supplementary block — taxable.
             //
@@ -406,14 +469,18 @@ public class Bir2316Service : IBir2316Service
             // when there is no taxable separation or retirement pay to report, so the "Others
             // (specify)" box does not appear on an ordinary certificate.
             Item39_BasicSalary = entries.Sum(e => e.RegularPay - e.MaternityDifferential
-                                                  - e.SSSEmployee - e.PhilHealthEmployee - e.PagIbigEmployee),
+                                                  - e.SSSEmployee - e.PhilHealthEmployee - e.PagIbigEmployee)
+                                + balanceBasicNetOfContributions,
             Item44A_OtherAmount = entries.Sum(e => e.HolidayPay),
             Item44A_OtherLabel = "Holiday Pay",
             Item44B_OtherAmount = entries.Sum(e => e.NightDiffPay),
             Item44B_OtherLabel = "Night Shift Differential",
             Item48_TaxableThirteenthMonth = thirteenthMonthTaxable,
             Item50_OvertimePay = entries.Sum(e => e.OvertimePay),
-            Item51A_OtherAmount = entries.Sum(e => e.TaxableAllowances),
+            // The opening balance's other taxable pay (overtime, holiday, night differential and
+            // taxable allowances as one total) can't be split into 44A/44B/50, so it takes this
+            // catch-all "Others" box with the taxable allowances.
+            Item51A_OtherAmount = entries.Sum(e => e.TaxableAllowances) + balanceOtherTaxable,
             Item51A_OtherLabel = "Taxable Allowances",
             Item51B_OtherAmount = finalPayTaxable,
             // Kept short deliberately: the printed form's "Others (specify)" box is 130.5pt wide,
@@ -427,10 +494,13 @@ public class Bir2316Service : IBir2316Service
             // Item 24 is deliberately absent: it is a computed property on the DTO, derived from
             // Item 23 through BirWithholdingTax, and must never be summed from withheld tax - the
             // two agreeing is exactly what qualifies an employee for substituted filing.
-            Item25A_PresentTaxWithheld = entries.Sum(e => e.WithholdingTax),
+            // The opening balance's tax withheld was this employer's too, before PeopleCore.
+            Item25A_PresentTaxWithheld = entries.Sum(e => e.WithholdingTax) + balanceTaxWithheld,
             Item22_PrevTaxableCompensation = manual.Item22_PrevTaxableCompensation,
             Item25B_PrevTaxWithheld = manual.Item25B_PrevTaxWithheld,
-            Item27_PeraTaxCredit = manual.Item27_PeraTaxCredit
+            Item27_PeraTaxCredit = manual.Item27_PeraTaxCredit,
+
+            OpeningBalanceThrough = balance?.ThroughDate
         };
     }
 

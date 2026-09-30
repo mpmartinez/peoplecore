@@ -140,7 +140,8 @@ public sealed class GovernmentReportService : IGovernmentReportService
         var forms = await _bir2316.BuildAllAsync(year, ct);
 
         // January-November and December tax withheld aren't on the 2316; they come from the same
-        // year's Paid runs by pay month, and add up to its present-employer tax withheld.
+        // year's Paid runs by pay month (plus any opening balance, below), and add up to its
+        // present-employer tax withheld.
         // Same Paid/PayDate.Year predicate as Bir2316Service.BuildAsync, re-applied here so this
         // split can't silently disagree with the present-employer withheld tax (Item 25A) behind it.
         var runs = (await _runs.GetPaidRunsInYearAsync(year, ct))
@@ -159,6 +160,16 @@ public sealed class GovernmentReportService : IGovernmentReportService
             {
                 var e = employees[f.EmployeeId];
                 var withheld = withheldByEmployee.GetValueOrDefault(f.EmployeeId);
+                // An opening balance's tax withheld is in the 2316's Item 25A but on no run: it's
+                // what 25A holds beyond the runs, placed by the balance's through date as a run is
+                // by its pay date. The two columns then still add up to 25A.
+                if (f.OpeningBalanceThrough is { } through)
+                {
+                    decimal beforePeopleCore = f.Item25A_PresentTaxWithheld - withheld.JanToNov - withheld.December;
+                    withheld = through.Month == 12
+                        ? (withheld.JanToNov, withheld.December + beforePeopleCore)
+                        : (withheld.JanToNov + beforePeopleCore, withheld.December);
+                }
                 return new Bir1604CAlphalist.Person(f.EmployeeId, f, e.HireDate, e.SeparationDate, withheld.JanToNov, withheld.December);
             })
             .ToList();

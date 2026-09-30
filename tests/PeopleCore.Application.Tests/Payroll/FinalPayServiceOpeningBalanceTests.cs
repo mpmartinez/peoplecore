@@ -14,13 +14,20 @@ namespace PeopleCore.Application.Tests.Payroll;
 /// </summary>
 public partial class FinalPayServiceTests
 {
-    /// <summary>The service as the app builds it, reading earlier-this-year figures with <paramref name="balances"/>.</summary>
+    /// <summary>
+    /// The service as the app builds it, reading earlier-this-year figures and settling the tax
+    /// through a 2316 that both read <paramref name="balances"/>.
+    /// </summary>
     private FinalPayService WithOpeningBalances(params PayrollOpeningBalance[] balances) => new(
         _separations.Object, _runs.Object, _compensations.Object, _loans.Object, _allowances.Object,
         _leaveBalances.Object, _leaveTypes.Object, _shifts.Object, _attendance.Object, _settings.Object,
-        new Bir2316Service(_runs.Object, _employees.Object, _companies.Object, _bir2316Inputs.Object),
+        CertificateWith(balances),
         new PayrollComputationService(), TimeProvider.System,
         yearToDate: new PayrollYearToDate(_runs.Object, Holding(balances).Object));
+
+    /// <summary>The 2316 as the app builds it, reading <paramref name="balances"/>.</summary>
+    private Bir2316Service CertificateWith(params PayrollOpeningBalance[] balances)
+        => new(_runs.Object, _employees.Object, _companies.Object, _bir2316Inputs.Object, Holding(balances).Object);
 
     [Fact]
     public async Task CreateAsync_The13thMonth_CountsTheBasicAndThe13thMonthOnTheOpeningBalance()
@@ -134,5 +141,54 @@ public partial class FinalPayServiceTests
         summary.LeaveConversionPay.Should().Be(18_000m);
         summary.LeaveConversionNonTaxable.Should().Be(17_658.33m);   // 12,000 + 5,658.33
         (await sut.GetAsync(_separation.Id))!.LeaveConversionNonTaxable.Should().Be(17_658.33m);
+    }
+
+    [Fact]
+    public async Task CreateAsync_SettledTax_RefundsTheTaxWithheldBeforePeopleCoreToo()
+    {
+        // The worked example with January paid before PeopleCore: 36,500 basic, 2,862.50 of
+        // contributions and 1,500 withheld.
+        var january = OpeningBalance(_employee.Id, basicSalary: 36_500m, employeeContributions: 2_862.50m,
+            taxWithheld: 1_500m, throughDate: new DateOnly(2026, 1, 31));
+        var sut = WithOpeningBalances(january);
+
+        await sut.CreateAsync(_separation.Id, Request());
+
+        // 13th month: (36,500 + 36,500 + 15,600) / 12 = 7,383.33, inside the 90,000.
+        // Item 39 = (36,500 - 2,862.50) + 36,500 + (15,600 - 2,862.50) = 82,875 -> 0 tax due.
+        // Settled = 0 - (2,000 February + 1,500 January) = -3,500 (without the balance, -2,000).
+        SavedEntry.ThirteenthMonth.Should().Be(7_383.33m);
+        SavedEntry.WithholdingTax.Should().Be(-3_500m);
+        var cert = (await CertificateWith(january).BuildWithDraftEntryAsync(_employee.Id, 2026, _savedRun!, SavedEntry))!;
+        cert.Item39_BasicSalary.Should().Be(82_875m);
+        cert.Item25A_PresentTaxWithheld.Should().Be(0m, "-3,500 + 2,000 + 1,500");
+        cert.Item24_TaxDue.Should().Be(cert.Item26_TotalTaxWithheld + cert.Item27_PeraTaxCredit);
+    }
+
+    [Fact]
+    public async Task CreateAsync_SettledTax_CollectsWhatTheYearStillOwes_CountingThePayAndTaxBeforePeopleCore()
+    {
+        // CreateAsync_SettledTax_CollectsWhatTheYearStillOwes (150,000 a month; February's 300,000
+        // with 1,000 withheld; this period's 64,109.63 of basic with 4,450 of contributions), with
+        // January paid before PeopleCore: 150,000 basic, 4,450 of contributions, 2,000 withheld.
+        _compensation.BasicSalary = 150_000m;
+        _februaryRun.Employees.Single().RegularPay = 300_000m;
+        _februaryRun.Employees.Single().WithholdingTax = 1_000m;
+        var january = OpeningBalance(_employee.Id, basicSalary: 150_000m, employeeContributions: 4_450m,
+            taxWithheld: 2_000m, throughDate: new DateOnly(2026, 1, 31));
+        var sut = WithOpeningBalances(january);
+
+        await sut.CreateAsync(_separation.Id, Request());
+
+        // 13th month: (150,000 + 300,000 + 64,109.63) / 12 = 42,842.47, inside the 90,000.
+        // Taxable = (150,000 - 4,450) + 300,000 + (64,109.63 - 4,450) = 505,209.63.
+        // Tax due = 22,500 + (505,209.63 - 400,000) x 20% = 43,541.926 -> 43,541.93.
+        // Settled = 43,541.93 - 1,000 - 2,000 = 40,541.93.
+        var cert = (await CertificateWith(january).BuildWithDraftEntryAsync(_employee.Id, 2026, _savedRun!, SavedEntry))!;
+        SavedEntry.ThirteenthMonth.Should().Be(42_842.47m);
+        cert.Item23_GrossTaxable.Should().Be(505_209.63m);
+        cert.Item24_TaxDue.Should().Be(43_541.93m);
+        SavedEntry.WithholdingTax.Should().Be(40_541.93m);
+        cert.Item24_TaxDue.Should().Be(cert.Item26_TotalTaxWithheld);
     }
 }

@@ -148,6 +148,13 @@ public record Bir2316Dto
 
     public decimal Item26_TotalTaxWithheld => Item25A_PresentTaxWithheld + Item25B_PrevTaxWithheld;
     public decimal Item28_TotalTaxes => Item26_TotalTaxWithheld + Item27_PeraTaxCredit;
+
+    /// <summary>
+    /// The through date of the employee's opening balance for the year - what she was paid before
+    /// PeopleCore, which this certificate includes - or null when she has none. Not a box on the
+    /// form: the 2316 page notes it, and the 1604-C uses it to place that balance's tax withheld.
+    /// </summary>
+    public DateOnly? OpeningBalanceThrough { get; set; }
 }
 
 /// <summary>
