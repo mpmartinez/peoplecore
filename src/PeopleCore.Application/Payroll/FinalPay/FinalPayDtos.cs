@@ -10,13 +10,19 @@ namespace PeopleCore.Application.Payroll.FinalPay;
 /// <param name="SeparationPayOverride">Replaces the computed separation pay; needs <paramref name="OverrideNote"/>.</param>
 /// <param name="RetirementPayOverride">Replaces the computed retirement pay; needs <paramref name="OverrideNote"/>.</param>
 /// <param name="Deductions">HR-added deductions (unreturned property, advances outside the loans module), taken after loans.</param>
+/// <param name="AdvanceMaternityBenefit">
+/// Advance the employee's SSS maternity benefit on the final pay: her claim ready to advance (a Draft
+/// claim with an allowance, for approved leave, that no other run carries). Refused otherwise, as on a
+/// regular run. Mark Paid settles the claim.
+/// </param>
 public record FinalPayRequest(
     DateOnly PayDate,
     DateOnly? PeriodStart,
     decimal? SeparationPayOverride,
     decimal? RetirementPayOverride,
     string? OverrideNote,
-    IReadOnlyList<FinalPayDeductionDto> Deductions);
+    IReadOnlyList<FinalPayDeductionDto> Deductions,
+    bool AdvanceMaternityBenefit = false);
 
 public record FinalPayDeductionDto(string Label, decimal Amount);
 
@@ -104,4 +110,14 @@ public record FinalPaySummaryDto(
     decimal GrossPay,
     decimal NetPay,
     bool ClearanceComplete,
-    IReadOnlyList<string> OutstandingClearance);
+    IReadOnlyList<string> OutstandingClearance,
+    bool AdvanceMaternityBenefit = false,
+    decimal MaternityBenefitAdvance = 0m,
+    decimal MaternityBenefitOffset = 0m,
+    decimal MaternityDifferential = 0m,
+    decimal ContributionsDeferred = 0m,
+    decimal DeferredContributionsCollected = 0m,
+    IReadOnlyList<string>? MaternityWarnings = null)
+{
+    public IReadOnlyList<string> MaternityWarnings { get; init; } = MaternityWarnings ?? [];
+}

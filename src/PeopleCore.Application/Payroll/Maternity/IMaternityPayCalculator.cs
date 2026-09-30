@@ -18,8 +18,9 @@ public sealed record MaternityPay(decimal Advance, decimal Offset, IReadOnlyList
 }
 
 /// <summary>
-/// Works out the maternity advance and offset for a regular payroll run (RA 11210), the warnings the
-/// run shows, and settles the advanced claims at Mark Paid. A final pay gets no maternity handling.
+/// Works out the maternity advance and offset for a payroll run (RA 11210) - a regular run's cutoffs
+/// and a final pay's own period alike - the warnings the run shows, and settles the advanced claims
+/// at Mark Paid. A final pay with no salary days has no leave days to offset.
 /// </summary>
 public interface IMaternityPayCalculator
 {
@@ -40,7 +41,7 @@ public interface IMaternityPayCalculator
 
     /// <summary>
     /// The run's warnings as things stand now, rebuilt on every load of the run: its entries' figures
-    /// are stored, but a claim set up or advanced since changes what HR still has to do. None for a final pay.
+    /// are stored, but a claim set up or advanced since changes what HR still has to do.
     /// </summary>
     Task<IReadOnlyList<string>> WarningsAsync(PayrollRun run, CancellationToken ct = default);
 
@@ -61,7 +62,7 @@ public interface IMaternityPayCalculator
     /// <summary>
     /// For Mark Paid: every claim the run advances, marked <see cref="Domain.Enums.MaternityClaimStatus.Advanced"/>
     /// with the run and its pay date, for the caller to save with the run. Refuses when a claim is no
-    /// longer the one the run was computed with. Changes nothing for a final pay.
+    /// longer the one the run was computed with.
     /// </summary>
     Task<IReadOnlyList<MaternityClaim>> SettleAdvancesAsync(PayrollRun run, CancellationToken ct = default);
 }

@@ -547,6 +547,96 @@ public class FinalPayTests : BunitContext
         cut.FindAll("[data-final-pay-form]").Should().BeEmpty();
     }
 
+    // ---------- Maternity ----------
+
+    private const string ReadyPath = "/api/maternity-claims/ready";
+
+    /// <summary>The summary with its maternity figures: the advance flag, advance, offset, differential and warnings.</summary>
+    private static string MaternitySummary(bool advancing, decimal advance = 0m, decimal offset = 0m, decimal differential = 0m,
+        string warnings = "[]")
+    {
+        static string Num(decimal d) => d.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var summary = Summary().TrimEnd();
+        return summary[..^1]
+            + ",\"advanceMaternityBenefit\":" + (advancing ? "true" : "false")
+            + ",\"maternityBenefitAdvance\":" + Num(advance)
+            + ",\"maternityBenefitOffset\":" + Num(offset)
+            + ",\"maternityDifferential\":" + Num(differential)
+            + ",\"contributionsDeferred\":0,\"deferredContributionsCollected\":0"
+            + ",\"maternityWarnings\":" + warnings + "}";
+    }
+
+    private static IEnumerable<AngleSharp.Dom.IElement> AdvanceBoxes(IRenderedComponent<SeparationDetail> cut) =>
+        cut.FindAll("[data-advance-maternity]");
+
+    [Fact]
+    public void WithAClaimReadyToAdvance_TheFormOffersTheAdvance_AndSendsIt()
+    {
+        _api.On(HttpMethod.Get, ReadyPath, HttpStatusCode.OK, $$"""["{{MariaId}}"]""");
+        _api.On(HttpMethod.Post, FinalPayPath, HttpStatusCode.Created, MaternitySummary(true, 70000.35m, 7333.37m, 5866.63m));
+        var cut = RenderWithoutRun();
+
+        cut.WaitForAssertion(() => AdvanceBoxes(cut).Should().ContainSingle());
+        cut.Find("[data-advance-maternity]").ParentElement!.TextContent.Should().Contain("Advance maternity benefit");
+        cut.Find("[data-advance-maternity]").Click();
+        cut.Find("[data-submit-final-pay]").Click();
+
+        cut.WaitForElement("[data-final-pay-summary]");
+        BodyOf(HttpMethod.Post, FinalPayPath).GetProperty("advanceMaternityBenefit").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public void WithNoClaimReady_TheAdvanceIsNotOffered_AndNoneIsSent()
+    {
+        _api.On(HttpMethod.Get, ReadyPath, HttpStatusCode.OK, "[]");
+        _api.On(HttpMethod.Post, FinalPayPath, HttpStatusCode.Created, Summary());
+        var cut = RenderWithoutRun();
+
+        AdvanceBoxes(cut).Should().BeEmpty();
+        cut.Find("[data-submit-final-pay]").Click();
+
+        cut.WaitForElement("[data-final-pay-summary]");
+        BodyOf(HttpMethod.Post, FinalPayPath).GetProperty("advanceMaternityBenefit").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
+    public void EditingAFinalPayThatAdvancesTheBenefit_KeepsTheBoxTicked()
+    {
+        // The claim isn't "ready" any more - this final pay carries it - but the box stays, ticked.
+        _api.On(HttpMethod.Get, ReadyPath, HttpStatusCode.OK, "[]");
+        _api.On(HttpMethod.Put, FinalPayPath, HttpStatusCode.OK, MaternitySummary(true, 70000.35m));
+        var cut = RenderWithRun(MaternitySummary(true, 70000.35m));
+
+        cut.Find("[data-edit-final-pay]").Click();
+
+        cut.Find("[data-advance-maternity]").HasAttribute("aria-checked").Should().BeTrue();
+        cut.Find("[data-submit-final-pay]").Click();
+        cut.WaitForElement("[data-final-pay-summary]");
+        BodyOf(HttpMethod.Put, FinalPayPath).GetProperty("advanceMaternityBenefit").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public void TheSummary_ShowsTheAdvanceTheOffsetTheDifferential_AndTheWarnings()
+    {
+        var cut = RenderWithRun(MaternitySummary(false, 0m, 7333.37m, 5866.63m,
+            """["Maternity benefit not advanced yet for Maria Santos."]"""));
+
+        cut.FindAll("[data-maternity-advance]").Should().BeEmpty("nothing is advanced");
+        Text(cut, "[data-maternity-offset]").Should().Contain("7,333.37");
+        Text(cut, "[data-maternity-differential]").Should().Contain("5,866.63");
+        Text(cut, "[data-maternity-warnings]").Should().Contain("Maternity benefit not advanced yet for Maria Santos.");
+    }
+
+    [Fact]
+    public void TheSummary_ShowsTheAdvance_WhenThereIsOne()
+    {
+        var cut = RenderWithRun(MaternitySummary(true, 70000.35m));
+
+        Text(cut, "[data-maternity-advance]").Should().Contain("70,000.35");
+        cut.FindAll("[data-maternity-offset]").Should().BeEmpty();
+        cut.FindAll("[data-maternity-warnings]").Should().BeEmpty();
+    }
+
     [Fact]
     public void ASaveWithNothingNewerStarted_ShowsItsOwnAnswer_WithoutReloading()
     {

@@ -33,7 +33,7 @@ namespace PeopleCore.Application.Tests.Payroll;
 /// period's salary days are its calendar days. No shift is assigned and there is no attendance.
 /// </para>
 /// </summary>
-public class FinalPayServiceTests
+public partial class FinalPayServiceTests
 {
     private static readonly DateOnly LastDay = new(2026, 3, 13);   // a Friday
     private static readonly DateOnly PayDate = new(2026, 3, 31);

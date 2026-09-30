@@ -39,5 +39,11 @@ public class MaternityPayRegistrationTests
             .GetField("_maternityPay", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(service);
         calculator.Should().BeOfType<MaternityPayCalculator>();
+
+        // A final pay offsets and advances maternity through the same calculator.
+        var finalPay = scope.ServiceProvider.GetRequiredService<PeopleCore.Application.Payroll.FinalPay.IFinalPayService>();
+        typeof(PeopleCore.Application.Payroll.FinalPay.FinalPayService)
+            .GetField("_maternityPay", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(finalPay).Should().BeOfType<MaternityPayCalculator>();
     }
 }

@@ -299,8 +299,8 @@ public class PayrollRunService : IPayrollRunService
         if (run.RunType == PayrollRunType.Regular && run.IncludesLeaveConversion)
             await YearEndLeavePaidOutAsync(run, ct);
         // Likewise a maternity claim the run advances, while a recompute can still put it right: an
-        // approved regular run can't be recomputed.
-        if (run.RunType == PayrollRunType.Regular && _maternityPay is not null)
+        // approved regular run can't be recomputed. A final pay's maternity is checked the same way.
+        if (_maternityPay is not null)
         {
             await _maternityPay.EnsureAdvancesCurrentAsync(run, ct);
             // Maternity days no claim with an allowance covers were paid as ordinary, taxable salary
@@ -334,6 +334,8 @@ public class PayrollRunService : IPayrollRunService
             var finalPay = _finalPay ?? throw new InvalidOperationException(
                 "PayrollRunService was built without an IFinalPayService, so it can't pay a final-pay run.");
             leavePaidOut = await finalPay.LeavePaidOutAsync(run, ct);
+            // A final pay can advance the maternity benefit too; its claim is settled the same way.
+            maternityClaims = await SettleMaternityAdvancesAsync(run, ct);
         }
         else
         {

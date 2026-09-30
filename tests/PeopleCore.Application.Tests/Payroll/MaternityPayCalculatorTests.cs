@@ -507,6 +507,19 @@ public class MaternityPayCalculatorTests
     }
 
     [Fact]
+    public async Task Approving_AFinalPayWithMaternityDaysAndNoClaim_IsRefused()
+    {
+        var run = Cutoff(8, 1, 15, PayrollRunType.FinalPay);
+        run.FinalPayInputs = new FinalPayInputs { PayrollRunId = run.Id, WorkingDays = 15m };
+        run.Employees.Add(new PayrollRunEmployee { EmployeeId = _maria.Id, Employee = _maria });
+
+        var act = () => _sut.EnsureClaimsSetUpAsync(run, exempt: false);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Set up Maria Santos's maternity claim before approving; this payroll covers 6 maternity day(s).");
+    }
+
+    [Fact]
     public async Task Approving_ACutoffOutsideTheLeave_NeedsNoClaim()
     {
         var run = Cutoff(7, 16, 31);
@@ -518,16 +531,44 @@ public class MaternityPayCalculatorTests
     // ---- final pay -----------------------------------------------------------------------------
 
     [Fact]
-    public async Task AFinalPay_HasNoWarnings_AndSettlesNothing()
+    public async Task AFinalPay_OffsetsAdvancesWarnsAndSettles_LikeARegularRun()
     {
-        AClaim();
+        var claim = AClaim();
         var run = Cutoff(8, 1, 15, PayrollRunType.FinalPay);
+        run.FinalPayInputs = new FinalPayInputs { PayrollRunId = run.Id, WorkingDays = 15m };
         run.Employees.Add(new PayrollRunEmployee { EmployeeId = _maria.Id, Employee = _maria });
 
-        (await _sut.WarningsAsync(run)).Should().BeEmpty();
-        (await _sut.SettleAdvancesAsync(run)).Should().BeEmpty();
-        _leave.VerifyNoOtherCalls();
-        _claims.VerifyNoOtherCalls();
+        var pay = await _sut.ForAsync(run, _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+        var warnings = await _sut.WarningsAsync(run);
+        run.Employees[0].AdvanceMaternityBenefit = true;
+        run.Employees[0].MaternityBenefitAdvance = 70_000.35m;
+        run.Employees[0].MaternityClaimId = claim.Id;
+        var settled = await _sut.SettleAdvancesAsync(run);
+
+        // Aug 10-15: 6 days, 666.67 x 6 = 4,000.02 of the 6,000.00 those days' pay.
+        pay.Advance.Should().Be(70_000.35m);
+        pay.Offset.Should().Be(4_000.02m);
+        pay.Differential.Should().Be(1_999.98m);
+        warnings.Should().Equal("Maternity benefit not advanced yet for Maria Santos.");
+        settled.Should().Equal(claim);
+        claim.Status.Should().Be(MaternityClaimStatus.Advanced);
+        claim.AdvanceRunId.Should().Be(run.Id);
+    }
+
+    [Fact]
+    public async Task AFinalPayWithNoSalaryDays_HasNoLeaveDaysToOffset_OrToWarnAbout()
+    {
+        // Regular payroll already paid up to the last working day: the final pay's period is that
+        // day alone and pays no salary, so nothing on it is covered by SSS.
+        var run = Cutoff(8, 15, 15, PayrollRunType.FinalPay);
+        run.FinalPayInputs = new FinalPayInputs { PayrollRunId = run.Id, WorkingDays = 0m };
+        run.Employees.Add(new PayrollRunEmployee { EmployeeId = _maria.Id, Employee = _maria });
+
+        var pay = await _sut.ForAsync(run, _maria.Id, advanceRequested: false, 0m, exempt: false);
+
+        pay.Offset.Should().Be(0m);
+        pay.Warnings.Should().BeEmpty();
+        await _sut.EnsureClaimsSetUpAsync(run, exempt: false);
     }
 
     // ---- Mark Paid -----------------------------------------------------------------------------

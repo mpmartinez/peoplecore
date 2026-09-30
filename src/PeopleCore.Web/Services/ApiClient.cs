@@ -988,7 +988,9 @@ public record FinalPayRequest(
     decimal? SeparationPayOverride,
     decimal? RetirementPayOverride,
     string? OverrideNote,
-    IReadOnlyList<FinalPayDeductionDto> Deductions);
+    IReadOnlyList<FinalPayDeductionDto> Deductions,
+    // Advance her SSS maternity benefit on the final pay; offered only with a claim ready to advance.
+    bool AdvanceMaternityBenefit = false);
 
 public record FinalPayDeductionDto(string Label, decimal Amount);
 
@@ -1033,7 +1035,20 @@ public record FinalPaySummaryDto(
     decimal GrossPay,
     decimal NetPay,
     bool ClearanceComplete,
-    IReadOnlyList<string> OutstandingClearance);
+    IReadOnlyList<string> OutstandingClearance,
+    // Maternity (RA 11210): whether the final pay advances her benefit, the advance, the part of the
+    // period's pay SSS covers, the non-taxable differential, contributions deferred or collected, and
+    // what HR still has to do.
+    bool AdvanceMaternityBenefit = false,
+    decimal MaternityBenefitAdvance = 0m,
+    decimal MaternityBenefitOffset = 0m,
+    decimal MaternityDifferential = 0m,
+    decimal ContributionsDeferred = 0m,
+    decimal DeferredContributionsCollected = 0m,
+    IReadOnlyList<string>? MaternityWarnings = null)
+{
+    public IReadOnlyList<string> MaternityWarnings { get; init; } = MaternityWarnings ?? [];
+}
 public record ClearItemRequest(string? Note);
 public record AddClearanceItemRequest(string Name);
 // Leave balances and requests - copies of PeopleCore.Application.Leave.DTOs records, field by field

@@ -103,7 +103,13 @@ public sealed class FinalPayService : IFinalPayService
     private readonly IBir2316Service _bir2316;
     private readonly PayrollComputationService _engine;
     private readonly TimeProvider _clock;
+    private readonly Maternity.IMaternityPayCalculator? _maternityPay;
 
+    /// <param name="maternityPay">
+    /// Works out the final period's maternity offset and differential and the benefit advance, through
+    /// the calculator a regular run uses. Optional so callers that never see maternity pay needn't
+    /// supply one: without it there are no maternity figures, and advancing a benefit is refused.
+    /// </param>
     public FinalPayService(
         ISeparationRepository separations,
         IPayrollRunRepository runs,
@@ -117,7 +123,8 @@ public sealed class FinalPayService : IFinalPayService
         IPayrollSettingsRepository settings,
         IBir2316Service bir2316,
         PayrollComputationService engine,
-        TimeProvider clock)
+        TimeProvider clock,
+        Maternity.IMaternityPayCalculator? maternityPay = null)
     {
         _separations = separations;
         _runs = runs;
@@ -132,6 +139,7 @@ public sealed class FinalPayService : IFinalPayService
         _bir2316 = bir2316;
         _engine = engine;
         _clock = clock;
+        _maternityPay = maternityPay;
     }
 
     public async Task<FinalPaySummaryDto> CreateAsync(Guid separationId, FinalPayRequest request, CancellationToken ct = default)
@@ -161,14 +169,15 @@ public sealed class FinalPayService : IFinalPayService
         await ApplyRequestAsync(run, inputs, separation, request, period, ct);
 
         var attendance = await DeriveAttendanceAsync(run, inputs, separation.EmployeeId, ct);
-        var (entry, figures) = await ComputeSettledAsync(run, inputs, separation, compensation, attendance, ct);
+        var (entry, figures, warnings) = await ComputeSettledAsync(run, inputs, separation, compensation, attendance,
+            request.AdvanceMaternityBenefit, ct);
         run.Employees = [entry];
 
         // Saved in one go: the run, its entry, its inputs and the separation's link.
         separation.FinalPayRunId = run.Id;
         await _runs.AddFinalPayRunAsync(run, separation, ct);
 
-        return await SummaryAsync(separation, run, entry, figures, ct);
+        return await SummaryAsync(separation, run, entry, figures, warnings, ct);
     }
 
     public async Task<FinalPaySummaryDto> UpdateAsync(Guid separationId, FinalPayRequest request, CancellationToken ct = default)
@@ -204,14 +213,15 @@ public sealed class FinalPayService : IFinalPayService
         // HR is redefining the run, possibly its period, so attendance is derived afresh; only a
         // plain recompute (RecomputeAsync) holds to the snapshot.
         var attendance = await DeriveAttendanceAsync(run, inputs, separation.EmployeeId, ct);
-        var (entry, figures) = await ComputeSettledAsync(run, inputs, separation, compensation, attendance, ct);
+        var (entry, figures, warnings) = await ComputeSettledAsync(run, inputs, separation, compensation, attendance,
+            request.AdvanceMaternityBenefit, ct);
 
         // Changed figures need a fresh approval, as on any recompute.
         run.Status = PayrollRunStatus.Draft;
         run.UpdatedAt = _clock.GetUtcNow().UtcDateTime;
         await _runs.ReplaceEntriesAsync(run, [entry], ct);
 
-        return await SummaryAsync(separation, run, entry, figures, ct);
+        return await SummaryAsync(separation, run, entry, figures, warnings, ct);
     }
 
     public async Task<FinalPaySummaryDto?> GetAsync(Guid separationId, CancellationToken ct = default)
@@ -232,8 +242,10 @@ public sealed class FinalPayService : IFinalPayService
         var compensation = await _compensations.GetByEmployeeIdAsync(separation.EmployeeId, ct);
         var figures = await FiguresAsync(separation, inputs, compensation?.BasicSalary ?? 0m, entry.DailyRate,
             FinalPayMath.DeMinimisVacationDays, ct);
+        // What HR still has to do about her maternity claim, as things stand now.
+        IReadOnlyList<string> warnings = _maternityPay is null ? [] : await _maternityPay.WarningsAsync(run, ct);
 
-        return await SummaryAsync(separation, run, entry, figures, ct);
+        return await SummaryAsync(separation, run, entry, figures, warnings, ct);
     }
 
     public async Task<List<PayrollRunEmployee>> RecomputeAsync(PayrollRun run, CancellationToken ct = default)
@@ -253,7 +265,9 @@ public sealed class FinalPayService : IFinalPayService
             ? PayrollRunService.FromSnapshot(current)
             : await DeriveAttendanceAsync(run, inputs, separation.EmployeeId, ct);
 
-        var (entry, _) = await ComputeSettledAsync(run, inputs, separation, compensation, attendance, ct);
+        // The advance HR asked for when the final pay was created or last changed is kept.
+        var (entry, _, _) = await ComputeSettledAsync(run, inputs, separation, compensation, attendance,
+            current?.AdvanceMaternityBenefit ?? false, ct);
         return [entry];
     }
 
@@ -584,10 +598,16 @@ public sealed class FinalPayService : IFinalPayService
     /// year's tax settled - the 2316's tax due, built over the pay year's Paid runs plus this draft
     /// entry, less everything already withheld (this employer's other runs, a previous employer,
     /// the PERA credit). The result can be negative: a refund.
+    /// <para>
+    /// Maternity (RA 11210) goes through the calculator a regular run uses, for the final period: the
+    /// offset and the tax-exempt differential for her leave days in it (worked out against the regular
+    /// pay before the offset, from a first compute without it), and the benefit advance when asked for
+    /// - refused as on a regular run. The settle then sees the same figures the entry pays.
+    /// </para>
     /// </summary>
-    private async Task<(PayrollRunEmployee Entry, Figures Figures)> ComputeSettledAsync(
+    private async Task<(PayrollRunEmployee Entry, Figures Figures, IReadOnlyList<string> MaternityWarnings)> ComputeSettledAsync(
         PayrollRun run, FinalPayInputs inputs, Separation separation, EmployeeCompensation compensation,
-        PayrollAttendanceInput attendance, CancellationToken ct)
+        PayrollAttendanceInput attendance, bool advanceMaternity, CancellationToken ct)
     {
         var employee = separation.Employee;
         var employeeId = separation.EmployeeId;
@@ -646,7 +666,15 @@ public sealed class FinalPayService : IFinalPayService
             WithholdingTaxOverride: null,
             ContributionsDeductedInMonth: deductedInMonth);
 
-        PayrollRunEmployee Compute(FinalPayExtras finalPay) => _engine.Compute(
+        // Maternity: the period's leave, her claims and any other run advancing them, read once.
+        Maternity.MaternityRun? maternity = null;
+        if (_maternityPay is not null)
+            maternity = await _maternityPay.LoadAsync(run, [employeeId], ct);
+        else if (advanceMaternity)
+            throw new InvalidOperationException(
+                "FinalPayService was built without an IMaternityPayCalculator, so it can't advance a maternity benefit.");
+
+        PayrollRunEmployee Compute(FinalPayExtras finalPay, MaternityInput? maternityInput) => _engine.Compute(
             compensation, run,
             daysWorked: inputs.WorkingDays,
             includeThirteenthMonth: true,
@@ -657,9 +685,20 @@ public sealed class FinalPayService : IFinalPayService
             basicEarnedEarlierInYear: basicEarlier,
             isThirteenthMonthEligible: employee.Is13thMonthEligible,
             finalPay: finalPay,
+            maternity: maternityInput,
             deferredContributionsOutstanding: deferredOutstanding);
 
-        var draft = Compute(extras);
+        // The offset is worked out against the regular pay after absences and tardiness and before
+        // the offset - the entry's RegularPay without a maternity input - as a regular run does.
+        var withoutMaternity = Compute(extras, null);
+        var maternityPay = maternity?.For(employeeId, advanceMaternity, withoutMaternity.RegularPay,
+            settings?.ExemptFromMaternityDifferential ?? false) ?? Maternity.MaternityPay.None;
+        MaternityInput? maternityInput =
+            maternityPay.Advance > 0m || maternityPay.Offset > 0m || maternityPay.Differential > 0m
+                ? new MaternityInput(maternityPay.Advance, maternityPay.Offset, maternityPay.Differential)
+                : null;
+
+        var draft = maternityInput is null ? withoutMaternity : Compute(extras, maternityInput);
 
         // run.PayDate.Year is the year passed, as BuildWithDraftEntryAsync requires; the draft
         // entry is this employee's own.
@@ -672,15 +711,17 @@ public sealed class FinalPayService : IFinalPayService
             certificate.Item24_TaxDue - withheldElsewhere
             - certificate.Item25B_PrevTaxWithheld - certificate.Item27_PeraTaxCredit, 2);
 
-        var entry = Compute(extras with { WithholdingTaxOverride = settled });
+        var entry = Compute(extras with { WithholdingTaxOverride = settled }, maternityInput);
+        entry.AdvanceMaternityBenefit = advanceMaternity;
+        entry.MaternityClaimId = maternityPay.ClaimId;
         PayrollRunService.SnapshotAttendance(entry, attendance);
-        return (entry, figures);
+        return (entry, figures, maternityPay.Warnings);
     }
 
     // ── Summary ──────────────────────────────────────────────────────────────
 
     private async Task<FinalPaySummaryDto> SummaryAsync(Separation separation, PayrollRun run,
-        PayrollRunEmployee entry, Figures figures, CancellationToken ct)
+        PayrollRunEmployee entry, Figures figures, IReadOnlyList<string> maternityWarnings, CancellationToken ct)
     {
         var inputs = run.FinalPayInputs!;
         var (noSalary, startIsDefault) = await PeriodAgainstDefaultAsync(separation, run, inputs, ct);
@@ -708,7 +749,14 @@ public sealed class FinalPayService : IFinalPayService
                 .Where(i => i.ClearedAt is null)
                 .OrderBy(i => i.SortOrder)
                 .Select(i => i.Name)
-                .ToList());
+                .ToList(),
+            entry.AdvanceMaternityBenefit,
+            entry.MaternityBenefitAdvance,
+            entry.MaternityBenefitOffset,
+            entry.MaternityDifferential,
+            entry.ContributionsDeferred,
+            entry.DeferredContributionsCollected,
+            maternityWarnings);
     }
 
     /// <summary>

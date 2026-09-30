@@ -467,20 +467,80 @@ public partial class PayrollRunServiceTests
         await act.Should().ThrowAsync<DomainException>().WithMessage("Only draft or for-approval payroll runs can be recomputed.");
     }
 
-    [Fact]
-    public async Task AFinalPay_GetsNoMaternityHandling()
+    /// <summary>
+    /// Maria's final pay for Aug 1-15 (Status as given) while she is on maternity leave from Aug 10,
+    /// with her claim, and an entry that advances it when <paramref name="advancing"/>.
+    /// </summary>
+    private (PayrollRun Run, MaternityClaim? Claim) MariasFinalPayOnLeave(PayrollRunStatus status, bool withClaim, bool advancing)
     {
-        var (run, _) = ApprovedFinalPay(Item("Laptop", 1, cleared: true));
+        var (maria, _, claim, _) = MariaOnMaternityLeave(withClaim);
+        var (run, separation) = ApprovedFinalPay(Item("Laptop", 1, cleared: true));
+        run.Status = status;
+        run.PeriodStart = new DateOnly(2026, 8, 1);
+        run.PeriodEnd = new DateOnly(2026, 8, 15);
+        run.PayDate = new DateOnly(2026, 8, 31);
+        run.FinalPayInputs!.WorkingDays = 15m;
+        separation.EmployeeId = maria.Id;
+        separation.Employee = maria;
+        run.Employees.Clear();
+        run.Employees.Add(new PayrollRunEmployee
+        {
+            PayrollRunId = run.Id, EmployeeId = maria.Id, Employee = maria, RegularPay = 10_999.98m,
+            MaternityBenefitOffset = 4_000.02m, MaternityClaimId = claim?.Id,
+            AdvanceMaternityBenefit = advancing, MaternityBenefitAdvance = advancing ? 70_000.35m : 0m
+        });
+        _runRepo.Setup(r => r.GetWithEntriesAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        return (run, claim);
+    }
 
-        var dto = await MaternitySut.GetAsync(run.Id);
+    [Fact]
+    public async Task AFinalPay_ThatAdvancesTheBenefit_SettlesTheClaimInTheSameSave()
+    {
+        var (run, claim) = MariasFinalPayOnLeave(PayrollRunStatus.Approved, withClaim: true, advancing: true);
+
         await MaternitySut.MarkPaidAsync(run.Id);
 
-        dto!.Warnings.Should().BeEmpty();
-        _leaveRepo.VerifyNoOtherCalls();
-        _claimRepo.VerifyNoOtherCalls();
+        claim!.Status.Should().Be(MaternityClaimStatus.Advanced);
+        claim.AdvanceRunId.Should().Be(run.Id);
+        claim.AdvancedAt.Should().Be(new DateOnly(2026, 8, 31));
         _runRepo.Verify(r => r.SavePaidAsync(run, It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
             It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
-            It.Is<IReadOnlyCollection<MaternityClaim>>(c => c.Count == 0),
+            It.Is<IReadOnlyCollection<MaternityClaim>>(c => c.Single() == claim),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AFinalPay_ShowsItsMaternityWarnings()
+    {
+        var (run, _) = MariasFinalPayOnLeave(PayrollRunStatus.Draft, withClaim: true, advancing: false);
+
+        var dto = await MaternitySut.GetAsync(run.Id);
+
+        dto!.Warnings.Should().Equal("Maternity benefit not advanced yet for Maria Santos.");
+    }
+
+    [Fact]
+    public async Task ApproveAsync_AFinalPayWithMaternityDaysAndNoClaim_IsRefused()
+    {
+        var (run, _) = MariasFinalPayOnLeave(PayrollRunStatus.Draft, withClaim: false, advancing: false);
+
+        var act = () => MaternitySut.ApproveAsync(run.Id);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage(
+            "Set up Maria Santos's maternity claim before approving; this payroll covers 6 maternity day(s).");
+        run.Status.Should().Be(PayrollRunStatus.Draft);
+    }
+
+    [Fact]
+    public async Task ApproveAsync_AFinalPayWhoseClaimChangedSinceCompute_IsRefused()
+    {
+        var (run, claim) = MariasFinalPayOnLeave(PayrollRunStatus.Draft, withClaim: true, advancing: true);
+        claim!.DailyAllowance = 600m;
+        claim.Benefit = 63_000m;
+
+        var act = () => MaternitySut.ApproveAsync(run.Id);
+
+        await act.Should().ThrowAsync<DomainException>()
+            .WithMessage("Maria Santos's maternity claim has changed since this payroll was computed; recompute it before approving.");
     }
 }

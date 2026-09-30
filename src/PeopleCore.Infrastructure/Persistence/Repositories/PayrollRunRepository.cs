@@ -155,8 +155,7 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
             .Where(e => e.MaternityClaimId != null && ids.Contains(e.MaternityClaimId.Value)
                         && e.AdvanceMaternityBenefit
                         && e.MaternityBenefitAdvance > 0m
-                        && e.PayrollRunId != excludeRunId
-                        && e.PayrollRun.RunType == PayrollRunType.Regular)
+                        && e.PayrollRunId != excludeRunId)
             .OrderBy(e => e.PayrollRun.PayDate)
             .Select(e => new MaternityAdvanceInRun(e.MaternityClaimId!.Value, e.PayrollRun.RunNumber))
             .ToListAsync(ct);

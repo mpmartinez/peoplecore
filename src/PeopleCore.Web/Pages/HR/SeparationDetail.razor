@@ -226,6 +226,7 @@ else
     // Final pay
     private bool _canManagePayroll;
     private FinalPaySummaryDto? _finalPay;
+    private bool _maternityReady;
     private bool _finalPayLoaded;
     private string? _finalPayLoadError;
     private string? _finalPayActionError;
@@ -243,6 +244,7 @@ else
 
         await Load();
         await LoadFinalPay();
+        await LoadMaternityReady();
     }
 
     private async Task Load()
@@ -405,6 +407,29 @@ else
         }
     }
 
+    /// <summary>
+    /// Whether she has a maternity claim ready to advance (a Draft claim with an allowance, for
+    /// approved leave, that no run carries) - the only case the final pay can advance the benefit.
+    /// A failed check just leaves the advance unoffered; the API would refuse it anyway.
+    /// </summary>
+    private async Task LoadMaternityReady()
+    {
+        if (!_canManagePayroll || _separation is null) return;
+        try
+        {
+            var ready = await Api.GetMaternityReadyEmployeeIdsAsync();
+            _maternityReady = ready?.Contains(_separation.EmployeeId) == true;
+        }
+        catch (Exception)
+        {
+            _maternityReady = false;
+        }
+    }
+
+    // Offered when her claim is ready, and kept on a final pay that already advances it (its claim is
+    // then carried by this run, so no longer "ready").
+    private bool OffersMaternityAdvance => _maternityReady || _finalPay?.AdvanceMaternityBenefit == true;
+
     private bool IsRetirement => _separation?.Type == SeparationType.Retirement;
 
     // Same line the API draws: paid figures have retired loans, but an approved final pay can
@@ -433,6 +458,7 @@ else
             OverrideAmount = StoredOverride(summary),
             OverrideNote = summary.OverrideNote,
             Deductions = summary.Deductions.Select(d => new DeductionRow { Label = d.Label, Amount = d.Amount }).ToList(),
+            AdvanceMaternityBenefit = summary.AdvanceMaternityBenefit,
         };
         _finalPayActionError = null;
         _editingFinalPay = true;
@@ -463,7 +489,8 @@ else
             IsRetirement ? null : form.OverrideAmount,
             IsRetirement ? form.OverrideAmount : null,
             string.IsNullOrWhiteSpace(form.OverrideNote) ? null : form.OverrideNote.Trim(),
-            deductions);
+            deductions,
+            OffersMaternityAdvance && form.AdvanceMaternityBenefit);
     }
 
     private async Task SubmitFinalPay()
@@ -549,6 +576,17 @@ else
                 </FormField>
             </div>
 
+            @if (OffersMaternityAdvance)
+            {
+                <div class="mb-4 space-y-1">
+                    <Checkbox Value="@_finalPayForm.AdvanceMaternityBenefit"
+                              ValueChanged="@(v => _finalPayForm.AdvanceMaternityBenefit = v)" data-advance-maternity>
+                        Advance maternity benefit
+                    </Checkbox>
+                    <p class="ml-6 text-xs text-muted-foreground">@MaternityLabels.NetCashNote</p>
+                </div>
+            }
+
             <div class="mb-4">
                 <div class="flex items-center justify-between mb-2">
                     <Label>Other deductions</Label>
@@ -605,6 +643,19 @@ else
                     {
                         @("Add clearance items and clear them before paying final pay.")
                     }
+                </Alert>
+            }
+
+            @if (summary.MaternityWarnings.Count > 0)
+            {
+                @* What HR still has to do about her maternity claim; the API works these out afresh. *@
+                <Alert Variant="warning" Class="mb-4" data-maternity-warnings>
+                    <ul class="list-disc pl-4 space-y-0.5">
+                        @foreach (var warning in summary.MaternityWarnings)
+                        {
+                            <li>@warning</li>
+                        }
+                    </ul>
                 </Alert>
             }
 
@@ -756,6 +807,42 @@ else
                         </Alert>
                     }
 
+                    @if (summary.MaternityBenefitOffset > 0m)
+                    {
+                        @* Already taken out of the salary: the part of the leave days' pay SSS covers. *@
+                        <div class="flex justify-between py-2 border-b border-dashed" data-maternity-offset>
+                            <span class="text-muted-foreground text-sm">Covered by SSS maternity</span>
+                            <span class="text-sm font-medium text-right">@Peso(summary.MaternityBenefitOffset)</span>
+                        </div>
+                    }
+                    @if (summary.MaternityDifferential > 0m)
+                    {
+                        <div class="flex justify-between py-2 border-b border-dashed" data-maternity-differential>
+                            <span class="text-muted-foreground text-sm">Maternity salary differential (non-taxable)</span>
+                            <span class="text-sm font-medium text-right">@Peso(summary.MaternityDifferential)</span>
+                        </div>
+                    }
+                    @if (summary.MaternityBenefitAdvance > 0m)
+                    {
+                        <div class="flex justify-between py-2 border-b border-dashed" data-maternity-advance>
+                            <span class="text-muted-foreground text-sm">SSS maternity benefit (advance)</span>
+                            <span class="text-sm font-medium text-right">@Peso(summary.MaternityBenefitAdvance)</span>
+                        </div>
+                    }
+                    @if (summary.ContributionsDeferred > 0m)
+                    {
+                        <div class="flex justify-between py-2 border-b border-dashed" data-contributions-deferred>
+                            <span class="text-muted-foreground text-sm">Contributions deferred (collected later)</span>
+                            <span class="text-sm font-medium text-right">@Peso(summary.ContributionsDeferred)</span>
+                        </div>
+                    }
+                    @if (summary.DeferredContributionsCollected > 0m)
+                    {
+                        <div class="flex justify-between py-2 border-b border-dashed" data-deferred-collected>
+                            <span class="text-muted-foreground text-sm">Deferred contributions collected</span>
+                            <span class="text-sm font-medium text-right">@Peso(summary.DeferredContributionsCollected)</span>
+                        </div>
+                    }
                     <div class="flex justify-between py-2 border-b border-dashed" data-tax>
                         <span class="text-muted-foreground text-sm">@(summary.WithholdingTax < 0m ? "Tax refund" : "Withholding tax")</span>
                         <span class="text-sm font-medium text-right">@Peso(Math.Abs(summary.WithholdingTax))</span>
@@ -795,6 +882,7 @@ else
         public decimal? OverrideAmount { get; set; }
         public string? OverrideNote { get; set; }
         public List<DeductionRow> Deductions { get; set; } = [];
+        public bool AdvanceMaternityBenefit { get; set; }
     }
 
     private sealed class DeductionRow

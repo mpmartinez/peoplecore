@@ -177,9 +177,9 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     /// <summary>
     /// The maternity advances on file for the claims: one per entry that advances one of them
     /// (<see cref="PayrollRunEmployee.AdvanceMaternityBenefit"/>, a
-    /// <see cref="PayrollRunEmployee.MaternityBenefitAdvance"/> above zero), on a Regular run - in any
-    /// status - other than <paramref name="excludeRunId"/>, earliest pay date first. A benefit is
-    /// advanced once, so a second run carrying it is refused.
+    /// <see cref="PayrollRunEmployee.MaternityBenefitAdvance"/> above zero), on a run of any type - a
+    /// final pay advances too - and any status, other than <paramref name="excludeRunId"/>, earliest pay
+    /// date first. A benefit is advanced once, so a second run carrying it is refused.
     /// </summary>
     Task<IReadOnlyList<MaternityAdvanceInRun>> GetMaternityAdvancesAsync(
         IReadOnlyCollection<Guid> claimIds, Guid excludeRunId, CancellationToken ct = default);

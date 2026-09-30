@@ -9,8 +9,8 @@ using PeopleCore.Domain.Exceptions;
 namespace PeopleCore.Application.Payroll.Maternity;
 
 /// <summary>
-/// The maternity advance, offset and warnings for a regular run, and the claims its Mark Paid
-/// settles (RA 11210). Reads approved leave the way the payroll attendance bridge does
+/// The maternity advance, offset and warnings for a run - a regular run or a final pay - and the
+/// claims its Mark Paid settles (RA 11210). Reads approved leave the way the payroll attendance bridge does
 /// (<see cref="ILeaveRequestRepository.GetApprovedByPeriodAsync"/>), keeping each employee's
 /// requests of a maternity type, and the employees' claims.
 /// </summary>
@@ -39,7 +39,7 @@ public sealed class MaternityPayCalculator : IMaternityPayCalculator
 
     public async Task<IReadOnlyList<string>> WarningsAsync(PayrollRun run, CancellationToken ct = default)
     {
-        if (run.RunType != PayrollRunType.Regular || run.Employees.Count == 0)
+        if (run.Employees.Count == 0)
             return [];
 
         // Names come with the leave and the claims, which are all a warning is about.
@@ -87,13 +87,11 @@ public sealed class MaternityPayCalculator : IMaternityPayCalculator
     /// <summary>
     /// The claims the run's entries advance, each checked to still be the one the run was computed
     /// with: Draft, and its benefit what the entry advances. Every claim is checked before the caller
-    /// changes any, so a refusal leaves them all as they were. None for a final pay.
+    /// changes any, so a refusal leaves them all as they were.
     /// </summary>
     /// <param name="whatToDo">How the "has changed" refusal ends: what HR can do about it at this step.</param>
     private async Task<IReadOnlyList<MaternityClaim>> AdvancedClaimsAsync(PayrollRun run, string whatToDo, CancellationToken ct)
     {
-        if (run.RunType != PayrollRunType.Regular)
-            return [];
         var advancing = run.Employees.Where(e => AdvancedOn(e) is not null).ToList();
         if (advancing.Count == 0)
             return [];
@@ -125,13 +123,18 @@ public sealed class MaternityPayCalculator : IMaternityPayCalculator
         CancellationToken ct)
     {
         var ids = employeeIds.Distinct().ToList();
-        if (run.RunType != PayrollRunType.Regular || ids.Count == 0)
+        if (ids.Count == 0)
             return MaternityRun.None;
         var wanted = ids.ToHashSet();
 
-        var requests = (await _leave.GetApprovedByPeriodAsync(run.PeriodStart, run.PeriodEnd, ct) ?? [])
-            .Where(r => wanted.Contains(r.EmployeeId) && r.LeaveType is { IsMaternity: true })
-            .ToList();
+        // A final pay with no salary days (regular payroll already paid up to the last working day)
+        // stores that day alone as its period and pays no salary, so no leave day on it is covered.
+        bool paysNoSalary = run.RunType == PayrollRunType.FinalPay && run.FinalPayInputs is { WorkingDays: 0m };
+        var requests = paysNoSalary
+            ? []
+            : (await _leave.GetApprovedByPeriodAsync(run.PeriodStart, run.PeriodEnd, ct) ?? [])
+                .Where(r => wanted.Contains(r.EmployeeId) && r.LeaveType is { IsMaternity: true })
+                .ToList();
         var claims = (await _claims.GetForEmployeesAsync(ids, ct) ?? [])
             .Where(c => wanted.Contains(c.EmployeeId))
             .ToList();
@@ -168,7 +171,7 @@ public sealed class MaternityPayCalculator : IMaternityPayCalculator
 /// </summary>
 public sealed class MaternityRun
 {
-    /// <summary>For a final pay, or no employees: nothing to advance, offset or warn about.</summary>
+    /// <summary>For no employees: nothing to advance, offset or warn about.</summary>
     internal static readonly MaternityRun None = new(null, Enumerable.Empty<LeaveRequest>().ToLookup(r => r.EmployeeId),
         Enumerable.Empty<MaternityClaim>().ToLookup(c => c.EmployeeId), new Dictionary<Guid, string>(), new Dictionary<Guid, string>());
 

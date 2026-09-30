@@ -90,6 +90,16 @@ public class ApiClientMaternityTests
     }
 
     [Fact]
+    public void TheFinalPayMirrors_EndWithTheMaternityFields()
+    {
+        MembersOf<FinalPayRequest>().TakeLast(2).Should().Equal("deductions", "advanceMaternityBenefit");
+        MembersOf<FinalPaySummaryDto>().TakeLast(9).Should().Equal(
+            "clearanceComplete", "outstandingClearance",
+            "advanceMaternityBenefit", "maternityBenefitAdvance", "maternityBenefitOffset", "maternityDifferential",
+            "contributionsDeferred", "deferredContributionsCollected", "maternityWarnings");
+    }
+
+    [Fact]
     public void TheRunMirrors_EndWithTheMaternityFigures_AndTheWarnings()
     {
         // PayrollRunEmployeeDto's maternity members and PayrollRunDto's last one, as the API has them.
