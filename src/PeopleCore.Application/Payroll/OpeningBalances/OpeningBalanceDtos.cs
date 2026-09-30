@@ -25,7 +25,8 @@ public record OpeningBalanceRequest(Guid EmployeeId, int Year, DateOnly ThroughD
 /// <summary>What an opening-balance import saved: the balances it created and the ones it updated.</summary>
 /// <param name="Warnings">
 /// For each saved balance, in file order, its double-count warnings then its edit warnings (as on
-/// <see cref="OpeningBalanceDto.Warnings"/> after a save), each prefixed "{EmployeeNumber} {name}: ".
+/// <see cref="OpeningBalanceDto.Warnings"/> after a save): a double-count warning prefixed
+/// "{EmployeeNumber}: " (it already opens with her name), an edit warning "{EmployeeNumber} {name}: ".
 /// </param>
 public record OpeningBalanceImportDto(int Created, int Updated, IReadOnlyList<string> Warnings);
 

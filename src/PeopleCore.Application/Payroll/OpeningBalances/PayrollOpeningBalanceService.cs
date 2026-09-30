@@ -173,9 +173,15 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
         var paidRuns = new Dictionary<int, IReadOnlyList<PayrollRun>?>();
         foreach (var year in years)
             paidRuns[year] = await _runs.GetPaidRunsInYearAsync(year, ct);
+        // The double-count warning already opens with her name, so it takes only her number.
         var warnings = saved
-            .SelectMany(s => SaveWarnings(s.Balance, s.Employee.FullName, RunsOf(s.Balance, paidRuns[s.Balance.Year]))
-                .Select(w => $"{s.Employee.EmployeeNumber} {s.Employee.FullName}: {w}"))
+            .SelectMany(s =>
+            {
+                var (number, name) = (s.Employee.EmployeeNumber, s.Employee.FullName);
+                var runs = RunsOf(s.Balance, paidRuns[s.Balance.Year]);
+                return DoubleCountWarnings(s.Balance, name, runs).Select(w => $"{number}: {w}")
+                    .Concat(EditWarnings(s.Balance, runs).Select(w => $"{number} {name}: {w}"));
+            })
             .ToList();
         return new OpeningBalanceImportResult(added.Count, saved.Count - added.Count, [], warnings);
 
@@ -189,19 +195,18 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
         return ToDto(balance, SaveWarnings(balance, balance.Employee.FullName, runs));
     }
 
-    /// <summary>
-    /// What a save warns of: the double-count warnings, then one edit warning per Paid run of hers
-    /// paid after the through date, which used the figures and won't be recomputed.
-    /// </summary>
+    /// <summary>What a save warns of: the double-count warnings, then the edit warnings.</summary>
     private static List<string> SaveWarnings(PayrollOpeningBalance balance, string name, List<PayrollRun> runs)
-    {
-        var warnings = DoubleCountWarnings(balance, name, runs);
-        warnings.AddRange(runs
-            .Where(r => r.PayDate > balance.ThroughDate)
+        => [.. DoubleCountWarnings(balance, name, runs), .. EditWarnings(balance, runs)];
+
+    /// <summary>
+    /// One warning per Paid run of hers paid after the through date: it used the figures and won't
+    /// be recomputed.
+    /// </summary>
+    private static IEnumerable<string> EditWarnings(PayrollOpeningBalance balance, IEnumerable<PayrollRun> runs)
+        => runs.Where(r => r.PayDate > balance.ThroughDate)
             .Select(r => $"{r.RunNumber} used these figures; its 13th month and tax won't change. " +
-                         "Reissue her 2316 to pick up the change."));
-        return warnings;
-    }
+                         "Reissue her 2316 to pick up the change.");
 
     /// <summary>The Paid runs in the balance's year that paid its employee, earliest pay date first.</summary>
     private static List<PayrollRun> RunsOf(PayrollOpeningBalance balance, IReadOnlyList<PayrollRun>? paidRuns)
