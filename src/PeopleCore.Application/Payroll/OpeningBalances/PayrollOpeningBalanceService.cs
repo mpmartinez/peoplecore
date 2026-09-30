@@ -10,9 +10,10 @@ namespace PeopleCore.Application.Payroll.OpeningBalances;
 
 /// <summary>
 /// Payroll opening balances: what each employee was paid in a year before PeopleCore. Reads carry
-/// the double-count warning (a Paid run of hers in the year on or before the through date, whose
-/// pay the balance already covers); a save adds the edit warning (a Paid run of hers in the year
-/// after the through date relied on the figures and won't be recomputed). Both are warnings only.
+/// the double-count warning (a Paid run of hers in the year, or a regular run not paid yet, on or
+/// before the through date, whose pay the balance already covers); a save adds the edit warning (a
+/// Paid run of hers in the year after the through date relied on the figures and won't be
+/// recomputed). Both are warnings only.
 /// </summary>
 public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
 {
@@ -43,14 +44,18 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
         if (balances.Count == 0) return [];
 
         var runs = await _runs.GetPaidRunsInYearAsync(year, ct);
-        return balances.Select(b => ToDto(b, DoubleCountWarnings(b, b.Employee.FullName, RunsOf(b, runs)))).ToList();
+        var unpaid = await UnpaidAsync(year, ct);
+        return balances
+            .Select(b => ToDto(b, DoubleCountWarnings(b, b.Employee.FullName, RunsOf(b, runs), UnpaidOf(b, unpaid))))
+            .ToList();
     }
 
     public async Task<OpeningBalanceDto> GetAsync(Guid id, CancellationToken ct = default)
     {
         var balance = await FindAsync(id, ct);
         var runs = RunsOf(balance, await _runs.GetPaidRunsInYearAsync(balance.Year, ct));
-        return ToDto(balance, DoubleCountWarnings(balance, balance.Employee.FullName, runs));
+        var unpaid = UnpaidOf(balance, await UnpaidAsync(balance.Year, ct));
+        return ToDto(balance, DoubleCountWarnings(balance, balance.Employee.FullName, runs, unpaid));
     }
 
     public async Task<OpeningBalanceDto> CreateAsync(OpeningBalanceRequest request, CancellationToken ct = default)
@@ -169,17 +174,22 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
         }
         await _balances.SaveAllAsync(added, ct);
 
-        // Each year's Paid runs once, for every saved balance's warnings, in file order.
+        // Each year's Paid runs and unpaid regular runs once, for every saved balance's warnings, in file order.
         var paidRuns = new Dictionary<int, IReadOnlyList<PayrollRun>?>();
+        var unpaidRuns = new Dictionary<int, IReadOnlyList<UnpaidRunEntry>>();
         foreach (var year in years)
+        {
             paidRuns[year] = await _runs.GetPaidRunsInYearAsync(year, ct);
+            unpaidRuns[year] = await UnpaidAsync(year, ct);
+        }
         // The double-count warning already opens with her name, so it takes only her number.
         var warnings = saved
             .SelectMany(s =>
             {
                 var (number, name) = (s.Employee.EmployeeNumber, s.Employee.FullName);
                 var runs = RunsOf(s.Balance, paidRuns[s.Balance.Year]);
-                return DoubleCountWarnings(s.Balance, name, runs).Select(w => $"{number}: {w}")
+                var unpaid = UnpaidOf(s.Balance, unpaidRuns[s.Balance.Year]);
+                return DoubleCountWarnings(s.Balance, name, runs, unpaid).Select(w => $"{number}: {w}")
                     .Concat(EditWarnings(s.Balance, runs).Select(w => $"{number} {name}: {w}"));
             })
             .ToList();
@@ -192,12 +202,27 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
     private async Task<OpeningBalanceDto> SavedAsync(PayrollOpeningBalance balance, CancellationToken ct)
     {
         var runs = RunsOf(balance, await _runs.GetPaidRunsInYearAsync(balance.Year, ct));
-        return ToDto(balance, SaveWarnings(balance, balance.Employee.FullName, runs));
+        var unpaid = UnpaidOf(balance, await UnpaidAsync(balance.Year, ct));
+        return ToDto(balance, SaveWarnings(balance, balance.Employee.FullName, runs, unpaid));
     }
 
-    /// <summary>What a save warns of: the double-count warnings, then the edit warnings.</summary>
-    private static List<string> SaveWarnings(PayrollOpeningBalance balance, string name, List<PayrollRun> runs)
-        => [.. DoubleCountWarnings(balance, name, runs), .. EditWarnings(balance, runs)];
+    /// <summary>
+    /// What a save warns of: the double-count warnings, then the edit warnings. Only Paid runs used
+    /// the figures; an unpaid run is computed again before it's paid.
+    /// </summary>
+    private static List<string> SaveWarnings(PayrollOpeningBalance balance, string name, List<PayrollRun> runs,
+        List<UnpaidRunEntry> unpaid)
+        => [.. DoubleCountWarnings(balance, name, runs, unpaid), .. EditWarnings(balance, runs)];
+
+    private async Task<IReadOnlyList<UnpaidRunEntry>> UnpaidAsync(int year, CancellationToken ct)
+        => await _runs.GetUnpaidRegularRunEntriesInYearAsync(year, ct) ?? [];
+
+    /// <summary>The unpaid regular runs in the balance's year that pay its employee, one per run.</summary>
+    private static List<UnpaidRunEntry> UnpaidOf(PayrollOpeningBalance balance, IReadOnlyList<UnpaidRunEntry> entries)
+        => entries
+            .Where(e => e.EmployeeId == balance.EmployeeId && e.PayDate.Year == balance.Year)
+            .DistinctBy(e => e.RunNumber)
+            .ToList();
 
     /// <summary>
     /// One warning per Paid run of hers paid after the through date: it used the figures and won't
@@ -216,18 +241,28 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
             .ThenBy(r => r.RunNumber, StringComparer.Ordinal)
             .ToList();
 
-    /// <summary>One warning per Paid run of hers paid on or before the through date: pay the balance already covers.</summary>
-    private static List<string> DoubleCountWarnings(PayrollOpeningBalance balance, string name, IEnumerable<PayrollRun> runs)
-        => runs.Where(r => r.PayDate <= balance.ThroughDate)
-            .Select(r => DoubleCountWarning(name, balance.ThroughDate, r.RunNumber, r.PayDate))
+    /// <summary>
+    /// One warning per run of hers, Paid or unpaid, paid or paying on or before the through date: pay
+    /// the balance already covers. Earliest pay date first.
+    /// </summary>
+    private static List<string> DoubleCountWarnings(PayrollOpeningBalance balance, string name,
+        IEnumerable<PayrollRun> paidRuns, IEnumerable<UnpaidRunEntry> unpaidRuns)
+        => paidRuns.Select(r => (r.PayDate, r.RunNumber, Paid: true))
+            .Concat(unpaidRuns.Select(e => (e.PayDate, e.RunNumber, Paid: false)))
+            .Where(r => r.PayDate <= balance.ThroughDate)
+            .OrderBy(r => r.PayDate)
+            .ThenBy(r => r.RunNumber, StringComparer.Ordinal)
+            .Select(r => DoubleCountWarning(name, balance.ThroughDate, r.RunNumber, r.PayDate, r.Paid))
             .ToList();
 
     /// <summary>
     /// The double-count warning: her balance runs through <paramref name="throughDate"/>, and the run
-    /// was paid on or before it. The run's page shows the same words.
+    /// was paid (<paramref name="paid"/>) or pays on or before it. The run's page shows the same words.
     /// </summary>
-    internal static string DoubleCountWarning(string name, DateOnly throughDate, string runNumber, DateOnly payDate)
-        => $"{name}'s opening balance already covers pay through {Date(throughDate)}; {runNumber} was paid on {Date(payDate)}.";
+    internal static string DoubleCountWarning(string name, DateOnly throughDate, string runNumber, DateOnly payDate,
+        bool paid)
+        => $"{name}'s opening balance already covers pay through {Date(throughDate)}; " +
+           $"{runNumber} {(paid ? "was paid on" : "pays on")} {Date(payDate)}.";
 
     private static string Date(DateOnly date) => date.ToString("MMM d, yyyy", CultureInfo.InvariantCulture);
 

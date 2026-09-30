@@ -61,8 +61,12 @@ The year is the one each figure already uses (the pay-date year for tax and the 
 
 When an employee has a Paid PeopleCore run in the balance's `Year` with a `PayDate` on or before
 `ThroughDate`, show: "{name}'s opening balance already covers pay through {ThroughDate:MMM d,
-yyyy}; {RunNumber} was paid on {PayDate:MMM d, yyyy}." It appears on the opening-balance page and
-on that run's page. It is a warning, not a block.
+yyyy}; {RunNumber} was paid on {PayDate:MMM d, yyyy}." A regular run not paid yet (Draft,
+Processing, For approval or Approved) with such a `PayDate` warns ahead of paying it: "{name}'s
+opening balance already covers pay through {ThroughDate:MMM d, yyyy}; {RunNumber} pays on
+{PayDate:MMM d, yyyy}." An unpaid final pay doesn't. It appears on the opening-balance page (the
+list and a save's answer), in the import's warnings and on that run's page. It is a warning, not a
+block.
 
 ## Editing
 

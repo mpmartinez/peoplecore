@@ -1338,7 +1338,7 @@ public record PayrollRunDto(
     // True when the 13th month is included for any employee on the run.
     bool IncludesThirteenthMonth = false,
     // Worked out afresh on every load: what HR still has to do before the run pays maternity right,
-    // then, on a Paid run, pay an employee's opening balance already covers. Null (an older
+    // then pay (paid or to be paid) an employee's opening balance already covers. Null (an older
     // response) reads as none.
     IReadOnlyList<string>? Warnings = null)
 {

@@ -26,6 +26,7 @@ public class PayrollOpeningBalanceServiceTests
     private static readonly Employee Jose = new() { EmployeeNumber = "E-002", FirstName = "Jose", LastName = "Cruz" };
 
     private readonly List<PayrollRun> _paidRuns = [];
+    private readonly List<UnpaidRunEntry> _unpaidEntries = [];
 
     public PayrollOpeningBalanceServiceTests()
     {
@@ -33,6 +34,8 @@ public class PayrollOpeningBalanceServiceTests
         _employees.Setup(e => e.GetByIdAsync(Jose.Id, It.IsAny<CancellationToken>())).ReturnsAsync(Jose);
         _runs.Setup(r => r.GetPaidRunsInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
              .ReturnsAsync((int year, CancellationToken _) => _paidRuns.Where(r => r.PayDate.Year == year).ToList());
+        _runs.Setup(r => r.GetUnpaidRegularRunEntriesInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+             .ReturnsAsync((int year, CancellationToken _) => _unpaidEntries.Where(e => e.PayDate.Year == year).ToList());
         _balances.Setup(b => b.AddNewAsync(It.IsAny<PayrollOpeningBalance>(), It.IsAny<CancellationToken>()))
                  .ReturnsAsync((PayrollOpeningBalance b, CancellationToken _) => b);
         _sut = new PayrollOpeningBalanceService(_balances.Object, _employees.Object, _runs.Object);
@@ -68,6 +71,10 @@ public class PayrollOpeningBalanceServiceTests
             run.Employees.Add(new PayrollRunEmployee { PayrollRunId = run.Id, EmployeeId = employee.Id });
         _paidRuns.Add(run);
     }
+
+    /// <summary>A regular run not paid yet, as the repository reads it: one entry per employee on it.</summary>
+    private void AnUnpaidRun(string runNumber, DateOnly payDate, params Employee[] employees)
+        => _unpaidEntries.AddRange(employees.Select(e => new UnpaidRunEntry(e.Id, runNumber, payDate)));
 
     // ── Validation ───────────────────────────────────────────────────────────
 
@@ -327,6 +334,54 @@ public class PayrollOpeningBalanceServiceTests
         list[1].Warnings.Should().Equal(
             "Jose Cruz's opening balance already covers pay through Mar 31, 2026; PAY-2026-006 was paid on Mar 31, 2026.");
         _runs.Verify(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task List_WarnsOfAnUnpaidRunOfHersOnOrBeforeTheThroughDate_ThatItPaysThen_InPayDateOrder()
+    {
+        var maria = ABalance(Maria);
+        var jose = ABalance(Jose);
+        _balances.Setup(b => b.GetForYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([maria, jose]);
+        APaidRun("PAY-2026-005", new DateOnly(2026, 3, 15), Maria);
+        AnUnpaidRun("PAY-2026-004", new DateOnly(2026, 2, 28), Maria);
+        AnUnpaidRun("PAY-2026-006", new DateOnly(2026, 3, 31), Maria, Jose);  // on the through date counts
+        AnUnpaidRun("PAY-2026-007", new DateOnly(2026, 4, 15), Maria, Jose);  // after: no double count
+        AnUnpaidRun("PAY-2025-024", new DateOnly(2025, 12, 31), Maria);       // another year
+
+        var list = await _sut.ListAsync(2026);
+
+        list[0].Warnings.Should().Equal(
+            "Maria Reyes Santos's opening balance already covers pay through Mar 31, 2026; PAY-2026-004 pays on Feb 28, 2026.",
+            "Maria Reyes Santos's opening balance already covers pay through Mar 31, 2026; PAY-2026-005 was paid on Mar 15, 2026.",
+            "Maria Reyes Santos's opening balance already covers pay through Mar 31, 2026; PAY-2026-006 pays on Mar 31, 2026.");
+        list[1].Warnings.Should().Equal(
+            "Jose Cruz's opening balance already covers pay through Mar 31, 2026; PAY-2026-006 pays on Mar 31, 2026.");
+        _runs.Verify(r => r.GetUnpaidRegularRunEntriesInYearAsync(2026, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Get_CarriesTheUnpaidRunsDoubleCountWarning()
+    {
+        var balance = ABalance();
+        AnUnpaidRun("PAY-2026-005", new DateOnly(2026, 3, 15), Maria);
+
+        var dto = await _sut.GetAsync(balance.Id);
+
+        dto.Warnings.Should().Equal(
+            "Maria Reyes Santos's opening balance already covers pay through Mar 31, 2026; PAY-2026-005 pays on Mar 15, 2026.");
+    }
+
+    [Fact]
+    public async Task Update_WarnsOfAnUnpaidRunBeforeTheThroughDate_ButAnUnpaidRunAfterItUsedNoFigures()
+    {
+        var balance = ABalance();
+        AnUnpaidRun("PAY-2026-005", new DateOnly(2026, 3, 15), Maria);
+        AnUnpaidRun("PAY-2026-007", new DateOnly(2026, 4, 15), Maria);
+
+        var dto = await _sut.UpdateAsync(balance.Id, ARequest());
+
+        dto.Warnings.Should().Equal(
+            "Maria Reyes Santos's opening balance already covers pay through Mar 31, 2026; PAY-2026-005 pays on Mar 15, 2026.");
     }
 
     [Fact]

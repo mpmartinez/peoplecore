@@ -358,6 +358,62 @@ public class OpeningBalancesTests : BunitContext
         CancelButton(cut).HasAttribute("disabled").Should().BeFalse();
     }
 
+    [Fact]
+    public async Task ASaveRefusedAfterItsFormWasClosed_ShowsTheRefusalAboveTheList()
+    {
+        var gate = _api.OnGated(HttpMethod.Post, BasePath);
+        var cut = OpenNew();
+
+        cut.Find("#ob-employee").Change(MariaId.ToString());
+        Fill(cut);
+        cut.Find("[data-submit-balance]").Click();
+        cut.WaitForAssertion(() => CancelButton(cut).HasAttribute("disabled").Should().BeTrue());
+        CloseButton(cut).Click();
+
+        gate.SetResult(Problem($"Maria Santos already has an opening balance for {ThisYear}."));
+        await Task.Delay(100);
+
+        cut.WaitForAssertion(() => cut.Find("[data-action-error]").TextContent.Should()
+            .Contain($"Maria Santos already has an opening balance for {ThisYear}."));
+        cut.FindAll("[data-balance-dialog]").Should().BeEmpty();
+    }
+
+    /// <summary>Saves Maria's new balance, which answers with a warning, and returns the page with it shown.</summary>
+    private IRenderedComponent<OpeningBalances> SavedWithAWarning()
+    {
+        _api.On(HttpMethod.Post, BasePath, HttpStatusCode.Created, Balance(warnings: "Check PAY-2026-007."));
+        var cut = OpenNew();
+        cut.Find("#ob-employee").Change(MariaId.ToString());
+        Fill(cut);
+        cut.Find("[data-submit-balance]").Click();
+        cut.WaitForAssertion(() => cut.Find("[data-save-warnings]").TextContent.Should().Contain("Check PAY-2026-007."));
+        return cut;
+    }
+
+    [Fact]
+    public void TheSaveWarnings_GoWhenTheYearChanges()
+    {
+        _api.On(HttpMethod.Get, ListPath(ThisYear - 1), HttpStatusCode.OK, List());
+        var cut = SavedWithAWarning();
+
+        cut.Find("#ob-year").Change((ThisYear - 1).ToString());
+
+        cut.WaitForAssertion(() => cut.FindAll("[data-save-warnings]").Should().BeEmpty());
+    }
+
+    [Fact]
+    public void TheSaveWarnings_GoWhenAnImportStarts()
+    {
+        var gate = _api.OnGated(HttpMethod.Post, $"{BasePath}/import");
+        var cut = SavedWithAWarning();
+
+        Choose(cut, InputFileContent.CreateFromText("EmployeeNumber,Year\n", "balances.csv"));
+        cut.Find("[data-import]").Click();
+
+        cut.WaitForAssertion(() => cut.FindAll("[data-save-warnings]").Should().BeEmpty());
+        gate.SetResult(Json("""{"created":1,"updated":0,"warnings":[]}"""));
+    }
+
     // ---------- Editing and deleting ----------
 
     [Fact]
@@ -442,12 +498,26 @@ public class OpeningBalancesTests : BunitContext
     }
 
     [Fact]
+    public void AFailedTemplateDownload_ShowsAboveTheList_NotAsAnImportProblem()
+    {
+        _api.On(HttpMethod.Get, $"{BasePath}/template", () => Problem("The template could not be made."));
+        var cut = RenderPage(List());
+
+        cut.Find("[data-template]").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[data-action-error]").TextContent.Should().Contain("The template could not be made."));
+        cut.FindAll("[data-import-errors]").Should().BeEmpty();
+        cut.Markup.Should().NotContain("Nothing was imported.");
+        JSInterop.VerifyNotInvoke("downloadFileFromBytes");
+    }
+
+    [Fact]
     public void TheImport_TellsExcelUsersToKeepTheDateAndNumberColumnsAsText()
     {
         var cut = RenderPage(List());
 
         cut.Find("[data-import-tip]").TextContent.Trim().Should().Be(
-            "In Excel, format the date and employee-number columns as Text before saving, so they keep their format.");
+            "In Excel, format the date and employee-number columns as Text before typing or pasting into them, so they keep their format.");
         cut.Find("[data-import-file]").GetAttribute("accept").Should().Be(".csv");
     }
 

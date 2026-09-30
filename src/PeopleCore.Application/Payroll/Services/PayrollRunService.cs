@@ -62,7 +62,7 @@ public class PayrollRunService : IPayrollRunService
     /// figures are the Paid runs' alone.
     /// </param>
     /// <param name="openingBalances">
-    /// The opening balances, for a Paid run's double-count warning: an employee whose balance runs
+    /// The opening balances, for a run's double-count warning: an employee whose balance runs
     /// through a date on or after the run's pay date has that pay counted twice. Optional: without
     /// it a run has no such warning.
     /// </param>
@@ -1074,13 +1074,15 @@ public class PayrollRunService : IPayrollRunService
         => _maternityPay is null ? [] : await _maternityPay.WarningsAsync(run, ct);
 
     /// <summary>
-    /// On a Paid run, one warning per employee on it whose opening balance for the pay year runs
-    /// through the pay date or later: the balance already covers the pay this run paid. In the run's
-    /// order of employees; the balances are read once.
+    /// On a Paid run, or a regular run not paid yet, one warning per employee on it whose opening
+    /// balance for the pay year runs through the pay date or later: the balance already covers the
+    /// pay this run paid ("was paid on") or will pay ("pays on"). In the run's order of employees;
+    /// the balances are read once. An unpaid final pay has none.
     /// </summary>
     private async Task<IReadOnlyList<string>> DoubleCountWarningsAsync(PayrollRun run, CancellationToken ct)
     {
-        if (_openingBalances is null || run.Status != PayrollRunStatus.Paid || run.Employees.Count == 0)
+        var paid = run.Status == PayrollRunStatus.Paid;
+        if (_openingBalances is null || run.Employees.Count == 0 || (!paid && run.RunType != PayrollRunType.Regular))
             return [];
 
         var year = run.PayDate.Year;
@@ -1091,7 +1093,7 @@ public class PayrollRunService : IPayrollRunService
             .Where(x => x.Balance is not null && run.PayDate <= x.Balance.ThroughDate)
             .Select(x => PayrollOpeningBalanceService.DoubleCountWarning(
                 x.Entry.Employee?.FullName ?? x.Balance!.Employee?.FullName ?? string.Empty,
-                x.Balance!.ThroughDate, run.RunNumber, run.PayDate))
+                x.Balance!.ThroughDate, run.RunNumber, run.PayDate, paid))
             .Distinct()
             .ToList();
     }

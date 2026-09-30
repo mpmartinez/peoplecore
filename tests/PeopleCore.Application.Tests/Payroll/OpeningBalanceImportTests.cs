@@ -33,6 +33,7 @@ public class OpeningBalanceImportTests
     private readonly List<PayrollOpeningBalance> _existing = [];
     private List<PayrollOpeningBalance>? _saved;
     private readonly List<PayrollRun> _paidRuns = [];
+    private readonly List<UnpaidRunEntry> _unpaidEntries = [];
 
     public OpeningBalanceImportTests()
     {
@@ -48,6 +49,8 @@ public class OpeningBalanceImportTests
                  .Returns(Task.CompletedTask);
         _runs.Setup(r => r.GetPaidRunsInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
              .ReturnsAsync((int year, CancellationToken _) => _paidRuns.Where(r => r.PayDate.Year == year).ToList());
+        _runs.Setup(r => r.GetUnpaidRegularRunEntriesInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+             .ReturnsAsync((int year, CancellationToken _) => _unpaidEntries.Where(e => e.PayDate.Year == year).ToList());
         _sut = new PayrollOpeningBalanceService(_balances.Object, _employees.Object, _runs.Object);
     }
 
@@ -470,6 +473,18 @@ public class OpeningBalanceImportTests
     }
 
     [Fact]
+    public async Task Import_WarnsOfAnUnpaidRunOnOrBeforeTheThroughDate_ThatItPaysThen()
+    {
+        _unpaidEntries.Add(new UnpaidRunEntry(Maria.Id, "PAY-2026-006", new DateOnly(2026, 3, 31)));
+        _unpaidEntries.Add(new UnpaidRunEntry(Maria.Id, "PAY-2026-008", new DateOnly(2026, 4, 30)));
+
+        var result = await Import(Header, "E-001,2026,2026-03-31,1,0,0,0,0,0,0,0,0");
+
+        result.Warnings.Should().Equal(
+            "E-001: Maria Santos's opening balance already covers pay through Mar 31, 2026; PAY-2026-006 pays on Mar 31, 2026.");
+    }
+
+    [Fact]
     public async Task Import_LoadsThePaidRunsOncePerYear()
     {
         await Import(
@@ -480,6 +495,8 @@ public class OpeningBalanceImportTests
 
         _runs.Verify(r => r.GetPaidRunsInYearAsync(2025, It.IsAny<CancellationToken>()), Times.Once);
         _runs.Verify(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>()), Times.Once);
+        _runs.Verify(r => r.GetUnpaidRegularRunEntriesInYearAsync(2025, It.IsAny<CancellationToken>()), Times.Once);
+        _runs.Verify(r => r.GetUnpaidRegularRunEntriesInYearAsync(2026, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -497,5 +514,6 @@ public class OpeningBalanceImportTests
 
         result.Warnings.Should().BeEmpty();
         _runs.Verify(r => r.GetPaidRunsInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _runs.Verify(r => r.GetUnpaidRegularRunEntriesInYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

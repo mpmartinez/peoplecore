@@ -136,8 +136,10 @@ public record PayrollRunDto(
     bool IncludesLeaveConversion = false,
     // True when any entry includes the 13th month (PayrollRunEmployeeInput.IncludeThirteenthMonth).
     bool IncludesThirteenthMonth = false,
-    // What HR still has to do before the run pays maternity right, worked out afresh on every load
-    // (see IMaternityPayCalculator.WarningsAsync). Null in the constructor reads as none.
+    // Worked out afresh on every load: the maternity warnings, what HR still has to do before the run
+    // pays maternity right (see IMaternityPayCalculator.WarningsAsync), then the opening-balance
+    // double-count warnings, for employees whose opening balance already covers the run's pay date.
+    // Null in the constructor reads as none.
     IReadOnlyList<string>? Warnings = null)
 {
     public IReadOnlyList<string> Warnings { get; init; } = Warnings ?? [];

@@ -271,6 +271,20 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
             .ToListAsync(ct);
     }
 
+    public async Task<IReadOnlyList<UnpaidRunEntry>> GetUnpaidRegularRunEntriesInYearAsync(int payYear,
+        CancellationToken ct = default)
+    {
+        var first = new DateOnly(payYear, 1, 1);
+        var next = first.AddYears(1);
+        return await Context.PayrollRunEmployees
+            .Where(e => e.PayrollRun.RunType == PayrollRunType.Regular
+                        && e.PayrollRun.Status != PayrollRunStatus.Paid
+                        && e.PayrollRun.PayDate >= first && e.PayrollRun.PayDate < next)
+            .OrderBy(e => e.PayrollRun.PayDate).ThenBy(e => e.PayrollRun.RunNumber)
+            .Select(e => new UnpaidRunEntry(e.EmployeeId, e.PayrollRun.RunNumber, e.PayrollRun.PayDate))
+            .ToListAsync(ct);
+    }
+
     public async Task<IReadOnlyList<EarlierUnpaidRun>> GetEarlierUnpaidRunsInYearAsync(
         int payYear, DateOnly payDate, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId,
         CancellationToken ct = default)

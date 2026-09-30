@@ -6,8 +6,9 @@
 @*
     What each employee was paid in a year before PeopleCore: the opening balance for the year. The
     13th month, the ₱90,000 exemption, the de minimis leave days and the 2316 add it to the year's
-    Paid runs. HR enters one at a time, or imports a filled-in CSV template all at once. A Paid run
-    paid on or before a balance's through date counts that pay twice: the list warns of it.
+    Paid runs. HR enters one at a time, or imports a filled-in CSV template all at once. A run paid,
+    or a regular run to be paid, on or before a balance's through date counts that pay twice: the
+    list warns of it.
 *@
 
 <PageTitle>Opening Balances</PageTitle>
@@ -133,7 +134,7 @@ else
         </CardDescription>
     </CardHeader>
     <CardContent Class="space-y-3">
-        <p class="text-sm text-muted-foreground" data-import-tip>In Excel, format the date and employee-number columns as Text before saving, so they keep their format.</p>
+        <p class="text-sm text-muted-foreground" data-import-tip>In Excel, format the date and employee-number columns as Text before typing or pasting into them, so they keep their format.</p>
         <div class="flex flex-wrap items-center gap-2">
             <Button Variant="outline" Size="sm" OnClick="DownloadTemplate" Loading="@_downloading" data-template>
                 <i class="bi bi-filetype-csv mr-1"></i> Download template
@@ -332,6 +333,8 @@ else
 
     private async Task ChangeYear(int year)
     {
+        // What a save warned of was about the year that was on screen.
+        _saveWarnings = [];
         _year = year;
         _balances = null;
         await LoadBalances();
@@ -490,7 +493,9 @@ else
         }
         catch (Exception ex)
         {
+            // Its form closed meanwhile: the refusal still says why nothing was saved, above the list.
             if (version == _dialogVersion) _formError = ex.Message;
+            else _actionError = ex.Message;
             return;
         }
         finally
@@ -540,7 +545,7 @@ else
     private async Task DownloadTemplate()
     {
         if (_downloading) return;
-        _importErrors = [];
+        _actionError = null;
         _downloading = true;
         try
         {
@@ -549,7 +554,8 @@ else
         }
         catch (Exception ex)
         {
-            _importErrors = [ex.Message];
+            // Not an import problem: nothing was sent to import.
+            _actionError = ex.Message;
         }
         finally
         {
@@ -589,6 +595,7 @@ else
     private async Task Import()
     {
         if (_importing || _importContent is not { } content || _fileName is not { } fileName) return;
+        _saveWarnings = [];
         _importErrors = [];
         _imported = null;
         _importing = true;
