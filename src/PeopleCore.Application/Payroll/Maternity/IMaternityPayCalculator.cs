@@ -54,6 +54,14 @@ public interface IMaternityPayCalculator
     Task EnsureClaimsSetUpAsync(PayrollRun run, bool exempt, CancellationToken ct = default);
 
     /// <summary>
+    /// The first entry whose maternity figures the claims no longer give - its offset or
+    /// differential worked out again differs, or the claim it advances changed - or null. What
+    /// approval and Mark Paid refuse, found without refusing, so an approved run can be recomputed
+    /// for it. Changes nothing.
+    /// </summary>
+    Task<PayrollRunEmployee?> EntryNotMatchingClaimsAsync(PayrollRun run, bool exempt, CancellationToken ct = default);
+
+    /// <summary>
     /// For Mark Paid: every claim the run advances, marked <see cref="Domain.Enums.MaternityClaimStatus.Advanced"/>
     /// with the run and its pay date, for the caller to save with the run. Refuses when a claim is no
     /// longer the one the run was computed with.

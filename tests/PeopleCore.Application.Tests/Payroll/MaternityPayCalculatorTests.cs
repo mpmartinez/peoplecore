@@ -648,7 +648,7 @@ public class MaternityPayCalculatorTests
 
         await act.Should().ThrowAsync<DomainException>()
             .WithMessage("Maria Santos's maternity claim has changed since this payroll was computed; " +
-                         "discard this payroll and create it again.");
+                         "recompute it before paying.");
         claim.Status.Should().Be(MaternityClaimStatus.Draft);
     }
 
@@ -749,7 +749,17 @@ public class MaternityPayCalculatorTests
         await approve.Should().ThrowAsync<DomainException>().WithMessage(
             "Maria Santos's maternity claim has changed since this payroll was computed; recompute it before approving.");
         await pay.Should().ThrowAsync<DomainException>().WithMessage(
-            "Maria Santos's maternity claim has changed since this payroll was computed; discard this payroll and create it again.");
+            "Maria Santos's maternity claim has changed since this payroll was computed; recompute it before paying.");
         claim.Status.Should().Be(change == "not qualified" ? MaternityClaimStatus.NotQualified : MaternityClaimStatus.Draft);
+        // The same finding, without refusing, is what lets an approved run be recomputed.
+        (await _sut.EntryNotMatchingClaimsAsync(AugustFirstHalfAsComputed(), exempt))!.EmployeeId.Should().Be(_maria.Id);
+    }
+
+    [Fact]
+    public async Task AnEntryStillMatchingItsClaims_IsNotFoundStale()
+    {
+        AClaim();
+
+        (await _sut.EntryNotMatchingClaimsAsync(AugustFirstHalfAsComputed(), exempt: false)).Should().BeNull();
     }
 }

@@ -45,8 +45,10 @@ Rules:
 - **Setting the allowance:** only while `Draft`; must be > 0; rounded to 2 dp; never above the
   statutory maximum, 20,000 x 6 / 180 = 666.67 ("The SSS daily maternity allowance can't exceed
   ₱666.67."). Refused while an unpaid run advances the benefit ("{RunNumber} advances this benefit;
-  discard it or pay it first.") and once any Paid run has netted an offset for the claim ("{RunNumber}
-  already netted this allowance; it can't change now.").
+  discard it or pay it first."), while an unpaid run records an offset for the claim ("{RunNumber}
+  nets this allowance; discard it or pay it first.") and once any Paid run has netted an offset for
+  the claim ("{RunNumber} already netted this allowance; it can't change now."). Marking the claim not
+  SSS-qualified has the same unpaid-run lock.
 - **Suggested allowance:** the SSS formula - the 6 highest monthly salary credits (MSC) in the 12
   months before the semester of contingency, divided by 180. The semester is the two quarters
   ending with the quarter of the leave's start date. MSCs come from the employee's Paid runs (final
@@ -78,8 +80,8 @@ Rules:
   cancelled and refiled. Only when the claim's own leave is Cancelled or Rejected ("Only a claim whose
   leave was cancelled can be moved."), to an Approved maternity request of the same employee with no
   claim ("Choose an approved maternity leave of the same employee that has no claim."). `Days` takes
-  the new request's `TotalDays`; a Draft claim's `Benefit` is recomputed, an Advanced or Reimbursed
-  claim keeps the `Benefit` that was paid - and when its days change, the answer carries a `Warning`:
+  the new request's `TotalDays`; a Draft claim's `Benefit` is recomputed, an Advanced, Reimbursed or
+  Denied claim keeps the `Benefit` that was paid - and when its days change, the answer carries a `Warning`:
   "The benefit of ₱{Benefit} was paid for {old} days; this leave has {new}. Payroll will net {new}
   days.", which the page shows. The claim list says when a claim's leave was cancelled
   (`LeaveCancelled`). A move racing another claim for the same leave gets the same readable refusal
@@ -96,8 +98,9 @@ Rules:
   the 13th month, and is added to gross pay (not to the employer's cost).
 - Approval and Mark Paid also work every entry's offset and differential out again from the claims
   as they are now (allowance, status, the exemption) and refuse a difference: "{name}'s maternity
-  claim has changed since this payroll was computed; recompute it before approving." / "...; discard
-  this payroll and create it again."
+  claim has changed since this payroll was computed; recompute it before approving." / "...;
+  recompute it before paying." An Approved regular run refused for this can be recomputed (back to
+  Draft), as a final pay always can.
 - Approval refuses a run whose advanced claim changed since it was computed; Mark Paid makes the
   claim `Advanced` with the run and the pay date, in the same single save as the run's other changes.
 

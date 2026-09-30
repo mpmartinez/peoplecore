@@ -315,8 +315,37 @@ public partial class PayrollRunServiceTests
         var act = () => MaternitySut.MarkPaidAsync(savedRun()!.Id);
 
         await act.Should().ThrowAsync<DomainException>().WithMessage(
-            "Maria Santos's maternity claim has changed since this payroll was computed; discard this payroll and create it again.");
+            "Maria Santos's maternity claim has changed since this payroll was computed; recompute it before paying.");
         VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
+    public async Task ComputeAsync_AnApprovedRunWhoseMaternityOffsetIsStale_CanBeRecomputed_BackToDraft()
+    {
+        // Approved with the 4,000.02 offset; her claim was since marked not qualified, so the run
+        // can't be paid as it is - and a recompute is the way to put it right.
+        var (maria, _, claim, savedRun) = MariaOnMaternityLeave();
+        await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: false));
+        savedRun()!.Status = PayrollRunStatus.Approved;
+        claim!.Status = MaternityClaimStatus.NotQualified;
+        RecomputesInPlace();
+
+        await MaternitySut.ComputeAsync(savedRun()!.Id);
+
+        savedRun()!.Status.Should().Be(PayrollRunStatus.Draft);
+        savedRun()!.Employees.Single().MaternityBenefitOffset.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task ComputeAsync_AnApprovedRunWhoseMaternityOffsetStillHolds_IsStillRefused()
+    {
+        var (maria, _, _, savedRun) = MariaOnMaternityLeave();
+        await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: false));
+        savedRun()!.Status = PayrollRunStatus.Approved;
+
+        var act = () => MaternitySut.ComputeAsync(savedRun()!.Id);
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Only draft or for-approval payroll runs can be recomputed.");
     }
 
     [Fact]
@@ -413,7 +442,7 @@ public partial class PayrollRunServiceTests
 
         await act.Should().ThrowAsync<DomainException>()
             .WithMessage("Maria Santos's maternity claim has changed since this payroll was computed; " +
-                         "discard this payroll and create it again.");
+                         "recompute it before paying.");
         claim.Status.Should().Be(MaternityClaimStatus.Draft);
         VerifyNothingSavedAsPaid();
     }

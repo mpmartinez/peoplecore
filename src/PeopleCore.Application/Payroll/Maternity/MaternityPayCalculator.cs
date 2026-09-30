@@ -64,13 +64,14 @@ public sealed class MaternityPayCalculator : IMaternityPayCalculator
         }
     }
 
+    public async Task<PayrollRunEmployee?> EntryNotMatchingClaimsAsync(PayrollRun run, bool exempt, CancellationToken ct = default)
+        => (await StaleEntryAsync(run, exempt, ct))?.Entry;
+
     public async Task<IReadOnlyList<MaternityClaim>> SettleAdvancesAsync(PayrollRun run, bool exempt, CancellationToken ct = default)
     {
-        // An approved regular run can't be recomputed, so the way out is a new run. The allowance
-        // is locked while an unpaid run advances the benefit (MaternityClaimService), so this is a
-        // backstop that approval (EnsureAdvancesCurrentAsync) normally answers first.
-        var settling = await AdvancedClaimsAsync(run, exempt,
-            "discard this payroll and create it again.", ct);
+        // An approved run whose entries no longer match the claims can be recomputed for it
+        // (EntryNotMatchingClaimsAsync lets PayrollRunService.ComputeAsync do so), back to Draft.
+        var settling = await AdvancedClaimsAsync(run, exempt, "recompute it before paying.", ct);
         foreach (var claim in settling)
         {
             claim.Status = MaternityClaimStatus.Advanced;
@@ -92,23 +93,8 @@ public sealed class MaternityPayCalculator : IMaternityPayCalculator
     private async Task<IReadOnlyList<MaternityClaim>> AdvancedClaimsAsync(PayrollRun run, bool exempt, string whatToDo,
         CancellationToken ct)
     {
-        if (run.Employees.Count == 0)
-            return [];
-
-        var data = await LoadAsync(run, run.Employees.Select(e => e.EmployeeId).ToList(), lookUpNames: false, ct);
-        foreach (var entry in run.Employees)
-        {
-            // RegularPay is what the offset left; the engine never takes more than there is.
-            var now = data.For(entry.EmployeeId, advanceRequested: false,
-                entry.RegularPay + entry.MaternityBenefitOffset, exempt);
-            if (now.Offset != entry.MaternityBenefitOffset || now.Differential != entry.MaternityDifferential)
-            {
-                var name = entry.Employee?.FullName
-                    ?? (await _employees.GetByIdAsync(entry.EmployeeId, ct))?.FullName
-                    ?? data.NameOf(entry.EmployeeId, null);
-                throw new DomainException($"{name}'s maternity claim has changed since this payroll was computed; {whatToDo}");
-            }
-        }
+        if (await StaleEntryAsync(run, exempt, ct) is { } stale)
+            throw new DomainException($"{stale.Name}'s maternity claim has changed since this payroll was computed; {whatToDo}");
 
         var advancing = run.Employees.Where(e => AdvancedOn(e) is not null).ToList();
         if (advancing.Count == 0)
@@ -120,18 +106,60 @@ public sealed class MaternityPayCalculator : IMaternityPayCalculator
         var advanced = new List<MaternityClaim>();
         foreach (var entry in advancing)
         {
-            claims.TryGetValue(entry.MaternityClaimId!.Value, out var claim);
-            var name = entry.Employee?.FullName ?? claim?.Employee?.FullName
-                ?? (await _employees.GetByIdAsync(entry.EmployeeId, ct))?.FullName ?? entry.EmployeeId.ToString();
-
-            if (claim is { Status: not MaternityClaimStatus.Draft })
-                throw AlreadyAdvanced(name, claim.AdvanceRun?.RunNumber);
-            if (claim is null || claim.DailyAllowance is null || claim.Benefit != entry.MaternityBenefitAdvance)
-                throw new DomainException($"{name}'s maternity claim has changed since this payroll was computed; {whatToDo}");
+            // Every advanced claim still matches (StaleEntryAsync); one advanced elsewhere since is
+            // named instead.
+            var claim = claims[entry.MaternityClaimId!.Value];
+            if (claim.Status != MaternityClaimStatus.Draft)
+                throw AlreadyAdvanced(await NameAsync(entry, claim.Employee?.FullName, ct), claim.AdvanceRun?.RunNumber);
             advanced.Add(claim);
         }
         return advanced;
     }
+
+    /// <summary>
+    /// The first entry the run's claims no longer give, and its employee's name, or null. Every
+    /// entry's offset and differential are worked out again from its regular pay before the offset
+    /// (<c>RegularPay + MaternityBenefitOffset</c>: the engine never takes more than there is) and the
+    /// claims as they are now - allowance, status (a claim marked not SSS-qualified since offsets
+    /// nothing), the leave still approved, and the exemption. An entry that advances a claim must
+    /// still find it, with an allowance and the benefit it advances; a claim that has since been
+    /// advanced elsewhere isn't stale here (the caller names that run instead).
+    /// </summary>
+    private async Task<(PayrollRunEmployee Entry, string Name)?> StaleEntryAsync(PayrollRun run, bool exempt,
+        CancellationToken ct)
+    {
+        if (run.Employees.Count == 0)
+            return null;
+
+        var data = await LoadAsync(run, run.Employees.Select(e => e.EmployeeId).ToList(), lookUpNames: false, ct);
+        foreach (var entry in run.Employees)
+        {
+            var now = data.For(entry.EmployeeId, advanceRequested: false,
+                entry.RegularPay + entry.MaternityBenefitOffset, exempt);
+            if (now.Offset != entry.MaternityBenefitOffset || now.Differential != entry.MaternityDifferential)
+                return (entry, await NameAsync(entry, data.KnownNameOf(entry.EmployeeId), ct));
+        }
+
+        var advancing = run.Employees.Where(e => AdvancedOn(e) is not null).ToList();
+        if (advancing.Count == 0)
+            return null;
+        var claims = (await _claims.GetForEmployeesAsync(advancing.Select(e => e.EmployeeId).Distinct().ToList(), ct) ?? [])
+            .ToDictionary(c => c.Id);
+        foreach (var entry in advancing)
+        {
+            claims.TryGetValue(entry.MaternityClaimId!.Value, out var claim);
+            if (claim is { Status: not MaternityClaimStatus.Draft })
+                continue;
+            if (claim is null || claim.DailyAllowance is null || claim.Benefit != entry.MaternityBenefitAdvance)
+                return (entry, await NameAsync(entry, claim?.Employee?.FullName, ct));
+        }
+        return null;
+    }
+
+    /// <summary>The entry's employee's name: as loaded with the entry, else as known, else looked up.</summary>
+    private async Task<string> NameAsync(PayrollRunEmployee entry, string? known, CancellationToken ct)
+        => entry.Employee?.FullName ?? known
+           ?? (await _employees.GetByIdAsync(entry.EmployeeId, ct))?.FullName ?? entry.EmployeeId.ToString();
 
     /// <summary>The claim a stored entry advances, or null when it advances nothing.</summary>
     private static Guid? AdvancedOn(PayrollRunEmployee entry)
@@ -252,6 +280,9 @@ public sealed class MaternityRun
             warnings.Add($"Maternity benefit not advanced yet for {name}.");
         return warnings;
     }
+
+    /// <summary>The employee's name as read with the leave and the claims, or null when neither had it.</summary>
+    internal string? KnownNameOf(Guid employeeId) => _names.GetValueOrDefault(employeeId);
 
     internal string NameOf(Guid employeeId, string? knownName)
         => _names.GetValueOrDefault(employeeId) ?? knownName ?? employeeId.ToString();

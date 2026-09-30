@@ -142,13 +142,16 @@ public class PayrollRunService : IPayrollRunService
         // to Draft, to be approved again - is the way to pay it. So is one that includes the 13th
         // month: another run can pay some of it after approval, which Mark Paid refuses the same way.
         // And so is one whose deferred maternity contributions another run's payment changed since
-        // it was computed, which Mark Paid refuses too.
+        // it was computed, or whose maternity figures its claims no longer give (her leave cancelled,
+        // the allowance or the claim's status changed, the exemption switched) - both of which Mark
+        // Paid refuses too.
         if (run.RunType == PayrollRunType.FinalPay && run.Status == PayrollRunStatus.Paid)
             throw new DomainException("A paid final pay can't be recomputed.");
         if (run.RunType != PayrollRunType.FinalPay
             && (run.Status == PayrollRunStatus.Paid
                 || (run.Status == PayrollRunStatus.Approved && !run.IncludesLeaveConversion && !IncludesThirteenthMonth(run)
-                    && await EntryWithStaleDeferredContributionsAsync(run, ct) is null)))
+                    && await EntryWithStaleDeferredContributionsAsync(run, ct) is null
+                    && await EntryWithStaleMaternityAsync(run, ct) is null)))
             throw new DomainException("Only draft or for-approval payroll runs can be recomputed.");
 
         if (run.Employees.Count == 0)
@@ -616,6 +619,18 @@ public class PayrollRunService : IPayrollRunService
             PayrollComputationService.DeferredContributionsToCollect(
                 outstanding.GetValueOrDefault(e.EmployeeId), e.NetPay + e.DeferredContributionsCollected)
             != e.DeferredContributionsCollected);
+    }
+
+    /// <summary>
+    /// The first entry whose maternity offset, differential or advance the claims no longer give
+    /// (see <see cref="IMaternityPayCalculator.EntryNotMatchingClaimsAsync"/>), or null.
+    /// </summary>
+    private async Task<PayrollRunEmployee?> EntryWithStaleMaternityAsync(PayrollRun run, CancellationToken ct)
+    {
+        if (_maternityPay is null)
+            return null;
+        bool exempt = (await _settingsRepo.GetDefaultAsync(ct))?.ExemptFromMaternityDifferential ?? false;
+        return await _maternityPay.EntryNotMatchingClaimsAsync(run, exempt, ct);
     }
 
     private async Task<Dictionary<Guid, decimal>> DeferredContributionsOutstandingAsync(IReadOnlyCollection<Guid> employeeIds,

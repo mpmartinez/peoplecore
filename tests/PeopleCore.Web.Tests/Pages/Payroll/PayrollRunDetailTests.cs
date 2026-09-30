@@ -1291,13 +1291,13 @@ public class PayrollRunDetailTests : BunitContext
     {
         _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Approved"))
             .On(HttpMethod.Put, $"{RunPath}/mark-paid", HttpStatusCode.BadRequest,
-                """{"title":"Business rule violation","status":400,"detail":"Maria Santos's maternity claim has changed since this payroll was computed; discard this payroll and create it again."}""");
+                """{"title":"Business rule violation","status":400,"detail":"Maria Santos's maternity claim has changed since this payroll was computed; recompute it before paying."}""");
         var cut = RenderPage();
 
         Button(cut, "Mark Paid").Click();
 
         cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should()
-            .Contain("Maria Santos's maternity claim has changed since this payroll was computed; discard this payroll and create it again."));
+            .Contain("Maria Santos's maternity claim has changed since this payroll was computed; recompute it before paying."));
     }
 
     private static HttpResponseMessage Json(string json) =>

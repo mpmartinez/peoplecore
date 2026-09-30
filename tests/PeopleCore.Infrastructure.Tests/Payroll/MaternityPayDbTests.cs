@@ -397,30 +397,47 @@ public class MaternityPayDbTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task ApprovingARunComputedBeforeTheClaimWasMarkedNotQualified_IsRefused_UntilItIsRecomputed()
+    public async Task AnApprovedRunWhoseLeaveWasCancelled_IsRefusedAtMarkPaid_RecomputedApprovedAndPaid()
     {
         var (maria, claimId) = await MariaWithAReadyClaimAsync();
         var august = await CreateAsync(Cutoff(maria.Id, 8, 1, 15, new DateOnly(2026, 8, 20), advance: false));
         august.Employees.Single().MaternityBenefitOffset.Should().Be(4_000.02m);
+        // While it nets the allowance, the claim can't be marked not qualified either.
         await using (var context = NewContext())
-            await Claims(context).MarkNotQualifiedAsync(claimId, new NotQualifiedRequest("Fewer than 3 contributions"));
+            await FluentActions.Awaiting(() => Claims(context).MarkNotQualifiedAsync(claimId, new NotQualifiedRequest("No contributions")))
+                .Should().ThrowAsync<DomainException>().WithMessage($"{august.RunNumber} nets this allowance; discard it or pay it first.");
+        await using (var context = NewContext())
+            await Payroll(context).ApproveAsync(august.Id);
 
-        async Task Approve()
+        // She cancels the leave after approval: the 4,000.02 offset now has no leave behind it.
+        await using (var context = NewContext())
+        {
+            var claim = await context.MaternityClaims.SingleAsync(c => c.Id == claimId);
+            (await context.LeaveRequests.SingleAsync(r => r.Id == claim.LeaveRequestId)).Status = LeaveStatus.Cancelled;
+            await context.SaveChangesAsync();
+        }
+
+        async Task Pay()
         {
             await using var context = NewContext();
-            await Payroll(context).ApproveAsync(august.Id);
+            await Payroll(context).MarkPaidAsync(august.Id);
         }
-        await FluentActions.Awaiting(Approve).Should().ThrowAsync<DomainException>().WithMessage(
-            "Maria Santos's maternity claim has changed since this payroll was computed; recompute it before approving.");
+        await FluentActions.Awaiting(Pay).Should().ThrowAsync<DomainException>().WithMessage(
+            "Maria Santos's maternity claim has changed since this payroll was computed; recompute it before paying.");
 
-        // Recomputed, her 15,000 is ordinary salary, and approval goes through.
+        // Approved as it is, but recomputable for this: back to Draft, her 15,000 paid in full.
         await using (var context = NewContext())
             await Payroll(context).ComputeAsync(august.Id);
-        await Approve();
-        await using var reader = NewContext();
-        var entry = await reader.PayrollRunEmployees.SingleAsync(e => e.PayrollRunId == august.Id);
-        entry.MaternityBenefitOffset.Should().Be(0m);
-        entry.RegularPay.Should().Be(15_000m);
+        await using (var reader = NewContext())
+        {
+            var recomputed = (await Payroll(reader).GetAsync(august.Id))!;
+            recomputed.Status.Should().Be(PayrollRunStatus.Draft);
+            recomputed.Employees.Single().MaternityBenefitOffset.Should().Be(0m);
+            recomputed.Employees.Single().RegularPay.Should().Be(15_000m);
+        }
+        await ApproveAndPayAsync(august.Id);
+        await using var check = NewContext();
+        (await check.PayrollRuns.SingleAsync(r => r.Id == august.Id)).Status.Should().Be(PayrollRunStatus.Paid);
     }
 
     [Fact]
@@ -536,12 +553,9 @@ public class MaternityPayDbTests : DatabaseTestBase
             await Claims(context).SetAllowanceAsync(claimId, new SetAllowanceRequest(600m));
         }
 
-        // Unpaid, the run can still be recomputed with a new allowance.
-        await SetAllowance();
-        await using (var context = NewContext())
-            await Claims(context).SetAllowanceAsync(claimId, new SetAllowanceRequest(666.67m));
-        await using (var context = NewContext())
-            await Payroll(context).ComputeAsync(august.Id);
+        // While the run is unpaid its offset stands on this allowance: pay it (or discard it) first.
+        await FluentActions.Awaiting(SetAllowance).Should().ThrowAsync<DomainException>()
+            .WithMessage($"{august.RunNumber} nets this allowance; discard it or pay it first.");
         await ApproveAndPayAsync(august.Id);
 
         await FluentActions.Awaiting(SetAllowance).Should().ThrowAsync<DomainException>()

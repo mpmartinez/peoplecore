@@ -135,6 +135,8 @@ public sealed class MaternityClaimService : IMaternityClaimService
         // figure, and once approved it can't be recomputed. A paid run made the claim Advanced, so
         // the run found here is unpaid.
         await EnsureNoRunAdvancesAsync(claim, ct);
+        // An unpaid run's offset was worked out at this allowance: pay it or discard it first.
+        await EnsureNoUnpaidRunNetsAsync(claim, ct);
         // A paid cutoff already took the SSS benefit for its leave days off her pay at this
         // allowance; it can't be recomputed, so the allowance can't change under it.
         await EnsureNotNettedAsync(claim, ct);
@@ -190,8 +192,10 @@ public sealed class MaternityClaimService : IMaternityClaimService
         var note = Note(request.Note) ?? throw new DomainException("Explain why she doesn't qualify for the SSS benefit.");
         // A run advancing the benefit, or a paid cutoff that took her leave days' pay off against it
         // (with this claim's allowance, or an exempt employer's offset, which records no claim), was
-        // paid as if SSS pays for her leave; neither can stand once she doesn't qualify.
+        // paid as if SSS pays for her leave; neither can stand once she doesn't qualify. Nor can an
+        // unpaid run's offset against this claim: pay it or discard it first.
         await EnsureNoRunAdvancesAsync(claim, ct);
+        await EnsureNoUnpaidRunNetsAsync(claim, ct);
         var offset = await _runs.GetPaidRunsOffsettingPeriodAsync(claim.EmployeeId, claim.LeaveRequest.StartDate,
             claim.LeaveRequest.EndDate, ct) ?? [];
         if (offset.Count > 0)
@@ -270,11 +274,21 @@ public sealed class MaternityClaimService : IMaternityClaimService
 
         // A benefit already paid doesn't follow the new days, but payroll's offset does: say so.
         string? warning = null;
-        if (claim.Status is MaternityClaimStatus.Advanced or MaternityClaimStatus.Reimbursed && claim.Days != paidForDays)
+        // A denied claim was advanced - paid - too.
+        if (claim.Status is MaternityClaimStatus.Advanced or MaternityClaimStatus.Reimbursed or MaternityClaimStatus.Denied
+            && claim.Days != paidForDays)
             warning = string.Create(CultureInfo.InvariantCulture,
                 $"The benefit of ₱{claim.Benefit:N2} was paid for {paidForDays:0.##} days; this leave has {claim.Days:0.##}. " +
                 $"Payroll will net {claim.Days:0.##} days.");
         return ToDto(claim) with { Warning = warning };
+    }
+
+    /// <summary>Refuses while a run not yet Paid records an offset for the claim, worked out at its allowance.</summary>
+    private async Task EnsureNoUnpaidRunNetsAsync(MaternityClaim claim, CancellationToken ct)
+    {
+        var netting = await _runs.GetUnpaidRunsNettingMaternityClaimAsync(claim.Id, ct) ?? [];
+        if (netting.Count > 0)
+            throw new DomainException($"{netting[0]} nets this allowance; discard it or pay it first.");
     }
 
     /// <summary>Refuses once a Paid run netted the claim's allowance off regular pay.</summary>
