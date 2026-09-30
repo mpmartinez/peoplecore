@@ -149,7 +149,7 @@ public class MaternityPayStorageTests : DatabaseTestBase
     }
 
     [Fact]
-    public async Task GetForEmployee_ReturnsOnlyThatEmployeesClaims_NewestFirst_WithTheLeaveRequest()
+    public async Task GetForEmployees_ReturnsOnlyTheirClaims_NewestFirst_WithTheLeaveRequest()
     {
         var (employee, firstRequest) = await AMaternityRequestAsync("Reyes", new DateOnly(2025, 1, 1));
         var (other, otherRequest) = await AMaternityRequestAsync("Santos");
@@ -174,7 +174,7 @@ public class MaternityPayStorageTests : DatabaseTestBase
         await Sut.AddAsync(AClaim(employee, secondRequest));
 
         await using var reader = NewContext();
-        var claims = await new MaternityClaimRepository(reader).GetForEmployeeAsync(employee.Id);
+        var claims = await new MaternityClaimRepository(reader).GetForEmployeesAsync([employee.Id]);
 
         claims.Select(c => c.LeaveRequestId).Should().ContainInOrder(secondRequest.Id, firstRequest.Id);
         claims.Should().HaveCount(2);

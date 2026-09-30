@@ -173,11 +173,38 @@ public class PayslipServiceTests
     }
 
     [Fact]
+    public async Task GenerateForSelfServiceAsync_ReadsTheRunOnce_WithoutItsMaternityWarnings()
+    {
+        // The warnings are HR's to act on and cost queries to build; an employee's payslip needs none.
+        var employeeId = Guid.NewGuid();
+        var target = Employee(employeeId);
+        var run = RunWith(target) with { Status = PayrollRunStatus.Approved };
+        _runService.Setup(s => s.GetForPayslipAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        var expectedPdf = "%PDF-self"u8.ToArray();
+        _renderer.Setup(r => r.Render(run, target, It.IsAny<PayslipCompanyDto>())).Returns(expectedPdf);
+
+        var result = await _sut.GenerateForSelfServiceAsync(run.Id, employeeId, CancellationToken.None);
+
+        result.Should().BeSameAs(expectedPdf);
+        _runService.Verify(s => s.GetForPayslipAsync(run.Id, It.IsAny<CancellationToken>()), Times.Once);
+        _runService.Verify(s => s.GetAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GenerateForSelfServiceAsync_ForSomeoneNotOnTheRun_ReturnsNull()
+    {
+        var run = RunWith(Employee(Guid.NewGuid())) with { Status = PayrollRunStatus.Paid };
+        _runService.Setup(s => s.GetForPayslipAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+
+        (await _sut.GenerateForSelfServiceAsync(run.Id, Guid.NewGuid(), CancellationToken.None)).Should().BeNull();
+    }
+
+    [Fact]
     public async Task GenerateForSelfServiceAsync_WhenTheRunIsDraft_ReturnsNull()
     {
         var employeeId = Guid.NewGuid();
         var run = RunWith(Employee(employeeId)) with { Status = PayrollRunStatus.Draft };
-        _runService.Setup(s => s.GetAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        _runService.Setup(s => s.GetForPayslipAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
 
         var result = await _sut.GenerateForSelfServiceAsync(run.Id, employeeId, CancellationToken.None);
 

@@ -1,3 +1,4 @@
+using System.Globalization;
 using PeopleCore.Application.Leave.Interfaces;
 using PeopleCore.Application.Payroll.GovernmentReports;
 using PeopleCore.Application.Payroll.Interfaces;
@@ -117,6 +118,11 @@ public sealed class MaternityClaimService : IMaternityClaimService
             throw new DomainException("Only a draft claim's allowance can be changed.");
         if (request.DailyAllowance <= 0m)
             throw new DomainException("Enter the SSS daily maternity allowance.");
+        // Stored to 2 dp (numeric(18,2)); no SSS allowance can be more than the statutory maximum.
+        decimal allowance = Math.Round(request.DailyAllowance, 2, MidpointRounding.AwayFromZero);
+        if (allowance > MaternityMath.MaximumDailyAllowance)
+            throw new DomainException(string.Create(CultureInfo.InvariantCulture,
+                $"The SSS daily maternity allowance can't exceed ₱{MaternityMath.MaximumDailyAllowance:N2}."));
         // A run advancing the benefit was computed with it; changed, the run would advance the old
         // figure, and once approved it can't be recomputed. A paid run made the claim Advanced, so
         // the run found here is unpaid.
@@ -127,9 +133,9 @@ public sealed class MaternityClaimService : IMaternityClaimService
         if (netted.Count > 0)
             throw new DomainException($"{netted[0]} already netted this allowance; it can't change now.");
 
-        // Stored to 2 dp (numeric(18,2)), and the benefit is worked from what is stored.
-        claim.DailyAllowance = Math.Round(request.DailyAllowance, 2, MidpointRounding.AwayFromZero);
-        claim.Benefit = MaternityMath.Benefit(claim.DailyAllowance.Value, claim.Days);
+        // The benefit is worked from what is stored.
+        claim.DailyAllowance = allowance;
+        claim.Benefit = MaternityMath.Benefit(allowance, claim.Days);
         await _claims.UpdateAsync(claim, ct);
         return ToDto(claim);
     }

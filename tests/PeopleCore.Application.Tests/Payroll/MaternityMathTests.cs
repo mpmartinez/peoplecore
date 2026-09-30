@@ -103,6 +103,11 @@ public class MaternityMathTests
         => MaternityMath.Offset(20000m, 666.67m, 15).Should().Be(10000.05m);
 
     [Fact]
+    public void The_maximum_daily_allowance_is_the_regular_ss_ceiling_times_6_over_180()
+        // 20,000 x 6 / 180 = 666.666... -> 666.67.
+        => MaternityMath.MaximumDailyAllowance.Should().Be(666.67m);
+
+    [Fact]
     public void Offset_is_capped_at_the_maternity_days_pay()
         => MaternityMath.Offset(5000m, 666.67m, 15).Should().Be(5000m);
 

@@ -81,6 +81,11 @@ public class MaternityPayCalculatorTests
         return claim;
     }
 
+    /// <summary>One employee's figures, read the way a run reads them: loaded once, then answered.</summary>
+    private async Task<MaternityPay> ForAsync(PayrollRun run, Guid employeeId, bool advanceRequested,
+        decimal regularPayBeforeOffset, bool exempt)
+        => (await _sut.LoadAsync(run, [employeeId])).For(employeeId, advanceRequested, regularPayBeforeOffset, exempt);
+
     private void AdvancedOn(MaternityClaim claim, string runNumber)
         => _runs.Setup(r => r.GetMaternityAdvancesAsync(It.Is<IReadOnlyCollection<Guid>>(ids => ids.Contains(claim.Id)),
                     It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
@@ -93,7 +98,7 @@ public class MaternityPayCalculatorTests
     {
         var claim = AClaim();
 
-        var pay = await _sut.ForAsync(Cutoff(7, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+        var pay = await ForAsync(Cutoff(7, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
 
         // 666.67 x 105 = 70,000.35; July 16-31 is before the leave, so there is no offset.
         pay.Advance.Should().Be(70_000.35m);
@@ -105,7 +110,7 @@ public class MaternityPayCalculatorTests
     [Fact]
     public async Task TheAdvance_WithNoClaim_IsRefused()
     {
-        var act = () => _sut.ForAsync(Cutoff(7, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+        var act = () => ForAsync(Cutoff(7, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
 
         await act.Should().ThrowAsync<DomainException>().WithMessage("Maria Santos has no maternity claim ready to advance.");
     }
@@ -115,7 +120,7 @@ public class MaternityPayCalculatorTests
     {
         AClaim(allowance: null);
 
-        var act = () => _sut.ForAsync(Cutoff(7, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+        var act = () => ForAsync(Cutoff(7, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
 
         await act.Should().ThrowAsync<DomainException>().WithMessage("Maria Santos has no maternity claim ready to advance.");
     }
@@ -129,7 +134,7 @@ public class MaternityPayCalculatorTests
         // The leave (Aug 10 - Nov 22) hasn't ended by Aug 16, so this is the same pregnancy's claim.
         AClaim(status: status, advanceRun: new PayrollRun { RunNumber = "PAY-2026-015" });
 
-        var act = () => _sut.ForAsync(Cutoff(8, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+        var act = () => ForAsync(Cutoff(8, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
 
         await act.Should().ThrowAsync<DomainException>()
             .WithMessage("Maria Santos's maternity benefit was already advanced on PAY-2026-015.");
@@ -145,7 +150,7 @@ public class MaternityPayCalculatorTests
         _claims.Setup(c => c.GetForEmployeesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
                .ReturnsAsync([earlier, later]);
 
-        var act = () => _sut.ForAsync(Cutoff(8, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+        var act = () => ForAsync(Cutoff(8, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
 
         await act.Should().ThrowAsync<DomainException>()
             .WithMessage("Maria Santos's maternity benefit was already advanced on PAY-2026-015.");
@@ -156,7 +161,7 @@ public class MaternityPayCalculatorTests
     {
         AClaim(status: MaternityClaimStatus.Denied);
 
-        var act = () => _sut.ForAsync(Cutoff(8, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+        var act = () => ForAsync(Cutoff(8, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
 
         await act.Should().ThrowAsync<DomainException>().WithMessage("Maria Santos has no maternity claim ready to advance.");
     }
@@ -172,7 +177,7 @@ public class MaternityPayCalculatorTests
         _leaveRequest.EndDate = new DateOnly(2025, 11, 22);
         AClaim(status: status, advanceRun: new PayrollRun { RunNumber = "PAY-2025-015" });
 
-        var act = () => _sut.ForAsync(Cutoff(8, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+        var act = () => ForAsync(Cutoff(8, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
 
         await act.Should().ThrowAsync<DomainException>().WithMessage("Maria Santos has no maternity claim ready to advance.");
     }
@@ -184,7 +189,7 @@ public class MaternityPayCalculatorTests
         AdvancedOn(claim, "PAY-2026-016");
         var run = Cutoff(8, 1, 15);
 
-        var act = () => _sut.ForAsync(run, _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+        var act = () => ForAsync(run, _maria.Id, advanceRequested: true, 15_000m, exempt: false);
 
         await act.Should().ThrowAsync<DomainException>()
             .WithMessage("Maria Santos's maternity benefit was already advanced on PAY-2026-016.");
@@ -205,7 +210,7 @@ public class MaternityPayCalculatorTests
                .ReturnsAsync([claim, earlier]);
         AdvancedOn(claim, "PAY-2026-016");
 
-        var act = () => _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+        var act = () => ForAsync(Cutoff(8, 1, 15), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
 
         await act.Should().ThrowAsync<DomainException>()
             .WithMessage("Maria Santos's maternity benefit was already advanced on PAY-2026-016.");
@@ -220,7 +225,7 @@ public class MaternityPayCalculatorTests
         AClaim();
         _leaveRequest.Status = status;
 
-        var act = () => _sut.ForAsync(Cutoff(7, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+        var act = () => ForAsync(Cutoff(7, 16, 31), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
 
         await act.Should().ThrowAsync<DomainException>().WithMessage("Maria Santos has no maternity claim ready to advance.");
     }
@@ -230,8 +235,8 @@ public class MaternityPayCalculatorTests
     {
         AClaim(status: MaternityClaimStatus.Voided);
 
-        var advance = () => _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
-        var pay = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, advanceRequested: false, 15_000m, exempt: false);
+        var advance = () => ForAsync(Cutoff(8, 1, 15), _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+        var pay = await ForAsync(Cutoff(8, 1, 15), _maria.Id, advanceRequested: false, 15_000m, exempt: false);
 
         await advance.Should().ThrowAsync<DomainException>().WithMessage("Maria Santos has no maternity claim ready to advance.");
         pay.Offset.Should().Be(0m);
@@ -245,7 +250,7 @@ public class MaternityPayCalculatorTests
     {
         var claim = AClaim(status: MaternityClaimStatus.Advanced, advanceRun: new PayrollRun { RunNumber = "PAY-2026-015" });
 
-        var pay = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, advanceRequested: false, 15_000m, exempt: false);
+        var pay = await ForAsync(Cutoff(8, 1, 15), _maria.Id, advanceRequested: false, 15_000m, exempt: false);
 
         pay.Offset.Should().Be(4_000.02m);
         pay.ClaimId.Should().Be(claim.Id);
@@ -256,7 +261,7 @@ public class MaternityPayCalculatorTests
     {
         AClaim();
 
-        var pay = await _sut.ForAsync(Cutoff(7, 16, 31), _maria.Id, advanceRequested: false, 15_000m, exempt: false);
+        var pay = await ForAsync(Cutoff(7, 16, 31), _maria.Id, advanceRequested: false, 15_000m, exempt: false);
 
         pay.Advance.Should().Be(0m);
         pay.ClaimId.Should().BeNull();
@@ -269,9 +274,9 @@ public class MaternityPayCalculatorTests
     {
         AClaim(status: MaternityClaimStatus.Advanced, advanceRun: new PayrollRun { RunNumber = "PAY-2026-015" });
 
-        var first = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: false);
-        var second = await _sut.ForAsync(Cutoff(8, 16, 31), _maria.Id, false, 15_000m, exempt: false);
-        var november = await _sut.ForAsync(Cutoff(11, 16, 30), _maria.Id, false, 15_000m, exempt: false);
+        var first = await ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: false);
+        var second = await ForAsync(Cutoff(8, 16, 31), _maria.Id, false, 15_000m, exempt: false);
+        var november = await ForAsync(Cutoff(11, 16, 30), _maria.Id, false, 15_000m, exempt: false);
 
         // Aug 10-15 is 6 days: 666.67 x 6 = 4,000.02. Aug 16-31 is 16 days: 666.67 x 16 = 10,666.72.
         // Nov 16-22 is 7 days: 666.67 x 7 = 4,666.69. The claim's status doesn't matter.
@@ -294,7 +299,7 @@ public class MaternityPayCalculatorTests
     {
         AClaim();
 
-        var pay = await _sut.ForAsync(Cutoff(8, 16, 31), _maria.Id, false, 10_000m, exempt: false);
+        var pay = await ForAsync(Cutoff(8, 16, 31), _maria.Id, false, 10_000m, exempt: false);
 
         // Aug 16-31 is all leave: 10,000 x 16 / 16 = 10,000 for the leave days. 10,666.72 covered,
         // but only 10,000 to take it from, and no differential left.
@@ -310,7 +315,7 @@ public class MaternityPayCalculatorTests
         // Absences left 3,000 of the Aug 1-15 regular pay. The 6 leave days' share of it is
         // 3,000 x 6 / 15 = 1,200.00. SSS covers 666.67 x 6 = 4,000.02 of those days, so the offset
         // is the 1,200.00 and no more: the 1,800.00 for Aug 1-9 is still paid. No differential.
-        var pay = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 3_000m, exempt: false);
+        var pay = await ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 3_000m, exempt: false);
 
         pay.Offset.Should().Be(1_200m);
         pay.Differential.Should().Be(0m);
@@ -319,10 +324,10 @@ public class MaternityPayCalculatorTests
     [Fact]
     public async Task TheOffset_ForAnExemptEmployer_IsTheRegularPayForTheLeaveDays_WithOrWithoutAClaim()
     {
-        var withoutClaim = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: true);
+        var withoutClaim = await ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: true);
         AClaim();
-        var withClaim = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: true);
-        var wholeCutoff = await _sut.ForAsync(Cutoff(8, 16, 31), _maria.Id, false, 15_000m, exempt: true);
+        var withClaim = await ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: true);
+        var wholeCutoff = await ForAsync(Cutoff(8, 16, 31), _maria.Id, false, 15_000m, exempt: true);
 
         // 15,000 x 6 / 15 calendar days = 6,000.00; Aug 16-31 is all leave: 15,000 x 16 / 16.
         withoutClaim.Offset.Should().Be(6_000m);
@@ -355,8 +360,8 @@ public class MaternityPayCalculatorTests
         _claims.Setup(c => c.GetForEmployeesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()))
                .ReturnsAsync([claim, overlappingClaim]);
 
-        var withAllowance = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: false);
-        var exempt = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: true);
+        var withAllowance = await ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: false);
+        var exempt = await ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: true);
 
         // The earlier request's claim covers all 6 days: 666.67 x 6 = 4,000.02, and the overlapping
         // request adds nothing. Exempt: 15,000 x 6 / 15 = 6,000.00, not 15,000 x 10 / 15.
@@ -371,7 +376,7 @@ public class MaternityPayCalculatorTests
     {
         AClaim(allowance: null);
 
-        var pay = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: false);
+        var pay = await ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: false);
 
         pay.Offset.Should().Be(0m);
         pay.Differential.Should().Be(0m, "without an allowance nothing is known to be the SSS benefit's");
@@ -381,7 +386,7 @@ public class MaternityPayCalculatorTests
     [Fact]
     public async Task WithNoClaim_ThereIsNoOffset_AndHrIsWarned()
     {
-        var pay = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: false);
+        var pay = await ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: false);
 
         pay.Offset.Should().Be(0m);
         pay.Differential.Should().Be(0m);
@@ -403,7 +408,7 @@ public class MaternityPayCalculatorTests
         _leave.Setup(l => l.GetApprovedByPeriodAsync(It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
               .ReturnsAsync([_leaveRequest, vacation]);
 
-        var pay = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: false);
+        var pay = await ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: false);
 
         pay.Offset.Should().Be(0m);
     }
@@ -415,7 +420,7 @@ public class MaternityPayCalculatorTests
     {
         AClaim();
 
-        var pay = await _sut.ForAsync(Cutoff(7, 16, 31), _maria.Id, false, 15_000m, exempt: false);
+        var pay = await ForAsync(Cutoff(7, 16, 31), _maria.Id, false, 15_000m, exempt: false);
 
         pay.Warnings.Should().Equal("Maternity benefit not advanced yet for Maria Santos.");
     }
@@ -426,7 +431,7 @@ public class MaternityPayCalculatorTests
         var claim = AClaim();
         AdvancedOn(claim, "PAY-2026-016");
 
-        var pay = await _sut.ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: false);
+        var pay = await ForAsync(Cutoff(8, 1, 15), _maria.Id, false, 15_000m, exempt: false);
 
         pay.Warnings.Should().BeEmpty();
     }
@@ -538,7 +543,7 @@ public class MaternityPayCalculatorTests
         run.FinalPayInputs = new FinalPayInputs { PayrollRunId = run.Id, WorkingDays = 15m };
         run.Employees.Add(new PayrollRunEmployee { EmployeeId = _maria.Id, Employee = _maria });
 
-        var pay = await _sut.ForAsync(run, _maria.Id, advanceRequested: true, 15_000m, exempt: false);
+        var pay = await ForAsync(run, _maria.Id, advanceRequested: true, 15_000m, exempt: false);
         var warnings = await _sut.WarningsAsync(run);
         run.Employees[0].AdvanceMaternityBenefit = true;
         run.Employees[0].MaternityBenefitAdvance = 70_000.35m;
@@ -564,7 +569,7 @@ public class MaternityPayCalculatorTests
         run.FinalPayInputs = new FinalPayInputs { PayrollRunId = run.Id, WorkingDays = 0m };
         run.Employees.Add(new PayrollRunEmployee { EmployeeId = _maria.Id, Employee = _maria });
 
-        var pay = await _sut.ForAsync(run, _maria.Id, advanceRequested: false, 0m, exempt: false);
+        var pay = await ForAsync(run, _maria.Id, advanceRequested: false, 0m, exempt: false);
 
         pay.Offset.Should().Be(0m);
         pay.Warnings.Should().BeEmpty();

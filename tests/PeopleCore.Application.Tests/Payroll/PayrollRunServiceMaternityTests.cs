@@ -297,6 +297,22 @@ public partial class PayrollRunServiceTests
     }
 
     [Fact]
+    public async Task GetForPayslipAsync_IsTheRunWithoutItsWarnings_AndReadsNoMaternityData()
+    {
+        var (maria, _, _, savedRun) = MariaOnMaternityLeave(allowance: null);
+        await MaternitySut.CreateAsync(AugustFirstHalf(maria.Id, advance: false));
+        _leaveRepo.Invocations.Clear();
+        _claimRepo.Invocations.Clear();
+
+        var dto = await MaternitySut.GetForPayslipAsync(savedRun()!.Id);
+
+        dto!.Warnings.Should().BeEmpty();
+        dto.Employees.Single().MaternityBenefitOffset.Should().Be(0m, "no claim is set up");
+        _leaveRepo.VerifyNoOtherCalls();
+        _claimRepo.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task MarkPaidAsync_SettlesTheAdvancedClaim_InTheSameSaveAsTheRun()
     {
         var (maria, _, claim, savedRun) = MariaOnMaternityLeave();

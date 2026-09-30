@@ -447,6 +447,12 @@ public class PayrollRunService : IPayrollRunService
         return run is null ? null : await ToDtoAsync(run, ct);
     }
 
+    public async Task<PayrollRunDto?> GetForPayslipAsync(Guid runId, CancellationToken ct = default)
+    {
+        var run = await _runRepo.GetWithEntriesAsync(runId, ct);
+        return run is null ? null : await ToDtoAsync(run, ct, withWarnings: false);
+    }
+
     public async Task<PagedResult<PayrollRunSummaryDto>> GetPagedAsync(
         int page, int pageSize, CancellationToken ct = default)
     {
@@ -1023,9 +1029,10 @@ public class PayrollRunService : IPayrollRunService
 
     /// <summary>
     /// The run as the API returns it. Its maternity warnings are worked out now rather than stored:
-    /// a claim set up or advanced since the run was computed changes what HR still has to do.
+    /// a claim set up or advanced since the run was computed changes what HR still has to do. A
+    /// payslip goes without them (<paramref name="withWarnings"/> false), and without their queries.
     /// </summary>
-    private async Task<PayrollRunDto> ToDtoAsync(PayrollRun run, CancellationToken ct) => new(
+    private async Task<PayrollRunDto> ToDtoAsync(PayrollRun run, CancellationToken ct, bool withWarnings = true) => new(
         run.Id, run.RunNumber, run.PeriodLabel,
         run.PeriodStart, run.PeriodEnd, run.PayDate,
         run.Frequency, run.Status,
@@ -1033,7 +1040,7 @@ public class PayrollRunService : IPayrollRunService
         run.CreatedAt, run.AttendancePeriodId, run.EmployeesMissingAttendance,
         run.Employees.Select(ToEmployeeDto).ToList(), run.RunType, run.IncludesLeaveConversion,
         IncludesThirteenthMonth(run),
-        _maternityPay is null ? [] : await _maternityPay.WarningsAsync(run, ct));
+        _maternityPay is null || !withWarnings ? [] : await _maternityPay.WarningsAsync(run, ct));
 
     private static PayrollRunSummaryDto ToSummaryDto(PayrollRun run) => new(
         run.Id, run.RunNumber, run.PeriodLabel,

@@ -30,10 +30,6 @@ public sealed class MaternityPayCalculator : IMaternityPayCalculator
         _employees = employees;
     }
 
-    public async Task<MaternityPay> ForAsync(PayrollRun run, Guid employeeId, bool advanceRequested,
-        decimal regularPayBeforeOffset, bool exempt, CancellationToken ct = default)
-        => (await LoadAsync(run, [employeeId], ct)).For(employeeId, advanceRequested, regularPayBeforeOffset, exempt);
-
     public Task<MaternityRun> LoadAsync(PayrollRun run, IReadOnlyCollection<Guid> employeeIds, CancellationToken ct = default)
         => LoadAsync(run, employeeIds, lookUpNames: true, ct);
 

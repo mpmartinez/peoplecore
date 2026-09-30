@@ -43,13 +43,6 @@ public class MaternityClaimRepository : Repository<MaternityClaim>, IMaternityCl
     public async Task<MaternityClaim?> GetByLeaveRequestAsync(Guid leaveRequestId, CancellationToken ct = default)
         => await Context.MaternityClaims.FirstOrDefaultAsync(c => c.LeaveRequestId == leaveRequestId, ct);
 
-    public async Task<IReadOnlyList<MaternityClaim>> GetForEmployeeAsync(Guid employeeId, CancellationToken ct = default)
-        => await Context.MaternityClaims
-            .Where(c => c.EmployeeId == employeeId)
-            .Include(c => c.LeaveRequest)
-            .OrderByDescending(c => c.CreatedAt)
-            .ToListAsync(ct);
-
     public async Task<IReadOnlyList<MaternityClaim>> GetForEmployeesAsync(
         IReadOnlyCollection<Guid> employeeIds, CancellationToken ct = default)
     {

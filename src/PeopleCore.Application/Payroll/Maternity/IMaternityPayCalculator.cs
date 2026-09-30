@@ -25,17 +25,10 @@ public sealed record MaternityPay(decimal Advance, decimal Offset, IReadOnlyList
 public interface IMaternityPayCalculator
 {
     /// <summary>
-    /// One employee's figures. Refuses an advance the employee can't have (a
-    /// <see cref="Domain.Exceptions.DomainException"/>).
-    /// </summary>
-    /// <param name="regularPayBeforeOffset">The entry's regular pay after absences and tardiness, before the offset.</param>
-    /// <param name="exempt">The employer is exempt from the salary differential (<see cref="PayrollSettings.ExemptFromMaternityDifferential"/>).</param>
-    Task<MaternityPay> ForAsync(PayrollRun run, Guid employeeId, bool advanceRequested, decimal regularPayBeforeOffset,
-        bool exempt, CancellationToken ct = default);
-
-    /// <summary>
-    /// Loads what <see cref="ForAsync"/> reads for many employees at once, so computing a run is a
-    /// handful of queries rather than a few per employee.
+    /// Loads what the run's employees' figures are worked out from - the period's approved maternity
+    /// leave, their claims and the other runs advancing them - in one go, so computing a run is a
+    /// handful of queries rather than a few per employee. <see cref="MaternityRun.For"/> then answers
+    /// each employee.
     /// </summary>
     Task<MaternityRun> LoadAsync(PayrollRun run, IReadOnlyCollection<Guid> employeeIds, CancellationToken ct = default);
 

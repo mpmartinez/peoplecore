@@ -184,7 +184,8 @@ public class MaternityClaimServiceDbTests : DatabaseTestBase
         await Context.SaveChangesAsync();
         var request = await ARequestAsync(maria, await MaternityTypeAsync(), new DateOnly(2026, 8, 10));
         var created = await Service(Context).CreateAsync(request.Id);
-        await Service(NewContext()).SetAllowanceAsync(created.Id, new SetAllowanceRequest(805.56m));
+        // 555.56 x 105 = 58,333.80 (an allowance within the 666.67 maximum).
+        await Service(NewContext()).SetAllowanceAsync(created.Id, new SetAllowanceRequest(555.56m));
 
         var run = ARun("PAY-2026-017", new(2026, 8, 1), new(2026, 8, 15), new(2026, 8, 20));
         Context.PayrollRuns.Add(run);
@@ -199,12 +200,12 @@ public class MaternityClaimServiceDbTests : DatabaseTestBase
         }
 
         var reimbursed = await Service(NewContext()).ReimburseAsync(created.Id,
-            new ReimburseRequest(new DateOnly(2026, 11, 3), 84_583.80m, null));
+            new ReimburseRequest(new DateOnly(2026, 11, 3), 58_333.80m, null));
         var summary = await Service(NewContext()).ListAsync();
 
         reimbursed.Should().Be(new MaternityClaimDto(created.Id, request.Id, maria.Id, "Maria Santos",
-            new DateOnly(2026, 8, 10), new DateOnly(2026, 11, 22), 105m, 805.56m, 84_583.80m, MaternityClaimStatus.Reimbursed,
-            run.Id, "PAY-2026-017", new DateOnly(2026, 8, 20), new DateOnly(2026, 11, 3), 84_583.80m, null));
+            new DateOnly(2026, 8, 10), new DateOnly(2026, 11, 22), 105m, 555.56m, 58_333.80m, MaternityClaimStatus.Reimbursed,
+            run.Id, "PAY-2026-017", new DateOnly(2026, 8, 20), new DateOnly(2026, 11, 3), 58_333.80m, null));
         summary.Claims.Should().Equal(reimbursed);
         summary.Outstanding.Should().Be(0m);
         (await Service(NewContext()).ReadyEmployeeIdsAsync()).Should().BeEmpty();

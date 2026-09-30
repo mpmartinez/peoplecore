@@ -312,6 +312,11 @@ public class LeaveTypeServiceTests
         { new("Maternity Leave", "ML", 105m, IsPaid: false, false, null, "Female", true,
               EntitlementKind: LeaveEntitlementKind.PerEvent, DaysPerEvent: 105m, IsMaternity: true),
           "A maternity leave type must be paid." },
+        // RA 11210's 105 days are calendar days: the leave, the claim's days and the payroll offset
+        // all count every date, so a type counting only working days would short the benefit.
+        { new("Maternity Leave", "ML", 105m, IsPaid: true, false, null, "Female", true,
+              EntitlementKind: LeaveEntitlementKind.PerEvent, CountsCalendarDays: false, DaysPerEvent: 105m, IsMaternity: true),
+          "A maternity leave type must count calendar days." },
         { new("Paternity Leave", "PL", 0m, true, false, null, "Male", true,
               EntitlementKind: LeaveEntitlementKind.PerEvent, DaysPerEvent: 7m, MaxEvents: 0), "Set at least 1 for the most times allowed." },
         { new("Paternity Leave", "PL", 0m, true, false, null, "Male", true,

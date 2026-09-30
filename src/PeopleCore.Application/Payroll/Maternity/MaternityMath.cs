@@ -27,6 +27,13 @@ public static class MaternityMath
     public const decimal RegularSsMscCeiling = 20_000m;
 
     /// <summary>
+    /// The largest SSS daily maternity allowance there can be: the Regular SS ceiling for each of the
+    /// 6 highest months, over 180 - 20,000 x 6 / 180 = 666.67.
+    /// </summary>
+    public static readonly decimal MaximumDailyAllowance =
+        Math.Round(RegularSsMscCeiling * HighestMonths / Divisor, 2, MidpointRounding.AwayFromZero);
+
+    /// <summary>
     /// The 12-month window before the semester of contingency, from the first day of its first month
     /// to the last day of its last month. The semester is the two calendar quarters ending with the
     /// quarter of <paramref name="contingency"/>.

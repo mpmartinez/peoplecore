@@ -150,13 +150,14 @@ public class MaternityClaimServiceTests
         var claim = AClaim();
         claim.Days = 105m;
 
-        var dto = await _sut.SetAllowanceAsync(claim.Id, new SetAllowanceRequest(805.56m));
+        var dto = await _sut.SetAllowanceAsync(claim.Id, new SetAllowanceRequest(555.56m));
 
-        claim.DailyAllowance.Should().Be(805.56m);
-        claim.Benefit.Should().Be(84_583.80m);
+        // 555.56 x 105 = 58,333.80.
+        claim.DailyAllowance.Should().Be(555.56m);
+        claim.Benefit.Should().Be(58_333.80m);
         _claims.Verify(c => c.UpdateAsync(claim, It.IsAny<CancellationToken>()), Times.Once);
-        dto.DailyAllowance.Should().Be(805.56m);
-        dto.Benefit.Should().Be(84_583.80m);
+        dto.DailyAllowance.Should().Be(555.56m);
+        dto.Benefit.Should().Be(58_333.80m);
     }
 
     [Fact]
@@ -165,11 +166,11 @@ public class MaternityClaimServiceTests
         var claim = AClaim(allowance: 500m, benefit: 52_500m);
         claim.Days = 60m;
 
-        await _sut.SetAllowanceAsync(claim.Id, new SetAllowanceRequest(1_000.555m));
+        await _sut.SetAllowanceAsync(claim.Id, new SetAllowanceRequest(600.555m));
 
-        // Stored to 2 dp, and the benefit is worked from what is stored.
-        claim.DailyAllowance.Should().Be(1_000.56m);
-        claim.Benefit.Should().Be(60_033.60m);
+        // Stored to 2 dp (600.56), and the benefit is worked from what is stored: 600.56 x 60 = 36,033.60.
+        claim.DailyAllowance.Should().Be(600.56m);
+        claim.Benefit.Should().Be(36_033.60m);
     }
 
     [Theory]
@@ -251,6 +252,32 @@ public class MaternityClaimServiceTests
             .WithMessage("PAY-2026-016 already netted this allowance; it can't change now.");
         claim.DailyAllowance.Should().Be(666.67m);
         _claims.Verify(c => c.UpdateAsync(It.IsAny<MaternityClaim>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(666.68)]
+    [InlineData(800)]
+    public async Task SetAllowance_AboveTheStatutoryMaximum_IsRefused(decimal allowance)
+    {
+        // The Regular SS ceiling of 20,000 six times over 180: 666.67 a day at most.
+        var claim = AClaim();
+
+        var act = () => _sut.SetAllowanceAsync(claim.Id, new SetAllowanceRequest(allowance));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("The SSS daily maternity allowance can't exceed ₱666.67.");
+        claim.DailyAllowance.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SetAllowance_ThatRoundsToTheMaximum_IsAccepted()
+    {
+        // 666.674 is stored as 666.67: the maximum itself. 666.67 x 105 = 70,000.35.
+        var claim = AClaim();
+
+        await _sut.SetAllowanceAsync(claim.Id, new SetAllowanceRequest(666.674m));
+
+        claim.DailyAllowance.Should().Be(666.67m);
+        claim.Benefit.Should().Be(70_000.35m);
     }
 
     [Fact]

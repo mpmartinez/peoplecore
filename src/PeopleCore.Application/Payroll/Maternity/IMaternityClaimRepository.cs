@@ -17,9 +17,6 @@ public interface IMaternityClaimRepository : IRepository<MaternityClaim>
     /// </summary>
     Task<MaternityClaim> AddNewAsync(MaternityClaim claim, CancellationToken ct = default);
 
-    /// <summary>All of an employee's claims, newest first, each with its <see cref="MaternityClaim.LeaveRequest"/> loaded.</summary>
-    Task<IReadOnlyList<MaternityClaim>> GetForEmployeeAsync(Guid employeeId, CancellationToken ct = default);
-
     /// <summary>
     /// All of the employees' claims, tracked, each with its <see cref="MaternityClaim.Employee"/>,
     /// <see cref="MaternityClaim.LeaveRequest"/> and <see cref="MaternityClaim.AdvanceRun"/> loaded.
