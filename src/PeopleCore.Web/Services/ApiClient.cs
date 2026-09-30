@@ -663,6 +663,68 @@ public class ApiClient
     public Task<PayrollRunDto?> SetPayrollRunThirteenthMonthAsync(Guid runId, bool include)
         => SendJsonAsync<PayrollRunDto>(HttpMethod.Put, $"api/payroll-runs/{runId}/thirteenth-month", new { include });
 
+    // Maternity claims (payroll.manage). Each command answers with the claim as it now stands; a
+    // refusal throws with the API's reason, ready to show as it is.
+    public Task<MaternityClaimsSummaryDto?> GetMaternityClaimsAsync()
+        => GetJsonAsync<MaternityClaimsSummaryDto>("api/maternity-claims");
+
+    /// <summary>Approved maternity leave requests that have no claim yet, earliest start first.</summary>
+    public async Task<IReadOnlyList<EligibleMaternityLeaveDto>?> GetEligibleMaternityLeaveAsync()
+        => await GetJsonAsync<List<EligibleMaternityLeaveDto>>("api/maternity-claims/eligible");
+
+    /// <summary>
+    /// The employees whose maternity benefit a new payroll can advance: a Draft claim with an
+    /// allowance that no run already carries.
+    /// </summary>
+    public async Task<IReadOnlyList<Guid>?> GetMaternityReadyEmployeeIdsAsync()
+        => await GetJsonAsync<List<Guid>>("api/maternity-claims/ready");
+
+    public Task<MaternityClaimDto?> CreateMaternityClaimAsync(Guid leaveRequestId)
+        => SendJsonAsync<MaternityClaimDto>(HttpMethod.Post, $"api/maternity-claims/{leaveRequestId}");
+
+    /// <summary>The SSS daily allowance worked out from the employee's paid payroll, and the window it looked at.</summary>
+    public Task<SuggestedAllowanceDto?> GetMaternityAllowanceSuggestionAsync(Guid claimId)
+        => GetJsonAsync<SuggestedAllowanceDto>($"api/maternity-claims/{claimId}/suggestion");
+
+    public Task<MaternityClaimDto?> SetMaternityAllowanceAsync(Guid claimId, decimal dailyAllowance)
+        => SendJsonAsync<MaternityClaimDto>(HttpMethod.Put, $"api/maternity-claims/{claimId}/allowance", new SetAllowanceRequest(dailyAllowance));
+
+    public Task<MaternityClaimDto?> ReimburseMaternityClaimAsync(Guid claimId, ReimburseRequest request)
+        => SendJsonAsync<MaternityClaimDto>(HttpMethod.Put, $"api/maternity-claims/{claimId}/reimburse", request);
+
+    public Task<MaternityClaimDto?> DenyMaternityClaimAsync(Guid claimId, string? note)
+        => SendJsonAsync<MaternityClaimDto>(HttpMethod.Put, $"api/maternity-claims/{claimId}/deny", new DenyRequest(note));
+
+    /// <summary>Voids a Draft claim no unpaid run advances; the note says why.</summary>
+    public Task<MaternityClaimDto?> VoidMaternityClaimAsync(Guid claimId, string? note)
+        => SendJsonAsync<MaternityClaimDto>(HttpMethod.Put, $"api/maternity-claims/{claimId}/void", new VoidRequest(note));
+
+    /// <summary>Marks a Draft claim not SSS-qualified: her leave days are paid as ordinary salary.</summary>
+    public Task<MaternityClaimDto?> MarkMaternityClaimNotQualifiedAsync(Guid claimId, string? note)
+        => SendJsonAsync<MaternityClaimDto>(HttpMethod.Put, $"api/maternity-claims/{claimId}/not-qualified", new NotQualifiedRequest(note));
+
+    /// <summary>Sets a claim marked not SSS-qualified back to Draft, while no paid payroll covered her leave.</summary>
+    public Task<MaternityClaimDto?> ReopenMaternityClaimAsync(Guid claimId)
+        => SendJsonAsync<MaternityClaimDto>(HttpMethod.Put, $"api/maternity-claims/{claimId}/reopen");
+
+    /// <summary>Moves a claim whose leave was cancelled or rejected to the employee's refiled maternity leave.</summary>
+    public Task<MaternityClaimDto?> RelinkMaternityClaimAsync(Guid claimId, Guid leaveRequestId)
+        => SendJsonAsync<MaternityClaimDto>(HttpMethod.Put, $"api/maternity-claims/{claimId}/relink", new RelinkRequest(leaveRequestId));
+
+    // Payroll settings (payroll.manage): the row payroll computes from, whichever company it belongs
+    // to. The PUT is a full replacement and answers 204 with no body.
+    public Task<PayrollSettingsDto?> GetPayrollSettingsAsync()
+        => GetJsonAsync<PayrollSettingsDto>("api/payroll-settings/default");
+
+    public async Task SavePayrollSettingsAsync(PayrollSettingsDto settings)
+    {
+        using var message = new HttpRequestMessage(HttpMethod.Put, "api/payroll-settings/default")
+        {
+            Content = JsonContent.Create(settings, options: JsonOptions)
+        };
+        await EnsureSuccessAsync(await _http.SendAsync(message));
+    }
+
     // Employee Compensation
     //
     // A 404 here means the employee simply has no compensation row yet - PUT creates one, so the
@@ -934,7 +996,9 @@ public record FinalPayRequest(
     decimal? SeparationPayOverride,
     decimal? RetirementPayOverride,
     string? OverrideNote,
-    IReadOnlyList<FinalPayDeductionDto> Deductions);
+    IReadOnlyList<FinalPayDeductionDto> Deductions,
+    // Advance her SSS maternity benefit on the final pay; offered only with a claim ready to advance.
+    bool AdvanceMaternityBenefit = false);
 
 public record FinalPayDeductionDto(string Label, decimal Amount);
 
@@ -979,7 +1043,22 @@ public record FinalPaySummaryDto(
     decimal GrossPay,
     decimal NetPay,
     bool ClearanceComplete,
-    IReadOnlyList<string> OutstandingClearance);
+    IReadOnlyList<string> OutstandingClearance,
+    // Maternity (RA 11210): whether the final pay advances her benefit, the advance, the part of the
+    // period's pay SSS covers, the non-taxable differential, contributions deferred or collected, and
+    // what HR still has to do.
+    bool AdvanceMaternityBenefit = false,
+    decimal MaternityBenefitAdvance = 0m,
+    decimal MaternityBenefitOffset = 0m,
+    decimal MaternityDifferential = 0m,
+    decimal ContributionsDeferred = 0m,
+    decimal DeferredContributionsCollected = 0m,
+    IReadOnlyList<string>? MaternityWarnings = null,
+    // Deferred contribution shares her final pay couldn't collect.
+    decimal DeferredContributionsUncollected = 0m)
+{
+    public IReadOnlyList<string> MaternityWarnings { get; init; } = MaternityWarnings ?? [];
+}
 public record ClearItemRequest(string? Note);
 public record AddClearanceItemRequest(string Name);
 // Leave balances and requests - copies of PeopleCore.Application.Leave.DTOs records, field by field
@@ -1146,7 +1225,19 @@ public record PayrollRunEmployeeDto(
     decimal LeaveConversionNonTaxable = 0m,
     decimal SeparationPay = 0m,
     decimal RetirementPay = 0m,
-    decimal FinalPayNonTaxable = 0m);
+    decimal FinalPayNonTaxable = 0m,
+    // Maternity pay (RA 11210): the SSS benefit advanced on this run (in GrossPay, tax-free), and
+    // the part of basic pay SSS covers for the leave days in the period (already netted out of
+    // RegularPay).
+    decimal MaternityBenefitAdvance = 0m,
+    decimal MaternityBenefitOffset = 0m,
+    // The salary differential: the pay for the leave days the offset leaves. Still in RegularPay,
+    // but non-taxable (RMC 105-2019).
+    decimal MaternityDifferential = 0m,
+    // Shares a maternity-covered cutoff couldn't pay, deferred (added back to NetPay), and earlier
+    // deferred shares this entry collects (taken from NetPay; not in TotalDeductions).
+    decimal ContributionsDeferred = 0m,
+    decimal DeferredContributionsCollected = 0m);
 
 public record PayrollRunDto(
     Guid Id,
@@ -1170,7 +1261,13 @@ public record PayrollRunDto(
     // A regular December run that pays out unused year-end leave in cash.
     bool IncludesLeaveConversion = false,
     // True when the 13th month is included for any employee on the run.
-    bool IncludesThirteenthMonth = false);
+    bool IncludesThirteenthMonth = false,
+    // What HR still has to do before the run pays maternity right, worked out afresh on every load.
+    // Null (an older response) reads as none.
+    IReadOnlyList<string>? Warnings = null)
+{
+    public IReadOnlyList<string> Warnings { get; init; } = Warnings ?? [];
+}
 
 public record PayrollRunSummaryDto(
     Guid Id,
@@ -1189,6 +1286,61 @@ public record PayrollRunSummaryDto(
     string RunType = "Regular",
     bool IncludesLeaveConversion = false,
     bool IncludesThirteenthMonth = false);
+
+// Maternity claims - copies of PeopleCore.Application.Payroll.Maternity.MaternityDtos, field by field
+// and in the same order. The status travels as its name (JsonOptions' JsonStringEnumConverter);
+// MaternityLabels turns it into words.
+// Voided: a Draft claim HR withdrew; it counts for nothing. NotQualified: she doesn't qualify for the
+// SSS benefit, so her leave days are paid as ordinary salary.
+public enum MaternityClaimStatus { Draft, Advanced, Reimbursed, Denied, Voided, NotQualified }
+
+public record MaternityClaimDto(Guid Id, Guid LeaveRequestId, Guid EmployeeId, string EmployeeName,
+    DateOnly LeaveStart, DateOnly LeaveEnd, decimal Days, decimal? DailyAllowance, decimal Benefit,
+    MaternityClaimStatus Status, Guid? AdvanceRunId, string? AdvanceRunNumber, DateOnly? AdvancedAt,
+    DateOnly? ReimbursedOn, decimal? ReimbursedAmount, string? Note,
+    // On a Draft claim in the list, the unpaid run advancing its benefit (the allowance is locked until
+    // that run is paid or discarded).
+    string? CarriedByRunNumber = null,
+    // The claim's leave was cancelled or rejected, so it can be moved to the refiled leave.
+    bool LeaveCancelled = false,
+    // On a Draft claim in the list, the Paid run that netted its allowance: the allowance is locked
+    // and the claim can't be voided.
+    string? NettedByRunNumber = null,
+    // On the claim a re-link answers with, when a paid benefit no longer matches the leave's days.
+    string? Warning = null);
+
+// DailyAllowance is null when no month in the window has a paid payroll, or when RatesOverridden:
+// the payroll settings override both SSS rates, so the salary credit can't be worked back.
+public record SuggestedAllowanceDto(decimal? DailyAllowance, int MonthsFound, DateOnly WindowFrom, DateOnly WindowTo,
+    bool RatesOverridden = false);
+
+public record SetAllowanceRequest(decimal DailyAllowance);
+public record ReimburseRequest(DateOnly ReimbursedOn, decimal ReimbursedAmount, string? Note);
+public record DenyRequest(string? Note);
+public record VoidRequest(string? Note);
+public record RelinkRequest(Guid LeaveRequestId);
+public record NotQualifiedRequest(string? Note);
+public record MaternityClaimsSummaryDto(IReadOnlyList<MaternityClaimDto> Claims, decimal Outstanding);
+public record EligibleMaternityLeaveDto(Guid LeaveRequestId, Guid EmployeeId, string EmployeeName,
+    DateOnly StartDate, DateOnly EndDate, decimal Days);
+
+// Payroll settings - a copy of PeopleCore.Application.Payroll.DTOs.PayrollSettingsDto, field by
+// field and in the same order, with no defaults: the PUT replaces the whole record, so every caller
+// sends back every rate it read.
+public record PayrollSettingsDto(
+    Guid CompanyId,
+    decimal PhilHealthRate,
+    decimal PhilHealthMinShare,
+    decimal PhilHealthMaxShare,
+    decimal PagIbigEmployeeRate,
+    decimal PagIbigLowEmployeeRate,
+    decimal PagIbigLowRateThreshold,
+    decimal PagIbigEmployerRate,
+    decimal PagIbigMaxFundSalary,
+    decimal DailyRateFactor,
+    decimal? SSSEmployeeRate,
+    decimal? SSSEmployerRate,
+    bool ExemptFromMaternityDifferential);
 
 public record EmployeeCompensationDto(
     Guid Id,

@@ -78,11 +78,18 @@ public class PayslipService : IPayslipService
     /// </summary>
     public async Task<byte[]?> GenerateForSelfServiceAsync(Guid runId, Guid employeeId, CancellationToken ct = default)
     {
-        var run = await _runService.GetAsync(runId, ct);
+        // Read once, and without the run's maternity warnings: they are HR's to act on, not part of a
+        // payslip, and building them costs queries on every download.
+        var run = await _runService.GetForPayslipAsync(runId, ct);
         if (run is null || !IsApprovedOrPaid(run.Status))
             return null;
 
-        return await GenerateAsync(runId, employeeId, ct);
+        var employee = run.Employees.FirstOrDefault(e => e.EmployeeId == employeeId);
+        if (employee is null)
+            return null;
+
+        var company = await GetCompanyAsync(ct);
+        return _renderer.Render(run, employee, company);
     }
 
     public async Task<IReadOnlyList<MyPayslipSummaryDto>> GetMyPayslipsAsync(Guid employeeId, CancellationToken ct = default)

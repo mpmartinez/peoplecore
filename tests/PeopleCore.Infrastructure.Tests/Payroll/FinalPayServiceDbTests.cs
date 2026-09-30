@@ -30,7 +30,8 @@ public class FinalPayServiceDbTests : DatabaseTestBase
 
     private static readonly DateOnly LastDay = new(2026, 3, 13);
 
-    private static FinalPayService Service(AppDbContext context)
+    private static FinalPayService Service(AppDbContext context,
+        PeopleCore.Application.Payroll.Maternity.IMaternityPayCalculator? maternity = null)
     {
         // No shift assigned (Monday to Friday) and no attendance - the rest is real.
         var shifts = new Mock<IShiftService>();
@@ -49,7 +50,7 @@ public class FinalPayServiceDbTests : DatabaseTestBase
             attendance.Object, new PayrollSettingsRepository(context),
             new Bir2316Service(runs, new EmployeeRepository(context), new CompanyRepository(context),
                                new Bir2316InputsRepository(context)),
-            new PayrollComputationService(), TimeProvider.System);
+            new PayrollComputationService(), TimeProvider.System, maternity);
     }
 
     private async Task<Separation> SeedAsync()
@@ -241,6 +242,75 @@ public class FinalPayServiceDbTests : DatabaseTestBase
 
         await using var check = NewContext();
         (await new LeaveBalanceRepository(check).GetByEmployeeAsync(seeded.EmployeeId, 2027)).Should().BeEmpty();
+    }
+
+    private static PeopleCore.Application.Payroll.Maternity.MaternityPayCalculator Maternity(AppDbContext context) => new(
+        new LeaveRequestRepository(context), new MaternityClaimRepository(context), new PayrollRunRepository(context),
+        new EmployeeRepository(context));
+
+    [Fact]
+    public async Task AFinalPayAdvancingTheMaternityBenefit_OffsetsItsPeriod_AndMarkPaidSettlesTheClaimWithTheRest()
+    {
+        var seeded = await SeedAsync();
+        // Maria's approved maternity leave from Mar 3 (105 days) and her claim at 666.67 a day.
+        var type = new LeaveType { Name = "Maternity Leave", Code = "ML", MaxDaysPerYear = 105m, IsMaternity = true, IsPaid = true };
+        Context.LeaveTypes.Add(type);
+        var leave = new LeaveRequest
+        {
+            EmployeeId = seeded.EmployeeId, LeaveTypeId = type.Id, StartDate = new DateOnly(2026, 3, 3),
+            EndDate = new DateOnly(2026, 6, 15), TotalDays = 105m, Status = LeaveStatus.Approved
+        };
+        Context.LeaveRequests.Add(leave);
+        var claim = new MaternityClaim
+        {
+            EmployeeId = seeded.EmployeeId, LeaveRequestId = leave.Id, Days = 105m, DailyAllowance = 666.67m,
+            Benefit = 70_000.35m, Status = MaternityClaimStatus.Draft
+        };
+        Context.MaternityClaims.Add(claim);
+        await Context.SaveChangesAsync();
+
+        FinalPayService WithMaternity(AppDbContext context) => Service(context, Maternity(context));
+
+        // Mar 1-13: Mar 3-13 is 11 of 13 days. 15,600 x 11 / 13 = 13,200.00 for them; SSS covers
+        // 666.67 x 11 = 7,333.37; differential 5,866.63; regular pay 8,266.63. Net as the unit
+        // test works it out: 270,497.53 gross less 3,862.50 = 266,635.03.
+        FinalPaySummaryDto summary;
+        await using (var context = NewContext())
+            summary = await WithMaternity(context).CreateAsync(seeded.Id,
+                new FinalPayRequest(new DateOnly(2026, 3, 31), null, null, null, null, [], AdvanceMaternityBenefit: true));
+        summary.MaternityBenefitAdvance.Should().Be(70_000.35m);
+        summary.MaternityBenefitOffset.Should().Be(7_333.37m);
+        summary.MaternityDifferential.Should().Be(5_866.63m);
+        summary.NetPay.Should().Be(266_635.03m);
+
+        await using (var context = NewContext())
+        {
+            var item = await context.Set<SeparationClearanceItem>().SingleAsync(i => i.SeparationId == seeded.Id);
+            item.ClearedAt = DateTime.UtcNow;
+            item.ClearedBy = "hr@company.test";
+            await context.SaveChangesAsync();
+        }
+
+        PayrollRunService Runs(AppDbContext context) => new(
+            new PayrollRunRepository(context), new EmployeeCompensationRepository(context), new EmployeeAllowanceRepository(context),
+            new EmployeeLoanRepository(context), new PayrollSettingsRepository(context),
+            new PayrollComputationService(), Mock.Of<IPayrollAttendanceBridge>(),
+            new EmployeeRepository(context), new SeparationRepository(context),
+            NullLogger<PayrollRunService>.Instance, WithMaternity(context), maternityPay: Maternity(context));
+
+        await using (var context = NewContext())
+            await Runs(context).ApproveAsync(summary.RunId);
+        await using (var context = NewContext())
+            await Runs(context).MarkPaidAsync(summary.RunId);
+
+        // One save: the run Paid, the leave drawn down and the claim Advanced on the final pay.
+        await using var reader = NewContext();
+        (await reader.PayrollRuns.SingleAsync(r => r.Id == summary.RunId)).Status.Should().Be(PayrollRunStatus.Paid);
+        (await new LeaveBalanceRepository(reader).GetByEmployeeAsync(seeded.EmployeeId, 2026)).Single().UsedDays.Should().Be(5m);
+        var settled = await reader.MaternityClaims.SingleAsync(c => c.Id == claim.Id);
+        settled.Status.Should().Be(MaternityClaimStatus.Advanced);
+        settled.AdvanceRunId.Should().Be(summary.RunId);
+        settled.AdvancedAt.Should().Be(new DateOnly(2026, 3, 31));
     }
 
     private static PayrollRunService PayrollRuns(AppDbContext context) => new(

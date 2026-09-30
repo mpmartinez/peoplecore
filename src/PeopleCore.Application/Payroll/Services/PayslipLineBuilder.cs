@@ -17,15 +17,21 @@ public static class PayslipLineBuilder
 {
     public static List<PayrollEarningLineDto> Earnings(PayrollRunEmployeeDto e)
     {
-        // RegularPay is already net of absences and tardiness, so the basic figure is restored
-        // and the reductions shown beneath it. Presenting them as deductions instead would
-        // double-count: they are not part of TotalDeductions.
-        decimal basicForPeriod = e.RegularPay + e.AbsenceDeduction + e.TardinessDeduction;
+        // RegularPay is already net of absences, tardiness and the days SSS maternity covers, so
+        // the basic figure is restored and the reductions shown beneath it. Presenting them as
+        // deductions instead would double-count: they are not part of TotalDeductions. The
+        // maternity salary differential is in RegularPay too, but it is non-taxable (RMC 105-2019),
+        // so it is shown as its own earning and the basic net of it.
+        decimal basicForPeriod = e.RegularPay + e.AbsenceDeduction + e.TardinessDeduction + e.MaternityBenefitOffset
+                                 - e.MaternityDifferential;
 
         var lines = new List<PayrollEarningLineDto> { new("Basic Pay", basicForPeriod) };
 
         if (e.AbsenceDeduction > 0) lines.Add(new("Less: Absences", -e.AbsenceDeduction));
         if (e.TardinessDeduction > 0) lines.Add(new("Less: Tardiness / Undertime", -e.TardinessDeduction));
+        if (e.MaternityBenefitOffset > 0) lines.Add(new("Less: covered by SSS maternity benefit", -e.MaternityBenefitOffset));
+        if (e.MaternityDifferential > 0)
+            lines.Add(new("Maternity salary differential (non-taxable)", e.MaternityDifferential, IsTaxable: false));
         if (e.OvertimePay > 0) lines.Add(new("Overtime Pay", e.OvertimePay));
         if (e.HolidayPay > 0) lines.Add(new("Holiday / Rest Day Premium", e.HolidayPay));
         if (e.NightDiffPay > 0) lines.Add(new("Night Shift Differential", e.NightDiffPay));
@@ -46,6 +52,10 @@ public static class PayslipLineBuilder
         if (e.SeparationPay > 0) lines.Add(new("Separation Pay", e.SeparationPay, IsTaxable: separationAndRetirementTaxable));
         if (e.RetirementPay > 0) lines.Add(new("Retirement Pay", e.RetirementPay, IsTaxable: separationAndRetirementTaxable));
 
+        // The SSS maternity benefit advanced ahead of reimbursement: the SSS benefit, tax-free.
+        if (e.MaternityBenefitAdvance > 0)
+            lines.Add(new("SSS maternity benefit (advance)", e.MaternityBenefitAdvance, IsTaxable: false));
+
         return lines;
     }
 
@@ -61,7 +71,8 @@ public static class PayslipLineBuilder
     /// <see cref="PayrollRunEmployeeDto.TotalDeductions"/> nets a refund in, so it is added back
     /// here. Never negative. The stored figures are untouched.
     /// </summary>
-    public static decimal DeductionsTotal(PayrollRunEmployeeDto e) => e.TotalDeductions + TaxRefund(e);
+    public static decimal DeductionsTotal(PayrollRunEmployeeDto e)
+        => e.TotalDeductions + TaxRefund(e) - e.ContributionsDeferred + e.DeferredContributionsCollected;
 
     public static List<PayrollDeductionLineDto> Deductions(PayrollRunEmployeeDto e)
     {
@@ -77,6 +88,11 @@ public static class PayslipLineBuilder
 
         if (e.LoanDeductions > 0) lines.Add(new("Loan Deduction", e.LoanDeductions));
         if (e.OtherDeductions > 0) lines.Add(new("Other Deductions", e.OtherDeductions));
+        // While maternity leave is covered by SSS the shares are deducted in full above, but what
+        // the period's pay couldn't cover is deferred - shown here as taken back - and collected
+        // on a later payslip.
+        if (e.ContributionsDeferred > 0) lines.Add(new("Contributions deferred (collected later)", -e.ContributionsDeferred));
+        if (e.DeferredContributionsCollected > 0) lines.Add(new("Deferred contributions collected", e.DeferredContributionsCollected));
 
         lines.Add(new("SSS (Employer)", e.SSSEmployer, IsEmployer: true));
         lines.Add(new("PhilHealth (Employer)", e.PhilHealthEmployer, IsEmployer: true));

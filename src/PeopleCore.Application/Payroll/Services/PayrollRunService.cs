@@ -5,6 +5,7 @@ using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Payroll.DTOs;
 using PeopleCore.Application.Payroll.FinalPay;
 using PeopleCore.Application.Payroll.Interfaces;
+using PeopleCore.Application.Payroll.Maternity;
 using PeopleCore.Application.Payroll.Validation;
 using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Enums;
@@ -28,6 +29,7 @@ public class PayrollRunService : IPayrollRunService
     private readonly IFinalPayService? _finalPay;
     private readonly IYearEndLeaveConversion? _yearEndLeave;
     private readonly TimeProvider _clock;
+    private readonly IMaternityPayCalculator? _maternityPay;
 
     /// <param name="finalPay">
     /// Recomputes final-pay runs, which are built from a separation rather than from a list of
@@ -44,6 +46,12 @@ public class PayrollRunService : IPayrollRunService
     /// and on the leave balances Mark Paid draws down, as final pay stamps them. Defaults to the
     /// system clock.
     /// </param>
+    /// <param name="maternityPay">
+    /// Works out each employee's maternity advance and offset on a regular run, the run's maternity
+    /// warnings, and the claims Mark Paid settles. Optional so callers that never see maternity pay
+    /// needn't supply one: without it a run has no maternity figures or warnings, and advancing a
+    /// benefit is refused.
+    /// </param>
     public PayrollRunService(
         IPayrollRunRepository runRepo,
         IEmployeeCompensationRepository compensationRepo,
@@ -57,7 +65,8 @@ public class PayrollRunService : IPayrollRunService
         ILogger<PayrollRunService> logger,
         IFinalPayService? finalPay = null,
         IYearEndLeaveConversion? yearEndLeave = null,
-        TimeProvider? clock = null)
+        TimeProvider? clock = null,
+        IMaternityPayCalculator? maternityPay = null)
     {
         _runRepo = runRepo;
         _compensationRepo = compensationRepo;
@@ -72,6 +81,7 @@ public class PayrollRunService : IPayrollRunService
         _finalPay = finalPay;
         _yearEndLeave = yearEndLeave;
         _clock = clock ?? TimeProvider.System;
+        _maternityPay = maternityPay;
     }
 
     public async Task<PayrollRunDto> CreateAsync(CreatePayrollRunRequest request, CancellationToken ct = default)
@@ -113,7 +123,7 @@ public class PayrollRunService : IPayrollRunService
         var saved = await _runRepo.GetWithEntriesAsync(run.Id, ct)
             ?? throw new InvalidOperationException($"Payroll run {run.Id} was not found immediately after being saved.");
 
-        return ToDto(saved);
+        return await ToDtoAsync(saved, ct);
     }
 
     public async Task ComputeAsync(Guid runId, CancellationToken ct = default)
@@ -131,11 +141,17 @@ public class PayrollRunService : IPayrollRunService
         // request filed, rejected or cancelled), Mark Paid then refuses it, and a recompute - back
         // to Draft, to be approved again - is the way to pay it. So is one that includes the 13th
         // month: another run can pay some of it after approval, which Mark Paid refuses the same way.
+        // And so is one whose deferred maternity contributions another run's payment changed since
+        // it was computed, or whose maternity figures its claims no longer give (her leave cancelled,
+        // the allowance or the claim's status changed, the exemption switched) - both of which Mark
+        // Paid refuses too.
         if (run.RunType == PayrollRunType.FinalPay && run.Status == PayrollRunStatus.Paid)
             throw new DomainException("A paid final pay can't be recomputed.");
         if (run.RunType != PayrollRunType.FinalPay
             && (run.Status == PayrollRunStatus.Paid
-                || (run.Status == PayrollRunStatus.Approved && !run.IncludesLeaveConversion && !IncludesThirteenthMonth(run))))
+                || (run.Status == PayrollRunStatus.Approved && !run.IncludesLeaveConversion && !IncludesThirteenthMonth(run)
+                    && await EntryWithStaleDeferredContributionsAsync(run, ct) is null
+                    && await EntryWithStaleMaternityAsync(run, ct) is null)))
             throw new DomainException("Only draft or for-approval payroll runs can be recomputed.");
 
         if (run.Employees.Count == 0)
@@ -189,7 +205,7 @@ public class PayrollRunService : IPayrollRunService
 
         var saved = await _runRepo.GetWithEntriesAsync(run.Id, ct)
             ?? throw new InvalidOperationException($"Payroll run {run.Id} was not found immediately after being saved.");
-        return ToDto(saved);
+        return await ToDtoAsync(saved, ct);
     }
 
     public async Task<PayrollRunDto> SetThirteenthMonthAsync(Guid runId, bool include, CancellationToken ct = default)
@@ -218,7 +234,7 @@ public class PayrollRunService : IPayrollRunService
 
         var saved = await _runRepo.GetWithEntriesAsync(run.Id, ct)
             ?? throw new InvalidOperationException($"Payroll run {run.Id} was not found immediately after being saved.");
-        return ToDto(saved);
+        return await ToDtoAsync(saved, ct);
     }
 
     /// <summary>
@@ -243,7 +259,7 @@ public class PayrollRunService : IPayrollRunService
         var employeeInputs = run.Employees
             .Select(e => new PayrollRunEmployeeInput(
                 e.EmployeeId, e.DaysWorked, OvertimeHours: null, HolidayDays: null,
-                includeThirteenthMonth ?? e.IncludeThirteenthMonth))
+                includeThirteenthMonth ?? e.IncludeThirteenthMonth, e.AdvanceMaternityBenefit))
             .ToList();
 
         var snapshots = new Dictionary<Guid, PayrollAttendanceInput>();
@@ -285,6 +301,17 @@ public class PayrollRunService : IPayrollRunService
         // computed is caught before anyone approves figures that can't be paid.
         if (run.RunType == PayrollRunType.Regular && run.IncludesLeaveConversion)
             await YearEndLeavePaidOutAsync(run, ct);
+        // Likewise a maternity claim the run advances, while a recompute can still put it right: an
+        // approved regular run can't be recomputed. A final pay's maternity is checked the same way.
+        if (_maternityPay is not null)
+        {
+            bool exempt = (await _settingsRepo.GetDefaultAsync(ct))?.ExemptFromMaternityDifferential ?? false;
+            // Maternity days no claim with an allowance covers were paid as ordinary, taxable salary
+            // with nothing netted; they can't be approved that way unless the employer is exempt.
+            await _maternityPay.EnsureClaimsSetUpAsync(run, exempt, ct);
+            // The advances and every offset must still be what the claims give now.
+            await _maternityPay.EnsureAdvancesCurrentAsync(run, exempt, ct);
+        }
 
         run.Status = PayrollRunStatus.Approved;
         run.UpdatedAt = _clock.GetUtcNow().UtcDateTime;
@@ -318,6 +345,14 @@ public class PayrollRunService : IPayrollRunService
             if (run.IncludesLeaveConversion)
                 leavePaidOut = await YearEndLeavePaidOutAsync(run, ct);
         }
+        // Contributions deferred while maternity leave was covered by SSS: what each entry collects
+        // must still match what the employee has outstanding.
+        await EnsureDeferredContributionsCurrentAsync(run, ct);
+
+        // Every check has passed, so only now are the claims this run advances - a regular run's or a
+        // final pay's - marked Advanced, paid on this run's pay date: a refusal above leaves nothing
+        // modified. Discarding the run instead never gets here, so its claims stay Draft.
+        var maternityClaims = await SettleMaternityAdvancesAsync(run, ct);
 
         var loanIds = run.Employees
             .SelectMany(e => e.LoanDeductionLines)
@@ -348,9 +383,9 @@ public class PayrollRunService : IPayrollRunService
         run.Status = PayrollRunStatus.Paid;
         run.UpdatedAt = now;
 
-        // The run's status, the loans and the leave balances go out in one save, so they commit
-        // together or not at all.
-        await _runRepo.SavePaidAsync(run, loans, balances, ct);
+        // The run's status, the loans, the leave balances and the maternity claims go out in one
+        // save, so they commit together or not at all.
+        await _runRepo.SavePaidAsync(run, loans, balances, maternityClaims, ct);
     }
 
     public async Task<PayrollRunDto> RemoveEmployeeAsync(Guid runId, Guid employeeId, CancellationToken ct = default)
@@ -388,7 +423,7 @@ public class PayrollRunService : IPayrollRunService
         run.UpdatedAt = _clock.GetUtcNow().UtcDateTime;
         await _runRepo.RemoveEntryAsync(run, entry, ct);
 
-        return ToDto(run);
+        return await ToDtoAsync(run, ct);
     }
 
     public async Task DiscardAsync(Guid runId, CancellationToken ct = default)
@@ -403,15 +438,22 @@ public class PayrollRunService : IPayrollRunService
         if (run.Status == PayrollRunStatus.Paid)
             throw new DomainException("A paid payroll run can't be discarded.");
 
-        // Nothing but the run changes: loans and leave balances only move at Mark Paid, which this
-        // run never reached. Its entries, their loan deduction lines and premium days go with it.
+        // Nothing but the run changes: loans, leave balances and maternity claims only move at Mark
+        // Paid, which this run never reached - a claim it would have advanced stays Draft, free for
+        // another run to advance. Its entries, their loan deduction lines and premium days go with it.
         await _runRepo.DeleteAsync(run, ct);
     }
 
     public async Task<PayrollRunDto?> GetAsync(Guid runId, CancellationToken ct = default)
     {
         var run = await _runRepo.GetWithEntriesAsync(runId, ct);
-        return run is null ? null : ToDto(run);
+        return run is null ? null : await ToDtoAsync(run, ct);
+    }
+
+    public async Task<PayrollRunDto?> GetForPayslipAsync(Guid runId, CancellationToken ct = default)
+    {
+        var run = await _runRepo.GetWithEntriesAsync(runId, ct);
+        return run is null ? null : await ToDtoAsync(run, ct, withWarnings: false);
     }
 
     public async Task<PagedResult<PayrollRunSummaryDto>> GetPagedAsync(
@@ -540,6 +582,77 @@ public class PayrollRunService : IPayrollRunService
             : string.Create(CultureInfo.InvariantCulture,
                 $"The {year} 13th month must be paid by Dec 24, {year}; leave it out of this payroll and include it on one paid in {year}."));
     }
+
+    /// <summary>
+    /// Refuses a run whose collection of deferred contributions no longer holds: another run was
+    /// paid since this one was computed, so what the employee has outstanding changed, and the entry
+    /// would collect too much (what that run already collected) or too little (what it deferred).
+    /// Changes nothing. See <see cref="EntryWithStaleDeferredContributionsAsync"/>.
+    /// </summary>
+    private async Task EnsureDeferredContributionsCurrentAsync(PayrollRun run, CancellationToken ct)
+    {
+        var stale = await EntryWithStaleDeferredContributionsAsync(run, ct);
+        if (stale is null)
+            return;
+        var name = stale.Employee?.FullName
+            ?? (await _employeeRepo.GetByIdAsync(stale.EmployeeId, ct))?.FullName
+            ?? stale.EmployeeId.ToString();
+        throw new DomainException(
+            $"{name}'s deferred contributions have changed since this payroll was computed; recompute it before paying.");
+    }
+
+    /// <summary>
+    /// The first entry whose collection of deferred contributions no longer matches what the
+    /// employee has outstanding now, or null. Nothing extra is stored for this: an entry collects
+    /// <see cref="PayrollComputationService.DeferredContributionsToCollect"/> of what was outstanding
+    /// when it was computed and the cash it had left, and that cash is still on the entry (its net
+    /// pay plus what it collected). So the collection is worked out again against the outstanding
+    /// amount now; when it differs, a Paid run has deferred or collected some since. A change that
+    /// wouldn't alter the collection - the entry had no cash for more anyway - isn't one.
+    /// </summary>
+    private async Task<PayrollRunEmployee?> EntryWithStaleDeferredContributionsAsync(PayrollRun run, CancellationToken ct)
+    {
+        if (run.Employees.Count == 0)
+            return null;
+        var outstanding = await DeferredContributionsOutstandingAsync(run.Employees.Select(e => e.EmployeeId).ToList(), ct);
+        return run.Employees.FirstOrDefault(e =>
+            PayrollComputationService.DeferredContributionsToCollect(
+                outstanding.GetValueOrDefault(e.EmployeeId), e.NetPay + e.DeferredContributionsCollected)
+            != e.DeferredContributionsCollected);
+    }
+
+    /// <summary>
+    /// The first entry whose maternity offset, differential or advance the claims no longer give
+    /// (see <see cref="IMaternityPayCalculator.EntryNotMatchingClaimsAsync"/>), or null.
+    /// </summary>
+    private async Task<PayrollRunEmployee?> EntryWithStaleMaternityAsync(PayrollRun run, CancellationToken ct)
+    {
+        if (_maternityPay is null)
+            return null;
+        bool exempt = (await _settingsRepo.GetDefaultAsync(ct))?.ExemptFromMaternityDifferential ?? false;
+        return await _maternityPay.EntryNotMatchingClaimsAsync(run, exempt, ct);
+    }
+
+    private async Task<Dictionary<Guid, decimal>> DeferredContributionsOutstandingAsync(IReadOnlyCollection<Guid> employeeIds,
+        CancellationToken ct)
+        => (await _runRepo.GetDeferredContributionsOutstandingAsync(employeeIds, ct) ?? [])
+            .GroupBy(o => o.EmployeeId)
+            .ToDictionary(g => g.Key, g => g.Sum(o => o.Amount));
+
+    private async Task<IReadOnlyList<MaternityClaim>> SettleMaternityAdvancesAsync(PayrollRun run, CancellationToken ct)
+    {
+        if (_maternityPay is not null)
+        {
+            bool exempt = (await _settingsRepo.GetDefaultAsync(ct))?.ExemptFromMaternityDifferential ?? false;
+            return await _maternityPay.SettleAdvancesAsync(run, exempt, ct);
+        }
+        if (run.Employees.Any(e => e.AdvanceMaternityBenefit && e.MaternityBenefitAdvance > 0m))
+            throw new InvalidOperationException(NoMaternityPay);
+        return [];
+    }
+
+    private const string NoMaternityPay =
+        "PayrollRunService was built without an IMaternityPayCalculator, so it can't advance a maternity benefit.";
 
     private IYearEndLeaveConversion YearEndLeave() => _yearEndLeave ?? throw new InvalidOperationException(
         "PayrollRunService was built without an IYearEndLeaveConversion, so it can't convert year-end leave.");
@@ -719,6 +832,22 @@ public class PayrollRunService : IPayrollRunService
             }
         }
 
+        // Maternity pay (RA 11210), on a regular run: each employee's advance of the SSS benefit and
+        // the part of regular pay SSS covers, read in one go for the whole run. A final pay has none.
+        bool exempt = settings?.ExemptFromMaternityDifferential ?? false;
+        MaternityRun? maternity = null;
+        if (run.RunType == PayrollRunType.Regular)
+        {
+            if (_maternityPay is not null)
+                maternity = await _maternityPay.LoadAsync(run, employeeIds, ct);
+            else if (employees.Any(e => e.AdvanceMaternityBenefit))
+                throw new InvalidOperationException(NoMaternityPay);
+        }
+
+        // Contributions deferred on the employees' earlier Paid entries (a period SSS maternity
+        // covered), which this run collects as far as each entry's pay allows.
+        var deferredOutstanding = await DeferredContributionsOutstandingAsync(employeeIds, ct);
+
         var entries = new List<PayrollRunEmployee>();
         foreach (var employee in employees)
         {
@@ -756,7 +885,7 @@ public class PayrollRunService : IPayrollRunService
             // overtimeHours/holidayDays are left at their defaults: Compute reads them only when
             // attendance is null, and any caller override has already been folded into the
             // attendance record above so that the snapshot records what was actually paid.
-            var entry = _computationService.Compute(
+            PayrollRunEmployee ComputeWith(MaternityInput? maternityInput) => _computationService.Compute(
                 compensation, run,
                 daysWorked: employee.DaysWorked ?? defaultDaysInPeriod,
                 includeThirteenthMonth: employee.IncludeThirteenthMonth,
@@ -767,7 +896,22 @@ public class PayrollRunService : IPayrollRunService
                 isThirteenthMonthEligible: !ineligible.Contains(employee.EmployeeId),
                 otherBenefitsExemptUsedEarlierInYear:
                     earlierInYear.GetValueOrDefault(employee.EmployeeId).ExemptUsed,
-                leaveConversion: leaveConversion);
+                leaveConversion: leaveConversion,
+                maternity: maternityInput,
+                deferredContributionsOutstanding: deferredOutstanding.GetValueOrDefault(employee.EmployeeId));
+
+            // The offset is worked out against the regular pay after absences and tardiness and
+            // before the offset itself - the entry's RegularPay without a maternity input, since the
+            // engine strikes it there and the input changes nothing before it. So the entry is
+            // computed without the input, then again with it when there is one: the engine stays
+            // the one place regular pay is worked out.
+            var entry = ComputeWith(null);
+            var maternityPay = maternity?.For(employee.EmployeeId, employee.AdvanceMaternityBenefit, entry.RegularPay, exempt)
+                ?? MaternityPay.None;
+            if (maternityPay.Advance > 0m || maternityPay.Offset > 0m || maternityPay.Differential > 0m)
+                entry = ComputeWith(new MaternityInput(maternityPay.Advance, maternityPay.Offset, maternityPay.Differential));
+            entry.AdvanceMaternityBenefit = employee.AdvanceMaternityBenefit;
+            entry.MaternityClaimId = maternityPay.ClaimId;
 
             if (leaveConversion is not null && entry.DailyRate != dailyRate)
                 throw new InvalidOperationException(
@@ -901,14 +1045,20 @@ public class PayrollRunService : IPayrollRunService
             SSSEmployerRate = settings.SSSEmployerRate
         };
 
-    private static PayrollRunDto ToDto(PayrollRun run) => new(
+    /// <summary>
+    /// The run as the API returns it. Its maternity warnings are worked out now rather than stored:
+    /// a claim set up or advanced since the run was computed changes what HR still has to do. A
+    /// payslip goes without them (<paramref name="withWarnings"/> false), and without their queries.
+    /// </summary>
+    private async Task<PayrollRunDto> ToDtoAsync(PayrollRun run, CancellationToken ct, bool withWarnings = true) => new(
         run.Id, run.RunNumber, run.PeriodLabel,
         run.PeriodStart, run.PeriodEnd, run.PayDate,
         run.Frequency, run.Status,
         run.EmployeeCount, run.TotalGrossPay, run.TotalDeductions, run.TotalNetPay,
         run.CreatedAt, run.AttendancePeriodId, run.EmployeesMissingAttendance,
         run.Employees.Select(ToEmployeeDto).ToList(), run.RunType, run.IncludesLeaveConversion,
-        IncludesThirteenthMonth(run));
+        IncludesThirteenthMonth(run),
+        _maternityPay is null || !withWarnings ? [] : await _maternityPay.WarningsAsync(run, ct));
 
     private static PayrollRunSummaryDto ToSummaryDto(PayrollRun run) => new(
         run.Id, run.RunNumber, run.PeriodLabel,
@@ -930,5 +1080,7 @@ public class PayrollRunService : IPayrollRunService
         e.AbsenceDeduction, e.TardinessDeduction,
         e.SSSEmployee, e.SSSEmployer, e.PhilHealthEmployee, e.PhilHealthEmployer,
         e.PagIbigEmployee, e.PagIbigEmployer, e.WithholdingTax, e.LoanDeductions, e.OtherDeductions,
-        e.LeaveConversionPay, e.LeaveConversionNonTaxable, e.SeparationPay, e.RetirementPay, e.FinalPayNonTaxable);
+        e.LeaveConversionPay, e.LeaveConversionNonTaxable, e.SeparationPay, e.RetirementPay, e.FinalPayNonTaxable,
+        e.MaternityBenefitAdvance, e.MaternityBenefitOffset, e.MaternityDifferential,
+        e.ContributionsDeferred, e.DeferredContributionsCollected);
 }

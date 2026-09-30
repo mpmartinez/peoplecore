@@ -38,13 +38,19 @@ public record SetThirteenthMonthRequest(bool Include);
 /// days respectively. Overriding half of a split the caller cannot see would otherwise leave
 /// the entry paying more hours or days than the caller asked for.
 /// </para>
+/// <para>
+/// <see cref="AdvanceMaternityBenefit"/> advances the employee's SSS maternity benefit on this run:
+/// the benefit of their Draft claim with an allowance, once per claim. It is stored on the entry, so
+/// a recompute keeps it.
+/// </para>
 /// </summary>
 public record PayrollRunEmployeeInput(
     Guid EmployeeId,
     decimal? DaysWorked = null,
     decimal? OvertimeHours = null,
     decimal? HolidayDays = null,
-    bool IncludeThirteenthMonth = false);
+    bool IncludeThirteenthMonth = false,
+    bool AdvanceMaternityBenefit = false);
 
 /// <summary>
 /// One employee's line in a run. Deliberately carries only what this run computed - not the
@@ -72,8 +78,8 @@ public record PayrollRunEmployeeDto(
     // Already netted out of RegularPay above - a figure this run computed, not compensation
     // (see PayrollRunEmployee's remarks), which is why these two are here and BasicSalary,
     // PayFrequency, TaxCode and Dependents are not. PayslipLineBuilder reconstructs the basic
-    // figure from RegularPay + AbsenceDeduction + TardinessDeduction and must not have these
-    // added again anywhere they touch TotalDeductions.
+    // figure from RegularPay + AbsenceDeduction + TardinessDeduction + MaternityBenefitOffset and
+    // must not have these added again anywhere they touch TotalDeductions.
     decimal AbsenceDeduction,
     decimal TardinessDeduction,
     decimal SSSEmployee,
@@ -94,7 +100,20 @@ public record PayrollRunEmployeeDto(
     decimal LeaveConversionNonTaxable = 0m,
     decimal SeparationPay = 0m,
     decimal RetirementPay = 0m,
-    decimal FinalPayNonTaxable = 0m);
+    decimal FinalPayNonTaxable = 0m,
+    // Maternity pay (RA 11210). The advance is in GrossPay (tax-free); the offset is already
+    // netted out of RegularPay, and PayslipLineBuilder restores it to the basic figure the way it
+    // restores AbsenceDeduction and TardinessDeduction.
+    decimal MaternityBenefitAdvance = 0m,
+    decimal MaternityBenefitOffset = 0m,
+    // The salary differential: the pay for the leave days the offset leaves. Still in RegularPay,
+    // but non-taxable (RMC 105-2019); PayslipLineBuilder shows it as its own earning.
+    decimal MaternityDifferential = 0m,
+    // Shares a maternity-covered period couldn't pay, deferred (they are in the three employee
+    // shares above and added back to NetPay), and earlier deferred shares this entry collects
+    // (taken from NetPay, not part of TotalDeductions). See PayslipLineBuilder.DeductionsTotal.
+    decimal ContributionsDeferred = 0m,
+    decimal DeferredContributionsCollected = 0m);
 
 public record PayrollRunDto(
     Guid Id,
@@ -116,7 +135,13 @@ public record PayrollRunDto(
     PayrollRunType RunType = PayrollRunType.Regular,
     bool IncludesLeaveConversion = false,
     // True when any entry includes the 13th month (PayrollRunEmployeeInput.IncludeThirteenthMonth).
-    bool IncludesThirteenthMonth = false);
+    bool IncludesThirteenthMonth = false,
+    // What HR still has to do before the run pays maternity right, worked out afresh on every load
+    // (see IMaternityPayCalculator.WarningsAsync). Null in the constructor reads as none.
+    IReadOnlyList<string>? Warnings = null)
+{
+    public IReadOnlyList<string> Warnings { get; init; } = Warnings ?? [];
+}
 
 /// <summary>
 /// A run as it appears in a list. Deliberately omits the Employees collection that

@@ -16,7 +16,7 @@ using Xunit;
 
 namespace PeopleCore.Application.Tests.Payroll;
 
-public class PayrollRunServiceTests
+public partial class PayrollRunServiceTests
 {
     private readonly Mock<IPayrollRunRepository> _runRepo = new();
     private readonly Mock<IEmployeeCompensationRepository> _compensationRepo = new();
@@ -1155,6 +1155,7 @@ public class PayrollRunServiceTests
         balance.UsedDays.Should().Be(5m);
         _runRepo.Verify(r => r.SavePaidAsync(run, It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
             It.Is<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(b => b.Single() == balance),
+            It.IsAny<IReadOnlyCollection<MaternityClaim>>(),
             It.IsAny<CancellationToken>()), Times.Once);
         _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -1172,6 +1173,7 @@ public class PayrollRunServiceTests
         run.Status.Should().Be(PayrollRunStatus.Approved);
         _runRepo.Verify(r => r.SavePaidAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
                                               It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+                                              It.IsAny<IReadOnlyCollection<MaternityClaim>>(),
                                               It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -1200,6 +1202,7 @@ public class PayrollRunServiceTests
         run.Status.Should().Be(PayrollRunStatus.Approved);
         _runRepo.Verify(r => r.SavePaidAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
                                               It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+                                              It.IsAny<IReadOnlyCollection<MaternityClaim>>(),
                                               It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -1212,7 +1215,7 @@ public class PayrollRunServiceTests
 
         run.Status.Should().Be(PayrollRunStatus.Paid);
         _runRepo.Verify(r => r.SavePaidAsync(run, It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
-            It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(), It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(), It.IsAny<IReadOnlyCollection<MaternityClaim>>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -1336,6 +1339,7 @@ public class PayrollRunServiceTests
         _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
         _runRepo.Verify(r => r.SavePaidAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
                                               It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+                                              It.IsAny<IReadOnlyCollection<MaternityClaim>>(),
                                               It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -1356,6 +1360,7 @@ public class PayrollRunServiceTests
         _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
         _runRepo.Verify(r => r.SavePaidAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
                                               It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+                                              It.IsAny<IReadOnlyCollection<MaternityClaim>>(),
                                               It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -1456,6 +1461,7 @@ public class PayrollRunServiceTests
         _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
         _runRepo.Verify(r => r.SavePaidAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
                                               It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+                                              It.IsAny<IReadOnlyCollection<MaternityClaim>>(),
                                               It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -1657,6 +1663,7 @@ public class PayrollRunServiceTests
         _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
         _runRepo.Verify(r => r.SavePaidAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
                                               It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+                                              It.IsAny<IReadOnlyCollection<MaternityClaim>>(),
                                               It.IsAny<CancellationToken>()), Times.Never);
         // Loans only change at Mark Paid, so a run that was never paid has nothing to give back.
         _loanRepo.VerifyNoOtherCalls();
@@ -1926,6 +1933,7 @@ public class PayrollRunServiceTests
         _runRepo.Verify(r => r.SavePaidAsync(run,
             It.Is<IReadOnlyCollection<EmployeeLoan>>(l => l.Single() == loan),
             It.Is<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(b => b.Single() == paidOut.Balance),
+            It.IsAny<IReadOnlyCollection<MaternityClaim>>(),
             It.IsAny<CancellationToken>()), Times.Once);
         _runRepo.Verify(r => r.UpdateAsync(It.IsAny<PayrollRun>(), It.IsAny<CancellationToken>()), Times.Never);
         _yearEnd.Verify(y => y.DaysAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -2011,6 +2019,7 @@ public class PayrollRunServiceTests
         balance.UsedDays.Should().Be(0m);
         _runRepo.Verify(r => r.SavePaidAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
                                               It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+                                              It.IsAny<IReadOnlyCollection<MaternityClaim>>(),
                                               It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -2869,6 +2878,7 @@ public class PayrollRunServiceTests
     private void VerifyNothingSavedAsPaid() =>
         _runRepo.Verify(r => r.SavePaidAsync(It.IsAny<PayrollRun>(), It.IsAny<IReadOnlyCollection<EmployeeLoan>>(),
                                               It.IsAny<IReadOnlyCollection<PeopleCore.Domain.Entities.Leave.LeaveBalance>>(),
+                                              It.IsAny<IReadOnlyCollection<MaternityClaim>>(),
                                               It.IsAny<CancellationToken>()), Times.Never);
 
     [Fact]

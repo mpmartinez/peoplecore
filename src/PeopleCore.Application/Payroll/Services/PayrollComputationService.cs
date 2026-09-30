@@ -182,13 +182,25 @@ public class PayrollComputationService
     /// before, and inconsistent inputs err toward withholding more, not less. It affects only the
     /// tax: the 13th month due still comes off <paramref name="thirteenthMonthPaidEarlierInYear"/>.
     /// </param>
+    /// <param name="maternity">
+    /// The SSS maternity benefit advanced on this entry and the part of regular pay the benefit
+    /// covers (RA 11210). The offset comes off regular pay before anything reads it; the advance
+    /// joins gross pay only. Null for an entry with neither.
+    /// </param>
+    /// <param name="deferredContributionsOutstanding">
+    /// The employee shares deferred on the employee's earlier Paid entries and not yet collected
+    /// (<see cref="PayrollRunEmployee.ContributionsDeferred"/> less
+    /// <see cref="PayrollRunEmployee.DeferredContributionsCollected"/>). This entry collects as much
+    /// of it as its cash left after its own deductions allows.
+    /// </param>
     public PayrollRunEmployee Compute(EmployeeCompensation compensation, PayrollRun run, decimal daysWorked = 0,
         decimal overtimeHours = 0, decimal holidayDays = 0, bool includeThirteenthMonth = false,
         ContributionRates? rates = null, PayrollAttendanceInput? attendance = null,
         decimal? dailyRateFactor = null, decimal thirteenthMonthPaidEarlierInYear = 0m,
         decimal basicEarnedEarlierInYear = 0m, bool isThirteenthMonthEligible = true,
         FinalPayExtras? finalPay = null, LeaveConversionInput? leaveConversion = null,
-        decimal otherBenefitsExemptUsedEarlierInYear = 0m)
+        decimal otherBenefitsExemptUsedEarlierInYear = 0m, MaternityInput? maternity = null,
+        decimal deferredContributionsOutstanding = 0m)
     {
         // One leave-conversion path: a final pay's leave becomes the same input a year-end
         // conversion passes, so the two are recorded and taxed identically.
@@ -223,6 +235,21 @@ public class PayrollComputationService
         decimal lostMinutes = (attendance?.LateMinutes ?? 0m) + (attendance?.UndertimeMinutes ?? 0m);
         decimal tardinessDeduction = Math.Round(hourlyRate * lostMinutes / 60m, 2);
         decimal regularPay = Math.Max(0m, basePeriodPay - absenceDeduction - tardinessDeduction);
+
+        // Maternity leave (RA 11210): the days SSS covers are paid by its benefit, not the salary,
+        // so the offset comes off regular pay here - before the withholding base, the 13th-month
+        // basis, gross pay and the loan budget read it - leaving the taxable salary differential.
+        // Callers cap it at regular pay already; the cap here is a guard. Contributions are
+        // untouched: they are struck from the monthly basic below, not from regular pay.
+        decimal maternityOffset = Math.Min(maternity?.Offset ?? 0m, regularPay);
+        regularPay -= maternityOffset;
+        // The pay for the maternity days the offset leaves - the salary differential - stays in
+        // regular pay (the 13th month counts it, and she is paid it) but is part of the maternity
+        // benefit, so it is kept out of the withholding base below (RMC 105-2019).
+        decimal maternityDifferential = Math.Min(maternity?.Differential ?? 0m, regularPay);
+        // The advance is the SSS benefit paid ahead of reimbursement, not compensation: it is
+        // recorded on the entry and joins GrossPay there, and nothing below reads it.
+        decimal maternityAdvance = maternity?.Advance ?? 0m;
 
         // Premiums, priced per kind of day from DolePremiumRates. Without attendance the caller's
         // overtime and holiday figures stand for ordinary overtime and regular holiday days.
@@ -327,14 +354,14 @@ public class PayrollComputationService
             finalPayTaxable = separationPay + retirementPay - finalPay.SeparationAndRetirementNonTaxable;
         }
 
-        // Gross taxable pay, the withholding base before contributions come off: regular pay,
-        // overtime, holiday and night premiums, taxable allowances and, on a final pay, the
-        // separation or retirement pay that isn't exempt. Non-taxable allowances, the 13th month
-        // and the leave beyond de minimis stay out (the last two are taxed only past their 90,000
-        // exemption, below). It is not the contribution base: SSS, PhilHealth and Pag-IBIG are
-        // computed on the monthly basic alone.
-        decimal grossTaxable = regularPay + overtimePay + holidayPay + nightDiffPay + taxableAllowances
-            + finalPayTaxable;
+        // Gross taxable pay, the withholding base before contributions come off: regular pay less
+        // the maternity salary differential, overtime, holiday and night premiums, taxable
+        // allowances and, on a final pay, the separation or retirement pay that isn't exempt.
+        // Non-taxable allowances, the 13th month and the leave beyond de minimis stay out (the last
+        // two are taxed only past their 90,000 exemption, below). It is not the contribution base:
+        // SSS, PhilHealth and Pag-IBIG are computed on the monthly basic alone.
+        decimal grossTaxable = regularPay - maternityDifferential + overtimePay + holidayPay + nightDiffPay
+            + taxableAllowances + finalPayTaxable;
 
         // Mandatory contributions based on monthly salary
         // The SSS schedule in force for the run: a regular run's as of its period start; a final
@@ -418,6 +445,8 @@ public class PayrollComputationService
             });
         }
 
+        // The maternity advance stays out of this budget: it is the SSS benefit held for the
+        // employee, not wages a loan or HR deduction may be collected from.
         // Statutory deductions must be remitted whatever the period looked like, so only the
         // discretionary ones give way when they would not fit. Clamping net pay itself would
         // record deductions that were never actually withheld, and the loan balances retired
@@ -452,7 +481,7 @@ public class PayrollComputationService
 
         decimal otherDeductions = Math.Min(customDeductions, Math.Max(0m, discretionaryBudget - loanDeductions));
 
-        return new PayrollRunEmployee
+        var entry = new PayrollRunEmployee
         {
             PayrollRunId = run.Id,
             EmployeeId = compensation.EmployeeId,
@@ -483,6 +512,9 @@ public class PayrollComputationService
             SeparationPay = separationPay,
             RetirementPay = retirementPay,
             FinalPayNonTaxable = finalPayNonTaxable,
+            MaternityBenefitAdvance = maternityAdvance,
+            MaternityBenefitOffset = maternityOffset,
+            MaternityDifferential = maternityDifferential,
             SSSEmployee = sssEmp,
             SSSEmployer = sssEmr,
             PhilHealthEmployee = phEmp,
@@ -504,7 +536,33 @@ public class PayrollComputationService
                 })
                 .ToList()
         };
+
+        // Contributions while maternity leave is covered by SSS. The shares stay on the entry in
+        // full - the employer remits them as usual - but a covered period may have too little pay
+        // for them. Rather than a negative net pay, the part its cash can't cover (gross less every
+        // other deduction) is deferred and collected later. Loans and HR's deductions still never
+        // come out of the advance; they gave way above.
+        if (maternityOffset > 0m)
+        {
+            decimal cashForShares = Math.Max(0m,
+                entry.GrossPay - entry.WithholdingTax - entry.LoanDeductions - entry.OtherDeductions);
+            entry.ContributionsDeferred = Math.Max(0m, sssEmp + phEmp + piEmp - cashForShares);
+        }
+
+        // Shares deferred on the employee's earlier Paid entries are collected from what this entry
+        // has left after its own deductions - the net pay so far, which counts the advance too.
+        entry.DeferredContributionsCollected = DeferredContributionsToCollect(deferredContributionsOutstanding, entry.NetPay);
+        return entry;
     }
+
+    /// <summary>
+    /// What an entry collects of the contributions deferred on the employee's earlier Paid entries:
+    /// the outstanding amount, never more than the cash the entry has left after its own deductions
+    /// (<paramref name="cashLeft"/>, the net pay before collecting), and never less than zero. Mark
+    /// Paid works it out again against what is outstanding then, to tell whether it has changed.
+    /// </summary>
+    public static decimal DeferredContributionsToCollect(decimal outstanding, decimal cashLeft)
+        => Math.Max(0m, Math.Min(outstanding, cashLeft));
 
     private static bool IsRestDay(WorkDayType day) => day is WorkDayType.RestDay
         or WorkDayType.SpecialNonWorkingOnRestDay or WorkDayType.DoubleSpecialNonWorkingOnRestDay

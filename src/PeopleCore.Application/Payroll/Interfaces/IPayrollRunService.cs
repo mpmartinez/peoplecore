@@ -74,6 +74,12 @@ public interface IPayrollRunService
 
     Task<PayrollRunDto?> GetAsync(Guid runId, CancellationToken ct = default);
 
+    /// <summary>
+    /// The run as <see cref="GetAsync"/> gives it, without the maternity warnings - HR's to act on,
+    /// and a few queries to build. For the employee's own payslip.
+    /// </summary>
+    Task<PayrollRunDto?> GetForPayslipAsync(Guid runId, CancellationToken ct = default);
+
     /// <summary>A page of runs, summarised without their per-employee entries.</summary>
     Task<PagedResult<PayrollRunSummaryDto>> GetPagedAsync(int page, int pageSize, CancellationToken ct = default);
 }

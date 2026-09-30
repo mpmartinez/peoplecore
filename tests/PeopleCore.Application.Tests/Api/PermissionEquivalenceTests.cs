@@ -160,6 +160,28 @@ public class PermissionEquivalenceTests
         ["FinalPayController.Get"] = [Permissions.PayrollManage],
         ["FinalPayController.Create"] = [Permissions.PayrollManage],
         ["FinalPayController.Update"] = [Permissions.PayrollManage],
+
+        // The SSS maternity benefit claims: listing, opening, the suggested allowance, setting it,
+        // reimbursement and denial, plus the pickers the claims page and the payroll create form use.
+        ["MaternityClaimsController.List"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.Eligible"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.Ready"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.Create"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.Suggestion"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.SetAllowance"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.Reimburse"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.Deny"] = [Permissions.PayrollManage],
+        // Voiding a draft claim, and moving a claim to the leave refiled after its own was cancelled.
+        ["MaternityClaimsController.Void"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.Relink"] = [Permissions.PayrollManage],
+        // Marking a claim not SSS-qualified (her leave days paid as salary), and reopening it.
+        ["MaternityClaimsController.MarkNotQualified"] = [Permissions.PayrollManage],
+        ["MaternityClaimsController.Reopen"] = [Permissions.PayrollManage],
+
+        // GET and PUT api/payroll-settings/default: the settings row payroll computes from, read and
+        // changed without naming its company - managing payroll settings, like the per-company pair.
+        ["PayrollSettingsController.GetDefault"] = [Permissions.PayrollManage],
+        ["PayrollSettingsController.UpdateDefault"] = [Permissions.PayrollManage],
     };
 
     private static IEnumerable<(Type Controller, MethodInfo Action)> Endpoints() =>

@@ -129,17 +129,105 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
     }
 
     public async Task SavePaidAsync(PayrollRun run, IReadOnlyCollection<EmployeeLoan> loans,
-        IReadOnlyCollection<Domain.Entities.Leave.LeaveBalance> leaveBalances, CancellationToken ct = default)
+        IReadOnlyCollection<Domain.Entities.Leave.LeaveBalance> leaveBalances,
+        IReadOnlyCollection<MaternityClaim> maternityClaims, CancellationToken ct = default)
     {
-        // Normally all three were loaded through this request's context and are tracked already;
+        // Normally all of them were loaded through this request's context and are tracked already;
         // any that weren't are attached as existing rows to update. One SaveChanges is one
-        // transaction, so the run can't be Paid without its loans retired and its leave used.
+        // transaction, so the run can't be Paid without its loans retired, its leave used and its
+        // maternity advances recorded.
         Attach(run);
         foreach (var loan in loans)
             Attach(loan);
         foreach (var balance in leaveBalances)
             Attach(balance);
+        foreach (var claim in maternityClaims)
+            Attach(claim);
         await Context.SaveChangesAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<MaternityAdvanceInRun>> GetMaternityAdvancesAsync(
+        IReadOnlyCollection<Guid> claimIds, Guid excludeRunId, CancellationToken ct = default)
+    {
+        var ids = claimIds.Distinct().ToList();
+        if (ids.Count == 0) return [];
+        return await Context.PayrollRunEmployees
+            .Where(e => e.MaternityClaimId != null && ids.Contains(e.MaternityClaimId.Value)
+                        && e.AdvanceMaternityBenefit
+                        && e.MaternityBenefitAdvance > 0m
+                        && e.PayrollRunId != excludeRunId)
+            .OrderBy(e => e.PayrollRun.PayDate)
+            .Select(e => new MaternityAdvanceInRun(e.MaternityClaimId!.Value, e.PayrollRun.RunNumber))
+            .ToListAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<DeferredContributionsOutstanding>> GetDeferredContributionsOutstandingAsync(
+        IReadOnlyCollection<Guid> employeeIds, CancellationToken ct = default)
+    {
+        var ids = employeeIds.Distinct().ToList();
+        if (ids.Count == 0) return [];
+        var sums = await Context.PayrollRunEmployees
+            .Where(e => ids.Contains(e.EmployeeId) && e.PayrollRun.Status == PayrollRunStatus.Paid
+                        && (e.ContributionsDeferred != 0m || e.DeferredContributionsCollected != 0m))
+            .GroupBy(e => e.EmployeeId)
+            .Select(g => new { EmployeeId = g.Key, Amount = g.Sum(e => e.ContributionsDeferred - e.DeferredContributionsCollected) })
+            .ToListAsync(ct);
+        return sums
+            .Where(s => s.Amount != 0m)
+            .Select(s => new DeferredContributionsOutstanding(s.EmployeeId, s.Amount))
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<string>> GetPaidRunsNettingMaternityClaimAsync(Guid claimId, CancellationToken ct = default)
+    {
+        var runs = await Context.PayrollRunEmployees
+            .Where(e => e.MaternityClaimId == claimId && e.MaternityBenefitOffset > 0m
+                        && e.PayrollRun.Status == PayrollRunStatus.Paid)
+            .Select(e => new { e.PayrollRun.RunNumber, e.PayrollRun.PayDate })
+            .Distinct()
+            .ToListAsync(ct);
+        return runs.OrderBy(r => r.PayDate).ThenBy(r => r.RunNumber).Select(r => r.RunNumber).ToList();
+    }
+
+    public async Task<IReadOnlyList<MaternityNettingInRun>> GetPaidRunsNettingMaternityClaimsAsync(
+        IReadOnlyCollection<Guid> claimIds, CancellationToken ct = default)
+    {
+        var ids = claimIds.Distinct().ToList();
+        if (ids.Count == 0) return [];
+        var rows = await Context.PayrollRunEmployees
+            .Where(e => e.MaternityClaimId != null && ids.Contains(e.MaternityClaimId.Value)
+                        && e.MaternityBenefitOffset > 0m && e.PayrollRun.Status == PayrollRunStatus.Paid)
+            .Select(e => new { ClaimId = e.MaternityClaimId!.Value, e.PayrollRun.RunNumber, e.PayrollRun.PayDate })
+            .Distinct()
+            .ToListAsync(ct);
+        return rows.OrderBy(r => r.PayDate).ThenBy(r => r.RunNumber)
+            .Select(r => new MaternityNettingInRun(r.ClaimId, r.RunNumber))
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<string>> GetPaidRunsCoveringPeriodAsync(Guid employeeId, DateOnly from, DateOnly to,
+        CancellationToken ct = default)
+    {
+        var runs = await Context.PayrollRunEmployees
+            .Where(e => e.EmployeeId == employeeId && e.PayrollRun.Status == PayrollRunStatus.Paid
+                        && e.PayrollRun.PeriodStart <= to && e.PayrollRun.PeriodEnd >= from)
+            .Select(e => new { e.PayrollRun.RunNumber, e.PayrollRun.PayDate })
+            .Distinct()
+            .ToListAsync(ct);
+        return runs.OrderBy(r => r.PayDate).ThenBy(r => r.RunNumber).Select(r => r.RunNumber).ToList();
+    }
+
+    public async Task<IReadOnlyList<string>> GetPaidRunsOffsettingPeriodAsync(Guid employeeId, DateOnly from, DateOnly to,
+        CancellationToken ct = default)
+    {
+        var runs = await Context.PayrollRunEmployees
+            .Where(e => e.EmployeeId == employeeId && e.MaternityBenefitOffset > 0m
+                        && e.PayrollRun.Status == PayrollRunStatus.Paid
+                        && e.PayrollRun.PeriodStart <= to && e.PayrollRun.PeriodEnd >= from)
+            .Select(e => new { e.PayrollRun.RunNumber, e.PayrollRun.PayDate })
+            .Distinct()
+            .ToListAsync(ct);
+        return runs.OrderBy(r => r.PayDate).ThenBy(r => r.RunNumber).Select(r => r.RunNumber).ToList();
     }
 
     private void Attach<TEntity>(TEntity entity) where TEntity : class

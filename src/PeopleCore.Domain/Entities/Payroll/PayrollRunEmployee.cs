@@ -83,9 +83,49 @@ public class PayrollRunEmployee : AuditableEntity
     /// </summary>
     public decimal FinalPayNonTaxable { get; set; }
 
+    // Maternity pay (RA 11210).
+    /// <summary>Input: this entry advances the employee's SSS maternity benefit (their Draft claim).</summary>
+    public bool AdvanceMaternityBenefit { get; set; }
+    /// <summary>The SSS maternity benefit advanced on this entry: tax-free, and in gross pay only.</summary>
+    public decimal MaternityBenefitAdvance { get; set; }
+    /// <summary>The part of regular pay SSS covers during maternity leave, already netted out of <see cref="RegularPay"/>.</summary>
+    public decimal MaternityBenefitOffset { get; set; }
+    /// <summary>
+    /// The salary differential: the pay for the maternity days that <see cref="MaternityBenefitOffset"/>
+    /// leaves. It is still in <see cref="RegularPay"/> (and so in the 13th-month basis and gross), but
+    /// it is part of the maternity benefit and exempt from tax and withholding (RMC 105-2019): the
+    /// 2316 reports it in Item 37, not the taxable basic, and the 1601-C as other non-taxable.
+    /// </summary>
+    public decimal MaternityDifferential { get; set; }
+
+    /// <summary>
+    /// The part of this entry's employee shares (SSS, PhilHealth, Pag-IBIG) not collected here: a
+    /// period SSS maternity covers can have too little pay for them. The shares stay in full in
+    /// their own fields - the employer remits them - and this part is collected on a later entry.
+    /// Only an entry with a <see cref="MaternityBenefitOffset"/> defers.
+    /// </summary>
+    public decimal ContributionsDeferred { get; set; }
+
+    /// <summary>
+    /// Shares deferred on the employee's earlier Paid entries that this entry collects, out of the
+    /// cash it has left after its own deductions (the maternity advance counts for this). Not one of
+    /// <see cref="TotalDeductions"/>: it comes off <see cref="NetPay"/> on its own.
+    /// </summary>
+    public decimal DeferredContributionsCollected { get; set; }
+    /// <summary>
+    /// The claim whose benefit <see cref="MaternityBenefitAdvance"/> advances, when there is one. It
+    /// is how a claim is advanced on one payroll only, and which claim Mark Paid settles.
+    /// </summary>
+    public Guid? MaternityClaimId { get; set; }
+
+    /// <summary>
+    /// Everything this entry pays the employee. It includes <see cref="MaternityBenefitAdvance"/>,
+    /// which is the SSS benefit rather than compensation: the government reports that start from
+    /// gross (the 1601-C) take it back out, and the 2316 never sums it.
+    /// </summary>
     public decimal GrossPay =>
         RegularPay + OvertimePay + HolidayPay + NightDiffPay + TaxableAllowances + NonTaxableAllowances
-        + ThirteenthMonth + LeaveConversionPay + SeparationPay + RetirementPay;
+        + ThirteenthMonth + LeaveConversionPay + SeparationPay + RetirementPay + MaternityBenefitAdvance;
 
     /// <summary>
     /// The final-pay earnings taxable outright: separation or retirement pay that isn't exempt.
@@ -143,9 +183,16 @@ public class PayrollRunEmployee : AuditableEntity
 
     public decimal TotalDeductions =>
         SSSEmployee + PhilHealthEmployee + PagIbigEmployee + WithholdingTax + LoanDeductions + OtherDeductions;
-    public decimal NetPay => GrossPay - TotalDeductions;
+    /// <summary>
+    /// What the employee takes home: gross less this entry's deductions, with the shares it
+    /// deferred left in her pay and the earlier deferred shares it collects taken out.
+    /// </summary>
+    public decimal NetPay => GrossPay - TotalDeductions + ContributionsDeferred - DeferredContributionsCollected;
 
-    // Employer cost total
+    /// <summary>
+    /// What the entry costs the employer. The maternity advance is left out: SSS reimburses it, so
+    /// it is cash the employer fronts, not a cost.
+    /// </summary>
     public decimal TotalEmployerCost =>
-        GrossPay + SSSEmployer + PhilHealthEmployer + PagIbigEmployer;
+        GrossPay - MaternityBenefitAdvance + SSSEmployer + PhilHealthEmployer + PagIbigEmployer;
 }

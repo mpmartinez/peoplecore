@@ -33,7 +33,8 @@ public class PayrollRunDetailTests : BunitContext
 
     private static string RunJson(string status, bool withEmployee = true, int missingAttendance = 0,
         string runType = "Regular", string? employees = null, decimal totalDeductions = 0m,
-        string periodEnd = "2026-09-15", bool includesLeaveConversion = false, bool includesThirteenthMonth = false) =>
+        string periodEnd = "2026-09-15", bool includesLeaveConversion = false, bool includesThirteenthMonth = false,
+        string? warnings = null) =>
         $$"""
         {"id":"{{RunId}}","runNumber":"PR-2026-0017","periodLabel":"Sep 1-15, 2026","periodStart":"2026-09-01",
          "periodEnd":"{{periodEnd}}","payDate":"2026-09-20","frequency":"SemiMonthly","status":"{{status}}",
@@ -41,7 +42,7 @@ public class PayrollRunDetailTests : BunitContext
          "employeesMissingAttendance":{{missingAttendance}},"runType":"{{runType}}",
          "employees":[{{employees ?? (withEmployee ? EmployeeLine : "")}}],
          "includesLeaveConversion":{{(includesLeaveConversion ? "true" : "false")}},
-         "includesThirteenthMonth":{{(includesThirteenthMonth ? "true" : "false")}}}
+         "includesThirteenthMonth":{{(includesThirteenthMonth ? "true" : "false")}}{{(warnings is null ? "" : $",\"warnings\":{warnings}")}}}
         """;
 
     private const string December = "2026-12-31";
@@ -1128,6 +1129,175 @@ public class PayrollRunDetailTests : BunitContext
 
         gate.SetResult(new HttpResponseMessage(HttpStatusCode.NoContent));
         cut.WaitForAssertion(() => CurrentUri.Should().Be("http://localhost/payroll-runs"));
+    }
+
+    // ---------- Maternity pay ----------
+
+    private static string MaternityLine(Guid employeeId, string name, decimal advance, decimal offset, decimal differential = 0m) =>
+        $$"""
+        {"id":"{{Guid.NewGuid()}}","employeeId":"{{employeeId}}","employeeName":"{{name}}","employeeNumber":"EMP-0042",
+         "regularPay":10999.98,"grossPay":81000.33,"maternityBenefitAdvance":{{advance}},"maternityBenefitOffset":{{offset}},
+         "maternityDifferential":{{differential}}}
+        """;
+
+    [Fact]
+    public void ASalaryDifferential_GetsItsOwnColumn()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft",
+            employees: $"{MaternityLine(MariaId, "Maria Santos", 0m, 4000.02m, 1999.98m)},{JoseLine}"));
+
+        var cut = RenderPage();
+
+        var headers = cut.FindAll("thead th").Select(h => h.TextContent.Trim()).ToList();
+        headers.Should().Contain("Maternity differential");
+        headers.IndexOf("Maternity differential").Should().BeLessThan(headers.IndexOf("Gross"));
+        var maria = cut.FindAll("tbody tr").Single(r => r.TextContent.Contains("Maria Santos"));
+        maria.QuerySelector("[data-maternity-differential]")!.TextContent.Trim().Should().Be("₱1,999.98");
+        var jose = cut.FindAll("tbody tr").Single(r => r.TextContent.Contains("Jose Reyes"));
+        jose.QuerySelector("[data-maternity-differential]")!.TextContent.Trim().Should().Be("₱0.00");
+    }
+
+    [Fact]
+    public void AnOffsetWithNoDifferential_HasNoDifferentialColumn()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft",
+            employees: MaternityLine(MariaId, "Maria Santos", 0m, 4000.02m)));
+
+        var cut = RenderPage();
+
+        cut.FindAll("thead th").Select(h => h.TextContent.Trim()).Should().NotContain("Maternity differential");
+        cut.FindAll("[data-maternity-differential]").Should().BeEmpty();
+    }
+
+    private const string NetCashNote =
+        "While her leave is covered by SSS, her contribution shares are deferred and collected from the advance or her next pay.";
+
+    [Fact]
+    public void AnEntryCollectingDeferredShares_GetsTheNoteUnderTheTable()
+    {
+        var jose = $$"""
+            {"id":"{{Guid.NewGuid()}}","employeeId":"{{JoseId}}","employeeName":"Jose Reyes","employeeNumber":"EMP-0043",
+             "grossPay":15000,"totalDeductions":1728.75,"netPay":12046.25,"deferredContributionsCollected":1225}
+            """;
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", employees: jose));
+
+        var cut = RenderPage();
+
+        cut.Find("[data-deferred-collected-note]").TextContent.Trim()
+            .Should().Be("Deferred contributions from her maternity leave are collected here.");
+    }
+
+    [Fact]
+    public void ARunCollectingNoDeferredShares_HasNoSuchNote()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft"));
+
+        var cut = RenderPage();
+
+        cut.FindAll("[data-deferred-collected-note]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void DeferredAndCollectedShares_KeepGrossLessDeductionsEqualToNet()
+    {
+        // Maria's mostly covered cutoff: gross 400, shares 1,225 of which 825 deferred, net 0 - her
+        // deductions show 1,225 - 825 = 400. Jose collects 1,225 deferred earlier: gross 15,000, own
+        // deductions 1,728.75, net 12,046.25 - his show 1,728.75 + 1,225 = 2,953.75. The run's own
+        // deductions total 2,953.75; shown as 2,953.75 - 825 + 1,225 = 3,353.75, and
+        // 15,400 - 3,353.75 = 12,046.25, the run's net.
+        var maria = $$"""
+            {"id":"{{Guid.NewGuid()}}","employeeId":"{{MariaId}}","employeeName":"Maria Santos","employeeNumber":"EMP-0042",
+             "grossPay":400,"totalDeductions":1225,"netPay":0,"contributionsDeferred":825}
+            """;
+        var jose = $$"""
+            {"id":"{{Guid.NewGuid()}}","employeeId":"{{JoseId}}","employeeName":"Jose Reyes","employeeNumber":"EMP-0043",
+             "grossPay":15000,"totalDeductions":1728.75,"netPay":12046.25,"deferredContributionsCollected":1225}
+            """;
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft", employees: $"{maria},{jose}", totalDeductions: 2953.75m));
+
+        var cut = RenderPage();
+
+        var rows = cut.FindAll("tbody tr");
+        rows.Single(r => r.TextContent.Contains("Maria Santos")).QuerySelector("[data-employee-deductions]")!
+            .TextContent.Should().Contain("400.00");
+        rows.Single(r => r.TextContent.Contains("Jose Reyes")).QuerySelector("[data-employee-deductions]")!
+            .TextContent.Should().Contain("2,953.75");
+        cut.Find("[data-run-deductions]").TextContent.Should().Contain("3,353.75");
+    }
+
+    [Fact]
+    public void AnAdvanceAndAnOffset_GetTheirOwnColumns_WithTheNetCashNote()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft",
+            employees: $"{MaternityLine(MariaId, "Maria Santos", 70000.35m, 4000.02m)},{JoseLine}"));
+
+        var cut = RenderPage();
+
+        var headers = cut.FindAll("thead th").Select(h => h.TextContent.Trim()).ToList();
+        headers.Should().Contain(["Maternity advance", "Covered by SSS maternity"]);
+        headers.IndexOf("Maternity advance").Should().BeLessThan(headers.IndexOf("Gross"));
+        var maria = cut.FindAll("tbody tr").Single(r => r.TextContent.Contains("Maria Santos"));
+        maria.QuerySelector("[data-maternity-advance]")!.TextContent.Trim().Should().Be("₱70,000.35");
+        maria.QuerySelector("[data-maternity-offset]")!.TextContent.Trim().Should().Be("₱4,000.02");
+        var jose = cut.FindAll("tbody tr").Single(r => r.TextContent.Contains("Jose Reyes"));
+        jose.QuerySelector("[data-maternity-advance]")!.TextContent.Trim().Should().Be("₱0.00");
+        cut.Find("[data-maternity-net-cash-note]").TextContent.Trim().Should().Be(NetCashNote);
+    }
+
+    [Fact]
+    public void AnOffsetAlone_ShowsItsColumn_ButNoAdvanceColumnOrNote()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft",
+            employees: MaternityLine(MariaId, "Maria Santos", 0m, 4000.02m)));
+
+        var cut = RenderPage();
+
+        cut.FindAll("thead th").Select(h => h.TextContent.Trim()).Should().Contain("Covered by SSS maternity").And.NotContain("Maternity advance");
+        cut.FindAll("[data-maternity-net-cash-note]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ARunWithoutMaternityPay_HasNoMaternityColumnsNoteOrWarnings()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft"));
+
+        var cut = RenderPage();
+
+        cut.FindAll("thead th").Select(h => h.TextContent.Trim()).Should().NotContain(["Maternity advance", "Covered by SSS maternity"]);
+        cut.FindAll("[data-maternity-net-cash-note]").Should().BeEmpty();
+        cut.FindAll("[data-maternity-warnings]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void TheRunsWarnings_AreListedAboveTheTable()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Draft",
+            warnings: """["Maternity benefit not set up yet for Ana Cruz.","Maternity benefit not advanced yet for Maria Santos."]"""));
+
+        var cut = RenderPage();
+
+        var warnings = cut.Find("[data-maternity-warnings]");
+        warnings.GetAttribute("role").Should().Be("alert");
+        warnings.ClassList.Should().Contain("text-warning", "the warnings are amber");
+        warnings.QuerySelectorAll("li").Select(li => li.TextContent.Trim()).Should().Equal(
+            "Maternity benefit not set up yet for Ana Cruz.", "Maternity benefit not advanced yet for Maria Santos.");
+        var table = cut.Find("table");
+        (warnings.CompareDocumentPosition(table) & AngleSharp.Dom.DocumentPositions.Following).Should()
+            .Be(AngleSharp.Dom.DocumentPositions.Following, "the warnings come before the table");
+    }
+
+    [Fact]
+    public void AMaternityRefusal_ShowsTheApisReason()
+    {
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Approved"))
+            .On(HttpMethod.Put, $"{RunPath}/mark-paid", HttpStatusCode.BadRequest,
+                """{"title":"Business rule violation","status":400,"detail":"Maria Santos's maternity claim has changed since this payroll was computed; recompute it before paying."}""");
+        var cut = RenderPage();
+
+        Button(cut, "Mark Paid").Click();
+
+        cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should()
+            .Contain("Maria Santos's maternity claim has changed since this payroll was computed; recompute it before paying."));
     }
 
     private static HttpResponseMessage Json(string json) =>

@@ -1,0 +1,100 @@
+@page "/payroll-settings"
+@attribute [RequirePermission(Permissions.PayrollManage)]
+@inject ApiClient Api
+
+@*
+    Payroll settings the page can change. The statutory rates aren't edited here; the API's PUT
+    replaces the whole settings record, so they go back exactly as they were read.
+
+    There is one settings row, and payroll computes from it (a run carries no company yet), so the
+    page reads and saves that row (api/payroll-settings/default) without naming a company.
+*@
+
+<PageTitle>Payroll Settings</PageTitle>
+
+<PageHeader Title="Payroll Settings" Section="Payroll" Description="How payroll pays what the law leaves to the employer." />
+
+@if (_loading)
+{
+    <div class="p-6 flex justify-center"><Spinner /></div>
+}
+else if (_loadError is not null)
+{
+    <Alert Variant="destructive" Title="Couldn't load payroll settings">@_loadError</Alert>
+}
+else if (_settings is not null)
+{
+    <Card Class="max-w-2xl">
+        <CardContent Class="pt-6 space-y-4">
+            @if (_saveError is not null)
+            {
+                <Alert Variant="destructive" data-settings-error>@_saveError</Alert>
+            }
+            else if (_result is not null)
+            {
+                <Alert Variant="success" data-settings-result>@_result</Alert>
+            }
+
+            <div class="space-y-1">
+                <Switch Value="@_exempt" ValueChanged="@(v => { _exempt = v; _result = null; })" Disabled="@_saving" data-exempt-switch>
+                    Exempt from the maternity salary differential
+                </Switch>
+                <p class="ml-11 text-xs text-muted-foreground" data-exempt-hint>For distressed, small (10 or fewer workers), micro (BMBE) or already-compliant employers under RA 11210.</p>
+            </div>
+
+            <div class="flex justify-end pt-2">
+                <Button Variant="primary" OnClick="Save" Loading="@_saving" data-save-settings>Save</Button>
+            </div>
+        </CardContent>
+    </Card>
+}
+
+@code {
+    private bool _loading = true;
+    private string? _loadError;
+    private PayrollSettingsDto? _settings;
+    private bool _exempt;
+    private bool _saving;
+    private string? _saveError;
+    private string? _result;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _settings = await Api.GetPayrollSettingsAsync();
+            _exempt = _settings?.ExemptFromMaternityDifferential ?? false;
+        }
+        catch (Exception ex)
+        {
+            _settings = null;
+            _loadError = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task Save()
+    {
+        if (_saving || _settings is null) return;
+        _saveError = _result = null;
+        _saving = true;
+        try
+        {
+            var changed = _settings with { ExemptFromMaternityDifferential = _exempt };
+            await Api.SavePayrollSettingsAsync(changed);
+            _settings = changed;
+            _result = "Saved. Payrolls computed from now on use this setting.";
+        }
+        catch (Exception ex)
+        {
+            _saveError = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

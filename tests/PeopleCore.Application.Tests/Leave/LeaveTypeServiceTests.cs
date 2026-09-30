@@ -159,12 +159,13 @@ public class LeaveTypeServiceTests
 
     /// <summary>
     /// A per-event type with every setting moved off its default - bar carry-over, which only an
-    /// accrued type may have (<see cref="AnAccruedType_StoresItsCarryOver"/>), and year-end
+    /// accrued type may have (<see cref="AnAccruedType_StoresItsCarryOver"/>), year-end
     /// conversion, which only a paid accrued type may have
-    /// (<see cref="Create_StoresAndReturnsTheConvertsAtYearEndSetting"/>).
+    /// (<see cref="Create_StoresAndReturnsTheConvertsAtYearEndSetting"/>), and unpaid, which a
+    /// maternity type may not be (<see cref="Create_StoresAnUnpaidType"/>).
     /// </summary>
     private static CreateLeaveTypeDto EverySetting() => new(
-        "Maternity Leave", "ML", 0m, IsPaid: false, IsCarryOver: false, CarryOverMaxDays: null,
+        "Maternity Leave", "ML", 0m, IsPaid: true, IsCarryOver: false, CarryOverMaxDays: null,
         GenderRestriction: "Female", RequiresDocument: true,
         IsConvertibleToCash: true, CountsAsVacationForDeMinimis: false,
         IsActive: false, EntitlementKind: LeaveEntitlementKind.PerEvent, CountsCalendarDays: true,
@@ -176,7 +177,7 @@ public class LeaveTypeServiceTests
         lt.Name.Should().Be("Maternity Leave");
         lt.Code.Should().Be("ML");
         lt.MaxDaysPerYear.Should().Be(0m);
-        lt.IsPaid.Should().BeFalse();
+        lt.IsPaid.Should().BeTrue();
         lt.IsCarryOver.Should().BeFalse();
         lt.CarryOverMaxDays.Should().BeNull();
         lt.GenderRestriction.Should().Be("Female");
@@ -201,7 +202,7 @@ public class LeaveTypeServiceTests
         dto.Name.Should().Be("Maternity Leave");
         dto.Code.Should().Be("ML");
         dto.MaxDaysPerYear.Should().Be(0m);
-        dto.IsPaid.Should().BeFalse();
+        dto.IsPaid.Should().BeTrue();
         dto.IsCarryOver.Should().BeFalse();
         dto.CarryOverMaxDays.Should().BeNull();
         dto.GenderRestriction.Should().Be("Female");
@@ -236,6 +237,21 @@ public class LeaveTypeServiceTests
     }
 
     [Fact]
+    public async Task Create_StoresAnUnpaidType()
+    {
+        LeaveType? saved = null;
+        _repo.Setup(r => r.AddAsync(It.IsAny<LeaveType>(), It.IsAny<CancellationToken>()))
+            .Callback((LeaveType lt, CancellationToken _) => saved = lt)
+            .ReturnsAsync((LeaveType lt, CancellationToken _) => lt);
+
+        var dto = await _sut.CreateAsync(new CreateLeaveTypeDto(
+            "Leave Without Pay", "LWOP", 0m, IsPaid: false, false, null, null, false));
+
+        saved!.IsPaid.Should().BeFalse();
+        dto.IsPaid.Should().BeFalse();
+    }
+
+    [Fact]
     public async Task Update_WritesEverySetting_IncludingIsActive()
     {
         var existing = new LeaveType { Name = "Old", Code = "OLD", MaxDaysPerYear = 15m };
@@ -253,7 +269,7 @@ public class LeaveTypeServiceTests
     {
         var existing = new LeaveType
         {
-            Name = "Maternity Leave", Code = "ML", MaxDaysPerYear = 0m, IsPaid = false, IsCarryOver = false,
+            Name = "Maternity Leave", Code = "ML", MaxDaysPerYear = 0m, IsPaid = true, IsCarryOver = false,
             CarryOverMaxDays = null, GenderRestriction = "Female", RequiresDocument = true,
             IsConvertibleToCash = true, CountsAsVacationForDeMinimis = false, IsActive = false,
             EntitlementKind = LeaveEntitlementKind.PerEvent, CountsCalendarDays = true, DaysPerEvent = 105m,
@@ -291,6 +307,16 @@ public class LeaveTypeServiceTests
               EntitlementKind: LeaveEntitlementKind.Accrued, IsMaternity: true), "A maternity type must be per event." },
         { new("Maternity Leave", "ML", 105m, true, false, null, "Female", true,
               EntitlementKind: LeaveEntitlementKind.YearlyAllowance, IsMaternity: true), "A maternity type must be per event." },
+        // Payroll takes the part SSS covers off the salary (the maternity offset). An unpaid type
+        // would also leave the days absent, so they would be cut twice.
+        { new("Maternity Leave", "ML", 105m, IsPaid: false, false, null, "Female", true,
+              EntitlementKind: LeaveEntitlementKind.PerEvent, DaysPerEvent: 105m, IsMaternity: true),
+          "A maternity leave type must be paid." },
+        // RA 11210's 105 days are calendar days: the leave, the claim's days and the payroll offset
+        // all count every date, so a type counting only working days would short the benefit.
+        { new("Maternity Leave", "ML", 105m, IsPaid: true, false, null, "Female", true,
+              EntitlementKind: LeaveEntitlementKind.PerEvent, CountsCalendarDays: false, DaysPerEvent: 105m, IsMaternity: true),
+          "A maternity leave type must count calendar days." },
         { new("Paternity Leave", "PL", 0m, true, false, null, "Male", true,
               EntitlementKind: LeaveEntitlementKind.PerEvent, DaysPerEvent: 7m, MaxEvents: 0), "Set at least 1 for the most times allowed." },
         { new("Paternity Leave", "PL", 0m, true, false, null, "Male", true,

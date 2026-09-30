@@ -68,6 +68,14 @@ public class LeaveTypeService : ILeaveTypeService
             throw new DomainException("Set the days per year.");
         if (dto.IsMaternity && dto.EntitlementKind != LeaveEntitlementKind.PerEvent)
             throw new DomainException("A maternity type must be per event.");
+        // Payroll pays maternity days as paid leave, less the part SSS covers (the maternity offset).
+        // Unpaid, the days would be deducted as absences too, and so cut twice.
+        if (dto.IsMaternity && !dto.IsPaid)
+            throw new DomainException("A maternity leave type must be paid.");
+        // RA 11210's days are calendar days, and so are the claim's days and the payroll offset's: a
+        // type counting only working days would file fewer days than the law gives.
+        if (dto.IsMaternity && !dto.CountsCalendarDays)
+            throw new DomainException("A maternity leave type must count calendar days.");
         // Only a per-event type keeps MaxEvents; on any other kind it is cleared, not checked.
         if (dto.EntitlementKind == LeaveEntitlementKind.PerEvent && dto.MaxEvents < 1)
             throw new DomainException("Set at least 1 for the most times allowed.");

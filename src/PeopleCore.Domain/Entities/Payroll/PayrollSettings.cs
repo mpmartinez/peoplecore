@@ -28,4 +28,10 @@ public class PayrollSettings : AuditableEntity
 
     public decimal? SSSEmployeeRate { get; set; }
     public decimal? SSSEmployerRate { get; set; }
+
+    /// <summary>
+    /// The employer is exempt from paying the maternity salary differential (RA 11210): during
+    /// maternity leave payroll pays only what SSS covers, not the salary above it.
+    /// </summary>
+    public bool ExemptFromMaternityDifferential { get; set; }
 }

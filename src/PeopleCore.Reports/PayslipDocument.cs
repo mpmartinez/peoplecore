@@ -107,8 +107,9 @@ public class PayslipDocument : IDocument
     private void ComposeEarningsDeductions(IContainer c)
     {
         // Driven by PayslipLineBuilder, the one place a payslip's breakdown is built, so the
-        // reductions RegularPay already nets out (absences, tardiness) are visible on the
-        // document rather than silently folded away.
+        // reductions RegularPay already nets out (absences, tardiness, the days SSS maternity
+        // covers) are visible on the document rather than silently folded away, and the SSS
+        // maternity benefit advance shows as its own non-taxable earning inside GROSS PAY.
         // Zero-value lines are suppressed by the builder itself.
         var earningLines = PayslipLineBuilder.Earnings(_emp);
         var deductionLines = PayslipLineBuilder.Deductions(_emp).Where(l => !l.IsEmployer).ToList();

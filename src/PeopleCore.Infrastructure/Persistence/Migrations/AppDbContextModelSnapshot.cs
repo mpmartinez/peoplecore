@@ -2095,6 +2095,94 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.ToTable("final_pay_inputs", (string)null);
                 });
 
+            modelBuilder.Entity("PeopleCore.Domain.Entities.Payroll.MaternityClaim", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("AdvanceRunId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("advance_run_id");
+
+                    b.Property<DateOnly?>("AdvancedAt")
+                        .HasColumnType("date")
+                        .HasColumnName("advanced_at");
+
+                    b.Property<decimal>("Benefit")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(18,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("benefit");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<decimal?>("DailyAllowance")
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("daily_allowance");
+
+                    b.Property<decimal>("Days")
+                        .HasColumnType("numeric(6,2)")
+                        .HasColumnName("days");
+
+                    b.Property<Guid>("EmployeeId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("employee_id");
+
+                    b.Property<Guid>("LeaveRequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("leave_request_id");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("note");
+
+                    b.Property<decimal?>("ReimbursedAmount")
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("reimbursed_amount");
+
+                    b.Property<DateOnly?>("ReimbursedOn")
+                        .HasColumnType("date")
+                        .HasColumnName("reimbursed_on");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_maternity_claims");
+
+                    b.HasIndex("AdvanceRunId")
+                        .HasDatabaseName("ix_maternity_claims_advance_run_id");
+
+                    b.HasIndex("EmployeeId")
+                        .HasDatabaseName("ix_maternity_claims_employee_id");
+
+                    b.HasIndex("LeaveRequestId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_maternity_claims_leave_request_id");
+
+                    b.ToTable("maternity_claims", (string)null);
+                });
+
             modelBuilder.Entity("PeopleCore.Domain.Entities.Payroll.PayrollLoanDeduction", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2243,6 +2331,18 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(18,2)")
                         .HasColumnName("absence_deduction");
 
+                    b.Property<bool>("AdvanceMaternityBenefit")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("advance_maternity_benefit");
+
+                    b.Property<decimal>("ContributionsDeferred")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(18,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("contributions_deferred");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -2262,6 +2362,12 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("DaysWorked")
                         .HasColumnType("numeric(6,2)")
                         .HasColumnName("days_worked");
+
+                    b.Property<decimal>("DeferredContributionsCollected")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(18,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("deferred_contributions_collected");
 
                     b.Property<Guid>("EmployeeId")
                         .HasColumnType("uuid")
@@ -2306,6 +2412,28 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("LoanDeductions")
                         .HasColumnType("numeric(18,2)")
                         .HasColumnName("loan_deductions");
+
+                    b.Property<decimal>("MaternityBenefitAdvance")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(18,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("maternity_benefit_advance");
+
+                    b.Property<decimal>("MaternityBenefitOffset")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(18,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("maternity_benefit_offset");
+
+                    b.Property<Guid?>("MaternityClaimId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("maternity_claim_id");
+
+                    b.Property<decimal>("MaternityDifferential")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(18,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("maternity_differential");
 
                     b.Property<decimal>("NightDiffHours")
                         .HasColumnType("numeric(6,2)")
@@ -2413,6 +2541,9 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.HasIndex("EmployeeId")
                         .HasDatabaseName("ix_payroll_run_employees_employee_id");
 
+                    b.HasIndex("MaternityClaimId")
+                        .HasDatabaseName("ix_payroll_run_employees_maternity_claim_id");
+
                     b.HasIndex("PayrollRunId")
                         .HasDatabaseName("ix_payroll_run_employees_payroll_run_id");
 
@@ -2499,6 +2630,12 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("DailyRateFactor")
                         .HasColumnType("numeric(8,2)")
                         .HasColumnName("daily_rate_factor");
+
+                    b.Property<bool>("ExemptFromMaternityDifferential")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("exempt_from_maternity_differential");
 
                     b.Property<decimal>("PagIbigEmployeeRate")
                         .HasColumnType("numeric(8,4)")
@@ -3787,6 +3924,35 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.Navigation("PayrollRun");
                 });
 
+            modelBuilder.Entity("PeopleCore.Domain.Entities.Payroll.MaternityClaim", b =>
+                {
+                    b.HasOne("PeopleCore.Domain.Entities.Payroll.PayrollRun", "AdvanceRun")
+                        .WithMany()
+                        .HasForeignKey("AdvanceRunId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_maternity_claims_payroll_runs_advance_run_id");
+
+                    b.HasOne("PeopleCore.Domain.Entities.Employees.Employee", "Employee")
+                        .WithMany()
+                        .HasForeignKey("EmployeeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_maternity_claims_employees_employee_id");
+
+                    b.HasOne("PeopleCore.Domain.Entities.Leave.LeaveRequest", "LeaveRequest")
+                        .WithMany()
+                        .HasForeignKey("LeaveRequestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_maternity_claims_leave_requests_leave_request_id");
+
+                    b.Navigation("AdvanceRun");
+
+                    b.Navigation("Employee");
+
+                    b.Navigation("LeaveRequest");
+                });
+
             modelBuilder.Entity("PeopleCore.Domain.Entities.Payroll.PayrollLoanDeduction", b =>
                 {
                     b.HasOne("PeopleCore.Domain.Entities.Payroll.PayrollRunEmployee", "PayrollRunEmployee")
@@ -3807,6 +3973,12 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_payroll_run_employees_employees_employee_id");
+
+                    b.HasOne("PeopleCore.Domain.Entities.Payroll.MaternityClaim", null)
+                        .WithMany()
+                        .HasForeignKey("MaternityClaimId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_payroll_run_employees_maternity_claims_maternity_claim_id");
 
                     b.HasOne("PeopleCore.Domain.Entities.Payroll.PayrollRun", "PayrollRun")
                         .WithMany("Employees")

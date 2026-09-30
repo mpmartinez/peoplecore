@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using PeopleCore.Domain.Entities.Payroll;
+using PeopleCore.Application.Payroll.Services;
 using PeopleCore.Infrastructure.Persistence.Repositories;
 
 namespace PeopleCore.Infrastructure.Tests.Payroll;
@@ -84,5 +85,27 @@ public class PayrollSettingsRepositoryTests : DatabaseTestBase
         var settings = await Sut.GetByCompanyIdAsync(second.Id);
 
         settings!.DailyRateFactor.Should().Be(261m);
+    }
+
+    [Fact]
+    public async Task TheDefaultSettings_AreReadAndChanged_WithoutNamingTheirCompany()
+    {
+        // api/payroll-settings/default, through the service and the real repository: the row
+        // payroll computes from changes, and nothing is added beside it.
+        var company = ACompany("Zamboanga Branch");
+        Context.Companies.Add(company);
+        Context.PayrollSettings.Add(new PayrollSettings { CompanyId = company.Id, DailyRateFactor = 313m });
+        await Context.SaveChangesAsync();
+
+        var service = new PayrollSettingsService(Sut);
+        var read = await service.GetDefaultAsync();
+        read.CompanyId.Should().Be(company.Id);
+        await service.UpdateDefaultAsync(read with { CompanyId = Guid.Empty, ExemptFromMaternityDifferential = true });
+
+        await using var fresh = NewContext();
+        var stored = await fresh.PayrollSettings.SingleAsync();
+        stored.CompanyId.Should().Be(company.Id);
+        stored.DailyRateFactor.Should().Be(313m);
+        stored.ExemptFromMaternityDifferential.Should().BeTrue();
     }
 }

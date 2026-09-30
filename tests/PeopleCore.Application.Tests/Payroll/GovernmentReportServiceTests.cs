@@ -273,6 +273,168 @@ public class GovernmentReportServiceTests
     }
 
     [Fact]
+    public async Task Bir1601C_LeavesTheMaternityAdvanceOut_AndTakesTheReducedBasic()
+    {
+        // An engine-computed April entry: 30,000 salary, 6,000 covered by SSS maternity (regular
+        // pay 24,000), the 70,000.35 benefit advanced. Gross pay 94,000.35 carries the advance; the
+        // 1601-C must not. Compensation 24,000; shares 1,500 + 750 + 200 = 2,450; taxable
+        // 24,000 - 2,450 = 21,550; withheld 107.50 ((21,550 x 12 - 250,000) x 15% / 12).
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.TIN, "111-222-333-000"));
+        var april = MaternityRun(juan, new DateOnly(2026, 4, 1), advance: 70_000.35m, offset: 6_000m);
+        april.Employees.Single().GrossPay.Should().Be(94_000.35m);
+        _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(2026, 4, It.IsAny<CancellationToken>())).ReturnsAsync([april]);
+
+        var report = await _sut.BuildAsync("1601c", 2026, 4);
+
+        report.Summary.Should().ContainInOrder(
+            new GovernmentReportLineDto("Total amount of compensation", 24_000m),
+            new GovernmentReportLineDto("13th month pay and other benefits", 0m),
+            new GovernmentReportLineDto("De minimis benefits", 0m),
+            new GovernmentReportLineDto("SSS, PhilHealth and Pag-IBIG employee shares", 2_450m),
+            new GovernmentReportLineDto("Other non-taxable compensation", 0m),
+            new GovernmentReportLineDto("Total non-taxable compensation", 2_450m),
+            new GovernmentReportLineDto("Total taxable compensation", 21_550m),
+            new GovernmentReportLineDto("Total taxes withheld", 107.50m));
+        report.Rows.Single().Cells.Should().Equal(
+            "Cruz, Juan", "111-222-333-000", "24000.00", "0.00", "0.00", "2450.00", "0.00", "21550.00", "107.50");
+    }
+
+    [Fact]
+    public async Task Bir1601C_PutsTheMaternityDifferentialInOtherNonTaxable()
+    {
+        // April: 30,000 salary, 6,000 covered by SSS and 4,000 of salary differential (regular pay
+        // 24,000), the 70,000.35 advance. Compensation 24,000; shares 2,450; other non-taxable
+        // 4,000 (RMC 105-2019); taxable 24,000 - 2,450 - 4,000 = 17,550, the engine's base, so
+        // nothing withheld (210,600 a year).
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.TIN, "111-222-333-000"));
+        var april = MaternityRun(juan, new DateOnly(2026, 4, 1), advance: 70_000.35m, offset: 6_000m, differential: 4_000m);
+        _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(2026, 4, It.IsAny<CancellationToken>())).ReturnsAsync([april]);
+
+        var report = await _sut.BuildAsync("1601c", 2026, 4);
+
+        report.Rows.Single().Cells.Should().Equal(
+            "Cruz, Juan", "111-222-333-000", "24000.00", "0.00", "0.00", "2450.00", "4000.00", "17550.00", "0.00");
+        report.Summary.Should().Contain(new GovernmentReportLineDto("Other non-taxable compensation", 4_000m));
+        report.Summary.Should().Contain(new GovernmentReportLineDto("Total taxable compensation", 17_550m));
+    }
+
+    [Fact]
+    public async Task BuildAnnualAsync_1604C_WithAMaternityDifferential_AgreesWithTheMonthly1601C()
+    {
+        // March: an ordinary 30,000 month - taxable 27,550. April: 6,000 covered, 4,000 of
+        // differential - taxable 17,550 and 4,000 other non-taxable. The year: compensation
+        // 54,000, non-taxable 2,450 + 2,450 + 4,000 = 8,900, taxable 45,100. The 1604-C follows
+        // the 2316 (Item 37 takes the 4,000): basic 27,550 + 17,550 = 45,100.
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.TIN, "111-222-333-000"));
+        juan.HireDate = new DateOnly(2020, 1, 6);
+        var march = MaternityRun(juan, new DateOnly(2026, 3, 1), advance: 0m, offset: 0m);
+        var april = MaternityRun(juan, new DateOnly(2026, 4, 1), advance: 70_000.35m, offset: 6_000m, differential: 4_000m);
+        _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(2026, 3, It.IsAny<CancellationToken>())).ReturnsAsync([march]);
+        _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(2026, 4, It.IsAny<CancellationToken>())).ReturnsAsync([april]);
+        _runs.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([march, april]);
+        _runs.Setup(r => r.GetEmployeeIdsWithPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([juan.Id]);
+        _employees.Setup(e => e.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>())).ReturnsAsync([juan]);
+        var inputs = new Mock<IBir2316InputsRepository>();
+        inputs.Setup(i => i.GetForYearAsync(2026, It.IsAny<CancellationToken>()))
+              .ReturnsAsync(new Dictionary<Guid, Bir2316Inputs>());
+        var bir2316 = new PeopleCore.Application.Payroll.Services.Bir2316Service(
+            _runs.Object, _employees.Object, _companies.Object, inputs.Object);
+        var sut = new GovernmentReportService(_runs.Object, _companies.Object, _settings.Object,
+            new FixedClock(new DateTimeOffset(2026, 4, 10, 0, 0, 0, TimeSpan.Zero)), bir2316, _employees.Object);
+
+        decimal monthlyTaxable = 0m, monthlyOtherNonTaxable = 0m;
+        foreach (var month in new[] { 3, 4 })
+        {
+            var summary = (await sut.BuildAsync("1601c", 2026, month)).Summary;
+            monthlyTaxable += summary.Single(l => l.Label == "Total taxable compensation").Amount;
+            monthlyOtherNonTaxable += summary.Single(l => l.Label == "Other non-taxable compensation").Amount;
+        }
+        monthlyTaxable.Should().Be(45_100m);          // 27,550 + 17,550
+        monthlyOtherNonTaxable.Should().Be(4_000m);
+
+        var section = (await sut.BuildAnnualAsync("1604c", 2026)).Sections
+            .Single(s => s.Title == "Employed as of December 31, no previous employer");
+        var row = section.Rows.Should().ContainSingle().Subject;
+        var columns = section.Columns.ToList();
+        string Cell(string column) => row.Cells[columns.IndexOf(column)];
+
+        Cell("Gross compensation").Should().Be("54000.00");
+        Cell("Total non-taxable").Should().Be("8900.00");
+        Cell("Basic salary").Should().Be("45100.00");
+        Cell("Total taxable (present employer)").Should().Be(GovernmentReportMath.Money(monthlyTaxable));
+    }
+
+    [Fact]
+    public async Task BuildAnnualAsync_1604C_WithAMaternityAdvance_AgreesWithTheMonthly1601C()
+    {
+        // March: an ordinary 30,000 month - compensation 30,000, shares 2,450, taxable 27,550.
+        // April: 6,000 covered by SSS and the 70,000.35 advance - compensation 24,000, taxable
+        // 21,550. The year: compensation 54,000, non-taxable 4,900, taxable 49,100. The 1604-C,
+        // built from the real 2316, certifies the same year with no trace of the advance.
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.TIN, "111-222-333-000"));
+        juan.HireDate = new DateOnly(2020, 1, 6);
+        var march = MaternityRun(juan, new DateOnly(2026, 3, 1), advance: 0m, offset: 0m);
+        var april = MaternityRun(juan, new DateOnly(2026, 4, 1), advance: 70_000.35m, offset: 6_000m);
+        _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(2026, 3, It.IsAny<CancellationToken>())).ReturnsAsync([march]);
+        _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(2026, 4, It.IsAny<CancellationToken>())).ReturnsAsync([april]);
+        _runs.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([march, april]);
+        _runs.Setup(r => r.GetEmployeeIdsWithPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([juan.Id]);
+        _employees.Setup(e => e.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>())).ReturnsAsync([juan]);
+        var inputs = new Mock<IBir2316InputsRepository>();
+        inputs.Setup(i => i.GetForYearAsync(2026, It.IsAny<CancellationToken>()))
+              .ReturnsAsync(new Dictionary<Guid, Bir2316Inputs>());
+        var bir2316 = new PeopleCore.Application.Payroll.Services.Bir2316Service(
+            _runs.Object, _employees.Object, _companies.Object, inputs.Object);
+        var sut = new GovernmentReportService(_runs.Object, _companies.Object, _settings.Object,
+            new FixedClock(new DateTimeOffset(2026, 4, 10, 0, 0, 0, TimeSpan.Zero)), bir2316, _employees.Object);
+
+        decimal monthlyTaxable = 0m, monthlyCompensation = 0m;
+        foreach (var month in new[] { 3, 4 })
+        {
+            var summary = (await sut.BuildAsync("1601c", 2026, month)).Summary;
+            monthlyTaxable += summary.Single(l => l.Label == "Total taxable compensation").Amount;
+            monthlyCompensation += summary.Single(l => l.Label == "Total amount of compensation").Amount;
+        }
+        monthlyCompensation.Should().Be(54_000m);     // 30,000 + 24,000
+        monthlyTaxable.Should().Be(49_100m);          // 27,550 + 21,550
+
+        var section = (await sut.BuildAnnualAsync("1604c", 2026)).Sections
+            .Single(s => s.Title == "Employed as of December 31, no previous employer");
+        var row = section.Rows.Should().ContainSingle().Subject;
+        var columns = section.Columns.ToList();
+        string Cell(string column) => row.Cells[columns.IndexOf(column)];
+
+        Cell("Gross compensation").Should().Be(GovernmentReportMath.Money(monthlyCompensation));
+        Cell("SSS, PhilHealth and Pag-IBIG employee shares").Should().Be("4900.00");
+        Cell("Total non-taxable").Should().Be("4900.00");
+        Cell("Basic salary").Should().Be("49100.00");                     // 27,550 + 21,550
+        Cell("Total taxable (present employer)").Should().Be(GovernmentReportMath.Money(monthlyTaxable));
+        row.Cells.Should().NotContain("70000.35");
+    }
+
+    /// <summary>
+    /// A Paid monthly run for the month starting <paramref name="monthStart"/>, paid on its last
+    /// day, with one entry the real engine computed for a 30,000 salary and the given maternity
+    /// figures.
+    /// </summary>
+    private static PayrollRun MaternityRun(Employee employee, DateOnly monthStart, decimal advance, decimal offset,
+        decimal differential = 0m)
+    {
+        var monthEnd = monthStart.AddMonths(1).AddDays(-1);
+        var run = RunForPeriod(PayFrequency.Monthly, monthStart, monthEnd, monthEnd);
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = employee.Id, BasicSalary = 30_000m, PayFrequency = PayFrequency.Monthly
+        };
+        var entry = new PeopleCore.Application.Payroll.Services.PayrollComputationService()
+            .Compute(compensation, run,
+                maternity: new PeopleCore.Application.Payroll.Services.MaternityInput(advance, offset, differential));
+        entry.Employee = employee;
+        run.Employees.Add(entry);
+        return run;
+    }
+
+    [Fact]
     public async Task Bir1601C_ShowsFinalPayDeMinimisAndOtherNonTaxable_AndExcludesThemFromTaxable()
     {
         // A final-pay run paid in April: leave conversion of 6,000 (4,000 de minimis, 2,000

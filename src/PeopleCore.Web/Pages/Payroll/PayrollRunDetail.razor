@@ -118,9 +118,27 @@ else
         </Alert>
     }
 
+    @* What HR still has to do before the run pays maternity right; the API works these out afresh on every load. *@
+    @if (_run.Warnings.Count > 0)
+    {
+        <Alert Variant="warning" Class="mb-4" data-maternity-warnings>
+            <ul class="list-disc pl-4 space-y-1">
+                @foreach (var warning in _run.Warnings)
+                {
+                    <li>@warning</li>
+                }
+            </ul>
+        </Alert>
+    }
+
     @if (_actionError is not null)
     {
         <Alert Variant="destructive" Class="mb-4">@_actionError</Alert>
+    }
+
+    @if (ShowsMaternityAdvance)
+    {
+        <p class="text-xs text-muted-foreground mb-2" data-maternity-net-cash-note>@MaternityLabels.NetCashNote</p>
     }
 
     <Card>
@@ -156,6 +174,20 @@ else
                             else if (_run.IncludesLeaveConversion)
                             {
                                 <TableHead Class="px-4">Leave conversion</TableHead>
+                            }
+                            @if (ShowsMaternityAdvance)
+                            {
+                                <TableHead Class="px-4">Maternity advance</TableHead>
+                            }
+                            @if (ShowsMaternityOffset)
+                            {
+                                @* Already taken out of Regular: the part of basic pay SSS covers for the leave days. *@
+                                <TableHead Class="px-4">Covered by SSS maternity</TableHead>
+                            }
+                            @if (ShowsMaternityDifferential)
+                            {
+                                @* Still in Regular: the pay for the leave days SSS doesn't cover, non-taxable (RMC 105-2019). *@
+                                <TableHead Class="px-4">Maternity differential</TableHead>
                             }
                             <TableHead Class="px-4">Gross</TableHead>
                             <TableHead Class="px-4">SSS</TableHead>
@@ -195,6 +227,18 @@ else
                                 {
                                     <TableCell Class="px-4 py-3" data-leave-conversion>&#8369;@e.LeaveConversionPay.ToString("N2")</TableCell>
                                 }
+                                @if (ShowsMaternityAdvance)
+                                {
+                                    <TableCell Class="px-4 py-3" data-maternity-advance>@PayrollLabels.Peso(e.MaternityBenefitAdvance)</TableCell>
+                                }
+                                @if (ShowsMaternityOffset)
+                                {
+                                    <TableCell Class="px-4 py-3" data-maternity-offset>@PayrollLabels.Peso(e.MaternityBenefitOffset)</TableCell>
+                                }
+                                @if (ShowsMaternityDifferential)
+                                {
+                                    <TableCell Class="px-4 py-3" data-maternity-differential>@PayrollLabels.Peso(e.MaternityDifferential)</TableCell>
+                                }
                                 <TableCell Class="px-4 py-3 font-medium">&#8369;@e.GrossPay.ToString("N2")</TableCell>
                                 <TableCell Class="px-4 py-3">&#8369;@e.SSSEmployee.ToString("N2")</TableCell>
                                 <TableCell Class="px-4 py-3">&#8369;@e.PhilHealthEmployee.ToString("N2")</TableCell>
@@ -230,6 +274,11 @@ else
                     </TableBody>
                 </Table>
                 </div>
+                @if (CollectsDeferredShares)
+                {
+                    @* The shares a maternity-covered cutoff deferred come out of this pay (in the deductions shown). *@
+                    <p class="text-xs text-muted-foreground px-4 py-2" data-deferred-collected-note>Deferred contributions from her maternity leave are collected here.</p>
+                }
             }
         </CardContent>
     </Card>
@@ -301,6 +350,15 @@ else
     // Shown whenever someone on the run is paid any 13th month - a final pay's included.
     private bool ShowsThirteenthMonth => _run?.Employees.Any(e => e.ThirteenthMonth > 0m) == true;
 
+    // Maternity pay (RA 11210): the SSS benefit advanced on this run, and the part of basic pay the
+    // benefit covers for leave days in the period. Each column shows only when someone has it.
+    private bool ShowsMaternityAdvance => _run?.Employees.Any(e => e.MaternityBenefitAdvance > 0m) == true;
+    private bool ShowsMaternityOffset => _run?.Employees.Any(e => e.MaternityBenefitOffset > 0m) == true;
+    // The salary differential: the pay for the leave days the offset leaves, tax-exempt.
+    private bool ShowsMaternityDifferential => _run?.Employees.Any(e => e.MaternityDifferential > 0m) == true;
+    // Someone on the run has contribution shares deferred during maternity leave collected here.
+    private bool CollectsDeferredShares => _run?.Employees.Any(e => e.DeferredContributionsCollected > 0m) == true;
+
     // The API includes or leaves out the 13th month on a regular run that isn't paid, in any month
     // (an advance nets out of the 13th month paid later). A final pay works out its own.
     private bool CanChangeThirteenthMonth => _run is not null && !IsFinalPay && _run.Status != "Paid";
@@ -312,9 +370,13 @@ else
     // "Refund"), as the payslip does; net pay is unchanged. Mirrors PayslipLineBuilder's
     // TaxRefund and DeductionsTotal.
     private static decimal TaxRefund(PayrollRunEmployeeDto e) => Math.Max(-e.WithholdingTax, 0m);
-    private static decimal DeductionsTaken(PayrollRunEmployeeDto e) => e.TotalDeductions + TaxRefund(e);
+    // Contributions a maternity-covered cutoff deferred are taken back, and earlier deferred ones an
+    // entry collects are added, so gross less deductions is still net, as on the payslip.
+    private static decimal DeductionsTaken(PayrollRunEmployeeDto e)
+        => e.TotalDeductions + TaxRefund(e) - e.ContributionsDeferred + e.DeferredContributionsCollected;
     private decimal RunTaxRefund => _run?.Employees.Sum(TaxRefund) ?? 0m;
-    private decimal RunDeductions => (_run?.TotalDeductions ?? 0m) + RunTaxRefund;
+    private decimal RunDeductions => (_run?.TotalDeductions ?? 0m) + RunTaxRefund
+        - (_run?.Employees.Sum(e => e.ContributionsDeferred - e.DeferredContributionsCollected) ?? 0m);
 
     // A final pay is built for its one employee from their separation, a paid run has already
     // retired loan balances, and a run needs at least one employee - the API refuses all three,

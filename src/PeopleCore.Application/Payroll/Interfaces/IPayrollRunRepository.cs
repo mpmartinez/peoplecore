@@ -166,11 +166,63 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     Task<int> CountUnpaidRunsPaidInYearAsync(int year, CancellationToken ct = default);
 
     /// <summary>
-    /// Saves what marking a run Paid changed - the run's status, the loans it retired and the leave
-    /// balances it drew converted days from - in one save, so they commit together or not at all.
+    /// Saves what marking a run Paid changed - the run's status, the loans it retired, the leave
+    /// balances it drew converted days from and the maternity claims it advanced - in one save, so
+    /// they commit together or not at all.
     /// </summary>
     Task SavePaidAsync(PayrollRun run, IReadOnlyCollection<EmployeeLoan> loans,
-        IReadOnlyCollection<Domain.Entities.Leave.LeaveBalance> leaveBalances, CancellationToken ct = default);
+        IReadOnlyCollection<Domain.Entities.Leave.LeaveBalance> leaveBalances,
+        IReadOnlyCollection<MaternityClaim> maternityClaims, CancellationToken ct = default);
+
+    /// <summary>
+    /// The maternity advances on file for the claims: one per entry that advances one of them
+    /// (<see cref="PayrollRunEmployee.AdvanceMaternityBenefit"/>, a
+    /// <see cref="PayrollRunEmployee.MaternityBenefitAdvance"/> above zero), on a run of any type - a
+    /// final pay advances too - and any status, other than <paramref name="excludeRunId"/>, earliest pay
+    /// date first. A benefit is advanced once, so a second run carrying it is refused.
+    /// </summary>
+    Task<IReadOnlyList<MaternityAdvanceInRun>> GetMaternityAdvancesAsync(
+        IReadOnlyCollection<Guid> claimIds, Guid excludeRunId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Each employee's deferred contributions still to collect: over their entries on Paid runs of
+    /// any type, the sum of <see cref="PayrollRunEmployee.ContributionsDeferred"/> less the sum of
+    /// <see cref="PayrollRunEmployee.DeferredContributionsCollected"/>. Employees with nothing
+    /// outstanding are left out.
+    /// </summary>
+    Task<IReadOnlyList<DeferredContributionsOutstanding>> GetDeferredContributionsOutstandingAsync(
+        IReadOnlyCollection<Guid> employeeIds, CancellationToken ct = default);
+
+    /// <summary>
+    /// The Paid runs whose entries netted the claim's allowance off regular pay: an entry that
+    /// records the claim (<see cref="PayrollRunEmployee.MaternityClaimId"/>) with a
+    /// <see cref="PayrollRunEmployee.MaternityBenefitOffset"/> above zero. Run numbers, earliest pay
+    /// date first.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetPaidRunsNettingMaternityClaimAsync(Guid claimId, CancellationToken ct = default);
+
+    /// <summary>
+    /// <see cref="GetPaidRunsNettingMaternityClaimAsync"/> for many claims at once: one row per claim
+    /// and Paid run that netted it, earliest pay date first.
+    /// </summary>
+    Task<IReadOnlyList<MaternityNettingInRun>> GetPaidRunsNettingMaternityClaimsAsync(
+        IReadOnlyCollection<Guid> claimIds, CancellationToken ct = default);
+
+    /// <summary>
+    /// The Paid runs, of any type, that include the employee and whose period overlaps
+    /// [<paramref name="from"/>, <paramref name="to"/>]: run numbers, earliest pay date first.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetPaidRunsCoveringPeriodAsync(Guid employeeId, DateOnly from, DateOnly to,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// The Paid runs, of any type, whose entry for the employee has a maternity offset above zero and
+    /// whose period overlaps [<paramref name="from"/>, <paramref name="to"/>]: run numbers, earliest pay
+    /// date first. Found by the employee and the dates, not the claim: an exempt employer's offset
+    /// records no claim.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetPaidRunsOffsettingPeriodAsync(Guid employeeId, DateOnly from, DateOnly to,
+        CancellationToken ct = default);
 
     /// <summary>
     /// Year-end leave conversions already on file for the employees: one per entry with
@@ -208,6 +260,19 @@ public sealed record ThirteenthMonthInRun(Guid EmployeeId, string RunNumber);
 
 /// <summary>An employee on the unpaid run numbered <paramref name="RunNumber"/>, paid before the one being computed.</summary>
 public sealed record EarlierUnpaidRun(Guid EmployeeId, string RunNumber);
+
+/// <summary>
+/// The employee shares deferred on an employee's Paid entries and not yet collected:
+/// <see cref="PayrollRunEmployee.ContributionsDeferred"/> less
+/// <see cref="PayrollRunEmployee.DeferredContributionsCollected"/>.
+/// </summary>
+public sealed record DeferredContributionsOutstanding(Guid EmployeeId, decimal Amount);
+
+/// <summary>A maternity claim whose allowance the Paid run numbered <paramref name="RunNumber"/> netted off regular pay.</summary>
+public sealed record MaternityNettingInRun(Guid ClaimId, string RunNumber);
+
+/// <summary>A maternity claim whose benefit the run numbered <paramref name="RunNumber"/> advances.</summary>
+public sealed record MaternityAdvanceInRun(Guid ClaimId, string RunNumber);
 
 /// <summary>An employee whose leave the run numbered <paramref name="RunNumber"/> converted to cash.</summary>
 public sealed record LeaveConvertedInRun(Guid EmployeeId, string RunNumber);
