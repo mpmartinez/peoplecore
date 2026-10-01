@@ -763,6 +763,173 @@ public class PayrollAttendanceBridgeTests
         result.Inputs[employeeId].AbsenceDays.Should().Be(1m);
     }
 
+    // ─── Unworked double regular holidays ─────────────────────────────────────────────────────
+
+    private static Holiday[] TwoRegularHolidaysOn(DateOnly date) =>
+    [
+        new Holiday { Name = "Araw ng Kagitingan", HolidayDate = date, HolidayType = HolidayType.RegularHoliday },
+        new Holiday { Name = "Maundy Thursday", HolidayDate = date, HolidayType = HolidayType.RegularHoliday }
+    ];
+
+    [Fact]
+    public async Task BuildAsync_AnUnworkedDoubleRegularHoliday_IsCountedAsAnUnworkedDay_AndIsNotAnAbsence()
+    {
+        var employeeId = Guid.NewGuid();
+        var date = new DateOnly(2026, 4, 9);   // a Thursday: a scheduled working day
+
+        SetupFixedShift(employeeId, date);
+        SetupHolidays(TwoRegularHolidaysOn(date));
+
+        var result = await _sut.BuildAsync([employeeId], date, date, CancellationToken.None);
+
+        var input = result.Inputs[employeeId];
+        input.PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.DoubleRegularHoliday, UnworkedDays: 1m)]);
+        // The salary already pays the first 100%; no absence claws it back.
+        input.AbsenceDays.Should().Be(0m);
+        // The display roll-up counts worked days only.
+        input.HolidayRegularDays.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task BuildAsync_AnUnworkedDoubleRegularHolidayOnARestDay_IsCountedWhenNoOvertimeIsApproved()
+    {
+        var employeeId = Guid.NewGuid();
+        var saturday = new DateOnly(2026, 3, 7);   // a rest day under the Monday-to-Friday shift
+
+        SetupFixedShift(employeeId, new DateOnly(2026, 3, 2));
+        SetupHolidays(TwoRegularHolidaysOn(saturday));
+
+        var result = await _sut.BuildAsync([employeeId], saturday, saturday, CancellationToken.None);
+
+        result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.DoubleRegularHolidayOnRestDay, UnworkedDays: 1m)]);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ADoubleRegularHolidayOnARestDay_WorkedThroughApprovedOvertime_IsNotCounted()
+    {
+        var employeeId = Guid.NewGuid();
+        var saturday = new DateOnly(2026, 3, 7);
+
+        SetupFixedShift(employeeId, new DateOnly(2026, 3, 2));
+        SetupOvertime(employeeId, saturday, 480);
+        SetupHolidays(TwoRegularHolidaysOn(saturday));
+
+        var result = await _sut.BuildAsync([employeeId], saturday, saturday, CancellationToken.None);
+
+        // A rest day's work comes from approved overtime: this one was worked, and is priced as before.
+        result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.DoubleRegularHolidayOnRestDay, Hours: 8m)]);
+    }
+
+    [Fact]
+    public async Task BuildAsync_AWorkedDoubleRegularHoliday_IsNotCountedAsUnworked()
+    {
+        var employeeId = Guid.NewGuid();
+        var date = new DateOnly(2026, 4, 9);
+
+        SetupFixedShift(employeeId, date);
+        SetupPresent(employeeId, date);
+        SetupHolidays(TwoRegularHolidaysOn(date));
+
+        var result = await _sut.BuildAsync([employeeId], date, date, CancellationToken.None);
+
+        result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.DoubleRegularHoliday, Days: 1m)]);
+    }
+
+    [Fact]
+    public async Task BuildAsync_AnUnworkedDoubleSpecialDay_PaysNothingExtra_AndIsStillAnAbsence()
+    {
+        var employeeId = Guid.NewGuid();
+        var date = new DateOnly(2026, 11, 2);
+
+        SetupFixedShift(employeeId, date);
+        SetupHolidays(
+            new Holiday { Name = "All Souls' Day", HolidayDate = date, HolidayType = HolidayType.SpecialNonWorking },
+            new Holiday { Name = "City founding day", HolidayDate = date, HolidayType = HolidayType.SpecialNonWorking });
+
+        var result = await _sut.BuildAsync([employeeId], date, date, CancellationToken.None);
+
+        result.Inputs[employeeId].PremiumDays.Should().BeEmpty();
+        result.Inputs[employeeId].AbsenceDays.Should().Be(1m);
+    }
+
+    [Fact]
+    public async Task BuildAsync_AnUnworkedSingleRegularHoliday_AddsNothing()
+    {
+        var employeeId = Guid.NewGuid();
+        var date = new DateOnly(2026, 6, 12);
+
+        SetupFixedShift(employeeId, date);
+        SetupHolidays(new Holiday { Name = "Independence Day", HolidayDate = date, HolidayType = HolidayType.RegularHoliday });
+
+        var result = await _sut.BuildAsync([employeeId], date, date, CancellationToken.None);
+
+        result.Inputs[employeeId].PremiumDays.Should().BeEmpty();
+        result.Inputs[employeeId].AbsenceDays.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ADoubleRegularHolidayWithNoScheduleThatDate_AddsNothing()
+    {
+        var employeeId = Guid.NewGuid();
+        var holiday = new DateOnly(2026, 4, 9);
+
+        // The assignment starts the day after, so the holiday has no schedule behind it.
+        SetupFixedShift(employeeId, holiday.AddDays(1));
+        SetupHolidays(TwoRegularHolidaysOn(holiday));
+
+        var result = await _sut.BuildAsync([employeeId], holiday, holiday.AddDays(1), CancellationToken.None);
+
+        result.Inputs[employeeId].PremiumDays.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task BuildAsync_OnePresentRecordAmongSeveralForTheDate_MakesTheDoubleHolidayWorked()
+    {
+        var employeeId = Guid.NewGuid();
+        var date = new DateOnly(2026, 4, 9);
+
+        SetupFixedShift(employeeId, date);
+        SetupHolidays(TwoRegularHolidaysOn(date));
+        _attendance.Setup(r => r.GetAllByPeriodAsync(
+                       It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync([
+                       new AttendanceRecord { EmployeeId = employeeId, AttendanceDate = date, IsPresent = false },
+                       new AttendanceRecord { EmployeeId = employeeId, AttendanceDate = date, IsPresent = true }
+                   ]);
+
+        var result = await _sut.BuildAsync([employeeId], date, date, CancellationToken.None);
+
+        result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.DoubleRegularHoliday, Days: 1m)]);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ApprovedPaidLeaveOnAnUnworkedDoubleRegularHoliday_IsStillCounted()
+    {
+        var employeeId = Guid.NewGuid();
+        var date = new DateOnly(2026, 4, 9);
+
+        SetupFixedShift(employeeId, date);
+        SetupHolidays(TwoRegularHolidaysOn(date));
+        _leave.Setup(r => r.GetApprovedByPeriodAsync(
+                  It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+              .ReturnsAsync([new LeaveRequest
+              {
+                  EmployeeId = employeeId, StartDate = date, EndDate = date,
+                  Status = LeaveStatus.Approved,
+                  LeaveType = new LeaveType { Name = "Vacation", IsPaid = true }
+              }]);
+
+        var result = await _sut.BuildAsync([employeeId], date, date, CancellationToken.None);
+
+        result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.DoubleRegularHoliday, UnworkedDays: 1m)]);
+    }
+
     [Fact]
     public async Task BuildAsync_ThrowsArgumentException_WhenPeriodEndPrecedesStart()
     {

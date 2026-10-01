@@ -155,7 +155,7 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
             var anyDateScheduled = false;
 
             void Add(WorkDayType dayType, decimal days = 0m, decimal hours = 0m,
-                     decimal overtimeHours = 0m, decimal nightDiffHours = 0m)
+                     decimal overtimeHours = 0m, decimal nightDiffHours = 0m, decimal unworkedDays = 0m)
             {
                 var current = premiumDays.GetValueOrDefault(dayType) ?? new PremiumDayInput(dayType);
                 premiumDays[dayType] = current with
@@ -163,7 +163,8 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                     Days = current.Days + days,
                     Hours = current.Hours + hours,
                     OvertimeHours = current.OvertimeHours + overtimeHours,
-                    NightDiffHours = current.NightDiffHours + nightDiffHours
+                    NightDiffHours = current.NightDiffHours + nightDiffHours,
+                    UnworkedDays = current.UnworkedDays + unworkedDays
                 };
             }
 
@@ -224,6 +225,20 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                     if (overtimeHours > 0m) Add(dayType, overtimeHours: overtimeHours);
                 }
 
+                // An unworked double regular holiday is paid 200% where an unworked single one is
+                // paid 100%: the salary already carries the first 100%, and the engine adds the
+                // second from this count. It needs a schedule (with none there is no basis to pay,
+                // just as no absence is derived), nobody present, and on a rest day no approved
+                // overtime, which is how a rest day's work arrives. Paid leave does not stop it,
+                // as it does not stop the single holiday's pay.
+                if (dayType is WorkDayType.DoubleRegularHoliday or WorkDayType.DoubleRegularHolidayOnRestDay
+                    && schedule is not null
+                    && !isPresent
+                    && !(isRestDay && overtimeHours > 0m))
+                {
+                    Add(dayType, unworkedDays: 1m);
+                }
+
                 // An absence needs a scheduled working day. A rest day is not one, and a null
                 // schedule is no basis to deduct at all. Nor is an unworked REGULAR holiday: the
                 // Labor Code entitles the employee to 100% of the daily wage whether or not they
@@ -250,7 +265,8 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                     Hours = Math.Round(d.Hours, 2),
                     OvertimeHours = Math.Round(d.OvertimeHours, 2)
                 })
-                .Where(d => d.Days != 0m || d.Hours != 0m || d.OvertimeHours != 0m || d.NightDiffHours != 0m)
+                .Where(d => d.Days != 0m || d.Hours != 0m || d.OvertimeHours != 0m || d.NightDiffHours != 0m
+                            || d.UnworkedDays != 0m)
                 .OrderBy(d => d.DayType)
                 .ToList();
 
