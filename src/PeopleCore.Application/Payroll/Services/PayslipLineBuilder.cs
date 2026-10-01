@@ -37,7 +37,18 @@ public static class PayslipLineBuilder
         if (e.NightDiffPay > 0) lines.Add(new("Night Shift Differential", e.NightDiffPay));
         if (e.TaxableAllowances > 0) lines.Add(new("Taxable Allowances", e.TaxableAllowances));
         if (e.NonTaxableAllowances > 0) lines.Add(new("Non-Taxable Allowances", e.NonTaxableAllowances, IsTaxable: false));
-        if (e.ThirteenthMonth > 0) lines.Add(new("13th Month Pay", e.ThirteenthMonth, IsTaxable: false));
+        // The 13th month is exempt up to what is left of the year's 90,000. When part of it is past
+        // that (ThirteenthMonthTaxable, already inside ThirteenthMonth and GrossPay), it is shown as
+        // its exempt and taxable parts in place of the one line. Null (an entry computed before the
+        // figure was stored) or 0 keeps the one non-taxable line.
+        if (e.ThirteenthMonthTaxable is decimal thirteenthMonthTaxable && thirteenthMonthTaxable > 0)
+        {
+            decimal thirteenthMonthExempt = e.ThirteenthMonth - thirteenthMonthTaxable;
+            if (thirteenthMonthExempt > 0)
+                lines.Add(new("13th Month Pay (non-taxable)", thirteenthMonthExempt, IsTaxable: false));
+            lines.Add(new("13th Month Pay (taxable portion)", thirteenthMonthTaxable, IsTaxable: true));
+        }
+        else if (e.ThirteenthMonth > 0) lines.Add(new("13th Month Pay", e.ThirteenthMonth, IsTaxable: false));
 
         // Final-pay earnings; a regular run has only the leave conversion, and only when it
         // converts unused year-end leave. A line is flagged non-taxable only when all

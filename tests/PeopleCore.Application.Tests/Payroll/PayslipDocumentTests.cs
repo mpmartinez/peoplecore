@@ -1,5 +1,6 @@
 using FluentAssertions;
 using PeopleCore.Application.Payroll.DTOs;
+using PeopleCore.Application.Payroll.Services;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Reports;
 using QuestPDF.Fluent;
@@ -98,6 +99,26 @@ public class PayslipDocumentTests
         };
 
         var pdf = new PayslipDocument(Run() with { RunType = PayrollRunType.FinalPay }, employee, Company()).GeneratePdf();
+
+        pdf.Take(5).Should().Equal("%PDF-"u8.ToArray());
+    }
+
+    [Theory]
+    [InlineData(4_000)]
+    [InlineData(20_000)]
+    public void Renders_a_13th_month_split_into_its_non_taxable_and_taxable_parts(int taxable)
+    {
+        // A 20,000 13th month partly (4,000) and wholly (20,000) past the year's exemption.
+        var employee = Employee() with
+        {
+            ThirteenthMonth = 20_000m,
+            ThirteenthMonthTaxable = taxable,
+            GrossPay = 30_000m,
+            NetPay = 29_238.75m
+        };
+        PayslipLineBuilder.Earnings(employee).Should().Contain(l => l.Description == "13th Month Pay (taxable portion)");
+
+        var pdf = new PayslipDocument(Run(), employee, Company()).GeneratePdf();
 
         pdf.Take(5).Should().Equal("%PDF-"u8.ToArray());
     }

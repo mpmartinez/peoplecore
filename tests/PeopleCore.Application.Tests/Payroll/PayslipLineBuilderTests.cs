@@ -285,6 +285,73 @@ public class PayslipLineBuilderTests
         PayslipLineBuilder.Earnings(FullyLoaded()).Should().NotContain(l => l.Description.Contains("maternity"));
     }
 
+    // ---------- The taxable part of the 13th month ----------
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(0)]
+    public void A_13th_month_with_no_taxable_part_stays_one_non_taxable_line(int? taxable)
+    {
+        // Null: an entry computed before the figure was stored. 0: within the year's 90,000.
+        var e = FullyLoaded() with { ThirteenthMonthTaxable = taxable };
+
+        var lines = PayslipLineBuilder.Earnings(e);
+
+        lines.Where(l => l.Description.StartsWith("13th Month Pay")).Should().ContainSingle()
+            .Which.Should().Be(new PayrollEarningLineDto("13th Month Pay", 20_000m, IsTaxable: false));
+        lines.Sum(l => l.Amount).Should().Be(e.GrossPay);
+        (lines.Sum(l => l.Amount) - PayslipLineBuilder.DeductionsTotal(e)).Should().Be(e.NetPay);
+    }
+
+    [Fact]
+    public void A_13th_month_partly_over_the_exemption_is_split_into_its_non_taxable_and_taxable_parts()
+    {
+        // 20,000 13th month, 8,000 of it past what was left of the year's 90,000:
+        // 20,000 - 8,000 = 12,000 non-taxable, 8,000 taxable, in place of the single line.
+        var e = FullyLoaded() with { ThirteenthMonthTaxable = 8_000m };
+
+        var lines = PayslipLineBuilder.Earnings(e);
+
+        lines.Should().NotContain(l => l.Description == "13th Month Pay");
+        var nonTaxable = lines.FindIndex(l => l.Description == "13th Month Pay (non-taxable)");
+        lines[nonTaxable].Should().Be(new PayrollEarningLineDto("13th Month Pay (non-taxable)", 12_000m, IsTaxable: false));
+        lines[nonTaxable + 1].Should().Be(new PayrollEarningLineDto("13th Month Pay (taxable portion)", 8_000m, IsTaxable: true));
+        lines[nonTaxable - 1].Description.Should().Be("Non-Taxable Allowances", "the split takes the single line's place");
+        // 32,759.14 gross either way; 32,759.14 - 2,984.56 = 29,774.58 net.
+        lines.Sum(l => l.Amount).Should().Be(e.GrossPay).And.Be(32_759.14m);
+        (lines.Sum(l => l.Amount) - PayslipLineBuilder.DeductionsTotal(e)).Should().Be(e.NetPay).And.Be(29_774.58m);
+    }
+
+    [Fact]
+    public void A_13th_month_wholly_over_the_exemption_is_one_taxable_portion_line()
+    {
+        // All 20,000 taxable: the non-taxable part is 0, so it has no line.
+        var e = FullyLoaded() with { ThirteenthMonthTaxable = 20_000m };
+
+        var lines = PayslipLineBuilder.Earnings(e);
+
+        lines.Where(l => l.Description.StartsWith("13th Month Pay")).Should().ContainSingle()
+            .Which.Should().Be(new PayrollEarningLineDto("13th Month Pay (taxable portion)", 20_000m, IsTaxable: true));
+        lines.Sum(l => l.Amount).Should().Be(e.GrossPay);
+        (lines.Sum(l => l.Amount) - PayslipLineBuilder.DeductionsTotal(e)).Should().Be(e.NetPay);
+    }
+
+    [Fact]
+    public void A_split_13th_month_on_a_final_pay_still_foots_with_its_refund()
+    {
+        // 10,000 13th month, 2,341.67 taxable: 7,658.33 non-taxable. 62,500 gross;
+        // 62,500 - 7,350 + 1,800 refund = 56,950 net.
+        var e = FinalPay() with { ThirteenthMonthTaxable = 2_341.67m };
+
+        var lines = PayslipLineBuilder.Earnings(e);
+
+        lines.Should().Contain(new PayrollEarningLineDto("13th Month Pay (non-taxable)", 7_658.33m, IsTaxable: false));
+        lines.Should().Contain(new PayrollEarningLineDto("13th Month Pay (taxable portion)", 2_341.67m, IsTaxable: true));
+        lines.Sum(l => l.Amount).Should().Be(e.GrossPay).And.Be(62_500m);
+        (lines.Sum(l => l.Amount) - PayslipLineBuilder.DeductionsTotal(e) + PayslipLineBuilder.TaxRefund(e))
+            .Should().Be(e.NetPay).And.Be(56_950m);
+    }
+
     /// <summary>
     /// A maternity month on a 30,000 salary: 6,000 of it covered by SSS (regular pay 24,000) and
     /// the 70,000.35 benefit advanced; contributions on the 30,000 basic (1,500 / 750 / 200) and
