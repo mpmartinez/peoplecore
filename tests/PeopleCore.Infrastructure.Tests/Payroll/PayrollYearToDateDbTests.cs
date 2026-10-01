@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PeopleCore.Application.Payroll.DTOs;
@@ -8,6 +9,7 @@ using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Leave;
 using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Enums;
+using PeopleCore.Domain.Exceptions;
 using PeopleCore.Infrastructure.Persistence;
 using PeopleCore.Infrastructure.Persistence.Repositories;
 
@@ -98,10 +100,41 @@ public class PayrollYearToDateDbTests : DatabaseTestBase
         // 36,500, less the balance's 10,000 already paid = 26,500.
         entry.ThirteenthMonth.Should().Be(26_500m);
         entry.ThirteenthMonthPaidEarlierInYear.Should().Be(10_000m);
+        entry.BasicEarnedEarlierInYear.Should().Be(401_500m);
+        entry.ExemptUsedEarlierInYear.Should().Be(10_000m);
         // 3 SIL days x 1,200 = 3,600; 10 - 8 = 2 de minimis days left: 2,400, and 1,200 other benefits.
         entry.LeaveConversionPay.Should().Be(3_600m);
         entry.LeaveConversionNonTaxable.Should().Be(2_400m);
         entry.LeaveConversionOtherBenefits.Should().Be(1_200m);
+    }
+
+    [Fact]
+    public async Task ADecemberRun_WhoseOpeningBalancesBasicChangedAfterCompute_IsNotPaid()
+    {
+        var maria = await SeedAsync();
+
+        Guid runId;
+        await using (var context = NewContext())
+            runId = (await PayrollRuns(context).CreateAsync(new CreatePayrollRunRequest(
+                new DateOnly(2026, 12, 1), new DateOnly(2026, 12, 31), new DateOnly(2026, 12, 29), PayFrequency.Monthly,
+                [new PayrollRunEmployeeInput(maria.Id, IncludeThirteenthMonth: true)]))).Id;
+        await using (var context = NewContext())
+            await PayrollRuns(context).ApproveAsync(runId);
+        await using (var context = NewContext())
+        {
+            var balance = await context.PayrollOpeningBalances.SingleAsync(b => b.EmployeeId == maria.Id);
+            balance.BasicSalary = 400_000m;
+            await context.SaveChangesAsync();
+        }
+
+        await using (var context = NewContext())
+        {
+            var act = () => PayrollRuns(context).MarkPaidAsync(runId);
+            await act.Should().ThrowAsync<DomainException>().WithMessage(
+                "Maria Santos's pay before PeopleCore has changed since this payroll was computed; recompute it before paying.");
+        }
+        await using var reader = NewContext();
+        (await new PayrollRunRepository(reader).GetWithEntriesAsync(runId))!.Status.Should().Be(PayrollRunStatus.Approved);
     }
 
     [Fact]

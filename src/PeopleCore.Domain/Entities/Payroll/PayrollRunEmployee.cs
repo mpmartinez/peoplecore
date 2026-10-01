@@ -61,6 +61,24 @@ public class PayrollRunEmployee : AuditableEntity
     /// </summary>
     public decimal? ThirteenthMonthPaidEarlierInYear { get; set; }
 
+    /// <summary>
+    /// The basic salary earned earlier in the pay year (the year's other Paid runs plus the
+    /// employee's opening balance) when this entry's <see cref="ThirteenthMonth"/> was computed - the
+    /// figure its 13th month due was worked out from. Mark Paid compares it with the figure now, so
+    /// an opening balance edited, added or removed since can't change what the 13th month should be
+    /// unnoticed. Null as <see cref="ThirteenthMonthPaidEarlierInYear"/> is.
+    /// </summary>
+    public decimal? BasicEarnedEarlierInYear { get; set; }
+
+    /// <summary>
+    /// How much of the 90,000 exemption for 13th month and other benefits was used earlier in the
+    /// pay year (on the year's other Paid runs and the opening balance) when this entry's
+    /// <see cref="ThirteenthMonth"/> was computed - what its tax was worked out with. Mark Paid
+    /// compares it with the figure now, as <see cref="BasicEarnedEarlierInYear"/>. Null as
+    /// <see cref="ThirteenthMonthPaidEarlierInYear"/> is.
+    /// </summary>
+    public decimal? ExemptUsedEarlierInYear { get; set; }
+
     // Final-pay earnings. A Regular run's entries carry leave conversion too when the run
     // includes the year-end conversion; separation and retirement pay are a final pay's only.
     /// <summary>

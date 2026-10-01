@@ -230,4 +230,121 @@ public partial class PayrollRunServiceTests
         run.Status.Should().Be(PayrollRunStatus.Approved);
         loan.RemainingBalance.Should().Be(5_000m);
     }
+
+    private const string PayBeforePeopleCoreChanged =
+        "Maria Santos's pay before PeopleCore has changed since this payroll was computed; recompute it before paying.";
+
+    [Fact]
+    public async Task CreateAsync_StoresTheBasicEarnedAndTheExemptionUsedEarlierInYear_ThatThe13thMonthWasComputedWith()
+    {
+        var (employeeId, savedRun) = At120000WithAPaidRun();
+        var sut = WithOpeningBalances(OpeningBalance(employeeId, basicSalary: 690_000m, thirteenthMonthPaid: 60_000m,
+            otherBenefitsPaid: 30_000m));
+
+        await sut.CreateAsync(With13thMonth(RoundTripRequest(employeeId)), CancellationToken.None);
+
+        // 690,000 on the run + 690,000 on the balance; the balance's 60,000 + 30,000 of the exemption.
+        var entry = savedRun()!.Employees.Single();
+        entry.BasicEarnedEarlierInYear.Should().Be(1_380_000m);
+        entry.ExemptUsedEarlierInYear.Should().Be(90_000m);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithoutThe13thMonth_StoresNoBasicOrExemptionEarlierInYear()
+    {
+        var run = await SeptemberRunForMaria(includeThirteenthMonth: false);
+
+        run.Employees.Single().BasicEarnedEarlierInYear.Should().BeNull();
+        run.Employees.Single().ExemptUsedEarlierInYear.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenTheOpeningBalancesBasicChangedSinceCompute_IsRefused()
+    {
+        // Computed with 365,000 of basic earned before PeopleCore; HR has since corrected it to
+        // 400,000, so the 13th month due is now 35,000 / 12 = 2,916.67 more than the entry pays.
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: 0m, basicEarlier: 365_000m, exemptEarlier: 0m);
+        var sut = WithOpeningBalances(OpeningBalance(maria.Id, basicSalary: 400_000m));
+
+        var act = () => sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(PayBeforePeopleCoreChanged);
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenTheOpeningBalancesOtherBenefitsChangedSinceCompute_IsRefused()
+    {
+        // Computed with none of the exemption used; HR has since recorded 5,000 of other benefits
+        // paid before PeopleCore, which uses 5,000 of it and changes the 13th month's tax.
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: 0m, basicEarlier: 365_000m, exemptEarlier: 0m);
+        var sut = WithOpeningBalances(OpeningBalance(maria.Id, basicSalary: 365_000m, otherBenefitsPaid: 5_000m));
+
+        var act = () => sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(PayBeforePeopleCoreChanged);
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenAnOpeningBalanceWasCreatedSinceCompute_IsRefused()
+    {
+        // Computed with nothing earlier in the year; a balance with 365,000 of basic was added since.
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: 0m, basicEarlier: 0m, exemptEarlier: 0m);
+        var sut = WithOpeningBalances(OpeningBalance(maria.Id, basicSalary: 365_000m));
+
+        var act = () => sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(PayBeforePeopleCoreChanged);
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenTheBasicAndExemptionEarlierAreWhatTheEntryWasComputedWith_PaysIt()
+    {
+        // 36,500 on PAY-2026-012 + 365,000 on the balance; the run's 6,000 13th month + the balance's
+        // 4,000 other benefits.
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: 6_000m, basicEarlier: 401_500m,
+            exemptEarlier: 10_000m);
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(
+            [PaidThirteenthMonth(maria.Id, "PAY-2026-012", 6_000m, paidAt: new DateTime(2026, 6, 30))]);
+        var sut = WithOpeningBalances(OpeningBalance(maria.Id, basicSalary: 365_000m, otherBenefitsPaid: 4_000m));
+
+        await sut.MarkPaidAsync(run.Id);
+
+        run.Status.Should().Be(PayrollRunStatus.Paid);
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_OnAnEntryComputedBeforeTheBasicAndExemptionWereStored_DoesNotCheckThem()
+    {
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: 0m);
+        var sut = WithOpeningBalances(OpeningBalance(maria.Id, basicSalary: 400_000m, otherBenefitsPaid: 5_000m));
+
+        await sut.MarkPaidAsync(run.Id);
+
+        run.Status.Should().Be(PayrollRunStatus.Paid);
+    }
+
+    [Fact]
+    public async Task ComputeAsync_OnAnApprovedRunWhoseOpeningBalanceChanged_RecomputesIt_AndSendsItBackToDraft()
+    {
+        // The way on from a Mark Paid refused because her pay before PeopleCore changed: computed
+        // with no balance, then HR recorded 365,000 of basic and 5,000 of other benefits.
+        var run = await SeptemberRunForMaria(includeThirteenthMonth: true);
+        run.Status = PayrollRunStatus.Approved;
+        var maria = run.Employees.Single().EmployeeId;
+        run.Employees.Single().BasicEarnedEarlierInYear.Should().Be(0m);
+        var sut = WithOpeningBalances(OpeningBalance(maria, basicSalary: 365_000m, otherBenefitsPaid: 5_000m));
+
+        await sut.ComputeAsync(run.Id);
+
+        // (365,000 + 36,500) / 12 = 33,458.33.
+        run.Status.Should().Be(PayrollRunStatus.Draft);
+        var entry = run.Employees.Single();
+        entry.ThirteenthMonth.Should().Be(33_458.33m);
+        entry.BasicEarnedEarlierInYear.Should().Be(365_000m);
+        entry.ExemptUsedEarlierInYear.Should().Be(5_000m);
+    }
 }

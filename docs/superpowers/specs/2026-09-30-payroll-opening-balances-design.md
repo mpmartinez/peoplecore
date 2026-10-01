@@ -74,6 +74,14 @@ block.
 - On save, when a Paid run of that year for her has already relied on the figures (any Paid run of
   hers in `Year` with a `PayDate` after `ThroughDate`), the page warns: "{RunNumber} used these figures; its 13th month and tax won't change. Reissue the
   2316 to pick up the change." Paid runs are never recomputed.
+- A regular run not paid yet that includes her 13th month stores, on her entry, the 13th month
+  already paid, the basic earned and the ₱90,000 exemption used earlier in the year that it was
+  computed with. Mark Paid compares them with the figures now (her Paid runs plus her balance), so
+  a balance created, edited or deleted after the run was computed refuses the payment. A change to
+  the 13th month already paid gives the 13th month's own message; a change to the basic earned or
+  the exemption used gives "{name}'s pay before PeopleCore has changed since this payroll was
+  computed; recompute it before paying." An Approved run in that state can be recomputed (back to
+  Draft). Entries computed before these figures were stored aren't checked.
 - Validation: "Enter a year." / "The through date must fall in {Year}." / "Amounts can't be
   negative." / "Contributions can't be more than the basic salary." / "De minimis leave days must
   be between 0 and 10."

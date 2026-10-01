@@ -158,7 +158,8 @@ public class PayrollRunService : IPayrollRunService
         // A regular run that converts leave is another: its leave can change after approval (a
         // request filed, rejected or cancelled), Mark Paid then refuses it, and a recompute - back
         // to Draft, to be approved again - is the way to pay it. So is one that includes the 13th
-        // month: another run can pay some of it after approval, which Mark Paid refuses the same way.
+        // month: another run can pay some of it after approval, or HR can record or change the
+        // employee's opening balance, which Mark Paid refuses the same way.
         // And so is one whose deferred maternity contributions another run's payment changed since
         // it was computed, or whose maternity figures its claims no longer give (her leave cancelled,
         // the allowance or the claim's status changed, the exemption switched) - both of which Mark
@@ -302,7 +303,7 @@ public class PayrollRunService : IPayrollRunService
     /// approved, but that sends it back to Draft, so it is paid only as approved all the same - and
     /// so can a regular run with the year-end leave conversion, whose leave can change after it's
     /// approved, and one that includes the 13th month, some of which another run can pay after
-    /// it's approved.
+    /// it's approved, and whose employees' opening balances can change after it's approved.
     /// </summary>
     public async Task ApproveAsync(Guid runId, CancellationToken ct = default)
     {
@@ -359,7 +360,7 @@ public class PayrollRunService : IPayrollRunService
         else
         {
             await EnsureNoOneHasLeftAsync(run, ct);
-            await EnsureThirteenthMonthNotPaidSinceAsync(run, ct);
+            await EnsureEarlierInYearUnchangedAsync(run, ct);
             if (run.IncludesLeaveConversion)
                 leavePaidOut = await YearEndLeavePaidOutAsync(run, ct);
         }
@@ -542,18 +543,29 @@ public class PayrollRunService : IPayrollRunService
     }
 
     /// <summary>
-    /// Refuses a regular run whose 13th month was computed before more of it was paid elsewhere:
-    /// for every entry that computed one, the 13th month paid earlier in the pay year now - on its
-    /// other Paid runs and on the employee's opening balance - must still be what the entry was
-    /// netted of (<see cref="PayrollRunEmployee.ThirteenthMonthPaidEarlierInYear"/>). Paid runs
-    /// can't be changed, so their part only grows; when the total has grown, the entry would pay
-    /// the difference twice. The balance can be edited either way; when it was lowered, the entry
-    /// would underpay. Entries computed before the figure was kept (null) aren't checked.
-    /// Changes nothing.
+    /// Refuses a regular run whose 13th month was computed on figures for earlier in the pay year
+    /// that have changed since. For every entry that computed one, what was paid earlier in the
+    /// year now - on the year's other Paid runs and on the employee's opening balance - must still
+    /// be what the entry was computed with:
+    /// <list type="bullet">
+    /// <item>the 13th month already paid, which it was netted of
+    /// (<see cref="PayrollRunEmployee.ThirteenthMonthPaidEarlierInYear"/>; see
+    /// <see cref="EnsureThirteenthMonthNotPaidSinceAsync"/>);</item>
+    /// <item>the basic earned, which the 13th month due was worked out from
+    /// (<see cref="PayrollRunEmployee.BasicEarnedEarlierInYear"/>), and the 90,000 exemption used,
+    /// which its tax was worked out with (<see cref="PayrollRunEmployee.ExemptUsedEarlierInYear"/>):
+    /// an opening balance created, or its basic salary or other benefits changed, since the entry
+    /// was computed would leave it paying the wrong 13th month or tax.</item>
+    /// </list>
+    /// Each figure is checked only when the entry stored it: entries computed before it was kept
+    /// (null) aren't. Changes nothing.
     /// </summary>
-    private async Task EnsureThirteenthMonthNotPaidSinceAsync(PayrollRun run, CancellationToken ct)
+    private async Task EnsureEarlierInYearUnchangedAsync(PayrollRun run, CancellationToken ct)
     {
-        var computed = run.Employees.Where(e => e.ThirteenthMonthPaidEarlierInYear is not null).ToList();
+        var computed = run.Employees
+            .Where(e => e.ThirteenthMonthPaidEarlierInYear is not null || e.BasicEarnedEarlierInYear is not null
+                        || e.ExemptUsedEarlierInYear is not null)
+            .ToList();
         if (computed.Count == 0)
             return;
 
@@ -562,28 +574,49 @@ public class PayrollRunService : IPayrollRunService
 
         foreach (var entry in computed)
         {
-            decimal paidNow = earlierInYear[entry.EmployeeId].ThirteenthMonthPaid;
-            if (paidNow == entry.ThirteenthMonthPaidEarlierInYear)
-                continue;
+            var now = earlierInYear[entry.EmployeeId];
+            await EnsureThirteenthMonthNotPaidSinceAsync(run, entry, now.ThirteenthMonthPaid, ct);
 
-            // Which run paid it isn't recorded against the entry; the latest one marked Paid that
-            // paid any 13th month is the likeliest, and is the one to look at. With none - or when
-            // the total fell, which a Paid run can't do - what changed is the 13th month on her
-            // opening balance.
-            var latest = paidNow < entry.ThirteenthMonthPaidEarlierInYear
-                ? null
-                : (await _runRepo.GetPaidRunsInYearAsync(run.PayDate.Year, ct) ?? [])
-                    .Where(r => r.Id != run.Id)
-                    .Where(r => r.Employees.Any(e => e.EmployeeId == entry.EmployeeId && e.ThirteenthMonth > 0m))
-                    .MaxBy(r => r.UpdatedAt);
-            var name = entry.Employee?.FullName
-                ?? (await _employeeRepo.GetByIdAsync(entry.EmployeeId, ct))?.FullName
-                ?? entry.EmployeeId.ToString();
-            throw new DomainException(latest is null
-                ? $"{name}'s 13th month paid before PeopleCore has changed since this payroll was computed; recompute it before paying."
-                : $"{name}'s 13th month was paid on {latest.RunNumber} after this payroll was computed; recompute it before paying.");
+            if ((entry.BasicEarnedEarlierInYear is { } basic && basic != now.BasicEarned)
+                || (entry.ExemptUsedEarlierInYear is { } exempt && exempt != now.ExemptUsed))
+                throw new DomainException(
+                    $"{await NameAsync(entry, ct)}'s pay before PeopleCore has changed since this payroll was computed; recompute it before paying.");
         }
     }
+
+    /// <summary>
+    /// Refuses the entry when the 13th month paid earlier in the year now (<paramref name="paidNow"/>)
+    /// isn't what it was netted of (<see cref="PayrollRunEmployee.ThirteenthMonthPaidEarlierInYear"/>),
+    /// when that is stored. Paid runs can't be changed, so their part only grows; when the total has
+    /// grown, the entry would pay the difference twice. The opening balance can be edited either way;
+    /// when it was lowered, the entry would underpay.
+    /// </summary>
+    private async Task EnsureThirteenthMonthNotPaidSinceAsync(PayrollRun run, PayrollRunEmployee entry, decimal paidNow,
+        CancellationToken ct)
+    {
+        if (entry.ThirteenthMonthPaidEarlierInYear is not { } paidThen || paidNow == paidThen)
+            return;
+
+        // Which run paid it isn't recorded against the entry; the latest one marked Paid that paid
+        // any 13th month is the likeliest, and is the one to look at. With none - or when the total
+        // fell, which a Paid run can't do - what changed is the 13th month on her opening balance.
+        var latest = paidNow < paidThen
+            ? null
+            : (await _runRepo.GetPaidRunsInYearAsync(run.PayDate.Year, ct) ?? [])
+                .Where(r => r.Id != run.Id)
+                .Where(r => r.Employees.Any(e => e.EmployeeId == entry.EmployeeId && e.ThirteenthMonth > 0m))
+                .MaxBy(r => r.UpdatedAt);
+        var name = await NameAsync(entry, ct);
+        throw new DomainException(latest is null
+            ? $"{name}'s 13th month paid before PeopleCore has changed since this payroll was computed; recompute it before paying."
+            : $"{name}'s 13th month was paid on {latest.RunNumber} after this payroll was computed; recompute it before paying.");
+    }
+
+    /// <summary>The entry's employee's name, for a refusal.</summary>
+    private async Task<string> NameAsync(PayrollRunEmployee entry, CancellationToken ct)
+        => entry.Employee?.FullName
+           ?? (await _employeeRepo.GetByIdAsync(entry.EmployeeId, ct))?.FullName
+           ?? entry.EmployeeId.ToString();
 
     /// <summary>
     /// The 13th month goes only on a regular run paid in the year its period ends: it's due by

@@ -79,3 +79,15 @@
 - [ ] The whole solution passes with no compiler warnings.
 - [ ] `AddPayrollOpeningBalances` holds only what Task 1 lists.
 - [ ] Browser check needs a signed-in account; record it as not done if no one can sign in.
+
+---
+
+### Final review fixes
+
+One commit each, test first.
+
+- [x] A balance's basic salary is after unpaid absences and tardiness (docs only).
+- [x] Mark Paid refuses a run with the 13th month whose employee's basic earned or exemption used
+  earlier in the year changed since compute (new nullable entry columns
+  `BasicEarnedEarlierInYear` and `ExemptUsedEarlierInYear`, migration
+  `AddYearToDateSnapshotToEntry`); an Approved run in that state can be recomputed.
