@@ -792,7 +792,7 @@ public class PayrollAttendanceBridgeTests
     }
 
     [Fact]
-    public async Task BuildAsync_AnUnworkedDoubleRegularHolidayOnARestDay_IsCountedWhenNoOvertimeIsApproved()
+    public async Task BuildAsync_AnUnworkedDoubleRegularHolidayOnARestDay_IsCountedWhenNoOvertimeIsApproved_AsItIsWithOvertime()
     {
         var employeeId = Guid.NewGuid();
         var saturday = new DateOnly(2026, 3, 7);   // a rest day under the Monday-to-Friday shift
@@ -807,7 +807,7 @@ public class PayrollAttendanceBridgeTests
     }
 
     [Fact]
-    public async Task BuildAsync_ADoubleRegularHolidayOnARestDay_WorkedThroughApprovedOvertime_IsNotCounted()
+    public async Task BuildAsync_ADoubleRegularHolidayOnARestDay_WorkedThroughApprovedOvertime_CountsTheGuaranteedDayAndKeepsTheHours()
     {
         var employeeId = Guid.NewGuid();
         var saturday = new DateOnly(2026, 3, 7);
@@ -818,9 +818,43 @@ public class PayrollAttendanceBridgeTests
 
         var result = await _sut.BuildAsync([employeeId], saturday, saturday, CancellationToken.None);
 
-        // A rest day's work comes from approved overtime: this one was worked, and is priced as before.
+        // The 200% is guaranteed whether or not the day is worked; the eight approved hours are
+        // priced on top of it by the engine as the work premium.
         result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
-            [new PremiumDayInput(WorkDayType.DoubleRegularHolidayOnRestDay, Hours: 8m)]);
+            [new PremiumDayInput(WorkDayType.DoubleRegularHolidayOnRestDay, Hours: 8m, UnworkedDays: 1m)]);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ADoubleRegularHolidayOnARestDay_WithOvertimePastEightHours_CountsTheGuaranteedDayOnce()
+    {
+        var employeeId = Guid.NewGuid();
+        var saturday = new DateOnly(2026, 3, 7);
+
+        SetupFixedShift(employeeId, new DateOnly(2026, 3, 2));
+        SetupOvertime(employeeId, saturday, 600);   // ten hours: eight at the day's rate, two overtime
+        SetupHolidays(TwoRegularHolidaysOn(saturday));
+
+        var result = await _sut.BuildAsync([employeeId], saturday, saturday, CancellationToken.None);
+
+        result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.DoubleRegularHolidayOnRestDay, Hours: 8m, OvertimeHours: 2m, UnworkedDays: 1m)]);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ADoubleRegularHolidayOnARestDay_WithAPresentRecordAndApprovedOvertime_CountsTheGuaranteedDayOnce()
+    {
+        var employeeId = Guid.NewGuid();
+        var saturday = new DateOnly(2026, 3, 7);
+
+        SetupFixedShift(employeeId, new DateOnly(2026, 3, 2));
+        SetupPresent(employeeId, saturday);
+        SetupOvertime(employeeId, saturday, 240);
+        SetupHolidays(TwoRegularHolidaysOn(saturday));
+
+        var result = await _sut.BuildAsync([employeeId], saturday, saturday, CancellationToken.None);
+
+        result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.DoubleRegularHolidayOnRestDay, Hours: 4m, UnworkedDays: 1m)]);
     }
 
     [Fact]
@@ -835,8 +869,8 @@ public class PayrollAttendanceBridgeTests
 
         var result = await _sut.BuildAsync([employeeId], saturday, saturday, CancellationToken.None);
 
-        // Rest-day work comes only from approved overtime, so turning up unapproved earns nothing
-        // as work: the day counts as unworked and she is never paid less than for staying home.
+        // Rest-day work comes only from approved overtime, so turning up unapproved earns no hours;
+        // the guaranteed 200% still counts, so she is never paid less than for staying home.
         result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
             [new PremiumDayInput(WorkDayType.DoubleRegularHolidayOnRestDay, UnworkedDays: 1m)]);
     }

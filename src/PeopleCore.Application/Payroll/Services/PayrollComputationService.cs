@@ -269,14 +269,22 @@ public class PayrollComputationService
             decimal alreadyPaid = IsRestDay(day.DayType) && !PaysRestDays(factor) ? 0m : 1m;
             decimal premium = DolePremiumRates.BaseRate(day.DayType) - alreadyPaid;
 
-            // A worked day of this type, and the first eight hours of work on a rest day.
-            holidayPay += (dailyRate * premium * day.Days) + (hourlyRate * premium * day.Hours);
-
-            // A scheduled double regular holiday the employee did not work is paid 200% in total.
-            // The salary pays what it always pays (alreadyPaid), so the extra is the rest of the 200%:
-            // one more day, or two on a rest day the factor does not pay. Other kinds of day carry no
-            // unworked rate and add nothing.
+            // A day type with an unworked rate (a double regular holiday) is paid that rate whether
+            // or not it is worked, through the guaranteed days below; work on it adds only the
+            // premium on top of the guarantee, so its hours are priced BaseRate - UnworkedRate (1.90
+            // on a rest day), not BaseRate - alreadyPaid, which would pay the guarantee twice.
             decimal unworkedRate = DolePremiumRates.UnworkedBaseRate(day.DayType);
+            decimal hourlyPremium = unworkedRate > 0m
+                ? DolePremiumRates.BaseRate(day.DayType) - unworkedRate
+                : premium;
+
+            // A worked day of this type, and the first eight hours of work on a rest day.
+            holidayPay += (dailyRate * premium * day.Days) + (hourlyRate * hourlyPremium * day.Hours);
+
+            // A scheduled double regular holiday is paid 200% in total, worked or not. The salary
+            // pays what it always pays (alreadyPaid), so the guarantee is the rest of the 200%:
+            // one more day, or two on a rest day the factor does not pay. Other kinds of day carry
+            // no unworked rate and add nothing.
             if (unworkedRate > 0m)
                 holidayPay += dailyRate * (unworkedRate - alreadyPaid) * day.UnworkedDays;
 
