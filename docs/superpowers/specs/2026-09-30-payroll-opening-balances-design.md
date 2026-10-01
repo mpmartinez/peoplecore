@@ -27,7 +27,7 @@ PeopleCore. Every "earlier this year" figure adds them in.
 |---|---|
 | `EmployeeId`, `Year` | whose, and which calendar year |
 | `ThroughDate` (DateOnly) | the last pay date the figures include; must fall in `Year` |
-| `BasicSalary` | basic salary earned, gross (before absences and contributions) |
+| `BasicSalary` | basic salary earned, after unpaid absences and tardiness, before contributions (a run's `RegularPay` is also after them, and the two are added together) |
 | `ThirteenthMonthPaid` | 13th month already paid |
 | `OtherBenefitsPaid` | other benefits (bonuses and the like) paid, which count toward the ₱90,000 |
 | `OtherTaxablePay` | overtime, holiday, night differential and taxable allowances, as one total |

@@ -19,7 +19,7 @@ public class PayrollOpeningBalance : AuditableEntity
     /// <summary>The last pay date the figures include; it falls in <see cref="Year"/>.</summary>
     public DateOnly ThroughDate { get; set; }
 
-    /// <summary>Basic salary earned, gross (before absences and contributions).</summary>
+    /// <summary>Basic salary earned, after unpaid absences and tardiness, before contributions.</summary>
     public decimal BasicSalary { get; set; }
 
     /// <summary>13th month already paid.</summary>

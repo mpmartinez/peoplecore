@@ -224,7 +224,7 @@ else
             <Input TValue="DateOnly?" Id="ob-through" Type="date" @bind-Value="_through" Disabled="@_saving" />
         </FormField>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <FormField LabelText="Basic salary" Id="ob-basic" Description="Basic salary earned, gross (before absences and contributions).">
+            <FormField LabelText="Basic salary" Id="ob-basic" Description="Basic salary earned, after unpaid absences and tardiness, before contributions.">
                 <Input TValue="decimal?" Id="ob-basic" Type="number" Min="0" Step="0.01" @bind-Value="_basicSalary" Disabled="@_saving" />
             </FormField>
             <FormField LabelText="13th month paid" Id="ob-thirteenth" Description="13th month already paid.">
