@@ -91,3 +91,5 @@ One commit each, test first.
   earlier in the year changed since compute (new nullable entry columns
   `BasicEarnedEarlierInYear` and `ExemptUsedEarlierInYear`, migration
   `AddYearToDateSnapshotToEntry`); an Approved run in that state can be recomputed.
+- [x] Mark Paid names a run only when it was marked Paid after the entry was computed; otherwise a
+  changed 13th month already paid is the balance's.

@@ -597,13 +597,16 @@ public class PayrollRunService : IPayrollRunService
         if (entry.ThirteenthMonthPaidEarlierInYear is not { } paidThen || paidNow == paidThen)
             return;
 
-        // Which run paid it isn't recorded against the entry; the latest one marked Paid that paid
-        // any 13th month is the likeliest, and is the one to look at. With none - or when the total
-        // fell, which a Paid run can't do - what changed is the 13th month on her opening balance.
+        // Which run paid it isn't recorded against the entry; the latest one marked Paid after the
+        // entry was computed (a run's UpdatedAt is when it was marked Paid - a Paid run doesn't
+        // change - and an entry's CreatedAt when it was computed: a recompute replaces it) that
+        // paid any 13th month is the likeliest, and is the one to look at. A run paid before the
+        // compute is already in what the entry was netted of. With none - or when the total fell,
+        // which a Paid run can't do - what changed is the 13th month on her opening balance.
         var latest = paidNow < paidThen
             ? null
             : (await _runRepo.GetPaidRunsInYearAsync(run.PayDate.Year, ct) ?? [])
-                .Where(r => r.Id != run.Id)
+                .Where(r => r.Id != run.Id && r.UpdatedAt > entry.CreatedAt)
                 .Where(r => r.Employees.Any(e => e.EmployeeId == entry.EmployeeId && e.ThirteenthMonth > 0m))
                 .MaxBy(r => r.UpdatedAt);
         var name = await NameAsync(entry, ct);

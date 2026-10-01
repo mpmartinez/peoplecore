@@ -214,6 +214,25 @@ public partial class PayrollRunServiceTests
     }
 
     [Fact]
+    public async Task MarkPaidAsync_WhenOnlyTheOpeningBalances13thMonthRoseSinceCompute_NamesTheBalance_NotARunPaidBefore()
+    {
+        // Computed (Nov 15) with 6,000 paid earlier, on PAY-2026-012 in June. HR has since recorded
+        // 4,000 of 13th month paid before PeopleCore: 10,000 now. PAY-2026-012 was paid before the
+        // compute and is already in the 6,000, so it isn't what changed.
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: 6_000m);
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(
+            [PaidThirteenthMonth(maria.Id, "PAY-2026-012", 6_000m, paidAt: new DateTime(2026, 6, 30))]);
+        var sut = WithOpeningBalances(OpeningBalance(maria.Id, thirteenthMonthPaid: 4_000m));
+
+        var act = () => sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos's 13th month paid before PeopleCore has changed since this payroll was computed; recompute it before paying.");
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
     public async Task MarkPaidAsync_WhenTheOpeningBalancesDeMinimisDaysChangedSinceCompute_IsRefused()
     {
         // The entry converted 3 SIL days as 3,600 of de minimis, computed with all ten days left.

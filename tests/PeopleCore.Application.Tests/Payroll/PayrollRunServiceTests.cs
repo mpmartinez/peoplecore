@@ -2857,7 +2857,8 @@ public partial class PayrollRunServiceTests
     /// <summary>
     /// Maria's approved December run: a 13th month computed when <paramref name="paidEarlier"/> of it
     /// had been paid in the year, <paramref name="basicEarlier"/> of basic earned and
-    /// <paramref name="exemptEarlier"/> of the 90,000 exemption used (null: not stored).
+    /// <paramref name="exemptEarlier"/> of the 90,000 exemption used (null: not stored). Computed on
+    /// Nov 15, 2026.
     /// </summary>
     private (PayrollRun Run, Employee Maria) ApprovedDecemberWithThe13thMonth(decimal? paidEarlier,
         decimal? basicEarlier = null, decimal? exemptEarlier = null)
@@ -2872,7 +2873,8 @@ public partial class PayrollRunServiceTests
         {
             PayrollRunId = run.Id, EmployeeId = maria.Id, Employee = maria, RegularPay = 36_500m,
             IncludeThirteenthMonth = true, ThirteenthMonth = 30_000m, ThirteenthMonthPaidEarlierInYear = paidEarlier,
-            BasicEarnedEarlierInYear = basicEarlier, ExemptUsedEarlierInYear = exemptEarlier
+            BasicEarnedEarlierInYear = basicEarlier, ExemptUsedEarlierInYear = exemptEarlier,
+            CreatedAt = new DateTime(2026, 11, 15)
         });
         _runRepo.Setup(r => r.GetWithEntriesAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(run);
         return (run, maria);

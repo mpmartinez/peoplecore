@@ -77,11 +77,14 @@ block.
 - A regular run not paid yet that includes her 13th month stores, on her entry, the 13th month
   already paid, the basic earned and the ₱90,000 exemption used earlier in the year that it was
   computed with. Mark Paid compares them with the figures now (her Paid runs plus her balance), so
-  a balance created, edited or deleted after the run was computed refuses the payment. A change to
-  the 13th month already paid gives the 13th month's own message; a change to the basic earned or
-  the exemption used gives "{name}'s pay before PeopleCore has changed since this payroll was
-  computed; recompute it before paying." An Approved run in that state can be recomputed (back to
-  Draft). Entries computed before these figures were stored aren't checked.
+  a balance created, edited or deleted after the run was computed refuses the payment. When the
+  13th month already paid differs, a Paid run that paid her some 13th month after the compute is
+  named ("{name}'s 13th month was paid on {RunNumber} after this payroll was computed; recompute it
+  before paying."); with none, the balance is what changed: "{name}'s 13th month paid before
+  PeopleCore has changed since this payroll was computed; recompute it before paying." A change to
+  the basic earned or the exemption used gives "{name}'s pay before PeopleCore has changed since
+  this payroll was computed; recompute it before paying." An Approved run in that state can be
+  recomputed (back to Draft). Entries computed before these figures were stored aren't checked.
 - Validation: "Enter a year." / "The through date must fall in {Year}." / "Amounts can't be
   negative." / "Contributions can't be more than the basic salary." / "De minimis leave days must
   be between 0 and 10."
