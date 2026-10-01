@@ -64,6 +64,18 @@ public static class DolePremiumRates
     };
 
     /// <summary>
+    /// Pay rate for a scheduled day the employee did not work: 200% for a double regular holiday
+    /// (the handbook's "unworked" rate, on a rest day too), and 0 for every other kind of day, which
+    /// owe nothing beyond what the salary already pays. A single regular holiday unworked is the
+    /// salary's 100% and no more; an unworked special day is no work, no pay.
+    /// </summary>
+    public static decimal UnworkedBaseRate(WorkDayType day) => day switch
+    {
+        WorkDayType.DoubleRegularHoliday or WorkDayType.DoubleRegularHolidayOnRestDay => 2.00m,
+        _ => 0m
+    };
+
+    /// <summary>
     /// The overtime factor for the given day. Ordinary days take 25%, everything else 30%.
     /// </summary>
     public static decimal OvertimeFactor(WorkDayType day) =>

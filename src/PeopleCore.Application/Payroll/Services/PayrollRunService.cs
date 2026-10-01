@@ -1055,8 +1055,10 @@ public class PayrollRunService : IPayrollRunService
     private static List<PremiumDayInput> Merge(IEnumerable<PremiumDayInput> days) => days
         .GroupBy(d => d.DayType)
         .Select(g => new PremiumDayInput(g.Key,
-            g.Sum(d => d.Days), g.Sum(d => d.Hours), g.Sum(d => d.OvertimeHours), g.Sum(d => d.NightDiffHours)))
-        .Where(d => d.Days != 0m || d.Hours != 0m || d.OvertimeHours != 0m || d.NightDiffHours != 0m)
+            g.Sum(d => d.Days), g.Sum(d => d.Hours), g.Sum(d => d.OvertimeHours), g.Sum(d => d.NightDiffHours),
+            g.Sum(d => d.UnworkedDays)))
+        .Where(d => d.Days != 0m || d.Hours != 0m || d.OvertimeHours != 0m || d.NightDiffHours != 0m
+            || d.UnworkedDays != 0m)
         .ToList();
 
     /// <summary>
@@ -1093,7 +1095,8 @@ public class PayrollRunService : IPayrollRunService
         HolidayRegularDays = entry.HolidayRegularDays,
         HolidaySpecialDays = entry.HolidaySpecialDays,
         PremiumDays        = entry.PremiumDays
-            .Select(d => new PremiumDayInput(d.DayType, d.Days, d.Hours, d.OvertimeHours, d.NightDiffHours))
+            .Select(d => new PremiumDayInput(d.DayType, d.Days, d.Hours, d.OvertimeHours, d.NightDiffHours,
+                d.UnworkedDays))
             .ToList()
     };
 

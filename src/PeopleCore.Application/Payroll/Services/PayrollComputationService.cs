@@ -272,6 +272,14 @@ public class PayrollComputationService
             // A worked day of this type, and the first eight hours of work on a rest day.
             holidayPay += (dailyRate * premium * day.Days) + (hourlyRate * premium * day.Hours);
 
+            // A scheduled double regular holiday the employee did not work is paid 200% in total.
+            // The salary pays what it always pays (alreadyPaid), so the extra is the rest of the 200%:
+            // one more day, or two on a rest day the factor does not pay. Other kinds of day carry no
+            // unworked rate and add nothing.
+            decimal unworkedRate = DolePremiumRates.UnworkedBaseRate(day.DayType);
+            if (unworkedRate > 0m)
+                holidayPay += dailyRate * (unworkedRate - alreadyPaid) * day.UnworkedDays;
+
             // Overtime is never paid by the salary, so it earns its full rate: 125% on an
             // ordinary day, 130% of the day's rate on any other.
             overtimePay += hourlyRate * DolePremiumRates.Rate(day.DayType, overtime: true) * day.OvertimeHours;
@@ -548,7 +556,8 @@ public class PayrollComputationService
                     Days = d.Days,
                     Hours = d.Hours,
                     OvertimeHours = d.OvertimeHours,
-                    NightDiffHours = d.NightDiffHours
+                    NightDiffHours = d.NightDiffHours,
+                    UnworkedDays = d.UnworkedDays
                 })
                 .ToList()
         };
