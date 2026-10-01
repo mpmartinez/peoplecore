@@ -288,7 +288,8 @@ public sealed class GovernmentReportService : IGovernmentReportService
         // (PayrollRunEmployee.ThirteenthMonthAndOtherBenefits) - paid earlier in the year has used
         // its share of the 90,000 exemption first, as the 2316 counts it: on the Paid runs paid
         // before the month, and before PeopleCore (the opening balance's 13th month and other
-        // benefits). The month's own columns are PeopleCore's alone. Skip the year-wide query
+        // benefits) - in a month after the balance's through date's month only, as its through date
+        // falls before the month. The month's own columns are PeopleCore's alone. Skip the year-wide query
         // entirely when nothing this month even has any to offset - most months don't.
         Dictionary<Guid, decimal> earlierThirteenth = [];
         if (people.Any(p => p.Entries.Any(e => e.ThirteenthMonthAndOtherBenefits > 0)))

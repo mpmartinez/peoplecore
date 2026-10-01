@@ -540,6 +540,25 @@ public class GovernmentReportServiceTests
     }
 
     [Fact]
+    public async Task Bir1601C_ForTheMonthOfTheBalancesThroughDate_DoesNotCountTheBalanceAsEarlier()
+    {
+        // Go-live mid-December: the balance runs through December 10 with 40,000 of 13th month and
+        // 20,000 of other benefits. December's 1601-C is the month the balance ends in, so it isn't
+        // paid earlier than December: all of December's 60,000 is inside the 90,000.
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.TIN, "111-222-333-000"));
+        var december = Run(new(2026, 12, 15), new(2026, 12, 18), Entry(juan, thirteenth: 60_000m));
+        _runs.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([december]);
+        _runs.Setup(r => r.GetPaidRunsByPayMonthAsync(2026, 12, It.IsAny<CancellationToken>())).ReturnsAsync([december]);
+        var sut = InJanuary2027WithOpeningBalances(
+            OpeningBalanceFakes.OpeningBalance(juan.Id, thirteenthMonthPaid: 40_000m, otherBenefitsPaid: 20_000m,
+                throughDate: new DateOnly(2026, 12, 10)));
+
+        var report = await sut.BuildAsync("1601c", 2026, 12);
+
+        report.Summary.Should().Contain(new GovernmentReportLineDto("13th month pay and other benefits", 60_000m));
+    }
+
+    [Fact]
     public async Task Bir1601C_AddsTheOpeningBalanceToThe13thMonthPaidEarlierOnRuns()
     {
         // May paid 60,000 of 13th month; the balance 10,000 more and 5,000 of other benefits:

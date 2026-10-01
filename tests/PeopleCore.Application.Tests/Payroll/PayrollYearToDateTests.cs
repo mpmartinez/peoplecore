@@ -163,4 +163,19 @@ public class PayrollYearToDateTests
         ytd[_maria].ExemptUsed.Should().Be(35_000m);
         ytd[_maria].ThirteenthMonthPaid.Should().Be(30_000m);
     }
+
+    [Theory]
+    [InlineData(11, 30, true)]    // through November: before December
+    [InlineData(12, 1, false)]    // through a day in December: December's own month
+    [InlineData(12, 31, false)]
+    public async Task PaidBeforeAsync_CountsTheBalance_OnlyForAMonthAfterItsThroughDatesMonth(int month, int day,
+        bool counted)
+    {
+        var sut = new PayrollYearToDate(_runs.Object, Holding(OpeningBalance(_maria, thirteenthMonthPaid: 20_000m,
+            otherBenefitsPaid: 5_000m, throughDate: new DateOnly(2026, month, day))).Object);
+
+        var ytd = await sut.PaidBeforeAsync([_maria], new DateOnly(2026, 12, 1));
+
+        ytd[_maria].ExemptUsed.Should().Be(counted ? 25_000m : 0m);
+    }
 }

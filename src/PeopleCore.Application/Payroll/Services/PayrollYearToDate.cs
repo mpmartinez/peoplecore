@@ -65,8 +65,10 @@ public interface IPayrollYearToDate
 
     /// <summary>
     /// Each employee's figures for <paramref name="before"/>'s year from the Paid runs paid before
-    /// it, plus her opening balance for the year - what a month's 1601-C treats as paid earlier in
-    /// the year when it is given the month's first day. Every requested employee is in the result.
+    /// it, plus her opening balance for the year when its through date is before it too - what a
+    /// month's 1601-C treats as paid earlier in the year when it is given the month's first day: the
+    /// balance counts only for the months after its through date's month. Every requested employee
+    /// is in the result.
     /// </summary>
     Task<IReadOnlyDictionary<Guid, YearToDate>> PaidBeforeAsync(IReadOnlyCollection<Guid> employeeIds, DateOnly before,
         CancellationToken ct = default);
@@ -110,11 +112,12 @@ public sealed class PayrollYearToDate : IPayrollYearToDate
     {
         var runs = (await _runs.GetPaidRunsInYearAsync(before.Year, ct) ?? [])
             .Where(r => r.PayDate < before);
-        return await SumAsync(employeeIds, before.Year, runs, ct);
+        return await SumAsync(employeeIds, before.Year, runs, ct, balance => balance.ThroughDate < before);
     }
 
+    /// <param name="counts">Which of the year's balances count, or null for all of them.</param>
     private async Task<IReadOnlyDictionary<Guid, YearToDate>> SumAsync(IReadOnlyCollection<Guid> employeeIds, int year,
-        IEnumerable<PayrollRun> runs, CancellationToken ct)
+        IEnumerable<PayrollRun> runs, CancellationToken ct, Func<PayrollOpeningBalance, bool>? counts = null)
     {
         var ids = employeeIds.Distinct().ToList();
         if (ids.Count == 0)
@@ -130,7 +133,7 @@ public sealed class PayrollYearToDate : IPayrollYearToDate
         return ids.ToDictionary(id => id, id =>
         {
             var mine = entries[id].ToList();
-            var balance = balances.FirstOrDefault(b => b.EmployeeId == id && b.Year == year);
+            var balance = balances.FirstOrDefault(b => b.EmployeeId == id && b.Year == year && (counts?.Invoke(b) ?? true));
             return new YearToDate(
                 BasicEarned: mine.Sum(e => e.RegularPay) + (balance?.BasicSalary ?? 0m),
                 ThirteenthMonthPaid: mine.Sum(e => e.ThirteenthMonth) + (balance?.ThirteenthMonthPaid ?? 0m),

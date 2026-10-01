@@ -60,7 +60,7 @@ balance's through date; the 2316 page offers that year, and the 1604-C includes 
 with the rest.
 
 The year is the one each figure already uses (the pay-date year for tax and the 2316; the year the
-13th month is computed for). The 1601-C's monthly columns are unchanged; the 13th month it treats as already exempt earlier in the year adds the balance's `ThirteenthMonthPaid + OtherBenefitsPaid`.
+13th month is computed for). The 1601-C's monthly columns are unchanged; the 13th month it treats as already exempt earlier in the year adds the balance's `ThirteenthMonthPaid + OtherBenefitsPaid`, for a month after the balance's `ThroughDate`'s month only (the balance isn't paid earlier than the month it ends in).
 
 ## Double-count warning
 
