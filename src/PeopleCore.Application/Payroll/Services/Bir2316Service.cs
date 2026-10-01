@@ -64,8 +64,16 @@ public class Bir2316Service : IBir2316Service
         _balances = balances;
     }
 
+    /// <summary>
+    /// The years the employee has a certificate for, latest first: those she was paid on a Paid run
+    /// in, and those she has an opening balance for (pay before PeopleCore, certified too).
+    /// </summary>
     public async Task<IReadOnlyList<int>> GetAvailableYearsAsync(Guid employeeId, CancellationToken ct = default)
-        => await _runRepo.GetPaidYearsForEmployeeAsync(employeeId, ct);
+    {
+        var paid = await _runRepo.GetPaidYearsForEmployeeAsync(employeeId, ct) ?? [];
+        var balances = _balances is null ? [] : await _balances.GetYearsForEmployeeAsync(employeeId, ct) ?? [];
+        return paid.Concat(balances).Distinct().OrderByDescending(y => y).ToList();
+    }
 
     public async Task<IReadOnlyList<Guid>> GetEmployeeIdsWithPaidRunsAsync(int year, CancellationToken ct = default)
         => await _runRepo.GetEmployeeIdsWithPaidRunsInYearAsync(year, ct);
@@ -103,8 +111,11 @@ public class Bir2316Service : IBir2316Service
         if (employee is null)
             return null;
 
+        // With no Paid run in the year, her opening balance alone - pay before PeopleCore, which
+        // this employer still certifies - is the certificate; with neither, there's nothing to certify.
         var (runs, entries) = await LoadRunsAndEntriesAsync(employeeId, year, draftRun: null, draftEntry: null, ct);
-        if (entries.Count == 0)
+        var balance = await BalanceAsync(employeeId, year, ct);
+        if (entries.Count == 0 && balance is null)
             return null;
 
         var company = await _companyRepo.GetDefaultAsync(ct)
@@ -112,11 +123,12 @@ public class Bir2316Service : IBir2316Service
                 "No Company record is configured. The database seeder always creates one, so " +
                 "its absence means the database is misconfigured.");
 
-        return BuildDto(employee, company, runs, entries, year, manual, await BalanceAsync(employeeId, year, ct));
+        return BuildDto(employee, company, runs, entries, year, manual, balance);
     }
 
     /// <summary>
-    /// Every employee with a paid run in <paramref name="year"/>, each built with whatever
+    /// Every employee with a paid run in <paramref name="year"/> or an opening balance for it, each
+    /// built with whatever
     /// <see cref="Bir2316ManualInputs"/> was last saved for that employee and year (empty when
     /// nothing was) - the bulk equivalent of <see cref="BuildAsync"/> for GenerateAll.
     /// <para>
@@ -127,17 +139,28 @@ public class Bir2316Service : IBir2316Service
     /// out of the run. This method instead fetches the year's paid runs ONCE, groups their entries
     /// by employee, batch-loads the employees that actually have one, and looks the company up
     /// once - four queries regardless of headcount instead of roughly three times the employee
-    /// count. The year's opening balances are read the same way: once, for everyone built.
+    /// count. The year's opening balances are read the same way: once, for everyone built - and
+    /// someone with a balance but no Paid run in the year (she left before PeopleCore, say) is
+    /// built from her balance alone, as <see cref="BuildAsync"/> builds her.
     /// </para>
     /// </summary>
     public async Task<IReadOnlyList<Bir2316Dto>> BuildAllAsync(int year, CancellationToken ct = default)
     {
         // Ordered by last name then first name (GetEmployeeIdsWithPaidRunsInYearAsync's remarks)
         // so a merged PDF's page order is deterministic and two exports for the same year are
-        // comparable. This also fixes the set and the order of who gets built; the runs query
-        // below only supplies each employee's entries.
-        var employeeIds = await _runRepo.GetEmployeeIdsWithPaidRunsInYearAsync(year, ct);
-        if (employeeIds.Count == 0)
+        // comparable. This also fixes the set and the order of who gets built (with the balances'
+        // employees below); the runs query only supplies each employee's entries.
+        var paidIds = await _runRepo.GetEmployeeIdsWithPaidRunsInYearAsync(year, ct) ?? [];
+
+        // Re-matched on the year for the same reason BalanceAsync re-checks it.
+        var balances = _balances is null
+            ? new Dictionary<Guid, PayrollOpeningBalance>()
+            : (await _balances.GetForYearAsync(year, ct) ?? [])
+                .Where(b => b.Year == year)
+                .GroupBy(b => b.EmployeeId)
+                .ToDictionary(g => g.Key, g => g.First());
+        var balanceOnlyIds = balances.Keys.Where(id => !paidIds.Contains(id)).ToList();
+        if (paidIds.Count == 0 && balanceOnlyIds.Count == 0)
             return [];
 
         // Same Paid/PayDate.Year predicate as BuildAsync, re-applied for the same reason: it is
@@ -152,8 +175,9 @@ public class Bir2316Service : IBir2316Service
             .GroupBy(x => x.Entry.EmployeeId)
             .ToDictionary(g => g.Key, g => g.ToList());
 
-        var employeesById = (await _employeeRepo.GetByIdsAsync(employeeIds, ct))
+        var employeesById = (await _employeeRepo.GetByIdsAsync([.. paidIds, .. balanceOnlyIds], ct))
             .ToDictionary(e => e.Id);
+        var employeeIds = InNameOrder(paidIds, balanceOnlyIds, employeesById);
 
         var company = await _companyRepo.GetDefaultAsync(ct)
             ?? throw new DomainException(
@@ -162,34 +186,57 @@ public class Bir2316Service : IBir2316Service
 
         var saved = await _inputsRepo.GetForYearAsync(year, ct);
 
-        // Re-matched on the year for the same reason BalanceAsync re-checks it.
-        var balances = _balances is null
-            ? new Dictionary<Guid, PayrollOpeningBalance>()
-            : (await _balances.GetForEmployeesAsync(employeeIds, year, ct))
-                .Where(b => b.Year == year)
-                .GroupBy(b => b.EmployeeId)
-                .ToDictionary(g => g.Key, g => g.First());
-
         var forms = new List<Bir2316Dto>(employeeIds.Count);
         foreach (var employeeId in employeeIds)
         {
-            // Both come from the same Paid/PayDate.Year query that produced employeeIds, so a
-            // miss here would mean the two repository calls disagree - it should not happen, but
-            // skipping rather than throwing keeps one inconsistent record from failing everyone
-            // else's certificate in the same bulk run.
-            if (!runsAndEntriesByEmployee.TryGetValue(employeeId, out var runsAndEntries)
-                || !employeesById.TryGetValue(employeeId, out var employee))
+            // A paid employee's runs come from the same Paid/PayDate.Year query that produced
+            // paidIds, so a miss here would mean the two repository calls disagree - it should not
+            // happen, but skipping rather than throwing keeps one inconsistent record from failing
+            // everyone else's certificate in the same bulk run. Someone with only a balance has no
+            // runs, and is built from it.
+            var balance = balances.GetValueOrDefault(employeeId);
+            if (!employeesById.TryGetValue(employeeId, out var employee)
+                || (!runsAndEntriesByEmployee.TryGetValue(employeeId, out var runsAndEntries) && balance is null))
                 continue;
 
+            runsAndEntries ??= [];
             var employeeRuns = runsAndEntries.Select(x => x.Run).Distinct().ToList();
             var employeeEntries = runsAndEntries.Select(x => x.Entry).ToList();
             var manual = saved.TryGetValue(employeeId, out var s) ? s.ToManualInputs() : new Bir2316ManualInputs();
 
-            forms.Add(BuildDto(employee, company, employeeRuns, employeeEntries, year, manual,
-                balances.GetValueOrDefault(employeeId)));
+            forms.Add(BuildDto(employee, company, employeeRuns, employeeEntries, year, manual, balance));
         }
 
         return forms;
+    }
+
+    /// <summary>
+    /// <paramref name="paidIds"/>, in the order the query gave them (by last then first name), with
+    /// each of <paramref name="balanceOnlyIds"/> - the employees with only an opening balance - put
+    /// before the first one after it by last then first name. Anyone not loaded goes last.
+    /// </summary>
+    private static List<Guid> InNameOrder(IReadOnlyList<Guid> paidIds, IReadOnlyList<Guid> balanceOnlyIds,
+        IReadOnlyDictionary<Guid, Employee> employeesById)
+    {
+        var ordered = paidIds.ToList();
+        foreach (var id in balanceOnlyIds)
+        {
+            if (!employeesById.TryGetValue(id, out var employee))
+            {
+                ordered.Add(id);
+                continue;
+            }
+            var at = ordered.FindIndex(other =>
+                employeesById.TryGetValue(other, out var o) && CompareByName(o, employee) > 0);
+            ordered.Insert(at < 0 ? ordered.Count : at, id);
+        }
+        return ordered;
+    }
+
+    private static int CompareByName(Employee a, Employee b)
+    {
+        int byLast = string.Compare(a.LastName, b.LastName, StringComparison.CurrentCultureIgnoreCase);
+        return byLast != 0 ? byLast : string.Compare(a.FirstName, b.FirstName, StringComparison.CurrentCultureIgnoreCase);
     }
 
     /// <summary>
@@ -306,6 +353,7 @@ public class Bir2316Service : IBir2316Service
     /// "no entries" / "no company" checks belong here: both callers already did those before this
     /// point, for reasons specific to how each one fetches its data.
     /// <para>
+    /// <paramref name="runs"/> is empty only when <paramref name="balance"/> isn't null.
     /// <paramref name="balance"/>, when she has one, is what she was paid in the year before
     /// PeopleCore. Each of its figures lands in the box the same pay from a run would: the basic
     /// net of the contributions in Item 39, the contributions in Item 36, the other taxable pay
@@ -354,13 +402,15 @@ public class Bir2316Service : IBir2316Service
         decimal balanceTaxWithheld = balance?.TaxWithheld ?? 0m;
 
         // The period is the runs' - except that with an opening balance the certificate covers the
-        // months before PeopleCore too: from January, or from a hire date later in the year.
-        var periodFrom = runs.Min(r => r.PeriodStart);
+        // months before PeopleCore too: from January, or from a hire date later in the year. With
+        // the balance alone (no Paid run in the year) it ends on the balance's through date.
+        DateOnly? periodFrom = runs.Count == 0 ? null : runs.Min(r => r.PeriodStart);
+        DateOnly periodTo = runs.Count == 0 ? balance!.ThroughDate : runs.Max(r => r.PeriodEnd);
         if (balance is not null)
         {
             var yearStart = new DateOnly(year, 1, 1);
             var employedFrom = employee.HireDate > yearStart ? employee.HireDate : yearStart;
-            if (employedFrom < periodFrom)
+            if (periodFrom is null || employedFrom < periodFrom)
                 periodFrom = employedFrom;
         }
 
@@ -368,8 +418,8 @@ public class Bir2316Service : IBir2316Service
         {
             EmployeeId = employee.Id,
             Year = year,
-            PeriodFrom = Format(periodFrom),
-            PeriodTo = Format(runs.Max(r => r.PeriodEnd)),
+            PeriodFrom = Format(periodFrom!.Value),
+            PeriodTo = Format(periodTo),
 
             // Part I — the employee. TIN comes from the EmployeeGovernmentId row: the M2NET.Core
             // base Employee.TIN is explicitly ignored by EmployeeConfiguration ("PeopleCore uses

@@ -23,6 +23,9 @@ public interface IPayrollOpeningBalanceRepository : IRepository<PayrollOpeningBa
     /// <summary>Every opening balance for the year, each with its <see cref="PayrollOpeningBalance.Employee"/>, by last then first name.</summary>
     Task<IReadOnlyList<PayrollOpeningBalance>> GetForYearAsync(int year, CancellationToken ct = default);
 
+    /// <summary>The years the employee has an opening balance for, latest first.</summary>
+    Task<IReadOnlyList<int>> GetYearsForEmployeeAsync(Guid employeeId, CancellationToken ct = default);
+
     /// <summary>
     /// Adds a new opening balance. Two creates for the same employee and year at once both pass the
     /// service's "already has one" check, so the unique index on (employee, year) is the real guard:

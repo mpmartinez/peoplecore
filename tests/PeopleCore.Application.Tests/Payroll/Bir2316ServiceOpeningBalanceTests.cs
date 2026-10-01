@@ -151,13 +151,95 @@ public partial class Bir2316ServiceTests
     }
 
     [Fact]
-    public async Task GetPreviewAsync_WithABalanceButNoPaidRuns_IsStillNothingToCertify()
+    public async Task GetPreviewAsync_WithABalanceButNoPaidRuns_IsTheCertificateTheBalanceAloneGives()
     {
-        // Paid before PeopleCore only: the certificate is the earlier system's to issue.
+        // Paid before PeopleCore only - she left before go-live, say: the employer still certifies
+        // what it paid her in the year.
         PaidRunsAre();
         var sut = WithOpeningBalances(JanuaryToMarch());
 
+        var result = (await sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None))!;
+
+        result.Should().NotBeNull();
+        result.Item34_ThirteenthMonthAndBenefits.Should().Be(15_000m);      // 5,000 + 10,000
+        result.Item35_DeMinimis.Should().Be(2_000m);
+        result.Item36_SssPhicPagibigContributions.Should().Be(5_850m);
+        result.Item37_SalariesOtherForms.Should().Be(1_500m);
+        result.Item39_BasicSalary.Should().Be(84_150m);                     // 90,000 - 5,850
+        result.Item51A_OtherAmount.Should().Be(3_000m);
+        result.Item51A_OtherLabel.Should().Be("Other Taxable Pay");
+        result.Item52_TotalTaxableCompensation.Should().Be(87_150m);        // 84,150 + 3,000
+        result.Item19_GrossCompensation.Should().Be(111_500m);              // the balance's 90,000 + 5,000 + 10,000 + 3,000 + 2,000 + 1,500
+        result.Item25A_PresentTaxWithheld.Should().Be(9_000m);
+        result.OpeningBalanceThrough.Should().Be(new DateOnly(2026, 3, 31));
+        // January (no later hire date) to the balance's through date.
+        result.PeriodFrom.Should().Be("01/01");
+        result.PeriodTo.Should().Be("03/31");
+    }
+
+    [Fact]
+    public async Task GetPreviewAsync_WithNeitherABalanceNorPaidRuns_IsNothingToCertify()
+    {
+        PaidRunsAre();
+        var sut = WithOpeningBalances(OpeningBalance(_employeeId, year: 2025, basicSalary: 90_000m));
+
         (await sut.GetPreviewAsync(_employeeId, 2026, CancellationToken.None)).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetAvailableYearsAsync_IncludesTheYearsWithAnOpeningBalance_LatestFirst()
+    {
+        _runRepo.Setup(r => r.GetPaidYearsForEmployeeAsync(_employeeId, It.IsAny<CancellationToken>()))
+                .ReturnsAsync([2027, 2025]);
+        var sut = WithOpeningBalances(
+            OpeningBalance(_employeeId, year: 2026), OpeningBalance(_employeeId, year: 2025),
+            OpeningBalance(_otherEmployeeId, year: 2024));
+
+        var years = await sut.GetAvailableYearsAsync(_employeeId, CancellationToken.None);
+
+        years.Should().Equal(2027, 2026, 2025);
+    }
+
+    [Fact]
+    public async Task BuildAllAsync_IncludesSomeoneWithABalanceButNoPaidRun_InNameOrder()
+    {
+        // Dela Cruz and Reyes were paid on PeopleCore in 2026; Garcia left before go-live, so she has
+        // only her opening balance.
+        var garciaId = Guid.NewGuid();
+        var run = Run(payDate: new DateOnly(2026, 4, 15), status: PayrollRunStatus.Paid, entries:
+        [
+            Entry(_employeeId, regularPay: 30_000m, withholdingTax: 2_000m),
+            Entry(_otherEmployeeId, regularPay: 15_000m, withholdingTax: 800m)
+        ]);
+        PaidRunsInYearAre([_employeeId, _otherEmployeeId], run);
+        EmployeesAre(TheEmployee(), AnEmployee(_otherEmployeeId, "Reyes", "Ana"), AnEmployee(garciaId, "Garcia", "Liza"));
+        var sut = WithOpeningBalances(
+            OpeningBalance(garciaId, basicSalary: 40_000m, employeeContributions: 2_000m, taxWithheld: 1_500m,
+                throughDate: new DateOnly(2026, 2, 28)),
+            OpeningBalance(garciaId, year: 2025, basicSalary: 1_000_000m));
+
+        var result = await sut.BuildAllAsync(2026, CancellationToken.None);
+
+        result.Select(f => f.EmployeeId).Should().Equal(_employeeId, garciaId, _otherEmployeeId);
+        var garcia = result[1];
+        garcia.Item39_BasicSalary.Should().Be(38_000m);                     // 40,000 - 2,000
+        garcia.Item25A_PresentTaxWithheld.Should().Be(1_500m);
+        garcia.OpeningBalanceThrough.Should().Be(new DateOnly(2026, 2, 28));
+        garcia.PeriodTo.Should().Be("02/28");
+        result[0].Item39_BasicSalary.Should().Be(30_000m);
+        result[2].Item39_BasicSalary.Should().Be(15_000m);
+    }
+
+    [Fact]
+    public async Task BuildAllAsync_WithNoPaidRunInTheYear_BuildsEveryoneWithABalance()
+    {
+        PaidRunsInYearAre([]);
+        EmployeesAre(TheEmployee());
+        var sut = WithOpeningBalances(JanuaryToMarch());
+
+        var result = await sut.BuildAllAsync(2026, CancellationToken.None);
+
+        result.Should().ContainSingle().Which.Item39_BasicSalary.Should().Be(84_150m);
     }
 
     [Fact]
@@ -227,7 +309,7 @@ public partial class Bir2316ServiceTests
         result[1].OpeningBalanceThrough.Should().Be(new DateOnly(2026, 3, 31));
         result[1].OpeningBalanceTaxWithheld.Should().Be(9_000m);
 
-        balances.Verify(b => b.GetForEmployeesAsync(It.IsAny<IReadOnlyCollection<Guid>>(), 2026, It.IsAny<CancellationToken>()), Times.Once);
+        balances.Verify(b => b.GetForYearAsync(2026, It.IsAny<CancellationToken>()), Times.Once);
         balances.Verify(b => b.GetAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 

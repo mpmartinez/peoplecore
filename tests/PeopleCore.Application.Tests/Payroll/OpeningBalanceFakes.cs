@@ -19,6 +19,14 @@ internal static class OpeningBalanceFakes
             .Setup(r => r.GetAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid employeeId, int year, CancellationToken _) =>
                 balances.SingleOrDefault(b => b.EmployeeId == employeeId && b.Year == year));
+        repository
+            .Setup(r => r.GetForYearAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((int year, CancellationToken _) => balances.Where(b => b.Year == year).ToList());
+        repository
+            .Setup(r => r.GetYearsForEmployeeAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid employeeId, CancellationToken _) =>
+                balances.Where(b => b.EmployeeId == employeeId).Select(b => b.Year).Distinct()
+                    .OrderByDescending(y => y).ToList());
         return repository;
     }
 

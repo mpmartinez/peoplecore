@@ -168,6 +168,21 @@ public class PayrollOpeningBalanceStorageTests : DatabaseTestBase
     }
 
     [Fact]
+    public async Task GetYearsForEmployee_ReturnsHerBalancesYears_LatestFirst()
+    {
+        var santos = await AnEmployeeAsync("Santos");
+        var cruz = await AnEmployeeAsync("Cruz", "Jose");
+        await Sut.AddNewAsync(ABalance(santos, 2025));
+        await Sut.AddNewAsync(ABalance(santos, 2026));
+        await Sut.AddNewAsync(ABalance(cruz, 2024));
+
+        await using var reader = NewContext();
+        var years = await new PayrollOpeningBalanceRepository(reader).GetYearsForEmployeeAsync(santos.Id);
+
+        years.Should().Equal(2026, 2025);
+    }
+
+    [Fact]
     public async Task GetForEmployees_WithNoEmployees_IsEmpty()
     {
         (await Sut.GetForEmployeesAsync([], 2026)).Should().BeEmpty();

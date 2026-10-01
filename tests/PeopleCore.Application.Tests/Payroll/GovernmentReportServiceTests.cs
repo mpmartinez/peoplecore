@@ -826,7 +826,8 @@ public class GovernmentReportServiceTests
         params PayrollOpeningBalance[] balances)
     {
         _runs.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(runs);
-        _runs.Setup(r => r.GetEmployeeIdsWithPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([juan.Id]);
+        _runs.Setup(r => r.GetEmployeeIdsWithPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>()))
+             .ReturnsAsync(runs.Length == 0 ? [] : [juan.Id]);
         _employees.Setup(e => e.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>())).ReturnsAsync([juan]);
         var inputs = new Mock<IBir2316InputsRepository>();
         inputs.Setup(i => i.GetForYearAsync(2026, It.IsAny<CancellationToken>()))
@@ -872,6 +873,25 @@ public class GovernmentReportServiceTests
         cell("Tax withheld, December").Should().Be("2500.00");
         cell("Total tax withheld").Should().Be("11000.00");                // the 2316's Item 26
         cell("To collect / (refund)").Should().Be("-4700.00");             // 6,300 - 11,000
+    }
+
+    [Fact]
+    public async Task BuildAnnualAsync_1604C_IncludesSomeoneWithAnOpeningBalanceButNoPaidRun()
+    {
+        // Paid January to March before PeopleCore and not on any PeopleCore run in 2026: 200,000
+        // basic, 4,800 of contributions, 6,000 withheld.
+        var juan = Person("Cruz", "Juan", (GovernmentIdType.TIN, "111-222-333-000"));
+        juan.HireDate = new DateOnly(2020, 1, 6);
+
+        var cell = await Juans1604CRowWithOpeningBalances(juan, [],
+            OpeningBalanceFakes.OpeningBalance(juan.Id, basicSalary: 200_000m, employeeContributions: 4_800m,
+                taxWithheld: 6_000m, throughDate: new DateOnly(2026, 3, 31)));
+
+        cell("Gross compensation").Should().Be("200000.00");
+        cell("Basic salary").Should().Be("195200.00");                     // 200,000 - 4,800
+        cell("Tax withheld, January to November").Should().Be("6000.00");
+        cell("Tax withheld, December").Should().Be("0.00");
+        cell("Total tax withheld").Should().Be("6000.00");
     }
 
     [Fact]

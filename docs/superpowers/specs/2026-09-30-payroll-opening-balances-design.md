@@ -54,6 +54,11 @@ for that year:
 | Final pay's tax settle | follows the 2316 |
 | De minimis leave-days cap | `DeMinimisLeaveDays` counts as already used |
 
+An employee with a balance for a year but no Paid run in it (she left before go-live, say) still
+gets a 2316 for the year, built from the balance alone, for January (or her later hire date) to the
+balance's through date; the 2316 page offers that year, and the 1604-C includes her, in name order
+with the rest.
+
 The year is the one each figure already uses (the pay-date year for tax and the 2316; the year the
 13th month is computed for). The 1601-C's monthly columns are unchanged; the 13th month it treats as already exempt earlier in the year adds the balance's `ThirteenthMonthPaid + OtherBenefitsPaid`.
 

@@ -93,3 +93,5 @@ One commit each, test first.
   `AddYearToDateSnapshotToEntry`); an Approved run in that state can be recomputed.
 - [x] Mark Paid names a run only when it was marked Paid after the entry was computed; otherwise a
   changed 13th month already paid is the balance's.
+- [x] A 2316 for someone with a balance but no Paid run in the year, from the balance alone; the
+  2316 page's years include the balance's (`GetYearsForEmployeeAsync`), and the 1604-C includes her.

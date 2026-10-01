@@ -90,4 +90,12 @@ public class PayrollOpeningBalanceRepository : Repository<PayrollOpeningBalance>
             .OrderBy(b => b.Employee.LastName)
             .ThenBy(b => b.Employee.FirstName)
             .ToListAsync(ct);
+
+    public async Task<IReadOnlyList<int>> GetYearsForEmployeeAsync(Guid employeeId, CancellationToken ct = default)
+        => await Context.PayrollOpeningBalances
+            .Where(b => b.EmployeeId == employeeId)
+            .Select(b => b.Year)
+            .Distinct()
+            .OrderByDescending(y => y)
+            .ToListAsync(ct);
 }
