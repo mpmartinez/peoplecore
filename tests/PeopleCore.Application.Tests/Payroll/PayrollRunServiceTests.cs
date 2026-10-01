@@ -699,6 +699,67 @@ public partial class PayrollRunServiceTests
     }
 
     [Fact]
+    public async Task ComputeAsync_RepricesUnworkedDaysFromTheStoredRows()
+    {
+        // 36,500 a month is 1,200 a day; one unworked double regular holiday adds 1,200 x (2.00 - 1.00).
+        var employeeId = Guid.NewGuid();
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = employeeId, BasicSalary = 36_500m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "S"
+        };
+        SetupBridge(employeeId, new PayrollAttendanceInput
+        {
+            PremiumDays = [new PremiumDayInput(WorkDayType.DoubleRegularHoliday, UnworkedDays: 1m)]
+        });
+        var savedRun = SetupRoundTripRepositories(compensation);
+
+        List<PayrollRunEmployee>? recomputed = null;
+        _runRepo.Setup(r => r.ReplaceEntriesAsync(It.IsAny<PayrollRun>(),
+                    It.IsAny<IReadOnlyList<PayrollRunEmployee>>(), It.IsAny<CancellationToken>()))
+                .Callback<PayrollRun, IReadOnlyList<PayrollRunEmployee>, CancellationToken>(
+                    (_, entries, _) => recomputed = entries.ToList())
+                .Returns(Task.CompletedTask);
+
+        await _sut.CreateAsync(RoundTripRequest(employeeId), CancellationToken.None);
+        var created = savedRun()!.Employees.Single();
+        created.HolidayPay.Should().Be(1_200.00m);
+        created.PremiumDays.Single().UnworkedDays.Should().Be(1m);
+
+        await _sut.ComputeAsync(savedRun()!.Id, CancellationToken.None);
+
+        var entry = recomputed!.Single();
+        entry.HolidayPay.Should().Be(1_200.00m);
+        entry.PremiumDays.Single().UnworkedDays.Should().Be(1m);
+    }
+
+    [Fact]
+    public async Task CreateAsync_AnOvertimeOverride_KeepsARowWhoseOnlyFigureIsUnworkedDays()
+    {
+        var employeeId = Guid.NewGuid();
+        var compensation = new EmployeeCompensation
+        {
+            EmployeeId = employeeId, BasicSalary = 36_500m, PayFrequency = PayFrequency.SemiMonthly, TaxCode = "S"
+        };
+        SetupBridge(employeeId, new PayrollAttendanceInput
+        {
+            PremiumDays = [new PremiumDayInput(WorkDayType.DoubleRegularHoliday, UnworkedDays: 1m)]
+        });
+        var savedRun = SetupRoundTripRepositories(compensation);
+
+        var request = RoundTripRequest(employeeId) with
+        {
+            Employees = [new PayrollRunEmployeeInput(employeeId, OvertimeHours: 5m)]
+        };
+        await _sut.CreateAsync(request, CancellationToken.None);
+
+        // The override rewrites the breakdown (Merge); the unworked day must survive it.
+        var entry = savedRun()!.Employees.Single();
+        entry.HolidayPay.Should().Be(1_200.00m);
+        entry.PremiumDays.Should().Contain(d =>
+            d.DayType == WorkDayType.DoubleRegularHoliday && d.UnworkedDays == 1m);
+    }
+
+    [Fact]
     public async Task CreateAsync_AnOvertimeOverride_ReplacesTheBreakdownsOvertime()
     {
         var employeeId = Guid.NewGuid();

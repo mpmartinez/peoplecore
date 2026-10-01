@@ -14,5 +14,6 @@ public class PayrollRunPremiumDayConfiguration : IEntityTypeConfiguration<Payrol
         builder.Property(x => x.Hours).HasColumnType("numeric(6,2)");
         builder.Property(x => x.OvertimeHours).HasColumnType("numeric(6,2)");
         builder.Property(x => x.NightDiffHours).HasColumnType("numeric(6,2)");
+        builder.Property(x => x.UnworkedDays).HasColumnType("numeric(18,2)");
     }
 }

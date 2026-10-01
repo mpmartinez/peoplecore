@@ -478,6 +478,154 @@ public class PayrollComputationServiceTests
         result.HolidayDays.Should().Be(1m);
     }
 
+    // ─── Unworked double regular holidays: 200% in total ──────────────────
+
+    // 36,500 a month under the 365 factor is 1,200 a day. The salary already pays 100% of an
+    // unworked holiday, so the extra is dailyRate x (2.00 - alreadyPaid) per unworked day.
+    private PayrollRunEmployee ComputeUnworked(WorkDayType dayType, decimal unworkedDays,
+        decimal? dailyRateFactor = null, decimal days = 0m, bool thirteenthMonth = false)
+    {
+        var employee = NewEmployee(basicSalary: 36_500m);
+        employee.PayFrequency = PayFrequency.Monthly;
+        var attendance = new PayrollAttendanceInput
+        {
+            PremiumDays = [new PremiumDayInput(dayType, Days: days, UnworkedDays: unworkedDays)]
+        };
+        return _sut.Compute(employee, NewRun(), daysWorked: 22m, attendance: attendance,
+            dailyRateFactor: dailyRateFactor, includeThirteenthMonth: thirteenthMonth);
+    }
+
+    [Fact]
+    public void Compute_adds_one_more_day_for_an_unworked_double_regular_holiday_under_365()
+    {
+        // 1,200 x (2.00 - 1.00) x 1 = 1,200: the salary's 100% plus 100% makes the 200%.
+        ComputeUnworked(WorkDayType.DoubleRegularHoliday, 1m).HolidayPay.Should().Be(1_200.00m);
+    }
+
+    [Fact]
+    public void Compute_adds_100_percent_for_an_unworked_double_holiday_on_a_rest_day_under_365()
+    {
+        // The 365 factor pays rest days: 1,200 x (2.00 - 1.00) = 1,200.
+        ComputeUnworked(WorkDayType.DoubleRegularHolidayOnRestDay, 1m).HolidayPay.Should().Be(1_200.00m);
+    }
+
+    [Theory]
+    [InlineData(313, 2_798.72)] // 36,500 x 12 / 313 = 1,399.36 a day; x (2.00 - 0) = 2,798.72
+    [InlineData(261, 3_356.32)] // 36,500 x 12 / 261 = 1,678.16 a day; x (2.00 - 0) = 3,356.32
+    public void Compute_adds_200_percent_for_an_unworked_double_holiday_on_a_rest_day_the_salary_does_not_pay(
+        double factor, double expected)
+    {
+        ComputeUnworked(WorkDayType.DoubleRegularHolidayOnRestDay, 1m, (decimal)factor)
+            .HolidayPay.Should().Be((decimal)expected);
+    }
+
+    [Fact]
+    public void Compute_pays_a_working_day_double_holiday_one_more_day_under_313_too()
+    {
+        // A scheduled working day is paid by the salary under every factor: 1,399.36 x (2.00 - 1.00).
+        ComputeUnworked(WorkDayType.DoubleRegularHoliday, 1m, 313m).HolidayPay.Should().Be(1_399.36m);
+    }
+
+    [Fact]
+    public void Compute_multiplies_the_extra_by_the_unworked_days()
+    {
+        // 1,200 x 1.00 x 2 = 2,400.
+        ComputeUnworked(WorkDayType.DoubleRegularHoliday, 2m).HolidayPay.Should().Be(2_400.00m);
+    }
+
+    [Fact]
+    public void Compute_adds_unworked_days_to_a_worked_double_holiday_of_the_same_day_type()
+    {
+        // One day worked: 1,200 x (3.00 - 1.00) = 2,400. Two unworked: 1,200 x (2.00 - 1.00) x 2 = 2,400.
+        ComputeUnworked(WorkDayType.DoubleRegularHoliday, 2m, days: 1m).HolidayPay.Should().Be(4_800.00m);
+    }
+
+    [Fact]
+    public void Compute_counts_unworked_holiday_pay_in_gross_and_withholding_but_not_in_the_13th_month()
+    {
+        var without = ComputeUnworked(WorkDayType.DoubleRegularHoliday, 0m, thirteenthMonth: true);
+        var with = ComputeUnworked(WorkDayType.DoubleRegularHoliday, 1m, thirteenthMonth: true);
+
+        // Gross carries the extra 1,200, and so does the withholding base.
+        (with.GrossPay - without.GrossPay).Should().Be(1_200.00m);
+        with.WithholdingTax.Should().BeGreaterThan(without.WithholdingTax);
+        // The 13th month is a twelfth of regular pay (basic net of absences); holiday pay is a
+        // premium and stays out of it, exactly as a worked holiday's does.
+        with.ThirteenthMonth.Should().Be(without.ThirteenthMonth);
+    }
+
+    [Theory]
+    [InlineData(WorkDayType.SpecialNonWorking)]
+    [InlineData(WorkDayType.RegularHoliday)]
+    [InlineData(WorkDayType.Ordinary)]
+    [InlineData(WorkDayType.DoubleSpecialNonWorking)]
+    public void Compute_adds_nothing_for_unworked_days_on_a_day_type_with_no_unworked_rate(WorkDayType dayType)
+    {
+        ComputeUnworked(dayType, 1m).HolidayPay.Should().Be(0m);
+    }
+
+    [Fact]
+    public void Compute_with_no_unworked_days_leaves_every_figure_unchanged()
+    {
+        var employee = NewEmployee(basicSalary: 36_500m);
+        employee.PayFrequency = PayFrequency.Monthly;
+        PayrollAttendanceInput Attendance(decimal unworked) => new()
+        {
+            PremiumDays = [new PremiumDayInput(WorkDayType.DoubleRegularHoliday, Days: 1m, OvertimeHours: 2m,
+                NightDiffHours: 3m, UnworkedDays: unworked)]
+        };
+
+        var plain = _sut.Compute(employee, NewRun(), daysWorked: 22m, attendance: Attendance(0m));
+
+        // 2,400 for the worked day (1,200 x 2.00); the figures before this feature existed.
+        plain.HolidayPay.Should().Be(2_400.00m);
+        plain.GrossPay.Should().Be(plain.RegularPay + plain.OvertimePay + 2_400.00m + plain.NightDiffPay);
+    }
+
+    [Fact]
+    public void Compute_records_the_unworked_days_it_priced_so_a_recompute_can_reprice_them()
+    {
+        var result = ComputeUnworked(WorkDayType.DoubleRegularHoliday, 2m);
+
+        result.PremiumDays.Select(d => (d.DayType, d.Days, d.UnworkedDays))
+            .Should().BeEquivalentTo([(WorkDayType.DoubleRegularHoliday, 0m, 2m)]);
+    }
+
+    [Fact]
+    public void ResolvePremiumDays_keeps_a_row_whose_only_figure_is_unworked_days()
+    {
+        // FromTotals filters rows with nothing on them; the unworked figure counts as something.
+        var rows = new[] { new PremiumDayInput(WorkDayType.DoubleRegularHoliday, UnworkedDays: 1m) };
+        var attendance = new PayrollAttendanceInput { PremiumDays = rows };
+
+        attendance.ResolvePremiumDays().Should().ContainSingle()
+            .Which.UnworkedDays.Should().Be(1m);
+    }
+
+    [Theory]
+    [InlineData(WorkDayType.Ordinary, 0)]
+    [InlineData(WorkDayType.RestDay, 0)]
+    [InlineData(WorkDayType.SpecialNonWorking, 0)]
+    [InlineData(WorkDayType.SpecialNonWorkingOnRestDay, 0)]
+    [InlineData(WorkDayType.DoubleSpecialNonWorking, 0)]
+    [InlineData(WorkDayType.DoubleSpecialNonWorkingOnRestDay, 0)]
+    [InlineData(WorkDayType.RegularHoliday, 0)]
+    [InlineData(WorkDayType.RegularHolidayOnRestDay, 0)]
+    [InlineData(WorkDayType.DoubleRegularHoliday, 2.00)]
+    [InlineData(WorkDayType.DoubleRegularHolidayOnRestDay, 2.00)]
+    public void UnworkedBaseRate_is_200_percent_for_the_two_double_regular_types_and_nothing_else(
+        WorkDayType dayType, double expected)
+    {
+        DolePremiumRates.UnworkedBaseRate(dayType).Should().Be((decimal)expected);
+    }
+
+    [Fact]
+    public void UnworkedBaseRate_covers_every_day_type()
+    {
+        foreach (var dayType in Enum.GetValues<WorkDayType>())
+            new[] { 0m, 2.00m }.Should().Contain(DolePremiumRates.UnworkedBaseRate(dayType), dayType.ToString());
+    }
+
     // ─── 13th month amount (PD 851) ───────────────────────────────────────
 
     [Fact]

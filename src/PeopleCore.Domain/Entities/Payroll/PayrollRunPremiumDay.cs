@@ -28,4 +28,11 @@ public class PayrollRunPremiumDay : AuditableEntity
 
     /// <summary>Hours worked between 10 p.m. and 6 a.m. on days of this type.</summary>
     public decimal NightDiffHours { get; set; }
+
+    /// <summary>
+    /// Scheduled days of this type the employee did not work but is owed pay for - a double regular
+    /// holiday unworked is paid 200% in total, the salary's 100% plus one more day (see
+    /// <see cref="DolePremiumRates.UnworkedBaseRate"/>). Zero for every other kind of day.
+    /// </summary>
+    public decimal UnworkedDays { get; set; }
 }

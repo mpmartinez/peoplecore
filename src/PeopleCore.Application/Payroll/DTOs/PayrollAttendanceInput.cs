@@ -37,7 +37,8 @@ public record PremiumDayInput(
     decimal Days = 0m,
     decimal Hours = 0m,
     decimal OvertimeHours = 0m,
-    decimal NightDiffHours = 0m)
+    decimal NightDiffHours = 0m,
+    decimal UnworkedDays = 0m)
 {
     /// <summary>
     /// The breakdown that collapsed totals stand for, priced exactly as they were before the
@@ -53,6 +54,7 @@ public record PremiumDayInput(
             new PremiumDayInput(WorkDayType.RegularHoliday, Days: totals.HolidayRegularDays),
             new PremiumDayInput(WorkDayType.SpecialNonWorking, Days: totals.HolidaySpecialDays)
         }
-        .Where(d => d.Days != 0m || d.Hours != 0m || d.OvertimeHours != 0m || d.NightDiffHours != 0m)
+        .Where(d => d.Days != 0m || d.Hours != 0m || d.OvertimeHours != 0m || d.NightDiffHours != 0m
+            || d.UnworkedDays != 0m)
         .ToList();
 }
