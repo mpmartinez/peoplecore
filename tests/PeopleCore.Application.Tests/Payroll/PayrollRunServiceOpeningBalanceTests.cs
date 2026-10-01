@@ -293,6 +293,75 @@ public partial class PayrollRunServiceTests
     }
 
     [Fact]
+    public async Task MarkPaidAsync_WhenAnotherRunWithHer13thMonthWasPaidSinceCompute_NamesItInsteadOfTheOpeningBalance()
+    {
+        // Computed (Nov 15) with no basic earned earlier; PAY-2026-020 was paid on Nov 30 with her
+        // 13th month, so the basic and exemption earlier in the year have moved - not her balance.
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: null, basicEarlier: 0m, exemptEarlier: 0m);
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(
+            [PaidThirteenthMonth(maria.Id, "PAY-2026-020", 3_000m, paidAt: new DateTime(2026, 11, 30))]);
+        var sut = WithOpeningBalances();
+
+        var act = () => sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos's pay was changed by PAY-2026-020, paid after this payroll was computed; recompute it before paying.");
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenSeveralRunsWithHer13thMonthWerePaidSinceCompute_NamesTheLatest()
+    {
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: null, basicEarlier: 0m, exemptEarlier: 0m);
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(
+        [
+            PaidThirteenthMonth(maria.Id, "PAY-2026-021", 3_000m, paidAt: new DateTime(2026, 12, 1)),
+            PaidThirteenthMonth(maria.Id, "PAY-2026-020", 3_000m, paidAt: new DateTime(2026, 11, 30)),
+        ]);
+        var sut = WithOpeningBalances();
+
+        var act = () => sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos's pay was changed by PAY-2026-021, paid after this payroll was computed; recompute it before paying.");
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenTheRunsPaidSinceComputeHaveNoThirteenthMonthOfHers_KeepsTheOpeningBalanceWording()
+    {
+        // PAY-2026-020 was paid after the compute but without her 13th month, PAY-2026-019 paid her
+        // 13th month before it, and another employee's 13th month was paid after it: none is the one.
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: null, basicEarlier: 0m, exemptEarlier: 0m);
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(
+        [
+            PaidThirteenthMonth(maria.Id, "PAY-2026-020", 0m, paidAt: new DateTime(2026, 11, 30)),
+            PaidThirteenthMonth(maria.Id, "PAY-2026-019", 3_000m, paidAt: new DateTime(2026, 11, 1)),
+            PaidThirteenthMonth(Guid.NewGuid(), "PAY-2026-022", 3_000m, paidAt: new DateTime(2026, 12, 2)),
+        ]);
+        var sut = WithOpeningBalances(OpeningBalance(maria.Id, basicSalary: 365_000m));
+
+        var act = () => sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(PayBeforePeopleCoreChanged);
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenTheOpeningBalanceChangedAndNoRunWasPaidSinceCompute_KeepsTheOpeningBalanceWording()
+    {
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: null, basicEarlier: 0m, exemptEarlier: 0m);
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        var sut = WithOpeningBalances(OpeningBalance(maria.Id, basicSalary: 365_000m));
+
+        var act = () => sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(PayBeforePeopleCoreChanged);
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
     public async Task MarkPaidAsync_WhenTheOpeningBalancesOtherBenefitsChangedSinceCompute_IsRefused()
     {
         // Computed with none of the exemption used; HR has since recorded 5,000 of other benefits

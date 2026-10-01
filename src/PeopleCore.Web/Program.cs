@@ -33,6 +33,7 @@ builder.Services.AddScoped<AuthenticationStateProvider, JwtAuthStateProvider>();
 builder.Services.AddScoped<JwtAuthStateProvider>();
 builder.Services.AddTransient<AuthTokenHandler>();
 builder.Services.AddScoped<ToastService>();
+builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services.AddHttpClient<ApiClient>(client =>
 {

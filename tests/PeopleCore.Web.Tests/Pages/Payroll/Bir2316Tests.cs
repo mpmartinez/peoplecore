@@ -17,10 +17,20 @@ public class Bir2316Tests : BunitContext
     private static readonly Guid JoseId = Guid.Parse("0c6f9a3e-8b2d-4f71-a5c4-3e9d1b7f2a60");
 
     private readonly StubHttpHandler _api = new();
+    private readonly FixedClock _clock = new(new DateTimeOffset(2026, 6, 15, 4, 0, 0, TimeSpan.Zero));
+
+    /// <summary>A clock stopped at one instant, so the page's idea of the current year is the test's.</summary>
+    private sealed class FixedClock(DateTimeOffset now) : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = now;
+
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
 
     public Bir2316Tests()
     {
         Services.AddSingleton(new ApiClient(StubHttpHandler.ClientFor(_api)));
+        Services.AddSingleton<TimeProvider>(_clock);
         // .SetVoidResult() completes the mocked call's Task; without it, Generate()'s own await of
         // this call never resumes - harmless everywhere else here, since nothing else in this suite
         // awaits anything after the JS call, but Generate_ReloadsThePreviewAfterwards does.
@@ -398,5 +408,53 @@ public class Bir2316Tests : BunitContext
         var cut = RenderWithMariasPreview();
 
         cut.FindAll("[data-opening-balance-note]").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AFutureYearsBalance_StaysInTheList_ButIsNotTheDefault()
+    {
+        // 2099 is a balance dated in the future (a typo); the page defaults to the latest year that
+        // is not after the current one, 2026.
+        _api.On(HttpMethod.Get, YearsPath(MariaId), HttpStatusCode.OK, "[2099,2026,2025]")
+            .On(HttpMethod.Get, PreviewPath(MariaId, 2026), HttpStatusCode.OK, Preview(2026))
+            .On(HttpMethod.Get, InputsPath(MariaId, 2026), HttpStatusCode.OK, Inputs());
+        var cut = RenderPage();
+
+        cut.Find("#employee").Change(MariaId.ToString());
+
+        cut.WaitForAssertion(() => cut.FindAll("#prevTin").Should().ContainSingle());
+        cut.FindAll("#year option").Select(o => o.TextContent).Should().Equal("2099", "2026", "2025");
+        cut.Find("#year").GetAttribute("value").Should().Be("2026");
+        Button(cut, "Download all for 2026");
+        _api.Requests.Should().NotContain(r => r.RequestUri!.PathAndQuery == PreviewPath(MariaId, 2099));
+    }
+
+    [Fact]
+    public void TheCurrentYearIsReadInThePhilippines_NotInUtc()
+    {
+        // 17:00 UTC on Dec 31, 2026 is already Jan 1, 2027 in Manila, so 2027 is not a future year yet.
+        _clock.Now = new DateTimeOffset(2026, 12, 31, 17, 0, 0, TimeSpan.Zero);
+        _api.On(HttpMethod.Get, YearsPath(MariaId), HttpStatusCode.OK, "[2027,2026]")
+            .On(HttpMethod.Get, PreviewPath(MariaId, 2027), HttpStatusCode.OK, Preview(2027))
+            .On(HttpMethod.Get, InputsPath(MariaId, 2027), HttpStatusCode.OK, Inputs());
+        var cut = RenderPage();
+
+        cut.Find("#employee").Change(MariaId.ToString());
+
+        cut.WaitForAssertion(() => Button(cut, "Download all for 2027"));
+    }
+
+    [Fact]
+    public void WhenEveryYearIsInTheFuture_NoYearIsLoadedUntilOneIsChosen()
+    {
+        _api.On(HttpMethod.Get, YearsPath(MariaId), HttpStatusCode.OK, "[2099]");
+        var cut = RenderPage();
+
+        cut.Find("#employee").Change(MariaId.ToString());
+
+        cut.WaitForAssertion(() => cut.FindAll("#year").Should().ContainSingle());
+        cut.FindAll("#year option").Select(o => o.TextContent).Should().Equal("Select a year", "2099");
+        _api.Requests.Should().NotContain(r => r.RequestUri!.PathAndQuery.Contains("/preview/"));
+        cut.FindAll("button").Should().NotContain(b => b.TextContent.Contains("Download all"));
     }
 }

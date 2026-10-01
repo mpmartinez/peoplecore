@@ -2,6 +2,7 @@
 @attribute [RequirePermission(Permissions.PayrollManage)]
 @inject ApiClient Api
 @inject IJSRuntime JS
+@inject TimeProvider Clock
 
 <PageTitle>BIR Form 2316</PageTitle>
 
@@ -64,6 +65,10 @@
                 {
                     <Select TValue="string" Id="year" Value="@(_selectedYear?.ToString() ?? "")"
                             ValueChanged="OnYearChanged" Class="mt-1">
+                        @if (_selectedYear is null)
+                        {
+                            <option value="">Select a year</option>
+                        }
                         @foreach (var y in _years)
                         {
                             <option value="@y">@y</option>
@@ -292,8 +297,11 @@ else if (_selectedYear.HasValue && !_previewLoadFailed)
             var years = await Api.GetBir2316YearsAsync(employeeId) ?? [];
             if (sequence != _loadSequence) return; // a later employee change has since started; drop this stale result
             _years = years;
-            if (_years.Count > 0)
-                await LoadYearAsync(_years[0].ToString(), sequence);
+            // The years come latest first. The default is the latest not after the current year: a
+            // balance dated in the future (a typo) stays in the list but isn't what opens.
+            var currentYear = CurrentPhilippineYear();
+            if (_years.Cast<int?>().FirstOrDefault(y => y <= currentYear) is { } defaultYear)
+                await LoadYearAsync(defaultYear.ToString(), sequence);
         }
         catch (Exception ex)
         {
@@ -306,6 +314,11 @@ else if (_selectedYear.HasValue && !_previewLoadFailed)
             if (sequence == _loadSequence) _loadingYears = false;
         }
     }
+
+    // The year it is in the Philippines now (UTC+8, which the Philippines keeps all year), not in
+    // the browser's time zone: PeopleCore.Web doesn't reference PeopleCore.Application, so this is
+    // the same offset as PhilippineTime there.
+    private int CurrentPhilippineYear() => Clock.GetUtcNow().ToOffset(TimeSpan.FromHours(8)).Year;
 
     // Bound directly to the year <select>'s ValueChanged: a direct year change is its own, fresh
     // load - it doesn't share the employee change's claimed number the way LoadYearAsync's other
