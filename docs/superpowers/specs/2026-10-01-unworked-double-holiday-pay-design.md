@@ -40,6 +40,8 @@ A rest day worked through approved overtime is worked and stays as now. A rest d
 record but no approved overtime earns nothing as work, so it is counted as unworked: she is paid
 the same 200% as if she had stayed home, never less for turning up.
 
+The rest-day rule above is superseded: a rest-day double regular holiday now always counts the guaranteed day, as set out in the 2026-10-02 spec.
+
 ## The engine
 
 `PremiumDayInput` gains `UnworkedDays` (default 0). In `PayrollComputationService.Compute` the

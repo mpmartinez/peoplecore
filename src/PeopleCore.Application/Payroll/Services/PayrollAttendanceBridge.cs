@@ -225,19 +225,18 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                     if (overtimeHours > 0m) Add(dayType, overtimeHours: overtimeHours);
                 }
 
-                // An unworked double regular holiday is paid 200% where an unworked single one is
-                // paid 100%: the salary already carries the first 100%, and the engine adds the
-                // second from this count. It needs a schedule (with none there is no basis to pay,
-                // just as no absence is derived) and a day not worked. Work is judged the way it
-                // is paid above: on a rest day only approved overtime is work, so a present record
-                // alone does not make it worked (it earns nothing, and counting the day keeps the
-                // employee from being paid less for turning up than for staying home); on a
-                // working day any present record is work. Paid leave does not stop the count, as
-                // it does not stop the single holiday's pay.
-                var workedTheDay = isRestDay ? overtimeHours > 0m : isPresent;
-                if (dayType is WorkDayType.DoubleRegularHoliday or WorkDayType.DoubleRegularHolidayOnRestDay
-                    && schedule is not null
-                    && !workedTheDay)
+                // A double regular holiday is paid 200% whether or not it is worked: the salary
+                // already carries the first 100% and the engine adds the second from this count.
+                // It needs a schedule (with none there is no basis to pay, just as no absence is
+                // derived). On a rest day the day is always counted, whatever overtime or presence
+                // there is: work there adds its premium on top of the guarantee (the hours added
+                // above are priced as that premium), so working never pays less than staying home.
+                // On a working day it is counted only when no record for the date is marked
+                // present, since attending is paid through Days at the worked rate instead. Paid
+                // leave does not stop the count, as it does not stop the single holiday's pay.
+                if (schedule is not null
+                    && (dayType == WorkDayType.DoubleRegularHolidayOnRestDay
+                        || (dayType == WorkDayType.DoubleRegularHoliday && !isPresent)))
                 {
                     Add(dayType, unworkedDays: 1m);
                 }

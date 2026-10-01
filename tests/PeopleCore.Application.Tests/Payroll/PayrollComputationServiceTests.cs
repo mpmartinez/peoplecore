@@ -540,6 +540,102 @@ public class PayrollComputationServiceTests
         ComputeUnworked(WorkDayType.DoubleRegularHoliday, 2m, days: 1m).HolidayPay.Should().Be(4_800.00m);
     }
 
+    // ─── Hours on a rest-day double holiday: the premium on top of the guaranteed 200% ───
+
+    // The bridge counts the guaranteed day for every rest-day double regular holiday, so the engine
+    // prices the hours as the work premium over that guarantee: hourlyRate x (3.90 - 2.00) = x 1.90.
+    private PayrollRunEmployee ComputeRestDayDoubleHolidayHours(decimal hours, decimal unworkedDays,
+        decimal? dailyRateFactor = null)
+    {
+        var employee = NewEmployee(basicSalary: 36_500m);
+        employee.PayFrequency = PayFrequency.Monthly;
+        var attendance = new PayrollAttendanceInput
+        {
+            PremiumDays = [new PremiumDayInput(WorkDayType.DoubleRegularHolidayOnRestDay,
+                Hours: hours, UnworkedDays: unworkedDays)]
+        };
+        return _sut.Compute(employee, NewRun(), daysWorked: 22m, attendance: attendance,
+            dailyRateFactor: dailyRateFactor);
+    }
+
+    [Theory]
+    // 365: 36,500 x 12 / 365 = 1,200 a day, 150 an hour. The 365 factor pays rest days, so
+    // alreadyPaid = 1. Guarantee: 1,200 x (2.00 - 1.00) = 1,200. Hours: 150 x 1.90 x h.
+    [InlineData(365, 1, 285.00, 1_485.00)]     // 150 x 1.90 x 1 = 285.00;   + 1,200 = 1,485.00
+    [InlineData(365, 4, 1_140.00, 2_340.00)]   // 150 x 1.90 x 4 = 1,140.00; + 1,200 = 2,340.00
+    [InlineData(365, 8, 2_280.00, 3_480.00)]   // 150 x 1.90 x 8 = 2,280.00; + 1,200 = 3,480.00
+    // 313: 36,500 x 12 / 313 = 1,399.36 a day, 174.92 an hour. Rest days are unpaid, so
+    // alreadyPaid = 0. Guarantee: 1,399.36 x (2.00 - 0) = 2,798.72. Hours: 174.92 x 1.90 x h.
+    [InlineData(313, 1, 332.35, 3_131.07)]     // 332.348 -> 332.35;     332.348 + 2,798.72 = 3,131.068 -> 3,131.07
+    [InlineData(313, 4, 1_329.39, 4_128.11)]   // 1,329.392 -> 1,329.39; 1,329.392 + 2,798.72 = 4,128.112 -> 4,128.11
+    [InlineData(313, 8, 2_658.78, 5_457.50)]   // 2,658.784 -> 2,658.78; 2,658.784 + 2,798.72 = 5,457.504 -> 5,457.50
+    public void Compute_prices_rest_day_double_holiday_hours_as_the_premium_on_top_of_the_guaranteed_200_percent(
+        double factor, double hours, double expectedHoursOnly, double expectedWithGuarantee)
+    {
+        ComputeRestDayDoubleHolidayHours((decimal)hours, 0m, (decimal)factor)
+            .HolidayPay.Should().Be((decimal)expectedHoursOnly);
+        ComputeRestDayDoubleHolidayHours((decimal)hours, 1m, (decimal)factor)
+            .HolidayPay.Should().Be((decimal)expectedWithGuarantee);
+    }
+
+    [Fact]
+    public void Compute_pays_eight_rest_day_double_holiday_hours_with_the_guarantee_what_it_paid_before_under_365()
+    {
+        // The old total: hourly 150 x (3.90 - 1.00) x 8 = 3,480.00, which is dailyRate x (3.90 - alreadyPaid).
+        ComputeRestDayDoubleHolidayHours(8m, 1m, 365m).HolidayPay.Should().Be(1_200.00m * (3.90m - 1m));
+        ComputeRestDayDoubleHolidayHours(8m, 1m, 365m).HolidayPay.Should().Be(3_480.00m);
+    }
+
+    [Fact]
+    public void Compute_pays_eight_rest_day_double_holiday_hours_with_the_guarantee_what_it_paid_before_under_313()
+    {
+        // The old total: hourly 174.92 x (3.90 - 0) x 8 = 5,457.504 = dailyRate 1,399.36 x 3.90 -> 5,457.50.
+        var total = ComputeRestDayDoubleHolidayHours(8m, 1m, 313m).HolidayPay;
+        total.Should().Be(5_457.50m);
+        total.Should().Be(Math.Round(1_399.36m * (3.90m - 0m), 2));
+    }
+
+    [Theory]
+    [InlineData(365, 1_200.00)]   // 1,200 x (2.00 - 1.00) x 1
+    [InlineData(313, 2_798.72)]   // 1,399.36 x (2.00 - 0) x 1
+    public void Compute_pays_the_guarantee_alone_what_an_unworked_rest_day_double_holiday_paid_before(
+        double factor, double expected)
+    {
+        ComputeRestDayDoubleHolidayHours(0m, 1m, (decimal)factor).HolidayPay.Should().Be((decimal)expected);
+    }
+
+    [Theory]
+    // 365: hourly 150, alreadyPaid 1 on a rest day type.
+    [InlineData(WorkDayType.RegularHolidayOnRestDay, 365, 1_920.00)]            // 150 x (2.60 - 1.00) x 8 = 1,920.00
+    [InlineData(WorkDayType.SpecialNonWorkingOnRestDay, 365, 600.00)]           // 150 x (1.50 - 1.00) x 8 = 600.00
+    [InlineData(WorkDayType.DoubleSpecialNonWorkingOnRestDay, 365, 1_140.00)]   // 150 x (1.95 - 1.00) x 8 = 1,140.00
+    [InlineData(WorkDayType.RestDay, 365, 360.00)]                              // 150 x (1.30 - 1.00) x 8 = 360.00
+    // 313: hourly 174.92, rest days unpaid so alreadyPaid 0.
+    [InlineData(WorkDayType.RegularHolidayOnRestDay, 313, 3_638.34)]            // 174.92 x 2.60 x 8 = 3,638.336
+    [InlineData(WorkDayType.RestDay, 313, 1_819.17)]                            // 174.92 x 1.30 x 8 = 1,819.168
+    public void Compute_keeps_pricing_hours_on_other_rest_day_types_at_the_rate_less_what_is_paid(
+        WorkDayType dayType, double factor, double expected)
+    {
+        var employee = NewEmployee(basicSalary: 36_500m);
+        employee.PayFrequency = PayFrequency.Monthly;
+        var attendance = new PayrollAttendanceInput
+        {
+            PremiumDays = [new PremiumDayInput(dayType, Hours: 8m)]
+        };
+
+        _sut.Compute(employee, NewRun(), daysWorked: 22m, attendance: attendance,
+            dailyRateFactor: (decimal)factor).HolidayPay.Should().Be((decimal)expected);
+    }
+
+    [Fact]
+    public void Compute_keeps_pricing_a_worked_working_day_double_holiday_at_the_rate_less_what_is_paid()
+    {
+        // Days keep BaseRate - alreadyPaid: 1,200 x (3.00 - 1.00) x 1 = 2,400. A guaranteed day, were
+        // one counted beside it, adds 1,200 x (2.00 - 1.00) = 1,200 more: 3,600.
+        ComputeUnworked(WorkDayType.DoubleRegularHoliday, 0m, days: 1m).HolidayPay.Should().Be(2_400.00m);
+        ComputeUnworked(WorkDayType.DoubleRegularHoliday, 1m, days: 1m).HolidayPay.Should().Be(3_600.00m);
+    }
+
     [Fact]
     public void Compute_counts_unworked_holiday_pay_in_gross_and_withholding_but_not_in_the_13th_month()
     {
