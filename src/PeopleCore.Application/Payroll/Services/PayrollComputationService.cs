@@ -418,6 +418,12 @@ public class PayrollComputationService
                 + ComputeThirteenthMonthTax(taxableForBIR, compensation.PayFrequency,
                     thirteenthMonth + leaveOtherBenefits, exemptUsedEarlierInYear));
 
+        // The same split, recorded for the payslip: the 13th month fills what is left of the
+        // exemption first, and the leave beyond de minimis takes whatever remains after it. Only a
+        // record - the tax above is worked out from the two together, and stays as it was.
+        decimal exemptionLeft = Math.Max(0m, StatutoryCaps.ThirteenthMonthExemption - exemptUsedEarlierInYear);
+        decimal thirteenthMonthTaxable = Math.Max(0m, thirteenthMonth - exemptionLeft);
+
         // Loan deductions. Each active loan contributes its per-period instalment, but never
         // more than is still owed - an employee must not be charged past the payoff - and only
         // once the loan has started. The per-loan detail is recorded so marking the run paid can
@@ -516,6 +522,7 @@ public class PayrollComputationService
             ExemptUsedEarlierInYear = includeThirteenthMonth && isThirteenthMonthEligible
                 ? otherBenefitsExemptUsedEarlierInYear
                 : null,
+            ThirteenthMonthTaxable = thirteenthMonthTaxable,
             LeaveConversionPay = leaveConversionPay,
             LeaveConversionNonTaxable = leaveConversionNonTaxable,
             SeparationPay = separationPay,

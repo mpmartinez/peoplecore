@@ -79,6 +79,22 @@ public class PayrollRunEmployee : AuditableEntity
     /// </summary>
     public decimal? ExemptUsedEarlierInYear { get; set; }
 
+    /// <summary>
+    /// The part of <see cref="ThirteenthMonth"/> above what was left of the 90,000 exemption for 13th
+    /// month and other benefits when the entry was computed: <c>max(0, ThirteenthMonth - max(0,
+    /// 90,000 - exemption used earlier in the year))</c>. The 13th month fills the exemption first; the
+    /// leave beyond de minimis takes what remains after it. A record of the split for the payslip
+    /// only - not part of <see cref="GrossPay"/>, taxable pay or any tax formula. 0 when nothing is
+    /// taxable; null on entries computed before it was stored.
+    /// </summary>
+    public decimal? ThirteenthMonthTaxable { get; set; }
+
+    /// <summary>
+    /// The part of <see cref="ThirteenthMonth"/> within the exemption: the 13th month less
+    /// <see cref="ThirteenthMonthTaxable"/> (all of it when that is null).
+    /// </summary>
+    public decimal ThirteenthMonthExempt => ThirteenthMonth - (ThirteenthMonthTaxable ?? 0m);
+
     // Final-pay earnings. A Regular run's entries carry leave conversion too when the run
     // includes the year-end conversion; separation and retirement pay are a final pay's only.
     /// <summary>
@@ -164,7 +180,8 @@ public class PayrollRunEmployee : AuditableEntity
     /// <c>StatutoryCaps.ThirteenthMonthExemption</c> a year and taxable past it: the 13th month
     /// plus <see cref="LeaveConversionOtherBenefits"/>. Which part is exempt depends on the year's
     /// other entries, so it's split where the year is summed - the 2316 (Items 34 and 48) and the
-    /// 1601-C - never stored here.
+    /// 1601-C. Only the payslip's split of the 13th month, as at compute, is stored here
+    /// (<see cref="ThirteenthMonthTaxable"/>).
     /// </summary>
     public decimal ThirteenthMonthAndOtherBenefits => ThirteenthMonth + LeaveConversionOtherBenefits;
 

@@ -113,7 +113,12 @@ public record PayrollRunEmployeeDto(
     // shares above and added back to NetPay), and earlier deferred shares this entry collects
     // (taken from NetPay, not part of TotalDeductions). See PayslipLineBuilder.DeductionsTotal.
     decimal ContributionsDeferred = 0m,
-    decimal DeferredContributionsCollected = 0m);
+    decimal DeferredContributionsCollected = 0m,
+    // The part of ThirteenthMonth above what was left of the year's 90,000 exemption for 13th month
+    // and other benefits when the entry was computed; the rest of it is exempt. Null on entries
+    // computed before it was stored, 0 when nothing is taxable. Already inside ThirteenthMonth and
+    // GrossPay - a split for the payslip, not another earning, and no tax is worked out from it.
+    decimal? ThirteenthMonthTaxable = null);
 
 public record PayrollRunDto(
     Guid Id,

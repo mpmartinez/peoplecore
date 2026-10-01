@@ -1156,5 +1156,6 @@ public class PayrollRunService : IPayrollRunService
         e.PagIbigEmployee, e.PagIbigEmployer, e.WithholdingTax, e.LoanDeductions, e.OtherDeductions,
         e.LeaveConversionPay, e.LeaveConversionNonTaxable, e.SeparationPay, e.RetirementPay, e.FinalPayNonTaxable,
         e.MaternityBenefitAdvance, e.MaternityBenefitOffset, e.MaternityDifferential,
-        e.ContributionsDeferred, e.DeferredContributionsCollected);
+        e.ContributionsDeferred, e.DeferredContributionsCollected,
+        e.ThirteenthMonthTaxable);
 }
