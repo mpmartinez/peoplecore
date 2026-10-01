@@ -792,7 +792,7 @@ public class PayrollAttendanceBridgeTests
     }
 
     [Fact]
-    public async Task BuildAsync_AnUnworkedDoubleRegularHolidayOnARestDay_IsCountedWhenNoOvertimeIsApproved()
+    public async Task BuildAsync_AnUnworkedDoubleRegularHolidayOnARestDay_IsCountedWhenNoOvertimeIsApproved_AsItIsWithOvertime()
     {
         var employeeId = Guid.NewGuid();
         var saturday = new DateOnly(2026, 3, 7);   // a rest day under the Monday-to-Friday shift

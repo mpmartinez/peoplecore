@@ -36,7 +36,7 @@
 
 **Files:** `src/PeopleCore.Application/Payroll/Services/PayrollAttendanceBridge.cs` (in the per-date loop, add `Add(dayType, unworkedDays: 1m)` for a qualifying date; `Add` gains an `unworkedDays` parameter and the `with` copy, the breakdown filter and rounding keep it), `tests/PeopleCore.Application.Tests/.../PayrollAttendanceBridge*Tests.cs` (the existing bridge test file).
 
-- [ ] Failing tests: an unworked double regular holiday on a working day; the same on a rest day with no overtime (counted) and with approved overtime (worked as now, not counted); worked (present) is unchanged and not counted; an unworked double special day (nothing, still an absence); an unworked single regular holiday (nothing); no schedule that date (nothing); one present record among several (worked); approved paid leave that date (still counted); the payroll run created from a bridge result pays the extra day end to end.
+- [ ] Failing tests: an unworked double regular holiday on a working day; the same on a rest day with no overtime (counted) and with approved overtime (as first built: worked, not counted; superseded by the 2026-10-02 plan); worked (present) is unchanged and not counted; an unworked double special day (nothing, still an absence); an unworked single regular holiday (nothing); no schedule that date (nothing); one present record among several (worked); approved paid leave that date (still counted); the payroll run created from a bridge result pays the extra day end to end.
 - [ ] Run and confirm they fail; implement; run the whole solution.
 - [ ] Commit `feat(payroll): an unworked double regular holiday is paid 200%`.
 
