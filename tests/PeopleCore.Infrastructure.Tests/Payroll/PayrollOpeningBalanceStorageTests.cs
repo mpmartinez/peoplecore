@@ -300,7 +300,6 @@ public class PayrollOpeningBalanceStorageTests : DatabaseTestBase
         await Sut.AddNewAsync(ABalance(jose));
 
         await using var reader = NewContext();
-        reader.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
         var loaded = await new PayrollOpeningBalanceRepository(reader).GetForEmployeesForUpdateAsync([maria.Id], 2026);
 
         var balance = loaded.Should().ContainSingle().Subject;

@@ -98,3 +98,5 @@ One commit each, test first.
 - [x] The unpaid regular runs of a year are read Jan 1 to Dec 31, so a balance for 9999 works.
 - [x] The 1601-C counts the balance as earlier in the year only for months after its through
   date's month.
+- [x] Nits: the figures are rounded before they're checked; the repository's tracking comment, the
+  import loader's redundant `AsTracking()` and the page's file-check comment are fixed.

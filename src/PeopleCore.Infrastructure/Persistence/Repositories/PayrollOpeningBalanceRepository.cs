@@ -77,8 +77,9 @@ public class PayrollOpeningBalanceRepository : Repository<PayrollOpeningBalance>
     {
         var ids = employeeIds.Distinct().ToList();
         if (ids.Count == 0) return [];
+        // Tracked as every query on the context is (it doesn't change the default); no Employee, so
+        // saving the changes touches only the balances.
         return await Context.PayrollOpeningBalances
-            .AsTracking()
             .Where(b => b.Year == year && ids.Contains(b.EmployeeId))
             .ToListAsync(ct);
     }

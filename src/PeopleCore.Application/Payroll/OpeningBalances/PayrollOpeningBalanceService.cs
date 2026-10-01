@@ -283,10 +283,13 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
 
     /// <summary>
     /// The first thing wrong with the request's year, through date and figures, or null. The form
-    /// and the CSV import both go through it, so they refuse exactly the same things.
+    /// and the CSV import both go through it, so they refuse exactly the same things. The figures
+    /// are checked as they are stored, rounded to the centavo (<see cref="Rounded"/>): 10.004 leave
+    /// days are the 10.00 saved, not more than ten.
     /// </summary>
     private static string? ProblemWith(OpeningBalanceRequest request)
     {
+        request = Rounded(request);
         if (!IsYear(request.Year))
             return "Enter a year.";
         if (request.ThroughDate.Year != request.Year)
@@ -313,17 +316,32 @@ public sealed class PayrollOpeningBalanceService : IPayrollOpeningBalanceService
     /// <summary>The request's through date and figures, each rounded to the 2 dp it is stored to.</summary>
     private static void Apply(PayrollOpeningBalance balance, OpeningBalanceRequest request)
     {
+        request = Rounded(request);
         balance.ThroughDate = request.ThroughDate;
-        balance.BasicSalary = Round(request.BasicSalary);
-        balance.ThirteenthMonthPaid = Round(request.ThirteenthMonthPaid);
-        balance.OtherBenefitsPaid = Round(request.OtherBenefitsPaid);
-        balance.OtherTaxablePay = Round(request.OtherTaxablePay);
-        balance.DeMinimis = Round(request.DeMinimis);
-        balance.OtherNonTaxable = Round(request.OtherNonTaxable);
-        balance.EmployeeContributions = Round(request.EmployeeContributions);
-        balance.TaxWithheld = Round(request.TaxWithheld);
-        balance.DeMinimisLeaveDays = Round(request.DeMinimisLeaveDays);
+        balance.BasicSalary = request.BasicSalary;
+        balance.ThirteenthMonthPaid = request.ThirteenthMonthPaid;
+        balance.OtherBenefitsPaid = request.OtherBenefitsPaid;
+        balance.OtherTaxablePay = request.OtherTaxablePay;
+        balance.DeMinimis = request.DeMinimis;
+        balance.OtherNonTaxable = request.OtherNonTaxable;
+        balance.EmployeeContributions = request.EmployeeContributions;
+        balance.TaxWithheld = request.TaxWithheld;
+        balance.DeMinimisLeaveDays = request.DeMinimisLeaveDays;
     }
+
+    /// <summary>The request with every figure rounded to the 2 dp it is stored to.</summary>
+    private static OpeningBalanceRequest Rounded(OpeningBalanceRequest request) => request with
+    {
+        BasicSalary = Round(request.BasicSalary),
+        ThirteenthMonthPaid = Round(request.ThirteenthMonthPaid),
+        OtherBenefitsPaid = Round(request.OtherBenefitsPaid),
+        OtherTaxablePay = Round(request.OtherTaxablePay),
+        DeMinimis = Round(request.DeMinimis),
+        OtherNonTaxable = Round(request.OtherNonTaxable),
+        EmployeeContributions = Round(request.EmployeeContributions),
+        TaxWithheld = Round(request.TaxWithheld),
+        DeMinimisLeaveDays = Round(request.DeMinimisLeaveDays),
+    };
 
     private static decimal Round(decimal value) => Math.Round(value, 2, MidpointRounding.AwayFromZero);
 

@@ -273,6 +273,27 @@ public class PayrollOpeningBalanceServiceTests
         dto.DeMinimisLeaveDays.Should().Be(1.26m);
     }
 
+    [Fact]
+    public async Task Create_ChecksTheFiguresAsRoundedToTheCentavo_NotAsTyped()
+    {
+        // Each is refused as typed, but not as stored: 10.004 days is 10.00, 150,000.004 of
+        // contributions is the 150,000 basic, and -0.004 withheld is 0.00.
+        var dto = await _sut.CreateAsync(ARequest(basic: 150_000m, contributions: 150_000.004m, tax: -0.004m,
+            leaveDays: 10.004m));
+
+        dto.DeMinimisLeaveDays.Should().Be(10m);
+        dto.EmployeeContributions.Should().Be(150_000m);
+        dto.TaxWithheld.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task Create_RefusesAnAmountThatRoundsUpToTheLimit()
+    {
+        var act = () => _sut.CreateAsync(ARequest(tax: 9_999_999_999.995m));
+
+        await act.Should().ThrowAsync<DomainException>().WithMessage("Enter an amount below ₱10,000,000,000.");
+    }
+
     // ── The edit warning ─────────────────────────────────────────────────────
 
     [Fact]

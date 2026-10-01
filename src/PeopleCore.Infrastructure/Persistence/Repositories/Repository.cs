@@ -49,8 +49,9 @@ public class Repository<T> : IRepository<T> where T : class
     /// <para>
     /// Limits: only one-to-many collections are walked, from the entity down, so a new child hung
     /// off a reference navigation is not found. And an existing row that was loaded untracked and
-    /// then put into a collection would be inserted again (a duplicate key); nothing loads rows
-    /// untracked today.
+    /// then put into a collection would be inserted again (a duplicate key). Few reads load rows
+    /// untracked - <c>EmployeeRepository.GetByNumbersAsync</c>, for the opening-balance import, is
+    /// one - and what they load is only read, never added to a collection saved here.
     /// </para>
     /// </summary>
     public async Task UpdateAsync(T entity, CancellationToken ct = default)

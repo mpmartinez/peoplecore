@@ -570,7 +570,9 @@ else
         _importErrors = [];
         _imported = null;
 
-        // The API refuses anything else with the same words; checked here so it isn't sent at all.
+        // The API refuses a file over 2 MB with the same words; the page refuses one not named .csv
+        // too (the API doesn't look at the name, and refuses what isn't the template by its header).
+        // Checked here so neither is sent at all.
         var file = e.File;
         if (!file.Name.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) || file.Size > MaxImportBytes)
         {

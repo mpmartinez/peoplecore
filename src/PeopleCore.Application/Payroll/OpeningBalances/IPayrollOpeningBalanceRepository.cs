@@ -14,8 +14,8 @@ public interface IPayrollOpeningBalanceRepository : IRepository<PayrollOpeningBa
 
     /// <summary>
     /// The employees' opening balances for the year, tracked so their changes save: what an import
-    /// updates in place. Unlike <see cref="GetForEmployeesAsync"/> it is always tracked, and loads
-    /// no <see cref="PayrollOpeningBalance.Employee"/>.
+    /// updates in place. Unlike <see cref="GetForEmployeesAsync"/> it loads no
+    /// <see cref="PayrollOpeningBalance.Employee"/>.
     /// </summary>
     Task<IReadOnlyList<PayrollOpeningBalance>> GetForEmployeesForUpdateAsync(IReadOnlyCollection<Guid> employeeIds,
         int year, CancellationToken ct = default);

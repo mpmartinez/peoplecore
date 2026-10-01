@@ -90,7 +90,7 @@ block.
   the basic earned or the exemption used gives "{name}'s pay before PeopleCore has changed since
   this payroll was computed; recompute it before paying." An Approved run in that state can be
   recomputed (back to Draft). Entries computed before these figures were stored aren't checked.
-- Validation: "Enter a year." / "The through date must fall in {Year}." / "Amounts can't be
+- Validation, on the figures rounded to the centavo as they are stored: "Enter a year." / "The through date must fall in {Year}." / "Amounts can't be
   negative." / "Contributions can't be more than the basic salary." / "De minimis leave days must
   be between 0 and 10."
 
