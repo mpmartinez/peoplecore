@@ -68,6 +68,8 @@ public partial class PayrollRunServiceTests
         // The unworked double holiday adds 1,200 x (2.00 - 1.00); the day itself carries no absence.
         var entry = savedRun()!.Employees.Single();
         entry.HolidayPay.Should().Be(1_200.00m);
+        // Of the period's 11 weekdays the holiday is excluded and the other ten are unattended.
+        entry.AbsenceDays.Should().Be(10m);
         entry.PremiumDays.Should().ContainSingle(d =>
             d.DayType == WorkDayType.DoubleRegularHoliday && d.UnworkedDays == 1m);
     }

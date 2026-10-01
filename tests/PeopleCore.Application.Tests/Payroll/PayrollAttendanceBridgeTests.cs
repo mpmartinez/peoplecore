@@ -824,6 +824,42 @@ public class PayrollAttendanceBridgeTests
     }
 
     [Fact]
+    public async Task BuildAsync_ADoubleRegularHolidayOnARestDay_WithAPresentRecordButNoApprovedOvertime_IsCounted()
+    {
+        var employeeId = Guid.NewGuid();
+        var saturday = new DateOnly(2026, 3, 7);   // a rest day under the Monday-to-Friday shift
+
+        SetupFixedShift(employeeId, new DateOnly(2026, 3, 2));
+        SetupPresent(employeeId, saturday);
+        SetupHolidays(TwoRegularHolidaysOn(saturday));
+
+        var result = await _sut.BuildAsync([employeeId], saturday, saturday, CancellationToken.None);
+
+        // Rest-day work comes only from approved overtime, so turning up unapproved earns nothing
+        // as work: the day counts as unworked and she is never paid less than for staying home.
+        result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.DoubleRegularHolidayOnRestDay, UnworkedDays: 1m)]);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ADoubleRegularHolidayOnAWorkingDay_WithApprovedOvertimeButNoPresentRecord_IsCountedAndItsOvertimeIsPriced()
+    {
+        var employeeId = Guid.NewGuid();
+        var date = new DateOnly(2026, 4, 9);   // a Thursday: a scheduled working day
+
+        SetupFixedShift(employeeId, date);
+        SetupOvertime(employeeId, date, 120);
+        SetupHolidays(TwoRegularHolidaysOn(date));
+
+        var result = await _sut.BuildAsync([employeeId], date, date, CancellationToken.None);
+
+        // On a working day only a present record is work, so approved overtime alone does not make
+        // it worked: the day is counted, and its overtime is still priced as holiday overtime.
+        result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.DoubleRegularHoliday, OvertimeHours: 2m, UnworkedDays: 1m)]);
+    }
+
+    [Fact]
     public async Task BuildAsync_AWorkedDoubleRegularHoliday_IsNotCountedAsUnworked()
     {
         var employeeId = Guid.NewGuid();
@@ -926,6 +962,52 @@ public class PayrollAttendanceBridgeTests
 
         var result = await _sut.BuildAsync([employeeId], date, date, CancellationToken.None);
 
+        result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.DoubleRegularHoliday, UnworkedDays: 1m)]);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ApprovedUnpaidLeaveOnAnUnworkedDoubleRegularHoliday_IsCounted()
+    {
+        var employeeId = Guid.NewGuid();
+        var date = new DateOnly(2026, 4, 9);
+
+        SetupFixedShift(employeeId, date);
+        SetupHolidays(TwoRegularHolidaysOn(date));
+        _leave.Setup(r => r.GetApprovedByPeriodAsync(
+                  It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+              .ReturnsAsync([new LeaveRequest
+              {
+                  EmployeeId = employeeId, StartDate = date, EndDate = date,
+                  Status = LeaveStatus.Approved,
+                  LeaveType = new LeaveType { Name = "Leave without pay", IsPaid = false }
+              }]);
+
+        var result = await _sut.BuildAsync([employeeId], date, date, CancellationToken.None);
+
+        // The holiday's pay does not depend on leave, paid or not; and a regular holiday is never
+        // an absence.
+        var input = result.Inputs[employeeId];
+        input.PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.DoubleRegularHoliday, UnworkedDays: 1m)]);
+        input.AbsenceDays.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ADoubleRegularHolidayThatAlsoHasASpecialHolidayRow_IsCountedAsADoubleRegularHoliday()
+    {
+        var employeeId = Guid.NewGuid();
+        var date = new DateOnly(2026, 4, 9);
+
+        SetupFixedShift(employeeId, date);
+        SetupHolidays([
+            .. TwoRegularHolidaysOn(date),
+            new Holiday { Name = "City founding day", HolidayDate = date, HolidayType = HolidayType.SpecialNonWorking }
+        ]);
+
+        var result = await _sut.BuildAsync([employeeId], date, date, CancellationToken.None);
+
+        // A regular holiday outranks a special day on the same date, so the extra row changes nothing.
         result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
             [new PremiumDayInput(WorkDayType.DoubleRegularHoliday, UnworkedDays: 1m)]);
     }

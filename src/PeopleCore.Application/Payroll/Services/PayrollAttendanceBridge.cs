@@ -228,13 +228,16 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                 // An unworked double regular holiday is paid 200% where an unworked single one is
                 // paid 100%: the salary already carries the first 100%, and the engine adds the
                 // second from this count. It needs a schedule (with none there is no basis to pay,
-                // just as no absence is derived), nobody present, and on a rest day no approved
-                // overtime, which is how a rest day's work arrives. Paid leave does not stop it,
-                // as it does not stop the single holiday's pay.
+                // just as no absence is derived) and a day not worked. Work is judged the way it
+                // is paid above: on a rest day only approved overtime is work, so a present record
+                // alone does not make it worked (it earns nothing, and counting the day keeps the
+                // employee from being paid less for turning up than for staying home); on a
+                // working day any present record is work. Paid leave does not stop the count, as
+                // it does not stop the single holiday's pay.
+                var workedTheDay = isRestDay ? overtimeHours > 0m : isPresent;
                 if (dayType is WorkDayType.DoubleRegularHoliday or WorkDayType.DoubleRegularHolidayOnRestDay
                     && schedule is not null
-                    && !isPresent
-                    && !(isRestDay && overtimeHours > 0m))
+                    && !workedTheDay)
                 {
                     Add(dayType, unworkedDays: 1m);
                 }

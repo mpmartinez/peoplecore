@@ -29,13 +29,16 @@ what an unworked single regular holiday is: the salary's 100%, with no absence b
 
 `PayrollAttendanceBridge` counts, per employee, the dates in the period where the classified day
 type is `DoubleRegularHoliday` or `DoubleRegularHolidayOnRestDay`, the shift schedule resolves
-(a working day or a rest day), no record for the date is marked present, and, on a rest day,
-no overtime is approved for it (a rest day's work comes from approved overtime). With no schedule for
-the date (before the assignment starts, say) nothing is paid, as no absence is derived for it.
-The count goes on that day type's `PremiumDayInput.UnworkedDays`.
+(a working day or a rest day), and the date was not worked. A date is worked when, on a rest day,
+approved overtime exists for it (a rest day's work comes only from approved overtime, so a present
+record alone does not count), and when, on a working day, any record for it is marked present. With
+no schedule for the date (before the assignment starts, say) nothing is paid, as no absence is
+derived for it. The count goes on that day type's `PremiumDayInput.UnworkedDays`.
 
 A double regular holiday the employee worked is unchanged (`Days` or, on a rest day, `Hours`).
-A rest day worked through approved overtime is worked and stays as now.
+A rest day worked through approved overtime is worked and stays as now. A rest day with a present
+record but no approved overtime earns nothing as work, so it is counted as unworked: she is paid
+the same 200% as if she had stayed home, never less for turning up.
 
 ## The engine
 
