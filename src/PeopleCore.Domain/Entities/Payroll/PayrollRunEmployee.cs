@@ -83,9 +83,11 @@ public class PayrollRunEmployee : AuditableEntity
     /// The part of <see cref="ThirteenthMonth"/> above what was left of the 90,000 exemption for 13th
     /// month and other benefits when the entry was computed: <c>max(0, ThirteenthMonth - max(0,
     /// 90,000 - exemption used earlier in the year))</c>. The 13th month fills the exemption first; the
-    /// leave beyond de minimis takes what remains after it. A record of the split for the payslip
-    /// only - not part of <see cref="GrossPay"/>, taxable pay or any tax formula. 0 when nothing is
-    /// taxable; null on entries computed before it was stored.
+    /// leave beyond de minimis takes what remains after it. A final pay counts the pay year's
+    /// exemption used (FinalPayService sets it after the engine). A record of the split for the
+    /// payslip only: it is already inside <see cref="ThirteenthMonth"/>, so it is not added to
+    /// <see cref="GrossPay"/> again, and no taxable pay or tax is worked out from it. 0 when nothing
+    /// is taxable; null on entries computed before it was stored.
     /// </summary>
     public decimal? ThirteenthMonthTaxable { get; set; }
 

@@ -9,6 +9,7 @@ using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Enums;
 using PeopleCore.Domain.Exceptions;
+using PeopleCore.Domain.Payroll;
 
 namespace PeopleCore.Application.Payroll.FinalPay;
 
@@ -713,6 +714,16 @@ public sealed class FinalPayService : IFinalPayService
             - certificate.Item25B_PrevTaxWithheld - certificate.Item27_PeraTaxCredit, 2);
 
         var entry = Compute(extras with { WithholdingTaxOverride = settled }, maternityInput);
+
+        // The taxable part of the 13th month, for the payslip, against the pay year's exemption for
+        // 13th month and other benefits - what its other Paid runs and her opening balance for it
+        // used, as the 2316 and the summary's leave split count it. The engine was given only the
+        // 13th month paid in the last working day's year (its inputs and the ExemptUsedEarlierInYear
+        // snapshot stay as they are); nothing else reads this figure, so the tax is unchanged.
+        decimal payYearExemptUsed = (await _yearToDate.ForEmployeeAsync(employeeId, payYear, run.Id, ct)).ExemptUsed;
+        decimal exemptionLeft = Math.Max(0m, StatutoryCaps.ThirteenthMonthExemption - payYearExemptUsed);
+        entry.ThirteenthMonthTaxable = Math.Max(0m, entry.ThirteenthMonth - exemptionLeft);
+
         entry.AdvanceMaternityBenefit = advanceMaternity;
         entry.MaternityClaimId = maternityPay.ClaimId;
         PayrollRunService.SnapshotAttendance(entry, attendance);

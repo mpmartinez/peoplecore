@@ -108,19 +108,19 @@ public class PayrollComputationServiceThirteenthMonthTaxableTests
     {
         // As the tax does (Compute_counts_the_exemption_used_as_at_least_the_13th_month_paid_earlier
         // in PayrollComputationServiceLeaveConversionTests): 80,000 of 13th month paid earlier but
-        // only 30,000 said to be used - the larger stands. 90,000 - 80,000 = 10,000 left.
-        // 13th month due: 88,000 - 80,000 = 8,000, all within the 10,000: 0 taxable.
-        // (Taking the 30,000 would also give 0; the leave below tells them apart.)
-        // Leave beyond de minimis 6,000 takes the 2,000 left: 4,000 taxable x 25% = 1,000.
-        // Tax: 12,837.50 + 1,000 = 13,837.50.
+        // only 30,000 said to be used - the larger stands.
+        // 1,112,000 of basic earned earlier: (1,112,000 + 88,000) / 12 = 100,000 due, less the 80,000
+        // paid = 20,000. Taking the 80,000: 90,000 - 80,000 = 10,000 left, so 10,000 exempt and
+        // 20,000 - 10,000 = 10,000 taxable. (Taking the 30,000 would leave 60,000: 0 taxable.)
+        // Tax: 10,000 x 25% = 2,500 + 12,837.50 = 15,337.50.
         var result = _sut.Compute(NewEmployee(), DecemberRun(),
-            includeThirteenthMonth: true, basicEarnedEarlierInYear: BasicEarnedJanToNov,
-            thirteenthMonthPaidEarlierInYear: 80_000m, otherBenefitsExemptUsedEarlierInYear: 30_000m,
-            leaveConversion: new LeaveConversionInput(DeMinimis: 12_000m, OtherBenefits: 6_000m));
+            includeThirteenthMonth: true, basicEarnedEarlierInYear: 1_112_000m,
+            thirteenthMonthPaidEarlierInYear: 80_000m, otherBenefitsExemptUsedEarlierInYear: 30_000m);
 
-        result.ThirteenthMonth.Should().Be(8_000m);
-        result.ThirteenthMonthTaxable.Should().Be(0m);
-        result.WithholdingTax.Should().Be(13_837.50m);
+        result.ThirteenthMonth.Should().Be(20_000m);
+        result.ThirteenthMonthTaxable.Should().Be(10_000m);
+        result.ThirteenthMonthExempt.Should().Be(10_000m);
+        result.WithholdingTax.Should().Be(15_337.50m);
     }
 
     [Fact]
@@ -191,7 +191,9 @@ public class PayrollComputationServiceThirteenthMonthTaxableTests
         // 1,080,000 of basic earned earlier and 85,000 of 13th month paid earlier:
         // 13th month (1,080,000 + 12,000) / 12 = 91,000 - 85,000 = 6,000. The exemption used is the
         // 85,000, so 5,000 is left: 5,000 exempt, 1,000 taxable. The settled tax (the override)
-        // replaces the computed withholding, and is untouched by the split.
+        // replaces the computed withholding, and is untouched by the split. (FinalPayService then
+        // replaces this figure with one against the pay year's exemption used; see
+        // FinalPayServiceThirteenthMonthTaxableTests.)
         var result = _sut.Compute(NewEmployee(basicSalary: 36_500m), FinalPayRun(),
             includeThirteenthMonth: true, basicEarnedEarlierInYear: 1_080_000m,
             thirteenthMonthPaidEarlierInYear: 85_000m,
