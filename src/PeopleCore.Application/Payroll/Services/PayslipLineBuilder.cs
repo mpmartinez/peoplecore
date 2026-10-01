@@ -37,14 +37,25 @@ public static class PayslipLineBuilder
         if (e.NightDiffPay > 0) lines.Add(new("Night Shift Differential", e.NightDiffPay));
         if (e.TaxableAllowances > 0) lines.Add(new("Taxable Allowances", e.TaxableAllowances));
         if (e.NonTaxableAllowances > 0) lines.Add(new("Non-Taxable Allowances", e.NonTaxableAllowances, IsTaxable: false));
-        if (e.ThirteenthMonth > 0) lines.Add(new("13th Month Pay", e.ThirteenthMonth, IsTaxable: false));
+        // The 13th month is exempt up to what is left of the year's 90,000. When part of it is past
+        // that (ThirteenthMonthTaxable, already inside ThirteenthMonth and GrossPay), it is shown as
+        // its exempt and taxable parts in place of the one line. Null (an entry computed before the
+        // figure was stored) or 0 keeps the one non-taxable line.
+        if (e.ThirteenthMonthTaxable is decimal thirteenthMonthTaxable && thirteenthMonthTaxable > 0)
+        {
+            decimal thirteenthMonthExempt = e.ThirteenthMonth - thirteenthMonthTaxable;
+            if (thirteenthMonthExempt > 0)
+                lines.Add(new("13th Month Pay (non-taxable)", thirteenthMonthExempt, IsTaxable: false));
+            lines.Add(new("13th Month Pay (taxable portion)", thirteenthMonthTaxable, IsTaxable: true));
+        }
+        else if (e.ThirteenthMonth > 0) lines.Add(new("13th Month Pay", e.ThirteenthMonth, IsTaxable: false));
 
         // Final-pay earnings; a regular run has only the leave conversion, and only when it
         // converts unused year-end leave. A line is flagged non-taxable only when all
         // of it is: FinalPayNonTaxable covers leave conversion's de minimis part plus whatever of
         // separation and retirement pay is exempt. Leave beyond de minimis is "other benefits",
-        // taxed with the 13th month only past the year's 90,000 exemption - which one payslip
-        // can't see - so the leave line is flagged as the 13th month's is.
+        // taxed with the 13th month only past the year's 90,000 exemption. The leave line is not
+        // split the way the 13th month is, so it stays flagged non-taxable.
         if (e.LeaveConversionPay > 0)
             lines.Add(new("Leave Conversion", e.LeaveConversionPay, IsTaxable: false));
         decimal separationAndRetirementNonTaxable = e.FinalPayNonTaxable - e.LeaveConversionNonTaxable;

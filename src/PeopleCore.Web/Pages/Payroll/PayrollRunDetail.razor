@@ -217,7 +217,14 @@ else
                                 <TableCell Class="px-4 py-3">&#8369;@e.NightDiffPay.ToString("N2")</TableCell>
                                 @if (ShowsThirteenthMonth)
                                 {
-                                    <TableCell Class="px-4 py-3" data-thirteenth-month>&#8369;@e.ThirteenthMonth.ToString("N2")</TableCell>
+                                    <TableCell Class="px-4 py-3" data-thirteenth-month>
+                                        &#8369;@e.ThirteenthMonth.ToString("N2")
+                                        @if (e.ThirteenthMonthTaxable > 0m)
+                                        {
+                                            @* The part past the year's 90,000 exemption; null on entries computed before it was stored. *@
+                                            <div class="text-xs text-muted-foreground" data-thirteenth-month-taxable>of which taxable @PayrollLabels.Peso(e.ThirteenthMonthTaxable.Value)</div>
+                                        }
+                                    </TableCell>
                                 }
                                 @if (IsFinalPay)
                                 {

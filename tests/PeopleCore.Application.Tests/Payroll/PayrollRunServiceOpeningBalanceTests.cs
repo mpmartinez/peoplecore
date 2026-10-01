@@ -293,6 +293,98 @@ public partial class PayrollRunServiceTests
     }
 
     [Fact]
+    public async Task MarkPaidAsync_WhenAnotherRunWithHer13thMonthWasPaidSinceCompute_NamesItInsteadOfTheOpeningBalance()
+    {
+        // Computed (Nov 15) with no basic earned earlier; PAY-2026-020 was paid on Nov 30 with her
+        // 13th month, so the basic and exemption earlier in the year have moved - not her balance.
+        // paidEarlier null skips the 13th-month check, so the basic or exemption branch is reached.
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: null, basicEarlier: 0m, exemptEarlier: 0m);
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(
+            [PaidThirteenthMonth(maria.Id, "PAY-2026-020", 3_000m, paidAt: new DateTime(2026, 11, 30))]);
+        var sut = WithOpeningBalances();
+
+        var act = () => sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos's pay was changed by PAY-2026-020, paid after this payroll was computed; recompute it before paying.");
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenSeveralRunsWithHer13thMonthWerePaidSinceCompute_NamesTheLatest()
+    {
+        // paidEarlier null skips the 13th-month check, so the basic or exemption branch is reached.
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: null, basicEarlier: 0m, exemptEarlier: 0m);
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(
+        [
+            PaidThirteenthMonth(maria.Id, "PAY-2026-020", 3_000m, paidAt: new DateTime(2026, 11, 30)),
+            PaidThirteenthMonth(maria.Id, "PAY-2026-021", 3_000m, paidAt: new DateTime(2026, 12, 1)),
+            PaidThirteenthMonth(maria.Id, "PAY-2026-019", 3_000m, paidAt: new DateTime(2026, 11, 20)),
+        ]);
+        var sut = WithOpeningBalances();
+
+        var act = () => sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos's pay was changed by PAY-2026-021, paid after this payroll was computed; recompute it before paying.");
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenAPaidRunOfHersWithNo13thMonthWasPaidSinceCompute_NamesIt()
+    {
+        // Computed (Nov 15) with no basic earned earlier; PAY-2026-020, her Dec 1-15 run without a 13th
+        // month, was marked Paid on Nov 30 - it moved her basic earned, not her opening balance.
+        // paidEarlier null skips the 13th-month check, so the basic or exemption branch is reached.
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: null, basicEarlier: 0m, exemptEarlier: 0m);
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(
+            [PaidThirteenthMonth(maria.Id, "PAY-2026-020", 0m, paidAt: new DateTime(2026, 11, 30))]);
+        var sut = WithOpeningBalances();
+
+        var act = () => sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(
+            "Maria Santos's pay was changed by PAY-2026-020, paid after this payroll was computed; recompute it before paying.");
+        run.Status.Should().Be(PayrollRunStatus.Approved);
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenTheRunsPaidSinceComputeAreNotHers_OrWerePaidBeforeIt_KeepsTheOpeningBalanceWording()
+    {
+        // PAY-2026-019 was paid before the compute, so it is in what the entry was computed with, and
+        // PAY-2026-022 was paid after it but doesn't include her: neither is the one.
+        // paidEarlier null skips the 13th-month check, so the basic or exemption branch is reached.
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: null, basicEarlier: 0m, exemptEarlier: 0m);
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync(
+        [
+            PaidThirteenthMonth(maria.Id, "PAY-2026-019", 3_000m, paidAt: new DateTime(2026, 11, 1)),
+            PaidThirteenthMonth(Guid.NewGuid(), "PAY-2026-022", 3_000m, paidAt: new DateTime(2026, 12, 2)),
+        ]);
+        var sut = WithOpeningBalances(OpeningBalance(maria.Id, basicSalary: 365_000m));
+
+        var act = () => sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(PayBeforePeopleCoreChanged);
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
+    public async Task MarkPaidAsync_WhenTheOpeningBalanceChangedAndNoRunWasPaidSinceCompute_KeepsTheOpeningBalanceWording()
+    {
+        // paidEarlier null skips the 13th-month check, so the basic or exemption branch is reached.
+        var (run, maria) = ApprovedDecemberWithThe13thMonth(paidEarlier: null, basicEarlier: 0m, exemptEarlier: 0m);
+        _runRepo.Setup(r => r.GetPaidRunsInYearAsync(2026, It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        var sut = WithOpeningBalances(OpeningBalance(maria.Id, basicSalary: 365_000m));
+
+        var act = () => sut.MarkPaidAsync(run.Id);
+
+        (await act.Should().ThrowAsync<DomainException>()).Which.Message.Should().Be(PayBeforePeopleCoreChanged);
+        VerifyNothingSavedAsPaid();
+    }
+
+    [Fact]
     public async Task MarkPaidAsync_WhenTheOpeningBalancesOtherBenefitsChangedSinceCompute_IsRefused()
     {
         // Computed with none of the exemption used; HR has since recorded 5,000 of other benefits

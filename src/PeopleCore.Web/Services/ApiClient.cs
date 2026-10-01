@@ -1312,7 +1312,10 @@ public record PayrollRunEmployeeDto(
     // Shares a maternity-covered cutoff couldn't pay, deferred (added back to NetPay), and earlier
     // deferred shares this entry collects (taken from NetPay; not in TotalDeductions).
     decimal ContributionsDeferred = 0m,
-    decimal DeferredContributionsCollected = 0m);
+    decimal DeferredContributionsCollected = 0m,
+    // The part of ThirteenthMonth past what was left of the year's 90,000 exemption (already inside
+    // ThirteenthMonth and GrossPay). Null on entries computed before it was stored; 0 when none is.
+    decimal? ThirteenthMonthTaxable = null);
 
 public record PayrollRunDto(
     Guid Id,

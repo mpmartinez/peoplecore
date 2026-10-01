@@ -105,13 +105,49 @@ public class ApiClientMaternityTests
     [Fact]
     public void TheRunMirrors_EndWithTheMaternityFigures_AndTheWarnings()
     {
-        // PayrollRunEmployeeDto's maternity members and PayrollRunDto's last one, as the API has them.
-        MembersOf<PayrollRunEmployeeDto>().TakeLast(10).Should().Equal(
+        // PayrollRunEmployeeDto's maternity members, the taxable part of the 13th month after them, and
+        // PayrollRunDto's last one, as the API has them.
+        MembersOf<PayrollRunEmployeeDto>().TakeLast(11).Should().Equal(
             "leaveConversionPay", "leaveConversionNonTaxable", "separationPay", "retirementPay", "finalPayNonTaxable",
             "maternityBenefitAdvance", "maternityBenefitOffset", "maternityDifferential",
-            "contributionsDeferred", "deferredContributionsCollected");
+            "contributionsDeferred", "deferredContributionsCollected", "thirteenthMonthTaxable");
         MembersOf<PayrollRunDto>().TakeLast(4).Should().Equal(
             "runType", "includesLeaveConversion", "includesThirteenthMonth", "warnings");
+    }
+
+    [Fact]
+    public void TheRunEmployeeMirror_HasEveryApiField_InTheApisOrder()
+    {
+        // PeopleCore.Application.Payroll.DTOs.PayrollRunEmployeeDto, parameter by parameter.
+        MembersOf<PayrollRunEmployeeDto>().Should().Equal(
+            "id", "employeeId", "employeeName", "employeeNumber", "daysWorked", "grossPay", "totalDeductions", "netPay",
+            "regularPay", "overtimePay", "holidayPay", "nightDiffPay", "taxableAllowances", "nonTaxableAllowances",
+            "thirteenthMonth", "absenceDeduction", "tardinessDeduction", "sssEmployee", "sssEmployer",
+            "philHealthEmployee", "philHealthEmployer", "pagIbigEmployee", "pagIbigEmployer", "withholdingTax",
+            "loanDeductions", "otherDeductions",
+            "leaveConversionPay", "leaveConversionNonTaxable", "separationPay", "retirementPay", "finalPayNonTaxable",
+            "maternityBenefitAdvance", "maternityBenefitOffset", "maternityDifferential",
+            "contributionsDeferred", "deferredContributionsCollected", "thirteenthMonthTaxable");
+    }
+
+    [Fact]
+    public async Task ARunsTaxable13thMonth_IsRead_AndANullStaysNull()
+    {
+        _api.On(HttpMethod.Get, $"/api/payroll-runs/{RunId}", HttpStatusCode.OK, $$"""
+            {"id":"{{RunId}}","runNumber":"PR-2026-0024","periodLabel":"Dec 1-15, 2026","periodStart":"2026-12-01",
+             "periodEnd":"2026-12-15","payDate":"2026-12-15","frequency":"SemiMonthly","status":"Draft",
+             "employeeCount":2,"totalGrossPay":0,"totalDeductions":0,"totalNetPay":0,"createdAt":"2026-12-01T00:00:00Z",
+             "attendancePeriodId":null,"employeesMissingAttendance":0,
+             "employees":[{"id":"{{Guid.NewGuid()}}","employeeId":"{{MariaId}}","employeeName":"Maria Santos","employeeNumber":"EMP-0042",
+                           "thirteenthMonth":3041.67,"thirteenthMonthTaxable":1041.67},
+                          {"id":"{{Guid.NewGuid()}}","employeeId":"{{Guid.NewGuid()}}","employeeName":"Ana Cruz","employeeNumber":"EMP-0044",
+                           "thirteenthMonth":2500,"thirteenthMonthTaxable":null}],
+             "runType":"Regular","includesLeaveConversion":false,"includesThirteenthMonth":true,"warnings":[]}
+            """);
+
+        var run = await CreateClient().GetPayrollRunAsync(RunId);
+
+        run!.Employees.Select(e => e.ThirteenthMonthTaxable).Should().Equal(1041.67m, null);
     }
 
     [Fact]

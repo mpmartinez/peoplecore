@@ -868,6 +868,33 @@ public class PayrollRunDetailTests : BunitContext
     }
 
     [Fact]
+    public void The13thMonthColumn_ShowsTheTaxablePart_BeneathTheAmount_OnlyWhenThereIsSome()
+    {
+        // Maria's 13th month is partly past the year's exemption; Jose's is wholly within it (0);
+        // Ana's entry was computed before the figure was stored (null).
+        var anaLine = $$"""
+            {"id":"{{Guid.NewGuid()}}","employeeId":"{{Guid.NewGuid()}}","employeeName":"Ana Cruz","employeeNumber":"EMP-0044",
+             "thirteenthMonth":2500,"thirteenthMonthTaxable":null}
+            """;
+        var mariaLine = ThirteenthMonthLine.TrimEnd().TrimEnd('}') + ""","thirteenthMonthTaxable":1041.67}""";
+        var joseLine = JoseLine.TrimEnd('}') + ""","thirteenthMonth":3041.67,"thirteenthMonthTaxable":0}""";
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK,
+            RunJson("Draft", includesThirteenthMonth: true, employees: $"{mariaLine},{joseLine},{anaLine}"));
+
+        var cut = RenderPage();
+
+        var cells = cut.FindAll("[data-thirteenth-month]");
+        cells.Should().HaveCount(3);
+        cells[0].QuerySelector("[data-thirteenth-month-taxable]")!.TextContent.Trim().Should().Be("of which taxable ₱1,041.67");
+        cells[0].TextContent.TrimStart().Should().StartWith("₱3,041.67");
+        cells[1].QuerySelector("[data-thirteenth-month-taxable]").Should().BeNull();
+        cells[1].TextContent.Trim().Should().Be("₱3,041.67");
+        cells[2].QuerySelector("[data-thirteenth-month-taxable]").Should().BeNull();
+        cells[2].TextContent.Trim().Should().Be("₱2,500.00");
+        cut.FindAll("[data-thirteenth-month-taxable]").Should().ContainSingle();
+    }
+
+    [Fact]
     public void ARunIncludingThe13thMonth_ThatPaysNoneOfIt_ShowsTheBadgeButNoColumn()
     {
         // Everyone on it is ineligible, say: the run includes it, but nobody's 13th month is above zero.
