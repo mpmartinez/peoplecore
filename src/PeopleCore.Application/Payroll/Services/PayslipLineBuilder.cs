@@ -54,8 +54,8 @@ public static class PayslipLineBuilder
         // converts unused year-end leave. A line is flagged non-taxable only when all
         // of it is: FinalPayNonTaxable covers leave conversion's de minimis part plus whatever of
         // separation and retirement pay is exempt. Leave beyond de minimis is "other benefits",
-        // taxed with the 13th month only past the year's 90,000 exemption - which one payslip
-        // can't see - so the leave line is flagged as the 13th month's is.
+        // taxed with the 13th month only past the year's 90,000 exemption. The leave line is not
+        // split the way the 13th month is, so it stays flagged non-taxable.
         if (e.LeaveConversionPay > 0)
             lines.Add(new("Leave Conversion", e.LeaveConversionPay, IsTaxable: false));
         decimal separationAndRetirementNonTaxable = e.FinalPayNonTaxable - e.LeaveConversionNonTaxable;
