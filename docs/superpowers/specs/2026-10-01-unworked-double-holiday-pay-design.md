@@ -44,7 +44,7 @@ premium loop adds `dailyRate x (DolePremiumRates.UnworkedBaseRate(dayType) - alr
 UnworkedDays` to `holidayPay`, with `UnworkedBaseRate` 2.00 for the two double regular types and
 0 for every other type (so it adds nothing for them). Rounded with the rest of `holidayPay`.
 
-`holidayPay` already feeds gross, taxable pay, the 13th month's basis and the payslip's holiday
+`holidayPay` already feeds gross, taxable pay, the loan budget and the payslip's holiday
 line, so no total or report needs changing. `HolidayDays` on the entry (a display roll-up of worked
 days) is unchanged.
 
@@ -74,7 +74,7 @@ No change: the holiday-pay amount grows. The payslip shows one holiday-pay line 
   among several for the date (worked); paid leave that date (still counted).
 - Engine, with hand-derived figures in comments: one unworked double holiday under the 365 factor
   (adds 100% of the daily rate); on a rest day under 365 (100%) and under 313 (200%); two such
-  days; mixed with a worked double holiday; gross and the 13th month's basis include it; a request
+  days; mixed with a worked double holiday; gross and the withholding base include it, the 13th month (worked from regular pay, as for a worked holiday) does not; a request
   with no unworked days is unchanged.
 - Storage: the column round-trips on Postgres, and a recompute of an unpaid run reprices the
   unworked days from the stored rows.
