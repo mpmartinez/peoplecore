@@ -44,7 +44,7 @@
 
 **Files:** `PayrollRunService.cs` (`EnsureEarlierInYearUnchangedAsync`), `Bir2316Service.cs` (`GetAvailableYearsAsync`) and the 2316 page's default year choice.
 
-- [ ] Failing tests: Mark Paid names another Paid run of hers that includes her 13th month and was paid after the entry was computed ("{name}'s pay was changed by {RunNumber}, paid after this payroll was computed; recompute it before paying."), and otherwise keeps the opening-balance wording; the 2316 page's default year is the latest available year not after the current Philippine year, with later years still listed.
+- [ ] Failing tests: Mark Paid names another Paid run of hers (a 13th month or not) paid after the entry was computed ("{name}'s pay was changed by {RunNumber}, paid after this payroll was computed; recompute it before paying."), and otherwise keeps the opening-balance wording; the 2316 page's default year is the latest available year not after the current Philippine year, with later years still listed.
 - [ ] Run and confirm they fail; implement; run the whole solution.
 - [ ] Commit `fix(payroll): Mark Paid names the run that changed the pay before PeopleCore, and the 2316 page doesn't default to a future year`.
 

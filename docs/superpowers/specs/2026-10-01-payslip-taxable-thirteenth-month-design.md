@@ -1,6 +1,6 @@
 # Payslip: the taxable part of the 13th month - design
 
-Date: 2026-10-01. Status: approved in brainstorming; awaiting spec review.
+Date: 2026-10-01. Status: built and reviewed.
 
 ## Why
 
@@ -19,7 +19,9 @@ exemption is shown a figure that was partly taxed with no sign of it.
   the 13th month fills the exemption first, so `ThirteenthMonthTaxable = max(0, ThirteenthMonth −
   exemptionLeft)`. Leave beyond de minimis ("other benefits") takes whatever exemption remains
   after it, as it does today. The total taxable excess and the tax are unchanged.
-- Stored on every entry the engine computes, 0 when nothing is taxable.
+- Stored on every entry the engine computes, 0 when nothing is taxable. A final pay re-bases it on
+  the pay year's exemption used (other benefits and the opening balance included), as its tax and
+  the 2316 do.
 - Null on entries computed before this change. Their payslips keep the single non-taxable line;
   recomputing an unpaid run gives it the split. Paid runs are never recomputed.
 - `ThirteenthMonthExempt` (computed property) = `ThirteenthMonth − (ThirteenthMonthTaxable ?? 0)`.
@@ -49,8 +51,9 @@ The run detail's 13th month column shows "of which taxable ₱{n}" beneath the a
 
 1. **Mark Paid's refusal for pay before PeopleCore.** `EnsureEarlierInYearUnchangedAsync` always
    says "{name}'s pay before PeopleCore has changed since this payroll was computed; recompute it
-   before paying." Another Paid run of hers that includes her 13th month and was paid after this
-   entry was computed (`run.UpdatedAt > entry.CreatedAt`) can also have moved the figures, and
+   before paying." Another Paid run of hers, with a 13th month or not, paid after this
+   entry was computed (`run.UpdatedAt > entry.CreatedAt`) can also have moved the figures (any Paid
+   run moves her basic earned), and
    the message then blames the wrong thing. When such a run exists, name it: "{name}'s pay was
    changed by {RunNumber}, paid after this payroll was computed; recompute it before paying."
    Otherwise keep the opening-balance wording. The refusal and the recompute path are unchanged.
