@@ -25,6 +25,7 @@ using PeopleCore.Application.Payroll.FinalPay;
 using PeopleCore.Application.Payroll.GovernmentReports;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Application.Payroll.Maternity;
+using PeopleCore.Application.Payroll.OpeningBalances;
 using PeopleCore.Application.Payroll.Services;
 using PeopleCore.Application.PayrollIntegration.Interfaces;
 using PeopleCore.Application.PayrollIntegration.Services;
@@ -226,6 +227,9 @@ public static class ServiceExtensions
         services.AddScoped<IMaternityClaimRepository, MaternityClaimRepository>();
         services.AddScoped<IMaternityClaimService, MaternityClaimService>();
         services.AddScoped<IMaternityPayCalculator, MaternityPayCalculator>();
+        services.AddScoped<IPayrollOpeningBalanceRepository, PayrollOpeningBalanceRepository>();
+        services.AddScoped<IPayrollOpeningBalanceService, PayrollOpeningBalanceService>();
+        services.AddScoped<IPayrollYearToDate, PayrollYearToDate>();
         services.AddScoped<PayrollComputationService>();
         services.AddScoped<IPayrollAttendanceBridge, PayrollAttendanceBridge>();
         services.AddScoped<IFinalPayService, FinalPayService>();

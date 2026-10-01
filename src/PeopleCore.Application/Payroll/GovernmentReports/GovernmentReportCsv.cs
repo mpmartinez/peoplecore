@@ -60,23 +60,26 @@ public static class GovernmentReportCsv
         return [.. Encoding.UTF8.GetPreamble(), .. Encoding.UTF8.GetBytes(text.ToString())];
     }
 
-    private static string Quote(string cell)
+    /// <summary>A CSV cell: <see cref="Neutralize"/>d, then quoted per RFC 4180 when it needs to be.</summary>
+    internal static string Quote(string cell)
     {
-        // Prevent formula injection: neutralize cells starting with =, +, -, @, \t, \r
-        // by prefixing with '. Exception: negative amounts (starting with -) that parse as
-        // decimal are kept numeric (e.g., money like -50.00).
-        var neutralized = cell;
-        if (cell.Length > 0 && "=+-@\t\r".IndexOf(cell[0]) >= 0)
-        {
-            var shouldNeutralize = true;
-            if (cell[0] == '-' && decimal.TryParse(cell, NumberStyles.Number, CultureInfo.InvariantCulture, out _))
-                shouldNeutralize = false; // Keep negative numbers numeric (money).
-
-            if (shouldNeutralize)
-                neutralized = "'" + cell;
-        }
+        var neutralized = Neutralize(cell);
 
         // Apply RFC 4180 quoting for commas, quotes, CR, LF.
         return neutralized.IndexOfAny([',', '"', '\r', '\n']) >= 0 ? $"\"{neutralized.Replace("\"", "\"\"")}\"" : neutralized;
+    }
+
+    /// <summary>
+    /// Prevents formula injection: a value starting with =, +, -, @, \t or \r is prefixed with ',
+    /// so a spreadsheet shows it as text instead of running it. Exception: negative amounts
+    /// (starting with -) that parse as decimal are kept numeric (e.g., money like -50.00).
+    /// </summary>
+    internal static string Neutralize(string cell)
+    {
+        if (cell.Length == 0 || "=+-@\t\r".IndexOf(cell[0]) < 0)
+            return cell;
+        if (cell[0] == '-' && decimal.TryParse(cell, NumberStyles.Number, CultureInfo.InvariantCulture, out _))
+            return cell; // Keep negative numbers numeric (money).
+        return "'" + cell;
     }
 }

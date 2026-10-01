@@ -711,6 +711,81 @@ public class ApiClient
     public Task<MaternityClaimDto?> RelinkMaternityClaimAsync(Guid claimId, Guid leaveRequestId)
         => SendJsonAsync<MaternityClaimDto>(HttpMethod.Put, $"api/maternity-claims/{claimId}/relink", new RelinkRequest(leaveRequestId));
 
+    // Payroll opening balances (payroll.manage): what each employee was paid in a year before
+    // PeopleCore. A save answers with the balance as saved, whose warnings include the edit warning;
+    // a refusal throws with the API's reason, ready to show as it is.
+    public async Task<IReadOnlyList<OpeningBalanceDto>?> GetOpeningBalancesAsync(int year)
+        => await GetJsonAsync<List<OpeningBalanceDto>>($"api/payroll-opening-balances?year={year}");
+
+    public Task<OpeningBalanceDto?> CreateOpeningBalanceAsync(OpeningBalanceRequest request)
+        => SendJsonAsync<OpeningBalanceDto>(HttpMethod.Post, "api/payroll-opening-balances", request);
+
+    /// <summary>The balance's employee and year can't change; the API refuses a request that changes them.</summary>
+    public Task<OpeningBalanceDto?> UpdateOpeningBalanceAsync(Guid id, OpeningBalanceRequest request)
+        => SendJsonAsync<OpeningBalanceDto>(HttpMethod.Put, $"api/payroll-opening-balances/{id}", request);
+
+    public async Task DeleteOpeningBalanceAsync(Guid id)
+        => await EnsureSuccessAsync(await _http.DeleteAsync($"api/payroll-opening-balances/{id}"));
+
+    /// <summary>The import's CSV template: its header row.</summary>
+    public async Task<byte[]> GetOpeningBalanceTemplateAsync()
+    {
+        var response = await _http.GetAsync("api/payroll-opening-balances/template");
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadAsByteArrayAsync();
+    }
+
+    /// <summary>
+    /// Imports a filled-in template, all or nothing. A file the API refuses comes back as its
+    /// problems (every row's, "Row {n}: {message}"), not as an exception; any other failure throws.
+    /// </summary>
+    public async Task<OpeningBalanceImportOutcome> ImportOpeningBalancesAsync(byte[] content, string fileName)
+    {
+        using var form = new MultipartFormDataContent();
+        var file = new ByteArrayContent(content);
+        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/csv");
+        form.Add(file, "file", fileName);
+        var response = await _http.PostAsync("api/payroll-opening-balances/import", form);
+
+        if (response.StatusCode == HttpStatusCode.BadRequest
+            && ImportProblems(await response.Content.ReadAsStringAsync()) is { Count: > 0 } problems)
+            return new OpeningBalanceImportOutcome(null, problems);
+
+        await EnsureSuccessAsync(response);
+        return new OpeningBalanceImportOutcome(await response.Content.ReadFromJsonAsync<OpeningBalanceImportDto>(JsonOptions), []);
+    }
+
+    /// <summary>
+    /// A refused import's problems: its <c>errors</c> when that is a list of messages. Otherwise its
+    /// <c>detail</c>, a line to a problem: the middleware's refusals have no list, and ASP.NET's own
+    /// validation problem has <c>errors</c> as an object keyed by field.
+    /// </summary>
+    private static List<string> ImportProblems(string body)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return [];
+            if (root.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Array)
+            {
+                var listed = errors.EnumerateArray()
+                    .Where(e => e.ValueKind == JsonValueKind.String)
+                    .Select(e => e.GetString()!)
+                    .Where(e => !string.IsNullOrWhiteSpace(e))
+                    .ToList();
+                if (listed.Count > 0) return listed;
+            }
+            if (root.TryGetProperty("detail", out var detail) && detail.ValueKind == JsonValueKind.String)
+                return detail.GetString()!.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            return [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
     // Payroll settings (payroll.manage): the row payroll computes from, whichever company it belongs
     // to. The PUT is a full replacement and answers 204 with no body.
     public Task<PayrollSettingsDto?> GetPayrollSettingsAsync()
@@ -1262,8 +1337,9 @@ public record PayrollRunDto(
     bool IncludesLeaveConversion = false,
     // True when the 13th month is included for any employee on the run.
     bool IncludesThirteenthMonth = false,
-    // What HR still has to do before the run pays maternity right, worked out afresh on every load.
-    // Null (an older response) reads as none.
+    // Worked out afresh on every load: what HR still has to do before the run pays maternity right,
+    // then pay (paid or to be paid) an employee's opening balance already covers. Null (an older
+    // response) reads as none.
     IReadOnlyList<string>? Warnings = null)
 {
     public IReadOnlyList<string> Warnings { get; init; } = Warnings ?? [];
@@ -1324,6 +1400,23 @@ public record MaternityClaimsSummaryDto(IReadOnlyList<MaternityClaimDto> Claims,
 public record EligibleMaternityLeaveDto(Guid LeaveRequestId, Guid EmployeeId, string EmployeeName,
     DateOnly StartDate, DateOnly EndDate, decimal Days);
 
+// Payroll opening balances - copies of PeopleCore.Application.Payroll.OpeningBalances.OpeningBalanceDtos,
+// field by field and in the same order. Warnings on a listed balance are its double-count warnings;
+// on the one a save answers with, the edit warnings follow them.
+public record OpeningBalanceDto(Guid Id, Guid EmployeeId, string EmployeeName, string EmployeeNumber, int Year,
+    DateOnly ThroughDate, decimal BasicSalary, decimal ThirteenthMonthPaid, decimal OtherBenefitsPaid,
+    decimal OtherTaxablePay, decimal DeMinimis, decimal OtherNonTaxable, decimal EmployeeContributions,
+    decimal TaxWithheld, decimal DeMinimisLeaveDays, IReadOnlyList<string> Warnings);
+
+public record OpeningBalanceRequest(Guid EmployeeId, int Year, DateOnly ThroughDate, decimal BasicSalary,
+    decimal ThirteenthMonthPaid, decimal OtherBenefitsPaid, decimal OtherTaxablePay, decimal DeMinimis,
+    decimal OtherNonTaxable, decimal EmployeeContributions, decimal TaxWithheld, decimal DeMinimisLeaveDays);
+
+public record OpeningBalanceImportDto(int Created, int Updated, IReadOnlyList<string> Warnings);
+
+// The client's own: an import either saved (Imported, with no Errors) or was refused (its Errors).
+public record OpeningBalanceImportOutcome(OpeningBalanceImportDto? Imported, IReadOnlyList<string> Errors);
+
 // Payroll settings - a copy of PeopleCore.Application.Payroll.DTOs.PayrollSettingsDto, field by
 // field and in the same order, with no defaults: the PUT replaces the whole record, so every caller
 // sends back every rate it read.
@@ -1370,6 +1463,8 @@ public record MyPayslipSummaryDto(
 // zero on a tax certificate instead of failing to compile or failing at runtime.
 public class Bir2316Dto
 {
+    public Guid EmployeeId { get; set; }
+
     // Header
     public int Year { get; set; }
     public string PeriodFrom { get; set; } = "";
@@ -1456,6 +1551,11 @@ public class Bir2316Dto
     public decimal Item24_TaxDue { get; set; }
     public decimal Item26_TotalTaxWithheld { get; set; }
     public decimal Item28_TotalTaxes { get; set; }
+
+    // Pay before PeopleCore: when the employee has an opening balance for the year, the last pay
+    // date it includes (the page says the certificate covers it) and its tax withheld (in Item 25A).
+    public DateOnly? OpeningBalanceThrough { get; set; }
+    public decimal OpeningBalanceTaxWithheld { get; set; }
 }
 
 // Problem-detail body from ExceptionHandlingMiddleware (400 responses for DomainException)

@@ -118,10 +118,13 @@ else
         </Alert>
     }
 
-    @* What HR still has to do before the run pays maternity right; the API works these out afresh on every load. *@
+    @*
+        The API works these out afresh on every load: what HR still has to do before the run pays
+        maternity right, and pay (paid or to be paid) an employee's opening balance already covers.
+    *@
     @if (_run.Warnings.Count > 0)
     {
-        <Alert Variant="warning" Class="mb-4" data-maternity-warnings>
+        <Alert Variant="warning" Class="mb-4" data-run-warnings>
             <ul class="list-disc pl-4 space-y-1">
                 @foreach (var warning in _run.Warnings)
                 {

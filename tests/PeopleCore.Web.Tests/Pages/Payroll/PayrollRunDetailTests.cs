@@ -1265,7 +1265,7 @@ public class PayrollRunDetailTests : BunitContext
 
         cut.FindAll("thead th").Select(h => h.TextContent.Trim()).Should().NotContain(["Maternity advance", "Covered by SSS maternity"]);
         cut.FindAll("[data-maternity-net-cash-note]").Should().BeEmpty();
-        cut.FindAll("[data-maternity-warnings]").Should().BeEmpty();
+        cut.FindAll("[data-run-warnings]").Should().BeEmpty();
     }
 
     [Fact]
@@ -1276,7 +1276,7 @@ public class PayrollRunDetailTests : BunitContext
 
         var cut = RenderPage();
 
-        var warnings = cut.Find("[data-maternity-warnings]");
+        var warnings = cut.Find("[data-run-warnings]");
         warnings.GetAttribute("role").Should().Be("alert");
         warnings.ClassList.Should().Contain("text-warning", "the warnings are amber");
         warnings.QuerySelectorAll("li").Select(li => li.TextContent.Trim()).Should().Equal(
@@ -1284,6 +1284,20 @@ public class PayrollRunDetailTests : BunitContext
         var table = cut.Find("table");
         (warnings.CompareDocumentPosition(table) & AngleSharp.Dom.DocumentPositions.Following).Should()
             .Be(AngleSharp.Dom.DocumentPositions.Following, "the warnings come before the table");
+    }
+
+    [Fact]
+    public void APaidRunsDoubleCountWarning_IsAmongTheRunsWarnings()
+    {
+        // The API adds it for an employee whose opening balance runs through the pay date or later.
+        const string doubleCount = "Maria Santos's opening balance already covers pay through Sep 30, 2026; PR-2026-0017 was paid on Sep 20, 2026.";
+        _api.On(HttpMethod.Get, RunPath, HttpStatusCode.OK, RunJson("Paid",
+            warnings: $$"""["Maternity benefit not advanced yet for Ana Cruz.","{{doubleCount}}"]"""));
+
+        var cut = RenderPage();
+
+        cut.Find("[data-run-warnings]").QuerySelectorAll("li").Select(li => li.TextContent.Trim()).Should().Equal(
+            "Maternity benefit not advanced yet for Ana Cruz.", doubleCount);
     }
 
     [Fact]

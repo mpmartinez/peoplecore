@@ -178,6 +178,17 @@ public class PermissionEquivalenceTests
         ["MaternityClaimsController.MarkNotQualified"] = [Permissions.PayrollManage],
         ["MaternityClaimsController.Reopen"] = [Permissions.PayrollManage],
 
+        // What each employee was paid in a year before PeopleCore: listing a year's opening
+        // balances, reading one, and adding, changing or removing it.
+        ["PayrollOpeningBalancesController.List"] = [Permissions.PayrollManage],
+        ["PayrollOpeningBalancesController.Get"] = [Permissions.PayrollManage],
+        ["PayrollOpeningBalancesController.Create"] = [Permissions.PayrollManage],
+        ["PayrollOpeningBalancesController.Update"] = [Permissions.PayrollManage],
+        ["PayrollOpeningBalancesController.Delete"] = [Permissions.PayrollManage],
+        // The CSV template to fill in, and importing it: every row's balance created or updated.
+        ["PayrollOpeningBalancesController.Template"] = [Permissions.PayrollManage],
+        ["PayrollOpeningBalancesController.Import"] = [Permissions.PayrollManage],
+
         // GET and PUT api/payroll-settings/default: the settings row payroll computes from, read and
         // changed without naming its company - managing payroll settings, like the per-company pair.
         ["PayrollSettingsController.GetDefault"] = [Permissions.PayrollManage],

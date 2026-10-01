@@ -279,4 +279,67 @@ public class ThirteenthMonthOnceDbTests : DatabaseTestBase
 
         found.Should().Equal(new EarlierUnpaidRun(maria.Id, "PAY-2026-019"), new EarlierUnpaidRun(maria.Id, "PAY-2026-021"));
     }
+
+    [Fact]
+    public async Task GetUnpaidRegularRunEntriesInYear_FindsEveryEntryOnARegularRunOfThatPayYearNotPaidYet()
+    {
+        var maria = AnEmployee("Santos", "Maria");
+        var ana = AnEmployee("Reyes", "Ana");
+        Context.Employees.AddRange(maria, ana);
+
+        PayrollRun AddRun(string number, DateOnly payDate, PayrollRunStatus status,
+                          PayrollRunType type = PayrollRunType.Regular)
+        {
+            var run = ARun(number, payDate.AddDays(-14), payDate, payDate, status);
+            run.RunType = type;
+            Context.PayrollRuns.Add(run);
+            return run;
+        }
+        void AddEntry(PayrollRun run, Employee employee) =>
+            Context.PayrollRunEmployees.Add(AnEntry(run.Id, employee.Id));
+
+        AddEntry(AddRun("PAY-2026-004", new(2026, 2, 28), PayrollRunStatus.Approved), maria);
+        var draft = AddRun("PAY-2026-002", new(2026, 1, 31), PayrollRunStatus.Draft);
+        AddEntry(draft, maria);
+        AddEntry(draft, ana);
+        AddEntry(AddRun("PAY-2026-003", new(2026, 2, 15), PayrollRunStatus.ForApproval), ana);
+        AddEntry(AddRun("PAY-2026-005", new(2026, 3, 15), PayrollRunStatus.Processing), maria);
+        AddEntry(AddRun("PAY-2026-001", new(2026, 1, 15), PayrollRunStatus.Paid), maria);
+        AddEntry(AddRun("FP-2026-001", new(2026, 2, 20), PayrollRunStatus.Approved, PayrollRunType.FinalPay), maria);
+        AddEntry(AddRun("PAY-2025-024", new(2025, 12, 31), PayrollRunStatus.Draft), maria);
+        AddEntry(AddRun("PAY-2027-001", new(2027, 1, 15), PayrollRunStatus.Draft), maria);
+        await Context.SaveChangesAsync();
+
+        await using var reader = NewContext();
+        var found = await new PayrollRunRepository(reader).GetUnpaidRegularRunEntriesInYearAsync(2026);
+
+        found.Should().BeEquivalentTo(
+        [
+            new UnpaidRunEntry(maria.Id, "PAY-2026-002", new(2026, 1, 31)),
+            new UnpaidRunEntry(ana.Id, "PAY-2026-002", new(2026, 1, 31)),
+            new UnpaidRunEntry(ana.Id, "PAY-2026-003", new(2026, 2, 15)),
+            new UnpaidRunEntry(maria.Id, "PAY-2026-004", new(2026, 2, 28)),
+            new UnpaidRunEntry(maria.Id, "PAY-2026-005", new(2026, 3, 15)),
+        ]);
+        found.Select(e => e.PayDate).Should().BeInAscendingOrder();
+    }
+
+    [Fact]
+    public async Task GetUnpaidRegularRunEntriesInYear_ForTheLastYearADateCanHave_FindsItsRuns()
+    {
+        // An opening balance can be for 9999, the last year DateOnly holds: its year's end can't be
+        // worked out as the first day of 10000. Dec 31, 9999 is DateOnly.MaxValue, which Npgsql
+        // stores as 'infinity'.
+        var maria = AnEmployee("Santos", "Maria");
+        Context.Employees.Add(maria);
+        var run = ARun("PAY-9999-024", new(9999, 12, 17), new(9999, 12, 31), new(9999, 12, 31), PayrollRunStatus.Draft);
+        Context.PayrollRuns.Add(run);
+        Context.PayrollRunEmployees.Add(AnEntry(run.Id, maria.Id));
+        await Context.SaveChangesAsync();
+
+        await using var reader = NewContext();
+        var found = await new PayrollRunRepository(reader).GetUnpaidRegularRunEntriesInYearAsync(9999);
+
+        found.Should().Equal(new UnpaidRunEntry(maria.Id, "PAY-9999-024", new(9999, 12, 31)));
+    }
 }

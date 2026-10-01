@@ -48,7 +48,7 @@ public class NavMenuTests : BunitContext
     {
         var links = Links(RenderAs("PayrollService"));
 
-        links.Should().Contain(["/payroll-runs", "/maternity-claims", "/payroll-settings", "/bir-2316"]);
+        links.Should().Contain(["/payroll-runs", "/maternity-claims", "/opening-balances", "/payroll-settings", "/bir-2316"]);
         links.Should().NotContain(["/employees", "/leave-approvals"]);
     }
 
@@ -57,7 +57,7 @@ public class NavMenuTests : BunitContext
     {
         var cut = RenderAs("Admin");
 
-        cut.FindAll("a[href]").Should().HaveCount(28);
+        cut.FindAll("a[href]").Should().HaveCount(29);
         Links(cut).Should().OnlyHaveUniqueItems();
     }
 

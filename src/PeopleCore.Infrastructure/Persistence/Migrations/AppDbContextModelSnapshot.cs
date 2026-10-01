@@ -2236,6 +2236,105 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.ToTable("payroll_loan_deductions", (string)null);
                 });
 
+            modelBuilder.Entity("PeopleCore.Domain.Entities.Payroll.PayrollOpeningBalance", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<decimal>("BasicSalary")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(18,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("basic_salary");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<decimal>("DeMinimis")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(18,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("de_minimis");
+
+                    b.Property<decimal>("DeMinimisLeaveDays")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(6,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("de_minimis_leave_days");
+
+                    b.Property<decimal>("EmployeeContributions")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(18,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("employee_contributions");
+
+                    b.Property<Guid>("EmployeeId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("employee_id");
+
+                    b.Property<decimal>("OtherBenefitsPaid")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(18,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("other_benefits_paid");
+
+                    b.Property<decimal>("OtherNonTaxable")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(18,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("other_non_taxable");
+
+                    b.Property<decimal>("OtherTaxablePay")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(18,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("other_taxable_pay");
+
+                    b.Property<decimal>("TaxWithheld")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(18,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("tax_withheld");
+
+                    b.Property<decimal>("ThirteenthMonthPaid")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(18,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("thirteenth_month_paid");
+
+                    b.Property<DateOnly>("ThroughDate")
+                        .HasColumnType("date")
+                        .HasColumnName("through_date");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.Property<int>("Year")
+                        .HasColumnType("integer")
+                        .HasColumnName("year");
+
+                    b.HasKey("Id")
+                        .HasName("pk_payroll_opening_balances");
+
+                    b.HasIndex("EmployeeId", "Year")
+                        .IsUnique()
+                        .HasDatabaseName("ix_payroll_opening_balances_employee_id_year");
+
+                    b.ToTable("payroll_opening_balances", (string)null);
+                });
+
             modelBuilder.Entity("PeopleCore.Domain.Entities.Payroll.PayrollRun", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2337,6 +2436,10 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(false)
                         .HasColumnName("advance_maternity_benefit");
 
+                    b.Property<decimal?>("BasicEarnedEarlierInYear")
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("basic_earned_earlier_in_year");
+
                     b.Property<decimal>("ContributionsDeferred")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("numeric(18,2)")
@@ -2372,6 +2475,10 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("EmployeeId")
                         .HasColumnType("uuid")
                         .HasColumnName("employee_id");
+
+                    b.Property<decimal?>("ExemptUsedEarlierInYear")
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("exempt_used_earlier_in_year");
 
                     b.Property<decimal>("FinalPayNonTaxable")
                         .HasColumnType("numeric(18,2)")
@@ -3963,6 +4070,18 @@ namespace PeopleCore.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_payroll_loan_deductions_payroll_run_employees_payroll_run_e");
 
                     b.Navigation("PayrollRunEmployee");
+                });
+
+            modelBuilder.Entity("PeopleCore.Domain.Entities.Payroll.PayrollOpeningBalance", b =>
+                {
+                    b.HasOne("PeopleCore.Domain.Entities.Employees.Employee", "Employee")
+                        .WithMany()
+                        .HasForeignKey("EmployeeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_payroll_opening_balances_employees_employee_id");
+
+                    b.Navigation("Employee");
                 });
 
             modelBuilder.Entity("PeopleCore.Domain.Entities.Payroll.PayrollRunEmployee", b =>

@@ -253,7 +253,18 @@ public interface IPayrollRunRepository : IRepository<PayrollRun>
     Task<IReadOnlyList<EarlierUnpaidRun>> GetEarlierUnpaidRunsInYearAsync(
         int payYear, DateOnly payDate, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Every entry on a Regular run that isn't Paid yet and whose PayDate falls in
+    /// <paramref name="payYear"/>, across all employees, ordered by PayDate then run number: the
+    /// runs an opening balance through that date or later would count twice once they're paid.
+    /// Final pays don't count.
+    /// </summary>
+    Task<IReadOnlyList<UnpaidRunEntry>> GetUnpaidRegularRunEntriesInYearAsync(int payYear, CancellationToken ct = default);
 }
+
+/// <summary>An employee on the unpaid regular run numbered <paramref name="RunNumber"/>, which pays on <paramref name="PayDate"/>.</summary>
+public sealed record UnpaidRunEntry(Guid EmployeeId, string RunNumber, DateOnly PayDate);
 
 /// <summary>An employee whose 13th month the unpaid run numbered <paramref name="RunNumber"/> includes.</summary>
 public sealed record ThirteenthMonthInRun(Guid EmployeeId, string RunNumber);

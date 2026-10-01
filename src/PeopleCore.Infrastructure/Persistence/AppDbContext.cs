@@ -69,6 +69,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, ApplicationRole, 
     public DbSet<FinalPayInputs> FinalPayInputs => Set<FinalPayInputs>();
     public DbSet<FinalPayDeduction> FinalPayDeductions => Set<FinalPayDeduction>();
     public DbSet<MaternityClaim> MaternityClaims => Set<MaternityClaim>();
+    public DbSet<PayrollOpeningBalance> PayrollOpeningBalances => Set<PayrollOpeningBalance>();
 
     // Recruitment
     public DbSet<JobPosting> JobPostings => Set<JobPosting>();

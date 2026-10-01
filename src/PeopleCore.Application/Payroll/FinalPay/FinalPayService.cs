@@ -104,11 +104,17 @@ public sealed class FinalPayService : IFinalPayService
     private readonly PayrollComputationService _engine;
     private readonly TimeProvider _clock;
     private readonly Maternity.IMaternityPayCalculator? _maternityPay;
+    private readonly IPayrollYearToDate _yearToDate;
 
     /// <param name="maternityPay">
     /// Works out the final period's maternity offset and differential and the benefit advance, through
     /// the calculator a regular run uses. Optional so callers that never see maternity pay needn't
     /// supply one: without it there are no maternity figures, and advancing a benefit is refused.
+    /// </param>
+    /// <param name="yearToDate">
+    /// What the employee was paid earlier in a year - its Paid runs plus her opening balance - for
+    /// the 13th month and the ten de minimis leave days. Optional so callers that never record an
+    /// opening balance needn't supply one: without it the figures are the Paid runs' alone.
     /// </param>
     public FinalPayService(
         ISeparationRepository separations,
@@ -124,7 +130,8 @@ public sealed class FinalPayService : IFinalPayService
         IBir2316Service bir2316,
         PayrollComputationService engine,
         TimeProvider clock,
-        Maternity.IMaternityPayCalculator? maternityPay = null)
+        Maternity.IMaternityPayCalculator? maternityPay = null,
+        IPayrollYearToDate? yearToDate = null)
     {
         _separations = separations;
         _runs = runs;
@@ -140,6 +147,7 @@ public sealed class FinalPayService : IFinalPayService
         _engine = engine;
         _clock = clock;
         _maternityPay = maternityPay;
+        _yearToDate = yearToDate ?? new PayrollYearToDate(runs);
     }
 
     public async Task<FinalPaySummaryDto> CreateAsync(Guid separationId, FinalPayRequest request, CancellationToken ct = default)
@@ -302,16 +310,11 @@ public sealed class FinalPayService : IFinalPayService
 
     /// <summary>
     /// The pay year's de minimis leave days the employee has left: ten, less what the year's other
-    /// Paid runs paid as de minimis (<see cref="LeavePayout.DeMinimisDaysLeft"/>).
+    /// Paid runs paid as de minimis and the days on her opening balance for the year
+    /// (<see cref="YearToDate.DeMinimisLeaveDaysLeft"/>).
     /// </summary>
     private async Task<decimal> DeMinimisDaysLeftAsync(Guid employeeId, PayrollRun run, CancellationToken ct)
-    {
-        int payYear = run.PayDate.Year;
-        var earlier = (await _runs.GetPaidRunsForEmployeeInYearAsync(employeeId, payYear, ct) ?? [])
-            .Where(r => r.Id != run.Id && r.Status == PayrollRunStatus.Paid && r.PayDate.Year == payYear)
-            .SelectMany(r => r.Employees.Where(e => e.EmployeeId == employeeId));
-        return LeavePayout.DeMinimisDaysLeft(earlier);
-    }
+        => (await _yearToDate.ForEmployeeAsync(employeeId, run.PayDate.Year, run.Id, ct)).DeMinimisLeaveDaysLeft;
 
     // ── Inputs ───────────────────────────────────────────────────────────────
 
@@ -626,17 +629,15 @@ public sealed class FinalPayService : IFinalPayService
             .ToList();
 
         // The 13th month is the last working day's year's: one twelfth of the basic earned that
-        // year - its Paid runs, selected by pay date as for any run, plus this final pay's own
-        // regular pay - less the 13th month already paid in it. A final pay made after the year
-        // end still owes the year the employee worked. The tax settle below stays on the pay
-        // year: that's the certificate the payment lands on.
+        // year - its Paid runs, selected by pay date as for any run, what she was paid that year
+        // before PeopleCore (her opening balance), plus this final pay's own regular pay - less the
+        // 13th month already paid in it, on either. A final pay made after the year end still owes
+        // the year the employee worked. The tax settle below stays on the pay year: that's the
+        // certificate the payment lands on.
         int thirteenthMonthYear = separation.LastWorkingDay.Year;
-        var earlier = (await _runs.GetPaidRunsForEmployeeInYearAsync(employeeId, thirteenthMonthYear, ct))
-            .Where(r => r.Id != run.Id && r.Status == PayrollRunStatus.Paid && r.PayDate.Year == thirteenthMonthYear)
-            .SelectMany(r => r.Employees.Where(e => e.EmployeeId == employeeId))
-            .ToList();
-        decimal basicEarlier = earlier.Sum(e => e.RegularPay);
-        decimal thirteenthEarlier = earlier.Sum(e => e.ThirteenthMonth);
+        var earlier = await _yearToDate.ForEmployeeAsync(employeeId, thirteenthMonthYear, run.Id, ct);
+        decimal basicEarlier = earlier.BasicEarned;
+        decimal thirteenthEarlier = earlier.ThirteenthMonthPaid;
 
         // What the separation month's Paid runs already deducted, the month taken as the
         // remittance reports take it (GetPaidRunsByPeriodEndMonthAsync) - this run excluded.
@@ -798,8 +799,9 @@ public sealed class FinalPayService : IFinalPayService
 
     /// <summary>
     /// How much of the leave beyond de minimis the 90,000 "13th month and other benefits"
-    /// exemption covers, as the pay year's 2316 will split it: what the year's other Paid runs
-    /// left of it, after this entry's own 13th month (see <see cref="FinalPayMath.OtherBenefitsExempt"/>).
+    /// exemption covers, as the pay year's 2316 will split it: what the year's other Paid runs and
+    /// her opening balance for the year (<see cref="YearToDate.ExemptUsed"/>) left of it, after this
+    /// entry's own 13th month (see <see cref="FinalPayMath.OtherBenefitsExempt"/>).
     /// </summary>
     private async Task<decimal> LeaveOtherBenefitsExemptAsync(Guid employeeId, PayrollRun run,
         PayrollRunEmployee entry, CancellationToken ct)
@@ -807,11 +809,7 @@ public sealed class FinalPayService : IFinalPayService
         if (entry.LeaveConversionOtherBenefits <= 0m)
             return 0m;
 
-        int payYear = run.PayDate.Year;
-        decimal usedEarlier = (await _runs.GetPaidRunsForEmployeeInYearAsync(employeeId, payYear, ct))
-            .Where(r => r.Id != run.Id && r.Status == PayrollRunStatus.Paid && r.PayDate.Year == payYear)
-            .SelectMany(r => r.Employees.Where(e => e.EmployeeId == employeeId))
-            .Sum(e => e.ThirteenthMonthAndOtherBenefits);
+        decimal usedEarlier = (await _yearToDate.ForEmployeeAsync(employeeId, run.PayDate.Year, run.Id, ct)).ExemptUsed;
 
         return FinalPayMath.OtherBenefitsExempt(entry.LeaveConversionOtherBenefits, entry.ThirteenthMonth, usedEarlier);
     }

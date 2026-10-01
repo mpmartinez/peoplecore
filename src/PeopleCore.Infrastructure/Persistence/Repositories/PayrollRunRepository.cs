@@ -271,6 +271,23 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
             .ToListAsync(ct);
     }
 
+    public async Task<IReadOnlyList<UnpaidRunEntry>> GetUnpaidRegularRunEntriesInYearAsync(int payYear,
+        CancellationToken ct = default)
+    {
+        // Jan 1 to Dec 31 rather than up to the next Jan 1: an opening balance can be for 9999,
+        // whose next year DateOnly can't hold. Nor the pay date's year: Npgsql stores Dec 31, 9999
+        // (DateOnly.MaxValue) as 'infinity', whose year Postgres can't make an integer of.
+        var first = new DateOnly(payYear, 1, 1);
+        var last = new DateOnly(payYear, 12, 31);
+        return await Context.PayrollRunEmployees
+            .Where(e => e.PayrollRun.RunType == PayrollRunType.Regular
+                        && e.PayrollRun.Status != PayrollRunStatus.Paid
+                        && e.PayrollRun.PayDate >= first && e.PayrollRun.PayDate <= last)
+            .OrderBy(e => e.PayrollRun.PayDate).ThenBy(e => e.PayrollRun.RunNumber)
+            .Select(e => new UnpaidRunEntry(e.EmployeeId, e.PayrollRun.RunNumber, e.PayrollRun.PayDate))
+            .ToListAsync(ct);
+    }
+
     public async Task<IReadOnlyList<EarlierUnpaidRun>> GetEarlierUnpaidRunsInYearAsync(
         int payYear, DateOnly payDate, IReadOnlyCollection<Guid> employeeIds, Guid excludeRunId,
         CancellationToken ct = default)

@@ -3,6 +3,7 @@ using PeopleCore.Application.Common.Time;
 using PeopleCore.Application.Employees.Interfaces;
 using PeopleCore.Application.Organization.Interfaces;
 using PeopleCore.Application.Payroll.Interfaces;
+using PeopleCore.Application.Payroll.Services;
 using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Enums;
@@ -25,9 +26,17 @@ public sealed class GovernmentReportService : IGovernmentReportService
     private readonly TimeProvider _clock;
     private readonly IBir2316Service _bir2316;
     private readonly IEmployeeRepository _employees;
+    private readonly IPayrollYearToDate _yearToDate;
 
+    /// <param name="yearToDate">
+    /// The 13th month and other benefits each employee was paid earlier in the year - the Paid runs
+    /// plus her opening balance - that the 1601-C counts against the 90,000 exemption. Optional so
+    /// callers that never record an opening balance needn't supply one: without it they are the
+    /// Paid runs' alone.
+    /// </param>
     public GovernmentReportService(IPayrollRunRepository runs, ICompanyRepository companies,
-        IPayrollSettingsRepository settings, TimeProvider clock, IBir2316Service bir2316, IEmployeeRepository employees)
+        IPayrollSettingsRepository settings, TimeProvider clock, IBir2316Service bir2316, IEmployeeRepository employees,
+        IPayrollYearToDate? yearToDate = null)
     {
         _runs = runs;
         _companies = companies;
@@ -35,6 +44,7 @@ public sealed class GovernmentReportService : IGovernmentReportService
         _clock = clock;
         _bir2316 = bir2316;
         _employees = employees;
+        _yearToDate = yearToDate ?? new PayrollYearToDate(runs);
     }
 
     public async Task<GovernmentReportDto> BuildAsync(string report, int year, int month, CancellationToken ct = default)
@@ -130,7 +140,8 @@ public sealed class GovernmentReportService : IGovernmentReportService
         var forms = await _bir2316.BuildAllAsync(year, ct);
 
         // January-November and December tax withheld aren't on the 2316; they come from the same
-        // year's Paid runs by pay month, and add up to its present-employer tax withheld.
+        // year's Paid runs by pay month (plus any opening balance, below), and add up to its
+        // present-employer tax withheld.
         // Same Paid/PayDate.Year predicate as Bir2316Service.BuildAsync, re-applied here so this
         // split can't silently disagree with the present-employer withheld tax (Item 25A) behind it.
         var runs = (await _runs.GetPaidRunsInYearAsync(year, ct))
@@ -149,6 +160,10 @@ public sealed class GovernmentReportService : IGovernmentReportService
             {
                 var e = employees[f.EmployeeId];
                 var withheld = withheldByEmployee.GetValueOrDefault(f.EmployeeId);
+                // An opening balance's tax withheld is in the 2316's Item 25A but on no run. It's
+                // months of withholding, nearly all before December even when the balance runs into
+                // it, so it goes in January to November. The two columns still add up to 25A.
+                withheld.JanToNov += f.OpeningBalanceTaxWithheld;
                 return new Bir1604CAlphalist.Person(f.EmployeeId, f, e.HireDate, e.SeparationDate, withheld.JanToNov, withheld.December);
             })
             .ToList();
@@ -271,17 +286,17 @@ public sealed class GovernmentReportService : IGovernmentReportService
     {
         // "13th month and other benefits" - the 13th month plus leave converted beyond de minimis
         // (PayrollRunEmployee.ThirteenthMonthAndOtherBenefits) - paid earlier in the year has used
-        // its share of the 90,000 exemption first, as the 2316 counts it. Skip the year-wide query
+        // its share of the 90,000 exemption first, as the 2316 counts it: on the Paid runs paid
+        // before the month, and before PeopleCore (the opening balance's 13th month and other
+        // benefits) - in a month after the balance's through date's month only, as its through date
+        // falls before the month. The month's own columns are PeopleCore's alone. Skip the year-wide query
         // entirely when nothing this month even has any to offset - most months don't.
         Dictionary<Guid, decimal> earlierThirteenth = [];
         if (people.Any(p => p.Entries.Any(e => e.ThirteenthMonthAndOtherBenefits > 0)))
         {
-            var monthStart = new DateOnly(year, month, 1);
-            earlierThirteenth = (await _runs.GetPaidRunsInYearAsync(year, ct))
-                .Where(r => r.PayDate < monthStart)
-                .SelectMany(r => r.Employees)
-                .GroupBy(e => e.EmployeeId)
-                .ToDictionary(g => g.Key, g => g.Sum(e => e.ThirteenthMonthAndOtherBenefits));
+            earlierThirteenth = (await _yearToDate.PaidBeforeAsync(
+                    people.Select(p => p.Employee.Id).ToList(), new DateOnly(year, month, 1), ct))
+                .ToDictionary(kv => kv.Key, kv => kv.Value.ExemptUsed);
         }
 
         var rows = new List<GovernmentReportRowDto>();

@@ -1,0 +1,633 @@
+@page "/opening-balances"
+@attribute [RequirePermission(Permissions.PayrollManage)]
+@inject ApiClient Api
+@inject IJSRuntime JS
+
+@*
+    What each employee was paid in a year before PeopleCore: the opening balance for the year. The
+    13th month, the ₱90,000 exemption, the de minimis leave days and the 2316 add it to the year's
+    Paid runs. HR enters one at a time, or imports a filled-in CSV template all at once. A run paid,
+    or a regular run to be paid, on or before a balance's through date counts that pay twice: the
+    list warns of it.
+*@
+
+<PageTitle>Opening Balances</PageTitle>
+
+<PageHeader Title="Opening Balances" Section="Payroll"
+            Description="What each employee was paid in the year before PeopleCore. The 13th month, the ₱90,000 exemption and the 2316 count it.">
+    <Actions>
+        <Button Variant="primary" OnClick="OpenNew" data-new-balance>
+            <i class="bi bi-plus-lg mr-1"></i> New opening balance
+        </Button>
+    </Actions>
+</PageHeader>
+
+<div class="flex items-center gap-2 mb-4">
+    <Label For="ob-year">Year</Label>
+    <Select TValue="int" Id="ob-year" Value="@_year" ValueChanged="ChangeYear" Class="w-32">
+        @foreach (var year in Years)
+        {
+            <option value="@year">@year</option>
+        }
+    </Select>
+</div>
+
+@if (_actionError is not null)
+{
+    <Alert Variant="destructive" Class="mb-4" data-action-error>@_actionError</Alert>
+}
+@if (_saveWarnings.Count > 0)
+{
+    @* What the API said about a save that went through: a Paid run relied on the old figures, or pay counted twice. *@
+    <Alert Variant="warning" Class="mb-4" Title="Saved. Please note:" data-save-warnings>
+        <ul class="list-disc pl-4 space-y-1">
+            @foreach (var warning in _saveWarnings)
+            {
+                <li>@warning</li>
+            }
+        </ul>
+    </Alert>
+}
+
+@if (_loadError is not null)
+{
+    <Alert Variant="destructive" Title="Couldn't load opening balances" data-load-error>@_loadError</Alert>
+    <Button Variant="outline" Size="sm" Class="mt-3" OnClick="LoadBalances">Retry</Button>
+}
+else if (_balances is null)
+{
+    <div class="p-6 flex justify-center"><Spinner /></div>
+}
+else
+{
+    <Card>
+        <CardContent Class="p-0">
+            @if (_balances.Count == 0)
+            {
+                <div class="p-6 text-center text-muted-foreground text-sm">No opening balances for @_shownYear.</div>
+            }
+            else
+            {
+                <div class="overflow-x-auto">
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead Class="px-4">Employee</TableHead>
+                            <TableHead Class="px-4">Through</TableHead>
+                            <TableHead Class="px-4">Basic salary</TableHead>
+                            <TableHead Class="px-4">13th month paid</TableHead>
+                            <TableHead Class="px-4">Tax withheld</TableHead>
+                            <TableHead Class="px-4">Warnings</TableHead>
+                            <TableHead Class="px-4"><span class="sr-only">Actions</span></TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        @foreach (var b in _balances)
+                        {
+                            <TableRow data-balance="@b.Id">
+                                <TableCell Class="px-4 py-3">
+                                    <div class="font-medium">@b.EmployeeName</div>
+                                    <div class="text-xs text-muted-foreground">@b.EmployeeNumber</div>
+                                </TableCell>
+                                <TableCell Class="px-4 py-3 whitespace-nowrap">@Date(b.ThroughDate)</TableCell>
+                                <TableCell Class="px-4 py-3">@PayrollLabels.Peso(b.BasicSalary)</TableCell>
+                                <TableCell Class="px-4 py-3">@PayrollLabels.Peso(b.ThirteenthMonthPaid)</TableCell>
+                                <TableCell Class="px-4 py-3">@PayrollLabels.Peso(b.TaxWithheld)</TableCell>
+                                <TableCell Class="px-4 py-3">
+                                    @if (b.Warnings.Count > 0)
+                                    {
+                                        <ul class="list-disc pl-4 space-y-1 text-xs text-warning" data-balance-warnings>
+                                            @foreach (var warning in b.Warnings)
+                                            {
+                                                <li>@warning</li>
+                                            }
+                                        </ul>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted-foreground">&mdash;</span>
+                                    }
+                                </TableCell>
+                                <TableCell Class="px-4 py-3">
+                                    <div class="flex gap-2 justify-end">
+                                        <Button Variant="outline" Size="sm" OnClick="@(() => OpenEdit(b))" data-edit>Edit</Button>
+                                        <Button Variant="ghost" Size="sm" OnClick="@(() => AskToDelete(b))" data-delete>Delete</Button>
+                                    </div>
+                                </TableCell>
+                            </TableRow>
+                        }
+                    </TableBody>
+                </Table>
+                </div>
+            }
+        </CardContent>
+    </Card>
+}
+
+<Card Class="mt-6">
+    <CardHeader>
+        <CardTitle>Import from a CSV file</CardTitle>
+        <CardDescription>
+            Fill in the template, one row per employee and year. Every row is checked first: a file with any problem
+            is refused whole and nothing is saved. A balance already recorded for the employee and year is replaced.
+            Dates are yyyy-MM-dd; amounts use a dot and no thousands separator.
+        </CardDescription>
+    </CardHeader>
+    <CardContent Class="space-y-3">
+        <p class="text-sm text-muted-foreground" data-import-tip>In Excel, format the date and employee-number columns as Text before typing or pasting into them, so they keep their format.</p>
+        <div class="flex flex-wrap items-center gap-2">
+            <Button Variant="outline" Size="sm" OnClick="DownloadTemplate" Loading="@_downloading" data-template>
+                <i class="bi bi-filetype-csv mr-1"></i> Download template
+            </Button>
+            <label class="inline-flex cursor-pointer items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-accent">
+                <i class="bi bi-upload"></i>
+                <span>@(_fileName ?? "Choose a CSV file")</span>
+                <InputFile OnChange="OnFileChosen" accept=".csv" class="hidden" disabled="@_importing" data-import-file />
+            </label>
+            <Button Variant="primary" Size="sm" OnClick="Import" Loading="@_importing" Disabled="@(_importContent is null || _importing)" data-import>
+                Import
+            </Button>
+        </div>
+
+        @if (_importErrors.Count > 0)
+        {
+            <Alert Variant="destructive" Title="Nothing was imported.">
+                <ul class="list-disc pl-4 space-y-1" data-import-errors>
+                    @foreach (var error in _importErrors)
+                    {
+                        <li>@error</li>
+                    }
+                </ul>
+            </Alert>
+        }
+        @if (_imported is not null)
+        {
+            <Alert Variant="success" data-import-result>
+                Imported: @_imported.Created created, @_imported.Updated updated.
+            </Alert>
+            @if (_imported.Warnings.Count > 0)
+            {
+                <Alert Variant="warning" Title="Please note:">
+                    <ul class="list-disc pl-4 space-y-1" data-import-warnings>
+                        @foreach (var warning in _imported.Warnings)
+                        {
+                            <li>@warning</li>
+                        }
+                    </ul>
+                </Alert>
+            }
+        }
+    </CardContent>
+</Card>
+
+<Dialog IsOpen="@_formOpen" Size="lg"
+        Title="@(_editing is null ? "New opening balance" : $"{_editing.EmployeeName}'s opening balance for {_editing.Year}")"
+        Description="What the employee was paid in the year before PeopleCore, through the last pay date the figures include."
+        OnClose="CloseDialogs" BodyClass="space-y-4" data-balance-dialog>
+    <ChildContent>
+        @if (_formError is not null)
+        {
+            <Alert Variant="destructive" data-balance-error>@_formError</Alert>
+        }
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            @if (_editing is not null)
+            {
+                <FormField LabelText="Employee" Id="ob-employee-name">
+                    <div id="ob-employee-name" class="text-sm py-2">@_editing.EmployeeName (@_editing.EmployeeNumber)</div>
+                </FormField>
+            }
+            else if (_employeesError is not null)
+            {
+                <Alert Variant="destructive" Class="sm:col-span-2">Employees could not be loaded: @_employeesError</Alert>
+            }
+            else if (_employees is null)
+            {
+                <div class="p-4 flex justify-center"><Spinner Size="sm" /></div>
+            }
+            else
+            {
+                <FormField LabelText="Employee" Id="ob-employee" Required="true">
+                    <Select TValue="Guid?" Id="ob-employee" @bind-Value="_employeeId" Placeholder="Select..." Disabled="@_saving">
+                        @foreach (var e in _employees)
+                        {
+                            <option value="@e.Id">@e.LastName, @e.FirstName (@e.EmployeeNumber)</option>
+                        }
+                    </Select>
+                </FormField>
+            }
+            <FormField LabelText="Year" Id="ob-form-year" Required="true" Description="The calendar year the figures are for.">
+                <Input TValue="int?" Id="ob-form-year" Type="number" Min="1900" Max="9999" Step="1" @bind-Value="_formYear"
+                       Disabled="@(_saving || _editing is not null)" />
+            </FormField>
+        </div>
+        <FormField LabelText="Through date" Id="ob-through" Required="true" Description="The last pay date the figures include.">
+            <Input TValue="DateOnly?" Id="ob-through" Type="date" @bind-Value="_through" Disabled="@_saving" />
+        </FormField>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <FormField LabelText="Basic salary" Id="ob-basic" Description="Basic salary earned, after unpaid absences and tardiness, before contributions.">
+                <Input TValue="decimal?" Id="ob-basic" Type="number" Min="0" Step="0.01" @bind-Value="_basicSalary" Disabled="@_saving" />
+            </FormField>
+            <FormField LabelText="13th month paid" Id="ob-thirteenth" Description="13th month already paid.">
+                <Input TValue="decimal?" Id="ob-thirteenth" Type="number" Min="0" Step="0.01" @bind-Value="_thirteenthMonthPaid" Disabled="@_saving" />
+            </FormField>
+            <FormField LabelText="Other benefits paid" Id="ob-other-benefits" Description="Bonuses and the like, which count toward the ₱90,000.">
+                <Input TValue="decimal?" Id="ob-other-benefits" Type="number" Min="0" Step="0.01" @bind-Value="_otherBenefitsPaid" Disabled="@_saving" />
+            </FormField>
+            <FormField LabelText="Other taxable pay" Id="ob-other-taxable" Description="Overtime, holiday, night differential and taxable allowances, as one total.">
+                <Input TValue="decimal?" Id="ob-other-taxable" Type="number" Min="0" Step="0.01" @bind-Value="_otherTaxablePay" Disabled="@_saving" />
+            </FormField>
+            <FormField LabelText="De minimis" Id="ob-de-minimis" Description="De minimis benefits paid.">
+                <Input TValue="decimal?" Id="ob-de-minimis" Type="number" Min="0" Step="0.01" @bind-Value="_deMinimis" Disabled="@_saving" />
+            </FormField>
+            <FormField LabelText="Other non-taxable" Id="ob-other-non-taxable" Description="Other non-taxable compensation.">
+                <Input TValue="decimal?" Id="ob-other-non-taxable" Type="number" Min="0" Step="0.01" @bind-Value="_otherNonTaxable" Disabled="@_saving" />
+            </FormField>
+            <FormField LabelText="Employee contributions" Id="ob-contributions" Description="The employee's SSS, PhilHealth and Pag-IBIG shares, as one total.">
+                <Input TValue="decimal?" Id="ob-contributions" Type="number" Min="0" Step="0.01" @bind-Value="_employeeContributions" Disabled="@_saving" />
+            </FormField>
+            <FormField LabelText="Tax withheld" Id="ob-tax" Description="Withholding tax deducted.">
+                <Input TValue="decimal?" Id="ob-tax" Type="number" Min="0" Step="0.01" @bind-Value="_taxWithheld" Disabled="@_saving" />
+            </FormField>
+            <FormField LabelText="De minimis leave days" Id="ob-leave-days" Description="Leave days already converted as de minimis, 0 to 10.">
+                <Input TValue="decimal?" Id="ob-leave-days" Type="number" Min="0" Max="10" Step="0.01" @bind-Value="_deMinimisLeaveDays" Disabled="@_saving" />
+            </FormField>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <div class="flex justify-end gap-2">
+            <Button Variant="outline" OnClick="CloseDialogs" Disabled="@_saving">Cancel</Button>
+            <Button Variant="primary" OnClick="Save" Loading="@_saving" data-submit-balance>Save</Button>
+        </div>
+    </FooterContent>
+</Dialog>
+
+<AlertDialog IsOpen="@(_deleting is not null)"
+             Title="@($"Delete {_deleting?.EmployeeName}'s opening balance for {_deleting?.Year}?")"
+             Description="The employee's 13th month, tax and 2316 then count only what PeopleCore paid. Paid runs don't change."
+             ConfirmText="Delete"
+             ConfirmVariant="destructive"
+             Loading="@_deleteBusy"
+             OnConfirm="DeleteConfirmed"
+             OnCancel="() => _deleting = null"
+             data-confirm-delete />
+
+@code {
+    // The API's own limits, so the form refuses what it would refuse, in its words.
+    private const decimal AmountLimit = 10_000_000_000m;
+    private const decimal MaxDeMinimisLeaveDays = 10m;
+    private const long MaxImportBytes = 2 * 1024 * 1024;
+    private const string ImportFileRefusal = "Choose a CSV file of at most 2 MB.";
+
+    private static readonly int ThisYear = DateTime.Today.Year;
+
+    private int _year = ThisYear;
+    // The year the list on screen is for, which lags _year while a new year loads.
+    private int _shownYear = ThisYear;
+    private List<OpeningBalanceDto>? _balances;
+    private string? _loadError;
+    // A later load wins: an earlier one still in flight is dropped when it answers.
+    private int _loadVersion;
+
+    private string? _actionError;
+    private IReadOnlyList<string> _saveWarnings = [];
+
+    // Bumped whenever the form opens or closes, so what an earlier form asked for (the employees,
+    // a save's refusal) never lands in the one on screen now.
+    private int _dialogVersion;
+    private bool _formOpen;
+    private OpeningBalanceDto? _editing;
+    private bool _saving;
+    private string? _formError;
+
+    private List<EmployeeListDto>? _employees;
+    private string? _employeesError;
+
+    private Guid? _employeeId;
+    private int? _formYear;
+    private DateOnly? _through;
+    private decimal? _basicSalary;
+    private decimal? _thirteenthMonthPaid;
+    private decimal? _otherBenefitsPaid;
+    private decimal? _otherTaxablePay;
+    private decimal? _deMinimis;
+    private decimal? _otherNonTaxable;
+    private decimal? _employeeContributions;
+    private decimal? _taxWithheld;
+    private decimal? _deMinimisLeaveDays;
+
+    private OpeningBalanceDto? _deleting;
+    private bool _deleteBusy;
+
+    private bool _downloading;
+    private byte[]? _importContent;
+    private string? _fileName;
+    private bool _importing;
+    private List<string> _importErrors = [];
+    private OpeningBalanceImportDto? _imported;
+
+    /// <summary>Next year back to five years ago, and the year on screen if it is outside them.</summary>
+    private IEnumerable<int> Years =>
+        Enumerable.Range(ThisYear - 5, 7).Append(_year).Distinct().OrderDescending();
+
+    protected override async Task OnInitializedAsync() => await LoadBalances();
+
+    private async Task ChangeYear(int year)
+    {
+        // What a save warned of was about the year that was on screen.
+        _saveWarnings = [];
+        _year = year;
+        _balances = null;
+        await LoadBalances();
+    }
+
+    private async Task LoadBalances()
+    {
+        var version = ++_loadVersion;
+        var year = _year;
+        _loadError = null;
+        try
+        {
+            var balances = await Api.GetOpeningBalancesAsync(year);
+            if (version != _loadVersion) return;
+            _balances = balances?.ToList() ?? [];
+            _shownYear = year;
+        }
+        catch (Exception ex)
+        {
+            if (version != _loadVersion) return;
+            _balances = null;
+            _loadError = ex.Message;
+        }
+    }
+
+    private void CloseDialogs()
+    {
+        _dialogVersion++;
+        _formOpen = false;
+        _editing = null;
+    }
+
+    private void ResetForm()
+    {
+        CloseDialogs();
+        _formError = null;
+        _actionError = null;
+        _saveWarnings = [];
+    }
+
+    private async Task OpenNew()
+    {
+        ResetForm();
+        var version = _dialogVersion;
+        _formOpen = true;
+        _employeeId = null;
+        _formYear = _year;
+        _through = null;
+        _basicSalary = _thirteenthMonthPaid = _otherBenefitsPaid = _otherTaxablePay = null;
+        _deMinimis = _otherNonTaxable = _employeeContributions = _taxWithheld = _deMinimisLeaveDays = null;
+        if (_employees is not null) return;
+
+        _employeesError = null;
+        try
+        {
+            var employees = await LoadAllEmployeesAsync();
+            if (version != _dialogVersion) return;
+            _employees = employees;
+        }
+        catch (Exception ex)
+        {
+            if (version != _dialogVersion) return;
+            _employeesError = ex.Message;
+        }
+    }
+
+    // GetEmployeesAsync is paged: page through to the end so the picker offers every employee
+    // (as Bir2316.razor does), sorted by last name.
+    private async Task<List<EmployeeListDto>> LoadAllEmployeesAsync()
+    {
+        var all = new List<EmployeeListDto>();
+        var page = 1;
+        while (true)
+        {
+            var result = await Api.GetEmployeesAsync(page, 100);
+            if (result is null || result.Items.Count == 0) break;
+            all.AddRange(result.Items);
+            if (page >= result.TotalPages) break;
+            page++;
+        }
+        return all.OrderBy(e => e.LastName).ThenBy(e => e.FirstName).ToList();
+    }
+
+    private void OpenEdit(OpeningBalanceDto balance)
+    {
+        ResetForm();
+        _formOpen = true;
+        _editing = balance;
+        _employeeId = balance.EmployeeId;
+        _formYear = balance.Year;
+        _through = balance.ThroughDate;
+        _basicSalary = balance.BasicSalary;
+        _thirteenthMonthPaid = balance.ThirteenthMonthPaid;
+        _otherBenefitsPaid = balance.OtherBenefitsPaid;
+        _otherTaxablePay = balance.OtherTaxablePay;
+        _deMinimis = balance.DeMinimis;
+        _otherNonTaxable = balance.OtherNonTaxable;
+        _employeeContributions = balance.EmployeeContributions;
+        _taxWithheld = balance.TaxWithheld;
+        _deMinimisLeaveDays = balance.DeMinimisLeaveDays;
+    }
+
+    /// <summary>
+    /// The first thing the API would refuse, in its words and its order (PayrollOpeningBalanceService),
+    /// on the figures as typed; a blank amount is 0.
+    /// </summary>
+    private string? Problem()
+    {
+        if (_editing is null && _employeeId is null)
+            return "Choose an employee.";
+        if (_formYear is not (>= 1900 and <= 9999))
+            return "Enter a year.";
+        if (_through is not { } through || through.Year != _formYear)
+            return $"The through date must fall in {_formYear}.";
+        decimal[] amounts =
+        [
+            Amount(_basicSalary), Amount(_thirteenthMonthPaid), Amount(_otherBenefitsPaid), Amount(_otherTaxablePay),
+            Amount(_deMinimis), Amount(_otherNonTaxable), Amount(_employeeContributions), Amount(_taxWithheld),
+        ];
+        if (amounts.Any(a => a < 0m))
+            return "Amounts can't be negative.";
+        if (amounts.Any(a => a >= AmountLimit))
+            return "Enter an amount below ₱10,000,000,000.";
+        if (Amount(_employeeContributions) > Amount(_basicSalary))
+            return "Contributions can't be more than the basic salary.";
+        if (Amount(_deMinimisLeaveDays) is < 0m or > MaxDeMinimisLeaveDays)
+            return "De minimis leave days must be between 0 and 10.";
+        return null;
+    }
+
+    private static decimal Amount(decimal? value) => value ?? 0m;
+
+    private async Task Save()
+    {
+        if (_saving || !_formOpen) return;
+        _formError = Problem();
+        if (_formError is not null) return;
+
+        var editing = _editing;
+        var request = new OpeningBalanceRequest(
+            editing?.EmployeeId ?? _employeeId!.Value, _formYear!.Value, _through!.Value,
+            Amount(_basicSalary), Amount(_thirteenthMonthPaid), Amount(_otherBenefitsPaid), Amount(_otherTaxablePay),
+            Amount(_deMinimis), Amount(_otherNonTaxable), Amount(_employeeContributions), Amount(_taxWithheld),
+            Amount(_deMinimisLeaveDays));
+
+        // The form may be closed (its X) while the balance is saved; the answer then belongs to no
+        // form on screen, so it neither closes another one nor shows its refusal there.
+        var version = _dialogVersion;
+        _saving = true;
+        OpeningBalanceDto? saved;
+        try
+        {
+            saved = editing is null
+                ? await Api.CreateOpeningBalanceAsync(request)
+                : await Api.UpdateOpeningBalanceAsync(editing.Id, request);
+        }
+        catch (Exception ex)
+        {
+            // Its form closed meanwhile: the refusal still says why nothing was saved, above the list.
+            if (version == _dialogVersion) _formError = ex.Message;
+            else _actionError = ex.Message;
+            return;
+        }
+        finally
+        {
+            _saving = false;
+        }
+
+        // It was saved either way: what the API warned of stands, and the list shows the saved year.
+        _saveWarnings = saved?.Warnings ?? [];
+        if (version == _dialogVersion) CloseDialogs();
+        if (saved is not null && saved.Year != _year)
+        {
+            _year = saved.Year;
+            _balances = null;
+        }
+        await LoadBalances();
+    }
+
+    private void AskToDelete(OpeningBalanceDto balance)
+    {
+        ResetForm();
+        _deleting = balance;
+    }
+
+    private async Task DeleteConfirmed()
+    {
+        if (_deleteBusy || _deleting is not { } balance) return;
+        _actionError = null;
+        _deleteBusy = true;
+        try
+        {
+            await Api.DeleteOpeningBalanceAsync(balance.Id);
+        }
+        catch (Exception ex)
+        {
+            _actionError = ex.Message;
+            return;
+        }
+        finally
+        {
+            _deleteBusy = false;
+            _deleting = null;
+        }
+        await LoadBalances();
+    }
+
+    private async Task DownloadTemplate()
+    {
+        if (_downloading) return;
+        _actionError = null;
+        _downloading = true;
+        try
+        {
+            var bytes = await Api.GetOpeningBalanceTemplateAsync();
+            await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(bytes), "opening-balances-template.csv", "text/csv");
+        }
+        catch (Exception ex)
+        {
+            // Not an import problem: nothing was sent to import.
+            _actionError = ex.Message;
+        }
+        finally
+        {
+            _downloading = false;
+        }
+    }
+
+    private async Task OnFileChosen(InputFileChangeEventArgs e)
+    {
+        _importContent = null;
+        _fileName = null;
+        _importErrors = [];
+        _imported = null;
+
+        // The API refuses a file over 2 MB with the same words; the page refuses one not named .csv
+        // too (the API doesn't look at the name, and refuses what isn't the template by its header).
+        // Checked here so neither is sent at all.
+        var file = e.File;
+        if (!file.Name.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) || file.Size > MaxImportBytes)
+        {
+            _importErrors = [ImportFileRefusal];
+            return;
+        }
+
+        try
+        {
+            await using var stream = file.OpenReadStream(MaxImportBytes);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            _importContent = buffer.ToArray();
+            _fileName = file.Name;
+        }
+        catch (Exception ex)
+        {
+            _importErrors = [ex.Message];
+        }
+    }
+
+    private async Task Import()
+    {
+        if (_importing || _importContent is not { } content || _fileName is not { } fileName) return;
+        _saveWarnings = [];
+        _importErrors = [];
+        _imported = null;
+        _importing = true;
+        OpeningBalanceImportOutcome outcome;
+        try
+        {
+            outcome = await Api.ImportOpeningBalancesAsync(content, fileName);
+        }
+        catch (Exception ex)
+        {
+            _importErrors = [ex.Message];
+            return;
+        }
+        finally
+        {
+            _importing = false;
+        }
+
+        if (outcome.Imported is not { } imported)
+        {
+            _importErrors = outcome.Errors.ToList();
+            return;
+        }
+
+        // Imported: the same file isn't offered again, and the list shows what it saved.
+        _imported = imported;
+        _importContent = null;
+        _fileName = null;
+        await LoadBalances();
+    }
+
+    private static string Date(DateOnly date) => date.ToString("MMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture);
+}

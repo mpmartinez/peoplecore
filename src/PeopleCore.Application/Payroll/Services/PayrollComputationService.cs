@@ -507,6 +507,15 @@ public class PayrollComputationService
             ThirteenthMonthPaidEarlierInYear = includeThirteenthMonth && isThirteenthMonthEligible
                 ? thirteenthMonthPaidEarlierInYear
                 : null,
+            // Likewise the basic it was worked out from and the exemption its tax was worked out
+            // with, so Mark Paid can tell whether either has changed since (an opening balance
+            // edited, say).
+            BasicEarnedEarlierInYear = includeThirteenthMonth && isThirteenthMonthEligible
+                ? basicEarnedEarlierInYear
+                : null,
+            ExemptUsedEarlierInYear = includeThirteenthMonth && isThirteenthMonthEligible
+                ? otherBenefitsExemptUsedEarlierInYear
+                : null,
             LeaveConversionPay = leaveConversionPay,
             LeaveConversionNonTaxable = leaveConversionNonTaxable,
             SeparationPay = separationPay,
