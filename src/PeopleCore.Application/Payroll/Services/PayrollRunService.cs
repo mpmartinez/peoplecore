@@ -554,8 +554,9 @@ public class PayrollRunService : IPayrollRunService
     /// <item>the basic earned, which the 13th month due was worked out from
     /// (<see cref="PayrollRunEmployee.BasicEarnedEarlierInYear"/>), and the 90,000 exemption used,
     /// which its tax was worked out with (<see cref="PayrollRunEmployee.ExemptUsedEarlierInYear"/>):
-    /// an opening balance created, or its basic salary or other benefits changed, since the entry
-    /// was computed would leave it paying the wrong 13th month or tax.</item>
+    /// an opening balance created, or its basic salary or other benefits changed, or another run of
+    /// hers marked Paid (with a 13th month or not), since the entry was computed would leave it
+    /// paying the wrong 13th month or tax.</item>
     /// </list>
     /// Each figure is checked only when the entry stored it: entries computed before it was kept
     /// (null) aren't. Changes nothing.
@@ -581,10 +582,11 @@ public class PayrollRunService : IPayrollRunService
                 || (entry.ExemptUsedEarlierInYear is { } exempt && exempt != now.ExemptUsed))
             {
                 // The figures can have moved because her opening balance was edited, or because
-                // another run that paid her 13th month was marked Paid after this entry was computed
-                // (same reading of UpdatedAt and CreatedAt as EnsureThirteenthMonthNotPaidSinceAsync).
-                // The latest such run is named; with none, it is the opening balance.
-                var paidSince = await LatestRunWithThirteenthMonthPaidSinceAsync(run, entry, ct);
+                // another run that includes her was marked Paid after this entry was computed - with a
+                // 13th month or not: any Paid run of hers moves her basic earned (same reading of
+                // UpdatedAt and CreatedAt as EnsureThirteenthMonthNotPaidSinceAsync). The latest such
+                // run is named; with none, it is the opening balance.
+                var paidSince = await LatestRunPaidSinceAsync(run, entry, onlyWith13thMonth: false, ct);
                 var name = await NameAsync(entry, ct);
                 throw new DomainException(paidSince is null
                     ? $"{name}'s pay before PeopleCore has changed since this payroll was computed; recompute it before paying."
@@ -612,7 +614,7 @@ public class PayrollRunService : IPayrollRunService
         // paid any 13th month is the likeliest, and is the one to look at. A run paid before the
         // compute is already in what the entry was netted of. With none - or when the total fell,
         // which a Paid run can't do - what changed is the 13th month on her opening balance.
-        var latest = paidNow < paidThen ? null : await LatestRunWithThirteenthMonthPaidSinceAsync(run, entry, ct);
+        var latest = paidNow < paidThen ? null : await LatestRunPaidSinceAsync(run, entry, onlyWith13thMonth: true, ct);
         var name = await NameAsync(entry, ct);
         throw new DomainException(latest is null
             ? $"{name}'s 13th month paid before PeopleCore has changed since this payroll was computed; recompute it before paying."
@@ -620,14 +622,20 @@ public class PayrollRunService : IPayrollRunService
     }
 
     /// <summary>
-    /// The latest other Paid run of the pay year that paid the entry's employee any 13th month and was
-    /// marked Paid after the entry was computed, or null when there is none.
+    /// The latest other Paid run of the pay year that includes the entry's employee and was marked Paid
+    /// after the entry was computed, or null when there is none.
     /// </summary>
-    private async Task<PayrollRun?> LatestRunWithThirteenthMonthPaidSinceAsync(PayrollRun run, PayrollRunEmployee entry,
-        CancellationToken ct)
+    /// <param name="onlyWith13thMonth">
+    /// True to count only a run that paid her any 13th month (what moves the 13th month paid earlier in
+    /// the year); false for any run of hers, whatever it paid (what moves her basic earned and the
+    /// exemption used).
+    /// </param>
+    private async Task<PayrollRun?> LatestRunPaidSinceAsync(PayrollRun run, PayrollRunEmployee entry,
+        bool onlyWith13thMonth, CancellationToken ct)
         => (await _runRepo.GetPaidRunsInYearAsync(run.PayDate.Year, ct) ?? [])
             .Where(r => r.Id != run.Id && r.UpdatedAt > entry.CreatedAt)
-            .Where(r => r.Employees.Any(e => e.EmployeeId == entry.EmployeeId && e.ThirteenthMonth > 0m))
+            .Where(r => r.Employees.Any(e => e.EmployeeId == entry.EmployeeId
+                                             && (!onlyWith13thMonth || e.ThirteenthMonth > 0m)))
             .MaxBy(r => r.UpdatedAt);
 
     /// <summary>The entry's employee's name, for a refusal.</summary>
