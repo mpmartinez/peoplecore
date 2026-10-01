@@ -95,3 +95,4 @@ One commit each, test first.
   changed 13th month already paid is the balance's.
 - [x] A 2316 for someone with a balance but no Paid run in the year, from the balance alone; the
   2316 page's years include the balance's (`GetYearsForEmployeeAsync`), and the 1604-C includes her.
+- [x] The unpaid regular runs of a year are read Jan 1 to Dec 31, so a balance for 9999 works.

@@ -323,4 +323,23 @@ public class ThirteenthMonthOnceDbTests : DatabaseTestBase
         ]);
         found.Select(e => e.PayDate).Should().BeInAscendingOrder();
     }
+
+    [Fact]
+    public async Task GetUnpaidRegularRunEntriesInYear_ForTheLastYearADateCanHave_FindsItsRuns()
+    {
+        // An opening balance can be for 9999, the last year DateOnly holds: its year's end can't be
+        // worked out as the first day of 10000. Dec 31, 9999 is DateOnly.MaxValue, which Npgsql
+        // stores as 'infinity'.
+        var maria = AnEmployee("Santos", "Maria");
+        Context.Employees.Add(maria);
+        var run = ARun("PAY-9999-024", new(9999, 12, 17), new(9999, 12, 31), new(9999, 12, 31), PayrollRunStatus.Draft);
+        Context.PayrollRuns.Add(run);
+        Context.PayrollRunEmployees.Add(AnEntry(run.Id, maria.Id));
+        await Context.SaveChangesAsync();
+
+        await using var reader = NewContext();
+        var found = await new PayrollRunRepository(reader).GetUnpaidRegularRunEntriesInYearAsync(9999);
+
+        found.Should().Equal(new UnpaidRunEntry(maria.Id, "PAY-9999-024", new(9999, 12, 31)));
+    }
 }
