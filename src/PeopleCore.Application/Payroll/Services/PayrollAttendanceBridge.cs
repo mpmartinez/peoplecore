@@ -272,10 +272,15 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                 // excluded here and still creates an absence when unworked. That asymmetry looks
                 // like an oversight if you don't know the Labor Code distinction, so it is spelled
                 // out here rather than left implicit.
+                //
+                // Paid leave covering the date exempts an absence, except on a forfeited holiday:
+                // the holiday is forfeited, so the leave cannot be what pays for it, and
+                // LeaveDayCounter never charges a regular holiday to leave credits - without the
+                // absence the holiday would still be paid and the rule defeated.
                 var isPaidRegularHoliday = holidays.Regular > 0 && !forfeitsRegularHoliday;
                 if (schedule is { IsRestDay: false }
                     && !isPresent
-                    && employeePaidLeave?.Contains(date) != true
+                    && (employeePaidLeave?.Contains(date) != true || forfeitsRegularHoliday)
                     && !isPaidRegularHoliday)
                 {
                     absenceDays += 1m;

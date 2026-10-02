@@ -28,6 +28,10 @@ is the employee's rest day or a non-working day, the test moves back to the last
 - Not entitled: the holiday books one absence (`AbsenceDays` +1, deducted at the daily rate as any
   absence is) and a double regular holiday counts no guaranteed day (`UnworkedDays`), so it pays
   nothing for the day. Entitled: unchanged (no absence; a double holiday's guarantee as now).
+- Approved paid leave on the holiday itself does not rescue a forfeited holiday: it books its one
+  absence whatever leave covers the date (the leave would otherwise exempt the absence and the
+  holiday would still be paid, and leave credits are not charged for a regular holiday either).
+  Paid leave on a holiday the employee is entitled to books no absence, as before.
 - A holiday the employee worked is paid as now, whatever the day before. Special non-working days,
   special working days and rest days are untouched.
 - Applies to every employee: PeopleCore pays all employees by monthly salary and daily-rate factor
@@ -42,6 +46,15 @@ are used only to evaluate the rule: records before `from` add nothing to late mi
 night hours, overtime, absences or premium days, and leave before `from` only feeds the check.
 Nothing in the engine, storage, DTOs or migrations changes; the absence flows through
 `AbsenceDays` as today.
+
+## Notes
+
+Release-note sentences:
+
+- A holiday in the walk that the employee worked also satisfies the rule when it is a rest day or
+  has no schedule for them, as the wording above says; this favours the employee.
+- The walk does not stop at the employee's hire date, so an assignment backdated before hire can
+  make days before hire read as absences.
 
 ## Out of scope
 

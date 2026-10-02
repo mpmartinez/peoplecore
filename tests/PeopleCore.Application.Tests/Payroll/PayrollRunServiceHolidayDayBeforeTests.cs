@@ -32,7 +32,8 @@ public partial class PayrollRunServiceTests
         });
 
         // Present on every other weekday of the period: Thu Jan 1, Tue Jan 6 to Fri Jan 9, and
-        // Mon Jan 12 to Thu Jan 15.
+        // Mon Jan 12 to Thu Jan 15. Thu Jan 1 is an ordinary present day here, because the
+        // holiday mock holds only Jan 5.
         var presentDays = new[] { 1, 6, 7, 8, 9, 12, 13, 14, 15 }.Select(d => new DateOnly(2026, 1, d));
         var records = presentDays
             .Select(d => new AttendanceRecord { EmployeeId = employeeId, AttendanceDate = d, IsPresent = true })

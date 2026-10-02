@@ -1398,6 +1398,86 @@ public class PayrollAttendanceBridgeTests
     }
 
     [Fact]
+    public async Task BuildAsync_AForfeitedRegularHoliday_CoveredByApprovedPaidLeave_StillBooksItsAbsence()
+    {
+        var employeeId = Guid.NewGuid();
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart));
+        SetupHolidays(RegularOn(WeekHoliday));
+        // Tuesday, before the period, has no record: absent without pay, so the holiday is forfeited.
+        SetupRecordsInRange();
+        SetupLeaveInRange(LeaveOn(employeeId, WeekHoliday, paid: true));
+
+        var result = await _sut.BuildAsync([employeeId], WeekHoliday, WeekHoliday, CancellationToken.None);
+
+        // The leave does not pay for a forfeited holiday: its one absence is booked all the same.
+        result.Inputs[employeeId].AbsenceDays.Should().Be(1m);
+        result.Inputs[employeeId].PremiumDays.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task BuildAsync_AForfeitedDoubleRegularHoliday_CoveredByApprovedPaidLeave_BooksOneAbsenceAndNoGuaranteedDay()
+    {
+        var employeeId = Guid.NewGuid();
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart));
+        SetupHolidays(TwoRegularHolidaysOn(WeekHoliday));
+        SetupRecordsInRange();
+        SetupLeaveInRange(LeaveOn(employeeId, WeekHoliday, paid: true));
+
+        var result = await _sut.BuildAsync([employeeId], WeekHoliday, WeekHoliday, CancellationToken.None);
+
+        result.Inputs[employeeId].AbsenceDays.Should().Be(1m);
+        result.Inputs[employeeId].PremiumDays.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task BuildAsync_AnEntitledRegularHoliday_CoveredByApprovedPaidLeave_BooksNoAbsence()
+    {
+        var employeeId = Guid.NewGuid();
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart));
+        SetupHolidays(RegularOn(WeekHoliday));
+        SetupRecordsInRange(PresentOn(employeeId, WeekTuesday));
+        SetupLeaveInRange(LeaveOn(employeeId, WeekHoliday, paid: true));
+
+        var result = await _sut.BuildAsync([employeeId], WeekHoliday, WeekHoliday, CancellationToken.None);
+
+        result.Inputs[employeeId].AbsenceDays.Should().Be(0m);
+        result.Inputs[employeeId].PremiumDays.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task BuildAsync_ARegularHolidayOnARestDay_AfterAnAbsentWorkday_IsUntouchedByTheDayBeforeRule()
+    {
+        var employeeId = Guid.NewGuid();
+        var saturday = new DateOnly(2026, 7, 11);   // a rest day; the Friday before has no record
+
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart));
+        SetupHolidays(RegularOn(saturday));
+        SetupRecordsInRange();
+
+        var result = await _sut.BuildAsync([employeeId], saturday, saturday, CancellationToken.None);
+
+        result.Inputs[employeeId].AbsenceDays.Should().Be(0m);
+        result.Inputs[employeeId].PremiumDays.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task BuildAsync_ADoubleRegularHolidayOnARestDay_AfterAnAbsentWorkday_KeepsItsGuaranteedDay()
+    {
+        var employeeId = Guid.NewGuid();
+        var saturday = new DateOnly(2026, 7, 11);   // a rest day; the Friday before has no record
+
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart));
+        SetupHolidays(TwoRegularHolidaysOn(saturday));
+        SetupRecordsInRange();
+
+        var result = await _sut.BuildAsync([employeeId], saturday, saturday, CancellationToken.None);
+
+        result.Inputs[employeeId].AbsenceDays.Should().Be(0m);
+        result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.DoubleRegularHolidayOnRestDay, UnworkedDays: 1m)]);
+    }
+
+    [Fact]
     public async Task BuildAsync_RecordsBeforeThePeriod_AddNothingToThePeriodsFigures()
     {
         var employeeId = Guid.NewGuid();
