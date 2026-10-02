@@ -57,14 +57,21 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
 
         var wantedSet = wanted.ToHashSet();
 
-        // ---- Load once, for the whole employee set -------------------------------------------
-        var records = await _attendance.GetAllByPeriodAsync(from, to, ct);
-        var approvedLeave = await _leave.GetApprovedByPeriodAsync(from, to, ct);
-        var approvedOvertime = await _overtime.GetApprovedByPeriodAsync(from, to, ct);
-        var assignments = await _assignments.GetActiveForPeriodAsync(wanted, from, to, ct);
+        // The day-before rule for an unworked regular holiday can reach back before the period
+        // (a holiday on its first day is judged by the previous period's last workday), so
+        // attendance, leave, schedules and holidays are loaded from this earlier date. Everything
+        // before `from` feeds only that rule: the per-date walk below covers `from` to `to`, so
+        // nothing earlier adds late, undertime, night hours, overtime, absences or premium days.
+        var lookBackFrom = from.AddDays(-DayBeforeLookBackDays);
 
-        // There is no period query for holidays, so ask for every year the period touches - a pay
-        // period can straddle a year boundary.
+        // ---- Load once, for the whole employee set -------------------------------------------
+        var records = await _attendance.GetAllByPeriodAsync(lookBackFrom, to, ct);
+        var approvedLeave = await _leave.GetApprovedByPeriodAsync(lookBackFrom, to, ct);
+        var approvedOvertime = await _overtime.GetApprovedByPeriodAsync(from, to, ct);
+        var assignments = await _assignments.GetActiveForPeriodAsync(wanted, lookBackFrom, to, ct);
+
+        // There is no period query for holidays, so ask for every year the look-back and the
+        // period touch - either can straddle a year boundary.
         //
         // Two holiday rows on one date is a real DOLE scenario - two regular holidays coinciding
         // (a double holiday, 300%), or two special days (150%). A regular holiday that a local
@@ -72,7 +79,7 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
         // two, whichever row the database returns first. A special working day is an ordinary
         // working day for pay, so it is not counted at all.
         var holidaysByDate = new Dictionary<DateOnly, (int Regular, int Special)>();
-        for (var year = from.Year; year <= to.Year; year++)
+        for (var year = lookBackFrom.Year; year <= to.Year; year++)
         {
             foreach (var holiday in await _holidays.GetByYearAsync(year, ct))
             {
@@ -112,7 +119,9 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                 ? existing
                 : paidLeaveDatesByEmployee[request.EmployeeId] = [];
 
-            var start = request.StartDate < from ? from : request.StartDate;
+            // Leave before `from` is kept for the day-before rule only; the per-date walk never
+            // reads a date outside the period, so it suppresses no absence there.
+            var start = request.StartDate < lookBackFrom ? lookBackFrom : request.StartDate;
             var end = request.EndDate > to ? to : request.EndDate;
             for (var date = start; date <= end; date = date.AddDays(1))
                 dates.Add(date);
@@ -206,6 +215,16 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                     }
                 }
 
+                // The day-before rule (Labor Code Art. 94): an unworked regular holiday on a
+                // scheduled working day is not paid when the employee was absent without pay on
+                // the workday before it. A rest-day holiday is not a holiday pay case here, and a
+                // date with no schedule has no basis to deduct, so neither is judged.
+                var forfeitsRegularHoliday = holidays.Regular > 0
+                    && schedule is { IsRestDay: false }
+                    && !isPresent
+                    && !QualifiesForUnworkedRegularHoliday(
+                        date, employeeAssignments, holidaysByDate, employeeRecords, employeePaidLeave);
+
                 var overtimeHours = (employeeOvertime?.GetValueOrDefault(date) ?? 0) / 60m;
                 if (isRestDay)
                 {
@@ -233,10 +252,12 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                 // above are priced as that premium), so working never pays less than staying home.
                 // On a working day it is counted only when no record for the date is marked
                 // present, since attending is paid through Days at the worked rate instead. Paid
-                // leave does not stop the count, as it does not stop the single holiday's pay.
+                // leave does not stop the count, as it does not stop the single holiday's pay. A
+                // holiday forfeited under the day-before rule counts no guaranteed day: it pays
+                // nothing for the day.
                 if (schedule is not null
                     && (dayType == WorkDayType.DoubleRegularHolidayOnRestDay
-                        || (dayType == WorkDayType.DoubleRegularHoliday && !isPresent)))
+                        || (dayType == WorkDayType.DoubleRegularHoliday && !isPresent && !forfeitsRegularHoliday)))
                 {
                     Add(dayType, unworkedDays: 1m);
                 }
@@ -245,15 +266,22 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
                 // schedule is no basis to deduct at all. Nor is an unworked REGULAR holiday: the
                 // Labor Code entitles the employee to 100% of the daily wage whether or not they
                 // work it, and basePeriodPay already pays that - deducting an absence here would
-                // claw it straight back. This is deliberately asymmetric: a SPECIAL NON-WORKING
-                // day follows "no work, no pay", so it is NOT excluded here and still creates an
-                // absence when unworked. That asymmetry looks like an oversight if you don't know
-                // the Labor Code distinction, so it is spelled out here rather than left implicit.
-                var isUnworkedRegularHoliday = holidays.Regular > 0;
+                // claw it straight back. The one exception is a holiday forfeited under the
+                // day-before rule, which is deducted like any absence. This is deliberately
+                // asymmetric: a SPECIAL NON-WORKING day follows "no work, no pay", so it is NOT
+                // excluded here and still creates an absence when unworked. That asymmetry looks
+                // like an oversight if you don't know the Labor Code distinction, so it is spelled
+                // out here rather than left implicit.
+                //
+                // Paid leave covering the date exempts an absence, except on a forfeited holiday:
+                // the holiday is forfeited, so the leave cannot be what pays for it, and
+                // LeaveDayCounter never charges a regular holiday to leave credits - without the
+                // absence the holiday would still be paid and the rule defeated.
+                var isPaidRegularHoliday = holidays.Regular > 0 && !forfeitsRegularHoliday;
                 if (schedule is { IsRestDay: false }
                     && !isPresent
-                    && employeePaidLeave?.Contains(date) != true
-                    && !isUnworkedRegularHoliday)
+                    && (employeePaidLeave?.Contains(date) != true || forfeitsRegularHoliday)
+                    && !isPaidRegularHoliday)
                 {
                     absenceDays += 1m;
                 }
@@ -295,6 +323,51 @@ public sealed class PayrollAttendanceBridge : IPayrollAttendanceBridge
         }
 
         return new AttendanceBridgeResult(inputs, withoutSchedule);
+    }
+
+    /// <summary>How far back the day-before rule looks for the qualifying workday.</summary>
+    private const int DayBeforeLookBackDays = 14;
+
+    /// <summary>
+    /// The day-before rule (Labor Code Art. 94, Omnibus Rules Book III Rule IV Sec. 6): whether an
+    /// employee who did not work the regular holiday on <paramref name="holiday"/> is still paid
+    /// for it. Walks back one day at a time:
+    /// <list type="bullet">
+    /// <item>a holiday date (any calendar holiday except a special working day, which
+    /// <paramref name="holidaysByDate"/> never holds) is skipped, unless the employee worked it -
+    /// a present record then satisfies the rule (Holy Thursday worked, so Good Friday is paid);</item>
+    /// <item>a rest day, or a date no assignment covers, is skipped;</item>
+    /// <item>the first scheduled working day decides: a present record or approved paid leave
+    /// satisfies the rule; approved unpaid leave or no record is absence without pay.</item>
+    /// </list>
+    /// With no decision after <see cref="DayBeforeLookBackDays"/> days the employee stays entitled.
+    /// </summary>
+    private static bool QualifiesForUnworkedRegularHoliday(
+        DateOnly holiday,
+        IReadOnlyList<EmployeeShiftAssignment> assignments,
+        IReadOnlyDictionary<DateOnly, (int Regular, int Special)> holidaysByDate,
+        IReadOnlyDictionary<DateOnly, IReadOnlyList<AttendanceRecord>>? records,
+        IReadOnlySet<DateOnly>? paidLeaveDates)
+    {
+        bool PresentOn(DateOnly date) => records?.GetValueOrDefault(date)?.Any(r => r.IsPresent) == true;
+
+        for (var day = 1; day <= DayBeforeLookBackDays; day++)
+        {
+            var date = holiday.AddDays(-day);
+
+            if (holidaysByDate.ContainsKey(date))
+            {
+                if (PresentOn(date)) return true;
+                continue;
+            }
+
+            var schedule = ShiftScheduleResolver.Resolve(ShiftScheduleResolver.PickAssignment(assignments, date), date);
+            if (schedule is null || schedule.IsRestDay) continue;
+
+            return PresentOn(date) || paidLeaveDates?.Contains(date) == true;
+        }
+
+        return true;
     }
 
     /// <summary>

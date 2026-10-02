@@ -1057,4 +1057,462 @@ public class PayrollAttendanceBridgeTests
 
         await act.Should().ThrowAsync<ArgumentException>();
     }
+
+    // ─── The day-before rule (Labor Code Art. 94) ─────────────────────────────────────────────
+    //
+    // Every date's weekday below was checked against a calendar. The repository mocks in this
+    // section answer only for the range they are asked about, as the real repositories do, so a
+    // test that needs a date before the period proves the bridge asked for it.
+
+    /// <summary>A Friday. The Monday-to-Friday shift from here covers every date in this section.</summary>
+    private static readonly DateOnly ShiftStart = new(2026, 5, 1);
+
+    private static Holiday RegularOn(DateOnly date, string name = "Regular holiday") =>
+        new() { Name = name, HolidayDate = date, HolidayType = HolidayType.RegularHoliday };
+
+    private static Holiday SpecialOn(DateOnly date, HolidayType type = HolidayType.SpecialNonWorking) =>
+        new() { Name = "Special day", HolidayDate = date, HolidayType = type };
+
+    private static AttendanceRecord PresentOn(Guid employeeId, DateOnly date) =>
+        new() { EmployeeId = employeeId, AttendanceDate = date, IsPresent = true };
+
+    private static LeaveRequest LeaveOn(Guid employeeId, DateOnly date, bool paid) => new()
+    {
+        EmployeeId = employeeId, StartDate = date, EndDate = date, Status = LeaveStatus.Approved,
+        LeaveType = new LeaveType { Name = paid ? "Vacation" : "Leave without pay", IsPaid = paid }
+    };
+
+    private static EmployeeShiftAssignment FixedAssignment(Guid employeeId, DateOnly effectiveFrom, DateOnly? effectiveTo)
+    {
+        var assignment = FixedAssignment(employeeId, effectiveFrom);
+        assignment.EffectiveTo = effectiveTo;
+        return assignment;
+    }
+
+    private void SetupRecordsInRange(params AttendanceRecord[] records) =>
+        _attendance.Setup(r => r.GetAllByPeriodAsync(It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync((DateOnly from, DateOnly to, CancellationToken _) =>
+                       records.Where(r => r.AttendanceDate >= from && r.AttendanceDate <= to).ToList());
+
+    private void SetupLeaveInRange(params LeaveRequest[] requests) =>
+        _leave.Setup(r => r.GetApprovedByPeriodAsync(It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+              .ReturnsAsync((DateOnly from, DateOnly to, CancellationToken _) =>
+                  requests.Where(r => r.StartDate <= to && r.EndDate >= from).ToList());
+
+    private void SetupAssignmentsInRange(params EmployeeShiftAssignment[] assignments) =>
+        _assignments.Setup(r => r.GetActiveForPeriodAsync(
+                        It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync((IReadOnlyList<Guid> _, DateOnly from, DateOnly to, CancellationToken _) =>
+                        assignments.Where(a => a.EffectiveFrom <= to && (a.EffectiveTo is null || a.EffectiveTo >= from)).ToList());
+
+    // A Monday-to-Friday week with a regular holiday on the Wednesday.
+    private static readonly DateOnly WeekMonday = new(2026, 7, 6);     // Monday
+    private static readonly DateOnly WeekTuesday = new(2026, 7, 7);    // Tuesday: the qualifying day
+    private static readonly DateOnly WeekHoliday = new(2026, 7, 8);    // Wednesday: the regular holiday
+    private static readonly DateOnly WeekThursday = new(2026, 7, 9);   // Thursday
+    private static readonly DateOnly WeekFriday = new(2026, 7, 10);    // Friday
+
+    [Fact]
+    public async Task BuildAsync_AnUnworkedRegularHoliday_AfterAnUnpaidAbsenceTheDayBefore_IsDeducted()
+    {
+        var employeeId = Guid.NewGuid();
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart));
+        SetupHolidays(RegularOn(WeekHoliday));
+        SetupRecordsInRange(PresentOn(employeeId, WeekMonday), PresentOn(employeeId, WeekThursday), PresentOn(employeeId, WeekFriday));
+
+        var result = await _sut.BuildAsync([employeeId], WeekMonday, WeekFriday, CancellationToken.None);
+
+        // Tuesday is an ordinary absence; the holiday after it is not paid, so it is one too.
+        result.Inputs[employeeId].AbsenceDays.Should().Be(2m);
+        result.Inputs[employeeId].PremiumDays.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task BuildAsync_AnUnworkedRegularHoliday_WhenPresentTheDayBefore_IsPaid()
+    {
+        var employeeId = Guid.NewGuid();
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart));
+        SetupHolidays(RegularOn(WeekHoliday));
+        SetupRecordsInRange(
+            PresentOn(employeeId, WeekMonday), PresentOn(employeeId, WeekTuesday),
+            PresentOn(employeeId, WeekThursday), PresentOn(employeeId, WeekFriday));
+
+        var result = await _sut.BuildAsync([employeeId], WeekMonday, WeekFriday, CancellationToken.None);
+
+        result.Inputs[employeeId].AbsenceDays.Should().Be(0m);
+        result.Inputs[employeeId].PremiumDays.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(true, 0)]    // approved paid leave on Tuesday: the holiday is paid
+    [InlineData(false, 2)]   // approved unpaid leave on Tuesday: absent without pay, both deducted
+    public async Task BuildAsync_AnUnworkedRegularHoliday_AfterApprovedLeaveTheDayBefore_IsPaidOnlyWhenTheLeaveIsPaid(
+        bool paid, decimal expectedAbsences)
+    {
+        var employeeId = Guid.NewGuid();
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart));
+        SetupHolidays(RegularOn(WeekHoliday));
+        SetupRecordsInRange(PresentOn(employeeId, WeekMonday), PresentOn(employeeId, WeekThursday), PresentOn(employeeId, WeekFriday));
+        SetupLeaveInRange(LeaveOn(employeeId, WeekTuesday, paid));
+
+        var result = await _sut.BuildAsync([employeeId], WeekMonday, WeekFriday, CancellationToken.None);
+
+        result.Inputs[employeeId].AbsenceDays.Should().Be(expectedAbsences);
+    }
+
+    [Theory]
+    [InlineData(true, 0)]    // present on the Friday: the Monday holiday is paid
+    [InlineData(false, 2)]   // absent on the Friday: the Friday and the Monday holiday are deducted
+    public async Task BuildAsync_AnUnworkedRegularHolidayOnAMonday_LooksPastTheWeekendToTheFriday(
+        bool presentOnFriday, decimal expectedAbsences)
+    {
+        var employeeId = Guid.NewGuid();
+        var friday = new DateOnly(2026, 7, 10);    // Friday
+        var monday = new DateOnly(2026, 7, 13);    // Monday: the regular holiday; Sat 11 and Sun 12 are rest days
+
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart));
+        SetupHolidays(RegularOn(monday));
+        SetupRecordsInRange(presentOnFriday ? [PresentOn(employeeId, friday)] : []);
+
+        var result = await _sut.BuildAsync([employeeId], friday, monday, CancellationToken.None);
+
+        // Saturday and Sunday carry no record; were they not skipped as rest days, the holiday
+        // would be deducted even with the Friday worked.
+        result.Inputs[employeeId].AbsenceDays.Should().Be(expectedAbsences);
+    }
+
+    // Holy Week 2026: Holy Thursday and Good Friday are consecutive regular holidays.
+    private static readonly DateOnly HolyMonday = new(2026, 3, 30);      // Monday
+    private static readonly DateOnly HolyTuesday = new(2026, 3, 31);     // Tuesday
+    private static readonly DateOnly HolyWednesday = new(2026, 4, 1);    // Wednesday: the qualifying day for both
+    private static readonly DateOnly HolyThursday = new(2026, 4, 2);     // Thursday: a regular holiday
+    private static readonly DateOnly GoodFriday = new(2026, 4, 3);       // Friday: a regular holiday
+
+    private void SetupHolyWeek() =>
+        SetupHolidays(RegularOn(HolyThursday, "Maundy Thursday"), RegularOn(GoodFriday, "Good Friday"));
+
+    [Fact]
+    public async Task BuildAsync_ConsecutiveRegularHolidays_WhenPresentTheWednesday_AreBothPaid()
+    {
+        var employeeId = Guid.NewGuid();
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart.AddMonths(-2)));
+        SetupHolyWeek();
+        SetupRecordsInRange(PresentOn(employeeId, HolyMonday), PresentOn(employeeId, HolyTuesday), PresentOn(employeeId, HolyWednesday));
+
+        var result = await _sut.BuildAsync([employeeId], HolyMonday, GoodFriday, CancellationToken.None);
+
+        // Good Friday walks back past Holy Thursday (a holiday) to the Wednesday.
+        result.Inputs[employeeId].AbsenceDays.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ConsecutiveRegularHolidays_WhenAbsentTheWednesday_AreBothDeducted()
+    {
+        var employeeId = Guid.NewGuid();
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart.AddMonths(-2)));
+        SetupHolyWeek();
+        SetupRecordsInRange(PresentOn(employeeId, HolyMonday), PresentOn(employeeId, HolyTuesday));
+
+        var result = await _sut.BuildAsync([employeeId], HolyMonday, GoodFriday, CancellationToken.None);
+
+        // The Wednesday, Holy Thursday and Good Friday.
+        result.Inputs[employeeId].AbsenceDays.Should().Be(3m);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ConsecutiveRegularHolidays_WhenHolyThursdayIsWorked_GoodFridayIsPaidDespiteTheAbsentWednesday()
+    {
+        var employeeId = Guid.NewGuid();
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart.AddMonths(-2)));
+        SetupHolyWeek();
+        SetupRecordsInRange(PresentOn(employeeId, HolyMonday), PresentOn(employeeId, HolyTuesday), PresentOn(employeeId, HolyThursday));
+
+        var result = await _sut.BuildAsync([employeeId], HolyMonday, GoodFriday, CancellationToken.None);
+
+        // Only the Wednesday is deducted: Holy Thursday was worked (paid as worked, whatever the
+        // day before), and it satisfies the rule for Good Friday.
+        var input = result.Inputs[employeeId];
+        input.AbsenceDays.Should().Be(1m);
+        input.PremiumDays.Should().BeEquivalentTo([new PremiumDayInput(WorkDayType.RegularHoliday, Days: 1m)]);
+    }
+
+    [Theory]
+    [InlineData("present", 0)]
+    [InlineData("paid leave", 0)]
+    [InlineData("absent", 1)]
+    public async Task BuildAsync_ARegularHolidayOnTheFirstDayOfThePeriod_IsJudgedByTheLastWorkdayOfThePreviousPeriod(
+        string friday, decimal expectedAbsences)
+    {
+        var employeeId = Guid.NewGuid();
+        var previousFriday = new DateOnly(2026, 7, 10);   // Friday: in the previous period
+        var from = new DateOnly(2026, 7, 13);             // Monday: the regular holiday, first day of the period
+        var to = new DateOnly(2026, 7, 17);               // Friday
+
+        // The Friday's schedule comes from an assignment that ended with it, which only a
+        // look-back load returns; the period itself runs on a new one.
+        SetupAssignmentsInRange(
+            FixedAssignment(employeeId, ShiftStart, previousFriday),
+            FixedAssignment(employeeId, from));
+        SetupHolidays(RegularOn(from));
+        var inPeriod = Enumerable.Range(1, 4).Select(i => PresentOn(employeeId, from.AddDays(i)));   // Tue 14 to Fri 17
+        SetupRecordsInRange([.. inPeriod, .. friday == "present" ? [PresentOn(employeeId, previousFriday)] : Array.Empty<AttendanceRecord>()]);
+        if (friday == "paid leave") SetupLeaveInRange(LeaveOn(employeeId, previousFriday, paid: true));
+
+        var result = await _sut.BuildAsync([employeeId], from, to, CancellationToken.None);
+
+        // Absent on the Friday, only the holiday is deducted here: the Friday itself belongs to
+        // the previous period and is never counted in this one.
+        result.Inputs[employeeId].AbsenceDays.Should().Be(expectedAbsences);
+    }
+
+    [Theory]
+    [InlineData(2026, 6, 23, 0)]   // Tuesday, 15 days before: beyond the walk, so the employee stays entitled
+    [InlineData(2026, 6, 24, 1)]   // Wednesday, 14 days before: the last day the walk reaches, absent
+    public async Task BuildAsync_TheWalkStopsAfter14Days_AndThenTheEmployeeStaysEntitled(
+        int year, int month, int day, decimal expectedAbsences)
+    {
+        var employeeId = Guid.NewGuid();
+        var lastScheduledDay = new DateOnly(year, month, day);
+        var holiday = new DateOnly(2026, 7, 8);   // Wednesday
+
+        // Nothing covers the days between the two assignments, so the walk skips them. Both are
+        // returned whatever the range asked for, so it is the walk's own limit that is tested.
+        _assignments.Setup(r => r.GetActiveForPeriodAsync(
+                        It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync([FixedAssignment(employeeId, ShiftStart, lastScheduledDay), FixedAssignment(employeeId, holiday)]);
+        SetupHolidays(RegularOn(holiday));
+
+        var result = await _sut.BuildAsync([employeeId], holiday, holiday, CancellationToken.None);
+
+        result.Inputs[employeeId].AbsenceDays.Should().Be(expectedAbsences);
+    }
+
+    [Fact]
+    public async Task BuildAsync_AWorkedRegularHoliday_AfterAnAbsentDay_IsPaidAsWorked()
+    {
+        var employeeId = Guid.NewGuid();
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart));
+        SetupHolidays(RegularOn(WeekHoliday));
+        SetupRecordsInRange(PresentOn(employeeId, WeekHoliday));
+
+        var result = await _sut.BuildAsync([employeeId], WeekTuesday, WeekHoliday, CancellationToken.None);
+
+        // Only Tuesday is deducted; the worked holiday earns its premium as before.
+        var input = result.Inputs[employeeId];
+        input.AbsenceDays.Should().Be(1m);
+        input.PremiumDays.Should().BeEquivalentTo([new PremiumDayInput(WorkDayType.RegularHoliday, Days: 1m)]);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task BuildAsync_AnUnworkedDoubleRegularHoliday_CountsItsGuaranteedDayOnlyWhenEntitled(bool presentTheDayBefore)
+    {
+        var employeeId = Guid.NewGuid();
+        var wednesday = new DateOnly(2026, 4, 8);   // Wednesday: the qualifying day
+        var holiday = new DateOnly(2026, 4, 9);     // Thursday: a double regular holiday
+
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart.AddMonths(-2)));
+        SetupHolidays(TwoRegularHolidaysOn(holiday));
+        SetupRecordsInRange(presentTheDayBefore ? [PresentOn(employeeId, wednesday)] : []);
+
+        var result = await _sut.BuildAsync([employeeId], wednesday, holiday, CancellationToken.None);
+
+        var input = result.Inputs[employeeId];
+        if (presentTheDayBefore)
+        {
+            input.AbsenceDays.Should().Be(0m);
+            input.PremiumDays.Should().BeEquivalentTo([new PremiumDayInput(WorkDayType.DoubleRegularHoliday, UnworkedDays: 1m)]);
+        }
+        else
+        {
+            // Not entitled: the holiday pays nothing for the day - one absence, no guaranteed day.
+            input.AbsenceDays.Should().Be(2m);
+            input.PremiumDays.Should().BeEmpty();
+        }
+    }
+
+    [Theory]
+    [InlineData(true, 1)]    // the special day alone: no work, no pay, as before
+    [InlineData(false, 2)]   // Tuesday and the special day: nothing more is added for the absent Tuesday
+    public async Task BuildAsync_AnUnworkedSpecialNonWorkingDay_IsUnchangedByTheDayBefore(bool presentTuesday, decimal expectedAbsences)
+    {
+        var employeeId = Guid.NewGuid();
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart));
+        SetupHolidays(SpecialOn(WeekHoliday));
+        SetupRecordsInRange(presentTuesday ? [PresentOn(employeeId, WeekTuesday)] : []);
+
+        var result = await _sut.BuildAsync([employeeId], WeekTuesday, WeekHoliday, CancellationToken.None);
+
+        result.Inputs[employeeId].AbsenceDays.Should().Be(expectedAbsences);
+        result.Inputs[employeeId].PremiumDays.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task BuildAsync_TheWalkSkipsASpecialNonWorkingDay_ButNotASpecialWorkingDay()
+    {
+        var skipped = Guid.NewGuid();
+        var notSkipped = Guid.NewGuid();
+        // Tuesday present, Wednesday (WeekHoliday) a special day not worked, Thursday a regular holiday.
+        SetupAssignmentsInRange(FixedAssignment(skipped, ShiftStart), FixedAssignment(notSkipped, ShiftStart));
+        SetupRecordsInRange(PresentOn(skipped, WeekTuesday), PresentOn(notSkipped, WeekTuesday));
+
+        SetupHolidays(SpecialOn(WeekHoliday), RegularOn(WeekThursday));
+        var nonWorking = await _sut.BuildAsync([skipped], WeekTuesday, WeekThursday, CancellationToken.None);
+
+        SetupHolidays(SpecialOn(WeekHoliday, HolidayType.SpecialWorking), RegularOn(WeekThursday));
+        var working = await _sut.BuildAsync([notSkipped], WeekTuesday, WeekThursday, CancellationToken.None);
+
+        // A special non-working day is skipped back to the worked Tuesday: only the special day
+        // itself is an absence. A special working day is an ordinary working day: missed, it is the
+        // qualifying day, so the regular holiday after it is deducted too.
+        nonWorking.Inputs[skipped].AbsenceDays.Should().Be(1m);
+        working.Inputs[notSkipped].AbsenceDays.Should().Be(2m);
+    }
+
+    [Theory]
+    [InlineData(true, 0)]
+    [InlineData(false, 1)]
+    public async Task BuildAsync_APeriodStartingOnNewYearsDay_WalksBackIntoThePreviousYearsHolidays(
+        bool presentMonday, decimal expectedAbsences)
+    {
+        var employeeId = Guid.NewGuid();
+        var monday = new DateOnly(2025, 12, 29);       // Monday: the qualifying day
+        var rizalDay = new DateOnly(2025, 12, 30);     // Tuesday: a regular holiday, not worked
+        var lastDay = new DateOnly(2025, 12, 31);      // Wednesday: a special non-working day, not worked
+        var newYear = new DateOnly(2026, 1, 1);        // Thursday: a regular holiday, first day of the period
+        var friday = new DateOnly(2026, 1, 2);         // Friday
+
+        SetupAssignmentsInRange(FixedAssignment(employeeId, new DateOnly(2025, 12, 1)));
+        _holidays.Setup(r => r.GetByYearAsync(2025, It.IsAny<CancellationToken>()))
+                 .ReturnsAsync([RegularOn(rizalDay, "Rizal Day"), SpecialOn(lastDay)]);
+        _holidays.Setup(r => r.GetByYearAsync(2026, It.IsAny<CancellationToken>()))
+                 .ReturnsAsync([RegularOn(newYear, "New Year's Day")]);
+        SetupRecordsInRange([PresentOn(employeeId, friday), .. presentMonday ? [PresentOn(employeeId, monday)] : Array.Empty<AttendanceRecord>()]);
+
+        var result = await _sut.BuildAsync([employeeId], newYear, friday, CancellationToken.None);
+
+        // Were the previous year's holidays not loaded, Dec 31 would be an unattended working day
+        // and New Year's Day would be deducted even with the Monday worked.
+        result.Inputs[employeeId].AbsenceDays.Should().Be(expectedAbsences);
+    }
+
+    [Fact]
+    public async Task BuildAsync_AForfeitedRegularHoliday_CoveredByApprovedPaidLeave_StillBooksItsAbsence()
+    {
+        var employeeId = Guid.NewGuid();
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart));
+        SetupHolidays(RegularOn(WeekHoliday));
+        // Tuesday, before the period, has no record: absent without pay, so the holiday is forfeited.
+        SetupRecordsInRange();
+        SetupLeaveInRange(LeaveOn(employeeId, WeekHoliday, paid: true));
+
+        var result = await _sut.BuildAsync([employeeId], WeekHoliday, WeekHoliday, CancellationToken.None);
+
+        // The leave does not pay for a forfeited holiday: its one absence is booked all the same.
+        result.Inputs[employeeId].AbsenceDays.Should().Be(1m);
+        result.Inputs[employeeId].PremiumDays.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task BuildAsync_AForfeitedDoubleRegularHoliday_CoveredByApprovedPaidLeave_BooksOneAbsenceAndNoGuaranteedDay()
+    {
+        var employeeId = Guid.NewGuid();
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart));
+        SetupHolidays(TwoRegularHolidaysOn(WeekHoliday));
+        SetupRecordsInRange();
+        SetupLeaveInRange(LeaveOn(employeeId, WeekHoliday, paid: true));
+
+        var result = await _sut.BuildAsync([employeeId], WeekHoliday, WeekHoliday, CancellationToken.None);
+
+        result.Inputs[employeeId].AbsenceDays.Should().Be(1m);
+        result.Inputs[employeeId].PremiumDays.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task BuildAsync_AnEntitledRegularHoliday_CoveredByApprovedPaidLeave_BooksNoAbsence()
+    {
+        var employeeId = Guid.NewGuid();
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart));
+        SetupHolidays(RegularOn(WeekHoliday));
+        SetupRecordsInRange(PresentOn(employeeId, WeekTuesday));
+        SetupLeaveInRange(LeaveOn(employeeId, WeekHoliday, paid: true));
+
+        var result = await _sut.BuildAsync([employeeId], WeekHoliday, WeekHoliday, CancellationToken.None);
+
+        result.Inputs[employeeId].AbsenceDays.Should().Be(0m);
+        result.Inputs[employeeId].PremiumDays.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task BuildAsync_ARegularHolidayOnARestDay_AfterAnAbsentWorkday_IsUntouchedByTheDayBeforeRule()
+    {
+        var employeeId = Guid.NewGuid();
+        var saturday = new DateOnly(2026, 7, 11);   // a rest day; the Friday before has no record
+
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart));
+        SetupHolidays(RegularOn(saturday));
+        SetupRecordsInRange();
+
+        var result = await _sut.BuildAsync([employeeId], saturday, saturday, CancellationToken.None);
+
+        result.Inputs[employeeId].AbsenceDays.Should().Be(0m);
+        result.Inputs[employeeId].PremiumDays.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task BuildAsync_ADoubleRegularHolidayOnARestDay_AfterAnAbsentWorkday_KeepsItsGuaranteedDay()
+    {
+        var employeeId = Guid.NewGuid();
+        var saturday = new DateOnly(2026, 7, 11);   // a rest day; the Friday before has no record
+
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart));
+        SetupHolidays(TwoRegularHolidaysOn(saturday));
+        SetupRecordsInRange();
+
+        var result = await _sut.BuildAsync([employeeId], saturday, saturday, CancellationToken.None);
+
+        result.Inputs[employeeId].AbsenceDays.Should().Be(0m);
+        result.Inputs[employeeId].PremiumDays.Should().BeEquivalentTo(
+            [new PremiumDayInput(WorkDayType.DoubleRegularHolidayOnRestDay, UnworkedDays: 1m)]);
+    }
+
+    [Fact]
+    public async Task BuildAsync_RecordsBeforeThePeriod_AddNothingToThePeriodsFigures()
+    {
+        var employeeId = Guid.NewGuid();
+        var from = new DateOnly(2026, 7, 13);   // Monday
+        var to = new DateOnly(2026, 7, 14);     // Tuesday
+
+        SetupAssignmentsInRange(FixedAssignment(employeeId, ShiftStart));
+        // A worked regular holiday on Thursday Jul 9, before the period.
+        SetupHolidays(RegularOn(new DateOnly(2026, 7, 9)));
+        SetupRecordsInRange(
+            // Before the period: Thursday Jul 9 (a worked holiday) and Friday Jul 10, a late,
+            // short night shift. Wednesday Jul 8 has no record at all.
+            new AttendanceRecord
+            {
+                EmployeeId = employeeId, AttendanceDate = new DateOnly(2026, 7, 9), IsPresent = true,
+                LateMinutes = 30, UndertimeMinutes = 20,
+                TimeIn = new DateTime(2026, 7, 9, 22, 0, 0), TimeOut = new DateTime(2026, 7, 10, 6, 0, 0)
+            },
+            new AttendanceRecord
+            {
+                EmployeeId = employeeId, AttendanceDate = new DateOnly(2026, 7, 10), IsPresent = true,
+                LateMinutes = 40, UndertimeMinutes = 25,
+                TimeIn = new DateTime(2026, 7, 10, 22, 0, 0), TimeOut = new DateTime(2026, 7, 11, 6, 0, 0)
+            },
+            new AttendanceRecord { EmployeeId = employeeId, AttendanceDate = from, IsPresent = true, LateMinutes = 5, UndertimeMinutes = 3 },
+            new AttendanceRecord { EmployeeId = employeeId, AttendanceDate = to, IsPresent = true, LateMinutes = 5, UndertimeMinutes = 3 });
+
+        var result = await _sut.BuildAsync([employeeId], from, to, CancellationToken.None);
+
+        var input = result.Inputs[employeeId];
+        input.LateMinutes.Should().Be(10m);
+        input.UndertimeMinutes.Should().Be(6m);
+        input.NightDiffHours.Should().Be(0m);
+        input.AbsenceDays.Should().Be(0m);
+        input.PremiumDays.Should().BeEmpty();
+        input.HolidayRegularDays.Should().Be(0m);
+    }
 }
