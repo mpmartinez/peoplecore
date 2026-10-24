@@ -1,0 +1,114 @@
+@inject ApiClient Api
+
+@*
+    Everything the audit trail holds about one record - by its type and id - or about one employee,
+    which takes in every row that names them: their compensation, government IDs, leave, payroll
+    lines, account. Newest first; an entry opens in place to show what it changed.
+*@
+
+@if (_error is not null)
+{
+    <Alert Variant="destructive" Title="Couldn't load the history">@_error</Alert>
+}
+else if (_entries is null)
+{
+    <div class="p-6 flex justify-center"><Spinner /></div>
+}
+else if (_entries.Count == 0)
+{
+    <p class="p-4 text-center text-sm text-muted-foreground" data-history-empty>Nothing recorded yet.</p>
+}
+else
+{
+    <ol class="divide-y" data-record-history>
+        @foreach (var entry in _entries)
+        {
+            <li class="py-3" data-history-entry="@entry.Id">
+                <button type="button" class="w-full text-left" @onclick="() => Toggle(entry.Id)">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <Badge Variant="@AuditLabels.CategoryVariant(entry.Category)">@AuditLabels.Category(entry.Category)</Badge>
+                        @if (entry.Outcome == "Failure")
+                        {
+                            <Badge Variant="destructive">Failed</Badge>
+                        }
+                        <span class="font-medium">@AuditLabels.What(entry)</span>
+                        @if (entry.ChangeCount > 0)
+                        {
+                            <span class="text-xs text-muted-foreground">@entry.ChangeCount field(s)</span>
+                        }
+                    </div>
+                    <div class="mt-1 text-xs text-muted-foreground">
+                        @AuditLabels.When(entry.OccurredAt) · @AuditLabels.Actor(entry)
+                    </div>
+                </button>
+                @if (_open == entry.Id)
+                {
+                    <div class="mt-3 rounded-md border bg-muted/20 p-3">
+                        <AuditEntryDetail EntryId="@entry.Id" />
+                    </div>
+                }
+            </li>
+        }
+    </ol>
+    @if (_hasMore)
+    {
+        <div class="pt-3 text-center">
+            <Button Variant="outline" Size="sm" Disabled="@_loading" OnClick="LoadMore" data-history-more>Show older</Button>
+        </div>
+    }
+}
+
+@code {
+    private const int PageSize = 25;
+
+    [Parameter] public string? EntityType { get; set; }
+    [Parameter] public string? EntityId { get; set; }
+    [Parameter] public Guid? EmployeeId { get; set; }
+
+    private string? _key;
+    private List<AuditLogEntryDto>? _entries;
+    private int _page;
+    private bool _hasMore;
+    private bool _loading;
+    private long? _open;
+    private string? _error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var key = $"{EntityType}|{EntityId}|{EmployeeId}";
+        if (key == _key) return;
+        _key = key;
+        _entries = null;
+        _open = null;
+        _page = 0;
+        await LoadMore();
+    }
+
+    private async Task LoadMore()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            var page = await Api.GetAuditLogsAsync(new AuditLogQuery(
+                EntityType: EmployeeId is null ? EntityType : null,
+                EntityId: EmployeeId is null ? EntityId : null,
+                EmployeeId: EmployeeId,
+                Page: _page + 1,
+                PageSize: PageSize));
+            _page++;
+            (_entries ??= []).AddRange(page?.Items ?? []);
+            _hasMore = page is not null && _page < page.TotalPages;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void Toggle(long id) => _open = _open == id ? null : id;
+}

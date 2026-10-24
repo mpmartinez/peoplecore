@@ -1,4 +1,4 @@
-@page "/employees"
+﻿@page "/employees"
 @attribute [RequirePermission(Permissions.EmployeesViewAll)]
 @inject ApiClient Api
 @inject NavigationManager Nav
@@ -104,6 +104,9 @@
                                         <Button Variant="ghost" Size="sm" OnClick="() => GoToRecordSeparation(emp.Id)" data-record-separation="@emp.Id">Record separation</Button>
                                     }
                                     <Button Variant="ghost" Size="sm" OnClick="() => OpenCoeDialog(emp)" data-open-coe="@emp.Id">Certificate of Employment</Button>
+                                </PermissionView>
+                                <PermissionView AnyOf="@(new[] { Permissions.AuditView })">
+                                    <Button Variant="ghost" Size="sm" OnClick="() => _historyFor = emp" data-employee-history="@emp.Id">History</Button>
                                 </PermissionView>
                             </TableCell>
                         </TableRow>
@@ -302,6 +305,9 @@
 
 <TemporaryPasswordDialog Password="@_temporaryPassword" Email="@_temporaryPasswordFor" OnClosed="ClearTemporaryPassword" />
 
+<HistorySheet IsOpen="@(_historyFor is not null)" OnClose="@(() => _historyFor = null)"
+              Description="@_historyFor?.FullName" EmployeeId="@_historyFor?.Id" />
+
 <Dialog IsOpen="@(_coeFor is not null)" OnClose="CloseCoeDialog" Title="Certificate of Employment"
         Description="@(_coeFor?.FullName)" data-coe-dialog>
     <ChildContent>
@@ -362,6 +368,7 @@
     private string? _temporaryPassword;
     private string? _temporaryPasswordFor;
     private EmployeeListDto? _coeFor;
+    private EmployeeListDto? _historyFor;
     private CoeFormModel _coeForm = new();
     private string? _coeError;
     private bool _coeDownloading;

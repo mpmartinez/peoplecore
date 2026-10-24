@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -913,6 +913,31 @@ public class ApiClient
         return await response.Content.ReadAsByteArrayAsync();
     }
 
+    // Audit trail (audit.view)
+    public Task<PagedResult<AuditLogEntryDto>?> GetAuditLogsAsync(AuditLogQuery query)
+        => GetJsonAsync<PagedResult<AuditLogEntryDto>>($"api/audit-logs?{query.ToQueryString()}");
+
+    public Task<AuditLogDetailDto?> GetAuditLogAsync(long id)
+        => GetJsonAsync<AuditLogDetailDto>($"api/audit-logs/{id}");
+
+    public Task<AuditFacetsDto?> GetAuditFacetsAsync()
+        => GetJsonAsync<AuditFacetsDto>("api/audit-logs/facets");
+
+    /// <summary>Every entry the filters match, as CSV. Paging is ignored; the API caps the rows.</summary>
+    public async Task<byte[]> ExportAuditLogsAsync(AuditLogQuery query)
+    {
+        var response = await _http.GetAsync($"api/audit-logs/export?{(query with { Page = 1 }).ToQueryString()}");
+        await EnsureSuccessAsync(response);
+        return await response.Content.ReadAsByteArrayAsync();
+    }
+
+    /// <summary>Tells the API a session ended, for the audit trail. The token itself is dropped by the caller.</summary>
+    public async Task LogoutAsync()
+    {
+        var response = await _http.PostAsync("api/auth/logout", null);
+        await EnsureSuccessAsync(response);
+    }
+
     private static string MonthQuery(int? month) => month.HasValue ? $"&month={month}" : "";
 
     // Every JSON read and every command goes through these two rather than GetFromJsonAsync or
@@ -1588,3 +1613,43 @@ public record GovernmentReportSectionDto(string Title, IReadOnlyList<string> Col
 public record Bir2316ManualInputsDto(string? PrevEmployerTin, string? PrevEmployerName, string? PrevEmployerAddress,
     string? PrevEmployerZipCode, decimal Item22_PrevTaxableCompensation, decimal Item25B_PrevTaxWithheld,
     decimal Item27_PeraTaxCredit, decimal Item35_DeMinimis, decimal Item33_HazardPayMwe);
+
+// Audit trail - copies of PeopleCore.Application.Auditing.DTOs. Category and Outcome travel as names.
+public record AuditLogEntryDto(
+    long Id, DateTime OccurredAt, string Category, string Action, string? Summary, string Outcome, string? FailureReason,
+    string? UserId, string? UserEmail, string? ActorName, string? IpAddress, string? EntityType, string? EntityId,
+    Guid? SubjectEmployeeId, string? SubjectEmployeeName, int? StatusCode, string? CorrelationId, int ChangeCount);
+public record AuditFieldChangeDto(string Field, string? Old, string? New);
+public record AuditLogDetailDto(
+    AuditLogEntryDto Entry, string? UserAgent, string? HttpMethod, string? Path,
+    IReadOnlyList<AuditFieldChangeDto> Changes, IReadOnlyDictionary<string, string?> Metadata, IReadOnlyList<AuditLogEntryDto> Related);
+public record AuditFacetsDto(IReadOnlyList<string> EntityTypes, IReadOnlyList<string> Actions);
+
+/// <summary>The audit trail's filters, as the API's AuditLogFilter reads them from the query string.</summary>
+public record AuditLogQuery(
+    DateOnly? From = null, DateOnly? To = null, string? Category = null, string? Action = null,
+    string? EntityType = null, string? EntityId = null, Guid? EmployeeId = null, string? User = null,
+    string? Outcome = null, string? CorrelationId = null, string? Search = null, int Page = 1, int PageSize = 50)
+{
+    public string ToQueryString()
+    {
+        var parts = new List<string> { $"page={Page}", $"pageSize={PageSize}" };
+        if (From is { } from) parts.Add($"from={from:yyyy-MM-dd}");
+        if (To is { } to) parts.Add($"to={to:yyyy-MM-dd}");
+        if (EmployeeId is { } employee) parts.Add($"employeeId={employee}");
+        Add("category", Category);
+        Add("action", Action);
+        Add("entityType", EntityType);
+        Add("entityId", EntityId);
+        Add("user", User);
+        Add("outcome", Outcome);
+        Add("correlationId", CorrelationId);
+        Add("search", Search);
+        return string.Join('&', parts);
+
+        void Add(string name, string? value)
+        {
+            if (!string.IsNullOrWhiteSpace(value)) parts.Add($"{name}={Uri.EscapeDataString(value.Trim())}");
+        }
+    }
+}

@@ -1,4 +1,4 @@
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using Bunit;
 using Bunit.TestDoubles;
 using FluentAssertions;
@@ -57,7 +57,7 @@ public class NavMenuTests : BunitContext
     {
         var cut = RenderAs("Admin");
 
-        cut.FindAll("a[href]").Should().HaveCount(29);
+        cut.FindAll("a[href]").Should().HaveCount(30);
         Links(cut).Should().OnlyHaveUniqueItems();
     }
 
@@ -69,6 +69,15 @@ public class NavMenuTests : BunitContext
     public void TheUsersPage_IsListedOnlyForAdminAndHr(string role, bool listed)
     {
         Links(RenderAs(role)).Contains("/admin/users").Should().Be(listed);
+    }
+
+    [Theory]
+    [InlineData("Admin", true)]
+    [InlineData("HRManager", false)]
+    [InlineData("PayrollService", false)]
+    public void TheAuditTrail_IsListedOnlyForThoseWhoMayReadIt(string role, bool listed)
+    {
+        Links(RenderAs(role)).Contains("/admin/audit-trail").Should().Be(listed);
     }
 
     [Theory]

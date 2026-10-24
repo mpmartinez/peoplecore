@@ -1,8 +1,9 @@
-@inherits LayoutComponentBase
+﻿@inherits LayoutComponentBase
 @implements IAsyncDisposable
 @using PeopleCore.Web.Components.UI.Sidebar
 @inject PeopleCore.Web.Auth.JwtAuthStateProvider AuthProvider
 @inject NavigationManager Nav
+@inject ApiClient Api
 @inject IJSRuntime JS
 
 @*
@@ -156,6 +157,10 @@
 
     private async Task Logout()
     {
+        // Recorded in the audit trail; signing out never waits on it succeeding.
+        try { await Api.LogoutAsync(); }
+        catch { }
+
         await AuthProvider.LogoutAsync();
         Nav.NavigateTo("/login");
     }

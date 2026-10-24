@@ -1,4 +1,4 @@
-@page "/payroll-runs/{Id:guid}"
+﻿@page "/payroll-runs/{Id:guid}"
 @attribute [RequirePermission(Permissions.PayrollManage)]
 @inject ApiClient Api
 @inject NavigationManager Nav
@@ -66,6 +66,11 @@
                 </Button>
             }
         }
+        <PermissionView AnyOf="@(new[] { Permissions.AuditView })">
+            <Button Variant="outline" OnClick="@(() => _showHistory = true)" data-run-history>
+                <i class="bi bi-clock-history mr-1"></i> History
+            </Button>
+        </PermissionView>
     </Actions>
 </PageHeader>
 
@@ -321,7 +326,11 @@ else
              ConfirmText="Remove" ConfirmVariant="destructive" CancelText="Keep them"
              Loading="@_removing" OnConfirm="RemoveEmployee" OnCancel="@(() => _removingEmployee = null)" data-confirm-remove />
 
+<HistorySheet IsOpen="@_showHistory" OnClose="@(() => _showHistory = false)" Description="@_run?.RunNumber"
+              EntityType="PayrollRun" EntityId="@Id.ToString()" />
+
 @code {
+    private bool _showHistory;
     [Parameter] public Guid Id { get; set; }
 
     private PayrollRunDto? _run;

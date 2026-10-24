@@ -1,4 +1,4 @@
-@page "/separations/{Id:guid}"
+﻿@page "/separations/{Id:guid}"
 @attribute [RequirePermission(Permissions.EmployeesManage)]
 @inject ApiClient Api
 @inject NavigationManager Nav
@@ -35,6 +35,11 @@
             }
             <Button Variant="primary" Size="sm" OnClick="@(() => _confirmingMark = true)" Loading="@_marking" Disabled="@_marking" data-mark-separated>Mark separated</Button>
         }
+        <PermissionView AnyOf="@(new[] { Permissions.AuditView })">
+            <Button Variant="outline" Size="sm" OnClick="@(() => _showHistory = true)" data-separation-history>
+                <i class="bi bi-clock-history mr-1"></i> History
+            </Button>
+        </PermissionView>
     </Actions>
 </PageHeader>
 
@@ -207,7 +212,11 @@ else
              ConfirmText="Mark separated" ConfirmVariant="primary" CancelText="Keep as is"
              Loading="@_marking" OnConfirm="MarkSeparated" OnCancel="@(() => _confirmingMark = false)" data-confirm-mark-separated />
 
+<HistorySheet IsOpen="@_showHistory" OnClose="@(() => _showHistory = false)" Description="@_separation?.EmployeeName"
+              EntityType="Separation" EntityId="@Id.ToString()" />
+
 @code {
+    private bool _showHistory;
     [Parameter] public Guid Id { get; set; }
 
     [CascadingParameter] private Task<AuthenticationState>? AuthenticationState { get; set; }
