@@ -1,6 +1,6 @@
 # Audit trail - design
 
-Date: 2026-10-24. Status: approved in planning; being implemented.
+Date: 2026-10-24. Status: implemented.
 
 ## Why
 
@@ -61,17 +61,19 @@ Recorded by `IAuditTrail`, which writes through its own context so the record su
 request: sign-in succeeded and failed (with the reason - unknown email, inactive, wrong password,
 locked out - while the response stays the same 401), sign-out (new `POST api/auth/logout`, called by
 the web app), password changed, reset requested, reset done; account created, roles changed (added
-and removed), employee linked, deactivated, reactivated, password reset by an admin, and refusals;
-role created, changed (permissions added and removed), deleted; email settings changed; and every
-403 for a signed-in user.
+and removed), employee linked, deactivated, reactivated, password reset by an admin; role created,
+changed (permissions added and removed), deleted; and every 403 a permission policy gives a
+signed-in user. A refused account or role change (the management policy's 403) is recorded as a
+failed action by the filter below, with the policy's reason.
 
 ## Actions and access
 
 - A global filter records every POST, PUT, PATCH and DELETE as an `Action` with its outcome, status
   code, route and query values and, on failure, the error message. Request bodies are never stored.
-  `[AuditAs]` gives the important ones a readable name; the rest are named `Controller.Action`.
-  The auth, users and roles controllers opt out with `[SkipAuditAction]`, since they record richer
-  security events.
+  `[AuditAs]` gives the important ones a readable name (email settings among them); the rest are
+  named `Controller.Action`. Only the auth controller opts out with `[SkipAuditAction]`, since it
+  records richer security events; the users and roles controllers keep the action entry, which
+  carries every call's outcome, and add their security events on success.
 - `[AuditAccess]` on payslips, 2316s, government reports, the payroll export, COEs, documents,
   government IDs, compensation, final pay and the audit export records an `Access` row on success.
 
@@ -87,6 +89,9 @@ role created, changed (permissions added and removed), deleted; email settings c
 
 Children removed by a database cascade (an employee's government IDs when the employee is deleted)
 are not recorded one by one; the parent's Deleted row stands for them.
+
+A request the framework rejects before the action runs - a body that fails model binding, which
+`[ApiController]` answers with a 400 - leaves no action entry. Nothing was changed by it.
 
 ## Testing
 
