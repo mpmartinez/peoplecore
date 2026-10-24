@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using FluentAssertions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -98,6 +98,12 @@ public class PermissionEquivalenceTests
         ["RolesController.Create"] = [Permissions.RolesManage],
         ["RolesController.Update"] = [Permissions.RolesManage],
         ["RolesController.Delete"] = [Permissions.RolesManage],
+
+        // The audit trail holds salaries and government ID numbers as they were; only audit.view reads it.
+        ["AuditLogsController.Search"] = [Permissions.AuditView],
+        ["AuditLogsController.Get"] = [Permissions.AuditView],
+        ["AuditLogsController.Facets"] = [Permissions.AuditView],
+        ["AuditLogsController.Export"] = [Permissions.AuditView],
 
         ["EmailSettingsController.Get"] = [Permissions.SettingsManage],
         ["EmailSettingsController.Save"] = [Permissions.SettingsManage],

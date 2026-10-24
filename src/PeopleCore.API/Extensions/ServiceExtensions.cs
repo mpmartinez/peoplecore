@@ -12,6 +12,8 @@ using PeopleCore.API.Accounts;
 using PeopleCore.API.Auditing;
 using PeopleCore.API.Authorization;
 using PeopleCore.Application.Attendance.Interfaces;
+using PeopleCore.Application.Auditing.Interfaces;
+using PeopleCore.Application.Auditing.Services;
 using PeopleCore.Application.Attendance.Services;
 using PeopleCore.Application.Common.Auditing;
 using PeopleCore.Application.Common.Interfaces;
@@ -108,6 +110,8 @@ public static class ServiceExtensions
         services.AddScoped<IAuditContext, HttpAuditContext>();
         services.AddScoped<IAuditTrail, AuditTrail>();
         services.AddSingleton<IAuthorizationMiddlewareResultHandler, AccessDeniedAuditHandler>();
+        services.AddScoped<IAuditLogRepository, AuditLogRepository>();
+        services.AddScoped<IAuditLogQueryService, AuditLogQueryService>();
         services.AddScoped<IUserAccountDirectory, UserAccountDirectory>();
         services.AddScoped<IRolePermissionReader, RolePermissionReader>();
         services.AddScoped<IEmailSettingsStore, EmailSettingsStore>();
