@@ -9,6 +9,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Minio;
 using PeopleCore.API.Accounts;
+using PeopleCore.API.Auditing;
 using PeopleCore.API.Authorization;
 using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Application.Attendance.Services;
@@ -105,6 +106,8 @@ public static class ServiceExtensions
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
         services.AddScoped<IAuditContext, HttpAuditContext>();
+        services.AddScoped<IAuditTrail, AuditTrail>();
+        services.AddSingleton<IAuthorizationMiddlewareResultHandler, AccessDeniedAuditHandler>();
         services.AddScoped<IUserAccountDirectory, UserAccountDirectory>();
         services.AddScoped<IRolePermissionReader, RolePermissionReader>();
         services.AddScoped<IEmailSettingsStore, EmailSettingsStore>();

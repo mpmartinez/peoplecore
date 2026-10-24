@@ -1,3 +1,4 @@
+﻿using PeopleCore.API.Auditing;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
 using PeopleCore.API.Filters;
@@ -67,6 +68,7 @@ public class PayrollOpeningBalancesController : ControllerBase
     /// line and whose <c>errors</c> lists them ("Row {n}: {message}"). Otherwise 200 with the counts and
     /// each saved balance's warnings.
     /// </summary>
+    [AuditAs("opening-balances.imported", "Imported payroll opening balances", EntityType = "PayrollOpeningBalance")]
     [HttpPost("import")]
     [RequestSizeLimit(MaxImportRequestBytes)]
     [RequestFormLimits(MultipartBodyLengthLimit = MaxImportRequestBytes)]

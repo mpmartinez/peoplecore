@@ -1,4 +1,4 @@
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
@@ -18,6 +18,8 @@ namespace PeopleCore.Application.Tests.Api;
 /// </summary>
 public abstract class UsersControllerTestBase
 {
+    protected RecordingAuditTrail Audit { get; } = new();
+
     protected const string CallerId = "caller-0001";
     protected const string TargetId = "target-0001";
     protected static readonly Guid EmployeeId = Guid.Parse("9c4e1a7b-3d2f-4b8a-8e6c-0f5d2a9b7c44");
@@ -42,7 +44,7 @@ public abstract class UsersControllerTestBase
                     SeededRoles.PermissionsOf([name]), 0))
                 .ToList());
 
-        Sut = new UsersController(Users.Object, Directory.Object, Employees.Object, Roles.Object);
+        Sut = new UsersController(Users.Object, Directory.Object, Employees.Object, Roles.Object, Audit);
         SignInAs("Admin", "Employee");
     }
 

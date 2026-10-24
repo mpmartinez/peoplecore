@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Security.Claims;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
@@ -8,12 +8,15 @@ using PeopleCore.API.Authorization;
 using PeopleCore.API.Controllers.Account;
 using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Infrastructure.Identity;
+using PeopleCore.Application.Common.Auditing;
 using Xunit;
 
 namespace PeopleCore.Application.Tests.Api;
 
 public class RolesControllerTests
 {
+    private RecordingAuditTrail Audit { get; } = new();
+
     private const string CallerId = "caller-1";
 
     private readonly Mock<IRoleCatalog> _catalog = new();
@@ -36,7 +39,7 @@ public class RolesControllerTests
                 .ReturnsAsync((string id, CancellationToken _) => _roles.SingleOrDefault(r => r.Id == id));
         _editor.Setup(e => e.CreateAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
                .ReturnsAsync("recruiter");
-        _sut = new RolesController(_catalog.Object, _editor.Object, _directory.Object);
+        _sut = new RolesController(_catalog.Object, _editor.Object, _directory.Object, Audit);
         SignInAs(["Admin", "Employee"], Permissions.AllKeys.ToArray());
     }
 
@@ -267,5 +270,36 @@ public class RolesControllerTests
     public async Task Delete_OfASystemRole_IsRefused()
     {
         Detail(await _sut.Delete("admin", CancellationToken.None), 403).Should().Be("System roles can't be changed.");
+    }
+
+    // ── The audit trail ──────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ChangingARole_RecordsThePermissionsAddedAndRemoved()
+    {
+        _directory.Setup(d => d.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                  .ReturnsAsync(new UserAccountRow(CallerId, "me@company.test", null, null, ["Admin", "Employee"], true, false, null, null));
+
+        await _sut.Update("payroll", new SaveRoleRequest("Payroll", "Pays.", [Permissions.RecruitmentManage]), CancellationToken.None);
+
+        var entry = Audit.Events.Should().ContainSingle().Subject;
+        entry.Action.Should().Be(AuditActions.RoleUpdated);
+        entry.EntityId.Should().Be("payroll");
+        entry.Metadata.Should().BeEquivalentTo(new
+        {
+            PermissionsAdded = new[] { Permissions.RecruitmentManage },
+            PermissionsRemoved = new[] { Permissions.PayrollManage },
+        });
+    }
+
+    [Fact]
+    public async Task ARefusedRoleChange_RecordsNoSecurityEvent()
+    {
+        // The action filter records the refused call; nothing changed, so nothing else is said.
+        SignInAs(["Delegates", "Employee"], [Permissions.RolesManage]);
+
+        await _sut.Update("payroll", new SaveRoleRequest("Payroll", "Pays.", []), CancellationToken.None);
+
+        Audit.Events.Should().BeEmpty();
     }
 }

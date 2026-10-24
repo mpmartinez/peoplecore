@@ -7,14 +7,19 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using PeopleCore.API.Accounts;
 using PeopleCore.API.Extensions;
+using PeopleCore.API.Auditing;
+using PeopleCore.Application.Common.Auditing;
 using PeopleCore.Application.Common.Authorization;
+using PeopleCore.Domain.Enums;
 using PeopleCore.Infrastructure.Email;
 using PeopleCore.Infrastructure.Identity;
 
 namespace PeopleCore.API.Controllers.Auth;
 
+// Records its own security events, richer than the action filter's.
 [ApiController]
 [Route("api/auth")]
+[SkipAuditAction]
 public class AuthController : ControllerBase
 {
     private readonly UserManager<ApplicationUser> _userManager;
@@ -25,6 +30,7 @@ public class AuthController : ControllerBase
     private readonly IEmailSettingsStore _mailSettings;
     private readonly IResetRequestThrottle _throttle;
     private readonly ILogger<AuthController> _log;
+    private readonly IAuditTrail _audit;
 
     public AuthController(
         UserManager<ApplicationUser> userManager,
@@ -34,7 +40,8 @@ public class AuthController : ControllerBase
         IEmailSender email,
         IEmailSettingsStore mailSettings,
         IResetRequestThrottle throttle,
-        ILogger<AuthController> log)
+        ILogger<AuthController> log,
+        IAuditTrail audit)
     {
         _userManager = userManager;
         _signInManager = signInManager;
@@ -44,6 +51,7 @@ public class AuthController : ControllerBase
         _mailSettings = mailSettings;
         _throttle = throttle;
         _log = log;
+        _audit = audit;
     }
 
     [AllowAnonymous]
@@ -53,12 +61,27 @@ public class AuthController : ControllerBase
         var user = await _userManager.FindByEmailAsync(request.Email);
         // A deactivated account gets the same answer as a wrong password, so the response never
         // confirms that an email belongs to an account. Checked before the password so a
-        // deactivated account's lockout counter is left alone.
-        if (user is null || !user.IsActive) return Unauthorized(new { message = "Invalid credentials." });
+        // deactivated account's lockout counter is left alone. Only the audit trail is told which.
+        if (user is null)
+            return await LoginFailedAsync(null, request.Email, "No account has this email address.");
+        if (!user.IsActive)
+            return await LoginFailedAsync(user, request.Email, "The account is deactivated.");
 
         var result = await _signInManager.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
-        if (!result.Succeeded) return Unauthorized(new { message = "Invalid credentials." });
+        if (!result.Succeeded)
+            return await LoginFailedAsync(user, request.Email,
+                result.IsLockedOut ? "The account is locked out after too many incorrect passwords."
+                : result.IsNotAllowed ? "The account is not allowed to sign in."
+                : "Incorrect password.");
 
+        await _audit.RecordAsync(new AuditEvent(AuditCategory.Security, AuditActions.LoginSucceeded, "Signed in")
+        {
+            UserId = user.Id,
+            UserEmail = user.Email,
+            EntityType = "UserAccount",
+            EntityId = user.Id,
+            SubjectEmployeeId = user.EmployeeId,
+        });
         return Ok(await IssueTokenAsync(user));
     }
 
@@ -82,13 +105,29 @@ public class AuthController : ControllerBase
 
         var check = await _signInManager.CheckPasswordSignInAsync(user, request.CurrentPassword, lockoutOnFailure: true);
         if (check.IsLockedOut)
+        {
+            await PasswordChangeFailedAsync(user, "The account is locked out after too many incorrect passwords.");
             return PasswordProblem("Too many incorrect attempts. Your account is locked for a few minutes; try again later.");
+        }
         if (!check.Succeeded)
+        {
+            await PasswordChangeFailedAsync(user, "Incorrect current password.");
             return PasswordProblem("Your current password is incorrect.");
+        }
 
         var result = await _userManager.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
         if (!result.Succeeded)
-            return PasswordProblem(string.Join(" ", result.Errors.Select(e => e.Description)));
+        {
+            var errors = string.Join(" ", result.Errors.Select(e => e.Description));
+            await PasswordChangeFailedAsync(user, errors);
+            return PasswordProblem(errors);
+        }
+        await _audit.RecordAsync(new AuditEvent(AuditCategory.Security, AuditActions.PasswordChanged, "Changed own password")
+        {
+            EntityType = "UserAccount",
+            EntityId = user.Id,
+            SubjectEmployeeId = user.EmployeeId,
+        });
 
         // ChangePasswordAsync has just replaced the security stamp, revoking the token this request
         // came with. Hand back a fresh one so the user stays signed in.
@@ -117,6 +156,7 @@ public class AuthController : ControllerBase
         if (email.Length == 0 || !_throttle.TryRequest(email, caller))
         {
             _log.LogInformation("Password reset not sent: empty address or rate limit reached.");
+            await ResetRequestedAsync(null, email, "Not sent: no address given, or too many requests.");
             return Ok(new { message = ResetRequested });
         }
 
@@ -124,6 +164,7 @@ public class AuthController : ControllerBase
         if (user is null || !user.IsActive)
         {
             _log.LogInformation("Password reset not sent: no active account for the address given.");
+            await ResetRequestedAsync(user, email, "Not sent: no active account has this address.");
             return Ok(new { message = ResetRequested });
         }
 
@@ -133,6 +174,7 @@ public class AuthController : ControllerBase
         if (account is null)
         {
             _log.LogWarning("Password reset not sent for {UserId}: no email account is configured.", user.Id);
+            await ResetRequestedAsync(user, email, "Not sent: no email account is configured.");
             return Ok(new { message = ResetRequested });
         }
 
@@ -144,11 +186,13 @@ public class AuthController : ControllerBase
         {
             await _email.SendAsync(PasswordResetMail.For(user.Email!, user.FirstName ?? string.Empty, link), CancellationToken.None);
             _log.LogInformation("Password reset link sent to {UserId}.", user.Id);
+            await ResetRequestedAsync(user, email, failure: null);
         }
         catch (Exception ex)
         {
             // The user is told nothing either way; an administrator finds out here.
             _log.LogError(ex, "Sending the password reset link to {UserId} failed.", user.Id);
+            await ResetRequestedAsync(user, email, "Not sent: the email could not be delivered.");
         }
 
         return Ok(new { message = ResetRequested });
@@ -161,13 +205,26 @@ public class AuthController : ControllerBase
         var user = await _userManager.FindByEmailAsync((request.Email ?? string.Empty).Trim());
         // An address with no account is answered like a stale link, so a link is not a way to ask
         // whether an account exists either.
-        if (user is null || !user.IsActive || string.IsNullOrEmpty(request.Token)) return StaleLink();
+        if (user is null || !user.IsActive || string.IsNullOrEmpty(request.Token))
+        {
+            await ResetFailedAsync(user, request.Email,
+                user is null ? "No account has this email address."
+                : !user.IsActive ? "The account is deactivated."
+                : "The link carried no token.");
+            return StaleLink();
+        }
 
         var result = await _userManager.ResetPasswordAsync(user, request.Token, request.NewPassword ?? string.Empty);
         if (!result.Succeeded)
         {
-            if (result.Errors.Any(e => e.Code == "InvalidToken")) return StaleLink();
-            return PasswordProblem(string.Join(" ", result.Errors.Select(e => e.Description)));
+            if (result.Errors.Any(e => e.Code == "InvalidToken"))
+            {
+                await ResetFailedAsync(user, request.Email, "The link has expired or was already used.");
+                return StaleLink();
+            }
+            var errors = string.Join(" ", result.Errors.Select(e => e.Description));
+            await ResetFailedAsync(user, request.Email, errors);
+            return PasswordProblem(errors);
         }
 
         // ResetPasswordAsync has replaced the security stamp, so every token issued before now is
@@ -181,7 +238,32 @@ public class AuthController : ControllerBase
             _log.LogWarning("Password reset for {UserId} succeeded, but clearing its lockout and flags did not save.", user.Id);
 
         _log.LogInformation("Password reset completed for {UserId}.", user.Id);
+        await _audit.RecordAsync(new AuditEvent(AuditCategory.Security, AuditActions.PasswordReset, "Reset password from an emailed link")
+        {
+            UserId = user.Id,
+            UserEmail = user.Email,
+            EntityType = "UserAccount",
+            EntityId = user.Id,
+            SubjectEmployeeId = user.EmployeeId,
+        });
         return Ok(new { message = "Your password has been changed. Sign in with your new password." });
+    }
+
+    /// <summary>
+    /// The token is stateless and simply dropped by the client, so this changes nothing on the
+    /// server. It is here so the audit trail can say when a session ended.
+    /// </summary>
+    [Authorize]
+    [AllowDuringPasswordChange]
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout()
+    {
+        await _audit.RecordAsync(new AuditEvent(AuditCategory.Security, AuditActions.Logout, "Signed out")
+        {
+            EntityType = "UserAccount",
+            EntityId = User.FindFirstValue(ClaimTypes.NameIdentifier),
+        });
+        return NoContent();
     }
 
     /// <summary>Lets the login page hide the link rather than send people to a page that cannot deliver.</summary>
@@ -189,6 +271,58 @@ public class AuthController : ControllerBase
     [HttpGet("password-reset-available")]
     public async Task<IActionResult> PasswordResetAvailable(CancellationToken ct) =>
         Ok(new { available = await _mailSettings.GetAccountAsync(ct) is not null });
+
+    private async Task<IActionResult> LoginFailedAsync(ApplicationUser? user, string? email, string reason)
+    {
+        await _audit.RecordAsync(AuditEvent.Failed(AuditCategory.Security, AuditActions.LoginFailed, "Sign-in failed", reason) with
+        {
+            UserId = user?.Id,
+            UserEmail = Clip(user?.Email ?? email),
+            EntityType = user is null ? null : "UserAccount",
+            EntityId = user?.Id,
+            SubjectEmployeeId = user?.EmployeeId,
+            StatusCode = StatusCodes.Status401Unauthorized,
+        });
+        return Unauthorized(new { message = "Invalid credentials." });
+    }
+
+    private Task PasswordChangeFailedAsync(ApplicationUser user, string reason) =>
+        _audit.RecordAsync(AuditEvent.Failed(AuditCategory.Security, AuditActions.PasswordChangeFailed, "Password change failed", reason) with
+        {
+            EntityType = "UserAccount",
+            EntityId = user.Id,
+            SubjectEmployeeId = user.EmployeeId,
+        });
+
+    private Task ResetRequestedAsync(ApplicationUser? user, string email, string? failure) =>
+        _audit.RecordAsync(new AuditEvent(AuditCategory.Security, AuditActions.PasswordResetRequested,
+            failure is null ? "Password reset link sent" : "Password reset requested")
+        {
+            Outcome = failure is null ? AuditOutcome.Success : AuditOutcome.Failure,
+            FailureReason = failure,
+            UserId = user?.Id,
+            UserEmail = Clip(user?.Email ?? email),
+            EntityType = user is null ? null : "UserAccount",
+            EntityId = user?.Id,
+            SubjectEmployeeId = user?.EmployeeId,
+        });
+
+    private Task ResetFailedAsync(ApplicationUser? user, string? email, string reason) =>
+        _audit.RecordAsync(AuditEvent.Failed(AuditCategory.Security, AuditActions.PasswordResetFailed, "Password reset failed", reason) with
+        {
+            UserId = user?.Id,
+            UserEmail = Clip(user?.Email ?? email),
+            EntityType = user is null ? null : "UserAccount",
+            EntityId = user?.Id,
+            SubjectEmployeeId = user?.EmployeeId,
+        });
+
+    /// <summary>An address typed into a form is kept as given, trimmed and never longer than the column.</summary>
+    private static string? Clip(string? email)
+    {
+        var trimmed = email?.Trim();
+        return trimmed is { Length: > 256 } ? trimmed[..256] : trimmed;
+    }
 
     private BadRequestObjectResult StaleLink() =>
         BadRequest(new ProblemDetails

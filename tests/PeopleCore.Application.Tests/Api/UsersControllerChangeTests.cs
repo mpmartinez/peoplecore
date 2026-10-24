@@ -1,8 +1,9 @@
-using FluentAssertions;
+﻿using FluentAssertions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 using PeopleCore.API.Controllers.Account;
+using PeopleCore.Application.Common.Auditing;
 using PeopleCore.Infrastructure.Identity;
 using Xunit;
 
@@ -325,5 +326,30 @@ public class UsersControllerChangeTests : UsersControllerTestBase
              .ReturnsAsync(IdentityResult.Failed(new IdentityError { Description = "Could not save." }));
 
         BadRequestDetail(await Sut.ResetPassword(TargetId, CancellationToken.None)).Should().Be("Could not save.");
+    }
+
+    // --- The audit trail ------------------------------------------------------------------------
+
+    [Fact]
+    public async Task SetRoles_RecordsTheRolesAddedAndRemoved()
+    {
+        Account("Employee", "PayrollService");
+
+        await Sut.SetRoles(TargetId, new SetRolesRequest(["Manager"]), CancellationToken.None);
+
+        var entry = Audit.Events.Should().ContainSingle().Subject;
+        entry.Action.Should().Be(AuditActions.AccountRolesChanged);
+        entry.EntityId.Should().Be(TargetId);
+        entry.Metadata.Should().BeEquivalentTo(new { Added = new[] { "Manager" }, Removed = new[] { "PayrollService" } });
+    }
+
+    [Fact]
+    public async Task Deactivating_IsRecorded()
+    {
+        Account("Employee");
+
+        await Sut.Deactivate(TargetId, CancellationToken.None);
+
+        Audit.Events.Should().ContainSingle().Which.Action.Should().Be(AuditActions.AccountDeactivated);
     }
 }

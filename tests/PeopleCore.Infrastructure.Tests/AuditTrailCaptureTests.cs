@@ -1,11 +1,13 @@
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using PeopleCore.Application.Common.Auditing;
 using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Payroll;
 using PeopleCore.Domain.Entities.System;
 using PeopleCore.Domain.Enums;
+using PeopleCore.Infrastructure.Auditing;
 using PeopleCore.Infrastructure.Identity;
 using PeopleCore.Infrastructure.Persistence.Repositories;
 
@@ -279,5 +281,29 @@ public class AuditTrailCaptureTests : DatabaseTestBase
         removed.UserId.Should().Be("user-1");
         trail.Where(a => a.EntityType == nameof(PayrollRunEmployee) && a.Action == "Created")
             .Should().HaveCount(2, "the original line and its recomputed replacement");
+    }
+
+    [Fact]
+    public async Task AnExplicitEventIsWrittenAtOnceWithoutSavingTheRequestsPendingChanges()
+    {
+        await using var request = NewContext(new FakeAuditContext());
+        request.Employees.Add(AnEmployee());   // pending, never saved
+
+        var trail = new AuditTrail(ContextOptions, new FakeAuditContext(), NullLogger<AuditTrail>.Instance);
+        await trail.RecordAsync(AuditEvent.Failed(AuditCategory.Security, AuditActions.LoginFailed, "Sign-in failed", "Incorrect password.") with
+        {
+            UserEmail = "someone@example.com",
+            Metadata = new { Attempt = 3 },
+        });
+
+        var entry = (await TrailAsync()).Should().ContainSingle().Subject;
+        entry.Action.Should().Be(AuditActions.LoginFailed);
+        entry.Outcome.Should().Be(AuditOutcome.Failure);
+        entry.FailureReason.Should().Be("Incorrect password.");
+        entry.UserEmail.Should().Be("someone@example.com", "an address the event names wins over the request's");
+        entry.UserId.Should().Be("user-1");
+        entry.IpAddress.Should().Be("203.0.113.7");
+        entry.Metadata.Should().Contain("\"attempt\": 3");
+        (await NewContext().Employees.CountAsync()).Should().Be(0);
     }
 }

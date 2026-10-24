@@ -1,3 +1,4 @@
+﻿using PeopleCore.API.Auditing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
@@ -82,6 +83,7 @@ public class AttendanceCorrectionsController : ControllerBase
         return StatusCode(201, await _service.RequestAsync(employeeId, dto, Actor, ct));
     }
 
+    [AuditAs("attendance-correction.approved", "Approved an attendance correction", EntityType = "AttendanceCorrection")]
     [HttpPut("{id:guid}/approve")]
     [RequirePermission(Permissions.ApprovalsTeam, Permissions.ApprovalsAll)]
     public async Task<IActionResult> Approve(Guid id, CancellationToken ct = default)
@@ -91,6 +93,7 @@ public class AttendanceCorrectionsController : ControllerBase
         return Ok(await _service.ApproveAsync(id, approver, Actor, ct));
     }
 
+    [AuditAs("attendance-correction.rejected", "Rejected an attendance correction", EntityType = "AttendanceCorrection")]
     [HttpPut("{id:guid}/reject")]
     [RequirePermission(Permissions.ApprovalsTeam, Permissions.ApprovalsAll)]
     public async Task<IActionResult> Reject(Guid id, [FromBody] RejectAttendanceCorrectionDto dto, CancellationToken ct = default)

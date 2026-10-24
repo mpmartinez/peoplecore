@@ -1,3 +1,4 @@
+﻿using PeopleCore.API.Auditing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
@@ -25,6 +26,7 @@ public class PayrollSettingsController : ControllerBase
         => Ok(await _service.GetDefaultAsync(ct));
 
     /// <summary>Changes the settings row payroll computes from; it keeps its own company.</summary>
+    [AuditAs("payroll-settings.saved", "Changed the payroll settings", EntityType = "PayrollSettings")]
     [HttpPut("default")]
     public async Task<IActionResult> UpdateDefault([FromBody] PayrollSettingsDto dto, CancellationToken ct = default)
     {
@@ -36,6 +38,7 @@ public class PayrollSettingsController : ControllerBase
     public async Task<IActionResult> GetByCompany(Guid companyId, CancellationToken ct = default)
         => Ok(await _service.GetAsync(companyId, ct));
 
+    [AuditAs("payroll-settings.saved", "Changed the payroll settings", EntityType = "PayrollSettings", IdRoute = "companyId")]
     [HttpPut("{companyId:guid}")]
     public async Task<IActionResult> Update(Guid companyId, [FromBody] PayrollSettingsDto dto, CancellationToken ct = default)
     {

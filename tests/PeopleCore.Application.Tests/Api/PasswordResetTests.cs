@@ -1,4 +1,4 @@
-using FluentAssertions;
+﻿using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -19,6 +19,8 @@ namespace PeopleCore.Application.Tests.Api;
 /// </summary>
 public class PasswordResetTests
 {
+    private RecordingAuditTrail Audit { get; } = new();
+
     private const string Email = "ana@company.test";
     private const string Answer = "If that address has an account, we've sent a link to reset the password.";
 
@@ -54,7 +56,7 @@ public class PasswordResetTests
 
         _sut = new AuthController(_users.Object, signIn.Object, TestJwtConfiguration.Create(),
             Mock.Of<IRolePermissionReader>(), _email.Object, _mailSettings.Object, _throttle.Object,
-            NullLogger<AuthController>.Instance)
+            NullLogger<AuthController>.Instance, Audit)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };

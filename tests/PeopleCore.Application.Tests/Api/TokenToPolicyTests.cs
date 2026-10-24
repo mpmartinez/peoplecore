@@ -1,4 +1,4 @@
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using FluentAssertions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -49,7 +49,7 @@ public class TokenToPolicyTests
 
         var sut = new AuthController(users.Object, signIn.Object, TestJwtConfiguration.Create(), permissionReader.Object,
             Mock.Of<IEmailSender>(), Mock.Of<IEmailSettingsStore>(), Mock.Of<IResetRequestThrottle>(),
-            NullLogger<AuthController>.Instance);
+            NullLogger<AuthController>.Instance, new RecordingAuditTrail());
 
         var result = await sut.Login(new LoginRequest(Email, Password));
         var session = result.Should().BeOfType<Microsoft.AspNetCore.Mvc.OkObjectResult>()

@@ -1,3 +1,4 @@
+﻿using PeopleCore.API.Auditing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
@@ -21,6 +22,7 @@ public class LeaveAccrualsController : ControllerBase
         _access = access;
     }
 
+    [AuditAs("leave-accrual.run", "Ran leave accruals by hand", EntityType = "LeaveAccrual")]
     [HttpPost("run-manual")]
     [RequirePermission(Permissions.LeaveRunAccruals)]
     public async Task<IActionResult> RunAccrualsAsync([FromQuery] int year, [FromQuery] int month, CancellationToken ct = default)

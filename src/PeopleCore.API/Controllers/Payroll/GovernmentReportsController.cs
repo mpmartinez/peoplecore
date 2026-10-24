@@ -1,3 +1,4 @@
+﻿using PeopleCore.API.Auditing;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
 using PeopleCore.Application.Common.Authorization;
@@ -20,6 +21,7 @@ public class GovernmentReportsController : ControllerBase
 
     public GovernmentReportsController(IGovernmentReportService service) => _service = service;
 
+    [AuditAccess("government-report.viewed", "Viewed a government report", EntityType = "GovernmentReport", IdRoute = "report")]
     [HttpGet("{report}")]
     public async Task<IActionResult> Get(string report, [FromQuery] int year, [FromQuery] int? month,
         [FromQuery] string? format, CancellationToken ct)

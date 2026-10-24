@@ -1,13 +1,15 @@
-using System.Net.Mail;
+﻿using System.Net.Mail;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Accounts;
 using PeopleCore.API.Authorization;
+using PeopleCore.Application.Common.Auditing;
 using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Application.Common.DTOs;
 using PeopleCore.Application.Employees.Interfaces;
+using PeopleCore.Domain.Enums;
 using PeopleCore.Infrastructure.Identity;
 
 namespace PeopleCore.API.Controllers.Account;
@@ -17,6 +19,8 @@ namespace PeopleCore.API.Controllers.Account;
 /// they may sign in at all. Whether the caller may make a given change is
 /// <see cref="AccountManagementPolicy"/>'s decision; this controller asks, then acts. Every change
 /// replaces the account's security stamp, which revokes the tokens that account already holds.
+/// Each change that goes through is recorded in the audit trail as a security event; the action
+/// filter records every call's outcome, refusals included.
 /// </summary>
 [ApiController]
 [RequirePermission(Permissions.UsersManage)]
@@ -29,14 +33,17 @@ public class UsersController : ControllerBase
     private readonly IUserAccountDirectory _directory;
     private readonly IEmployeeRepository _employees;
     private readonly IRoleCatalog _roles;
+    private readonly IAuditTrail _audit;
 
     public UsersController(
-        UserManager<ApplicationUser> users, IUserAccountDirectory directory, IEmployeeRepository employees, IRoleCatalog roles)
+        UserManager<ApplicationUser> users, IUserAccountDirectory directory, IEmployeeRepository employees, IRoleCatalog roles,
+        IAuditTrail audit)
     {
         _users = users;
         _directory = directory;
         _employees = employees;
         _roles = roles;
+        _audit = audit;
     }
 
     [HttpGet]
@@ -115,6 +122,11 @@ public class UsersController : ControllerBase
                   $"and removing it failed ({Describe(deleted)}). Delete or fix it before trying again.");
         }
 
+        await _audit.RecordAsync(AccountEvent(AuditActions.AccountCreated, $"Created the account {email}", user) with
+        {
+            Metadata = new { Email = email, Roles = roles, user.EmployeeId },
+        });
+
         var row = await _directory.GetAsync(user.Id, ct);
         return CreatedAtAction(nameof(Get), new { id = user.Id }, new CreatedUserAccountDto(ToDto(row!, catalog), password));
     }
@@ -162,6 +174,11 @@ public class UsersController : ControllerBase
         // change that never happened.
         if (!added && toRemove.Count == 0) return await AccountAsync(user.Id, ct);
 
+        // The roles are saved by now; what follows only revokes the account's tokens.
+        await _audit.RecordAsync(AccountEvent(AuditActions.AccountRolesChanged, $"Changed the roles of {user.Email}", user) with
+        {
+            Metadata = new { Added = toAdd, Removed = toRemove },
+        });
         return await SaveAndRevokeAsync(user, ct);
     }
 
@@ -178,8 +195,16 @@ public class UsersController : ControllerBase
             return AccountProblem(linkProblem);
 
         // The employee_id claim in the account's tokens is now wrong, so they are revoked too.
+        var before = user.EmployeeId;
         user.EmployeeId = request.EmployeeId;
-        return await SaveAndRevokeAsync(user, ct);
+        return await SaveAndRevokeAsync(user, ct,
+            AccountEvent(AuditActions.AccountEmployeeLinked,
+                request.EmployeeId is null ? $"Unlinked {user.Email} from its employee" : $"Linked {user.Email} to an employee",
+                user) with
+            {
+                SubjectEmployeeId = request.EmployeeId ?? before,
+                Metadata = new { Before = before, After = request.EmployeeId },
+            });
     }
 
     [HttpPost("{id}/deactivate")]
@@ -214,6 +239,7 @@ public class UsersController : ControllerBase
         var saved = await _users.UpdateSecurityStampAsync(user);
         if (!saved.Succeeded) return AccountProblem(Describe(saved));
 
+        await _audit.RecordAsync(AccountEvent(AuditActions.AccountPasswordReset, $"Issued a temporary password to {user.Email}", user));
         return Ok(new TemporaryPasswordDto(password));
     }
 
@@ -256,19 +282,31 @@ public class UsersController : ControllerBase
         if (!decision.Allowed) return Refused(decision);
 
         user.IsActive = active;
-        return await SaveAndRevokeAsync(user, ct);
+        return await SaveAndRevokeAsync(user, ct, active
+            ? AccountEvent(AuditActions.AccountReactivated, $"Reactivated {user.Email}", user)
+            : AccountEvent(AuditActions.AccountDeactivated, $"Deactivated {user.Email}", user));
     }
 
     /// <summary>
     /// Replaces the security stamp, which revokes every token the account holds. UpdateSecurityStampAsync
     /// saves the whole user, so any field set just before it is written in the same update.
     /// </summary>
-    private async Task<ActionResult<UserAccountDto>> SaveAndRevokeAsync(ApplicationUser user, CancellationToken ct)
+    private async Task<ActionResult<UserAccountDto>> SaveAndRevokeAsync(
+        ApplicationUser user, CancellationToken ct, AuditEvent? record = null)
     {
         var saved = await _users.UpdateSecurityStampAsync(user);
         if (!saved.Succeeded) return AccountProblem(Describe(saved));
+        if (record is not null) await _audit.RecordAsync(record);
         return await AccountAsync(user.Id, ct);
     }
+
+    private static AuditEvent AccountEvent(string action, string summary, ApplicationUser user) =>
+        new(AuditCategory.Security, action, summary)
+        {
+            EntityType = "UserAccount",
+            EntityId = user.Id,
+            SubjectEmployeeId = user.EmployeeId,
+        };
 
     private Task<int> ActiveAdminsAsync(CancellationToken ct) => _directory.CountActiveInRoleAsync(SeededRoles.Admin, ct);
 

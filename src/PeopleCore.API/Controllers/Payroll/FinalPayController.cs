@@ -1,3 +1,4 @@
+﻿using PeopleCore.API.Auditing;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
 using PeopleCore.Application.Common.Authorization;
@@ -21,6 +22,7 @@ public class FinalPayController : ControllerBase
 
     public FinalPayController(IFinalPayService service) => _service = service;
 
+    [AuditAccess("final-pay.viewed", "Viewed a final pay", EntityType = "Separation", IdRoute = "separationId")]
     [HttpGet]
     public async Task<ActionResult<FinalPaySummaryDto>> Get(Guid separationId, CancellationToken ct = default)
     {
@@ -28,6 +30,7 @@ public class FinalPayController : ControllerBase
         return summary is null ? NotFound() : Ok(summary);
     }
 
+    [AuditAs("final-pay.created", "Created a final pay", EntityType = "Separation", IdRoute = "separationId")]
     [HttpPost]
     public async Task<ActionResult<FinalPaySummaryDto>> Create(
         Guid separationId, FinalPayRequest request, CancellationToken ct = default)
@@ -36,6 +39,7 @@ public class FinalPayController : ControllerBase
         return CreatedAtAction(nameof(Get), new { separationId }, summary);
     }
 
+    [AuditAs("final-pay.updated", "Changed a final pay", EntityType = "Separation", IdRoute = "separationId")]
     [HttpPut]
     public async Task<ActionResult<FinalPaySummaryDto>> Update(
         Guid separationId, FinalPayRequest request, CancellationToken ct = default)

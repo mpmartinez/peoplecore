@@ -1,3 +1,4 @@
+﻿using PeopleCore.API.Auditing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
@@ -40,6 +41,7 @@ public class Bir2316Controller : ControllerBase
     /// Bir2316.razor page loads before the user changes anything, and exactly what
     /// <see cref="Generate"/> would produce with those same saved inputs.
     /// </summary>
+    [AuditAccess("bir2316.viewed", "Viewed a BIR 2316", EntityType = "Employee", IdRoute = "employeeId", EmployeeRoute = "employeeId")]
     [HttpGet("preview/{employeeId:guid}")]
     public async Task<ActionResult<Bir2316Dto>> GetPreview(
         Guid employeeId, [FromQuery] int year, CancellationToken ct = default)
@@ -71,6 +73,7 @@ public class Bir2316Controller : ControllerBase
     /// exact parameter type by reflection, so either change fails the build with an explanation.
     /// </para>
     /// </summary>
+    [AuditAccess("bir2316.generated", "Generated a BIR 2316", EntityType = "Employee", IdRoute = "employeeId", EmployeeRoute = "employeeId")]
     [HttpPost("generate/{employeeId:guid}")]
     public async Task<IActionResult> Generate(
         Guid employeeId, [FromQuery] int year, [FromBody] Bir2316ManualInputs manual, CancellationToken ct = default)
@@ -100,6 +103,7 @@ public class Bir2316Controller : ControllerBase
     /// stays a thin dispatch to Application either way.
     /// </para>
     /// </summary>
+    [AuditAccess("bir2316.generated-all", "Generated every employee's BIR 2316")]
     [HttpPost("generate-all")]
     public async Task<IActionResult> GenerateAll([FromQuery] int year, CancellationToken ct = default)
     {
@@ -118,6 +122,7 @@ public class Bir2316Controller : ControllerBase
     }
 
     /// <summary>The 2316 inputs saved for the employee and year, or empty ones when none are.</summary>
+    [AuditAccess("bir2316.inputs-viewed", "Viewed BIR 2316 inputs", EntityType = "Employee", IdRoute = "employeeId", EmployeeRoute = "employeeId")]
     [HttpGet("inputs/{employeeId:guid}")]
     public async Task<ActionResult<Bir2316ManualInputs>> GetInputs(Guid employeeId, [FromQuery] int year, CancellationToken ct = default)
         => Ok(await _service.GetInputsAsync(employeeId, year, ct));
