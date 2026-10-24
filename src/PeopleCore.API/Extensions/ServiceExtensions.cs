@@ -12,6 +12,7 @@ using PeopleCore.API.Accounts;
 using PeopleCore.API.Authorization;
 using PeopleCore.Application.Attendance.Interfaces;
 using PeopleCore.Application.Attendance.Services;
+using PeopleCore.Application.Common.Auditing;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Application.Common.Options;
 using PeopleCore.Application.Employees.Coe;
@@ -41,6 +42,7 @@ using PeopleCore.Application.Scheduling.Interfaces;
 using PeopleCore.Application.Scheduling.Services;
 using PeopleCore.Domain.Interfaces;
 using PeopleCore.Domain.Entities.Recruitment;
+using PeopleCore.Infrastructure.Auditing;
 using PeopleCore.Infrastructure.Identity;
 using PeopleCore.Infrastructure.BackgroundJobs;
 using PeopleCore.Infrastructure.DataProtection;
@@ -102,6 +104,7 @@ public static class ServiceExtensions
 
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
+        services.AddScoped<IAuditContext, HttpAuditContext>();
         services.AddScoped<IUserAccountDirectory, UserAccountDirectory>();
         services.AddScoped<IRolePermissionReader, RolePermissionReader>();
         services.AddScoped<IEmailSettingsStore, EmailSettingsStore>();

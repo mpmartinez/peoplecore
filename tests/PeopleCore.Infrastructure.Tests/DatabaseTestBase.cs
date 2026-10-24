@@ -1,3 +1,5 @@
+using Microsoft.EntityFrameworkCore;
+using PeopleCore.Application.Common.Auditing;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Organization;
@@ -31,6 +33,10 @@ public abstract class DatabaseTestBase : IAsyncLifetime
     protected AppDbContext NewContext() => _fixture.CreateContext();
 
     protected AppDbContext NewContext(ICurrentUserService? currentUser) => _fixture.CreateContext(currentUser);
+
+    protected AppDbContext NewContext(IAuditContext auditContext) => _fixture.CreateContext(null, auditContext);
+
+    protected DbContextOptions<AppDbContext> ContextOptions => _fixture.Options;
 
     // ── Seed helpers ─────────────────────────────────────────────────────────
     // Only the columns the schema requires are set. EmployeeNumber is unique and WorkEmail is

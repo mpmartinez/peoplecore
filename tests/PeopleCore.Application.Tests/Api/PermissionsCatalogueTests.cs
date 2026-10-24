@@ -18,7 +18,7 @@ public class PermissionsCatalogueTests
             "attendance.manage", "attendance.device-sync", "leave.manage", "leave.run-accruals",
             "approvals.team", "approvals.all", "performance.manage", "payroll.manage",
             "recruitment.manage", "scheduling.manage", "analytics.hr", "analytics.executive",
-            "users.manage", "roles.manage", "settings.manage");
+            "users.manage", "roles.manage", "settings.manage", "audit.view");
     }
 
     [Fact]

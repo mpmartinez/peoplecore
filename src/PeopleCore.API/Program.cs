@@ -124,6 +124,9 @@ app.MapControllers();
 // Seed roles and default admin on first run
 using (var scope = app.Services.CreateScope())
 {
+    // Resolved before the context so the context is built with it: what the seeding writes is
+    // recorded in the audit trail as the startup seed's doing.
+    scope.ServiceProvider.GetRequiredService<PeopleCore.Application.Common.Auditing.IAuditContext>().SystemActor = "Startup seed";
     var dbContext = scope.ServiceProvider.GetRequiredService<PeopleCore.Infrastructure.Persistence.AppDbContext>();
 
     // Apply pending migrations. The catch is SPMS.Training's: a transaction-mode connection

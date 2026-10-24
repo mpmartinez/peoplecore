@@ -1,5 +1,6 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using PeopleCore.Application.Common.Auditing;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Infrastructure.Persistence;
 
@@ -56,15 +57,13 @@ public sealed class PostgresFixture : IAsyncLifetime
 
     public AppDbContext CreateContext() => CreateContext(currentUser: null);
 
-    public AppDbContext CreateContext(ICurrentUserService? currentUser)
-    {
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(ConnectionFor(TestDatabase))
-            .UseSnakeCaseNamingConvention()
-            .Options;
+    public AppDbContext CreateContext(ICurrentUserService? currentUser, IAuditContext? auditContext = null)
+        => new(Options, currentUser, auditContext);
 
-        return new AppDbContext(options, currentUser);
-    }
+    public DbContextOptions<AppDbContext> Options => new DbContextOptionsBuilder<AppDbContext>()
+        .UseNpgsql(ConnectionFor(TestDatabase))
+        .UseSnakeCaseNamingConvention()
+        .Options;
 
     /// <summary>
     /// Empties every mapped table. Isolation is not optional: GetLastRegularSequenceAsync and

@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using PeopleCore.Application.Common.Auditing;
 using PeopleCore.Application.Common.Interfaces;
 using PeopleCore.Domain.Entities;
 using PeopleCore.Domain.Entities.Attendance;
@@ -12,6 +13,8 @@ using PeopleCore.Domain.Entities.Performance;
 using PeopleCore.Domain.Entities.Recruitment;
 using PeopleCore.Domain.Entities.Scheduling;
 using PeopleCore.Domain.Entities.System;
+using PeopleCore.Domain.Enums;
+using PeopleCore.Infrastructure.Auditing;
 using PeopleCore.Infrastructure.Identity;
 
 namespace PeopleCore.Infrastructure.Persistence;
@@ -19,13 +22,22 @@ namespace PeopleCore.Infrastructure.Persistence;
 public class AppDbContext : IdentityDbContext<ApplicationUser, ApplicationRole, string>, IDataProtectionKeyContext
 {
     private readonly ICurrentUserService? _currentUser;
+    private readonly IAuditContext? _auditContext;
 
-    // currentUser is optional so design-time tooling and the startup seeder, which have no
-    // HTTP context, can still construct the context. Audit columns are left null in that case.
-    public AppDbContext(DbContextOptions<AppDbContext> options, ICurrentUserService? currentUser = null)
+    /// <summary>Set while the audit entries of a save are written, so that save is not audited in turn.</summary>
+    private bool _writingAuditTrail;
+
+    // currentUser and auditContext are optional so design-time tooling and the startup seeder,
+    // which have no HTTP context, can still construct the context. Audit columns are left null in
+    // that case, and the audit trail names the actor "System".
+    public AppDbContext(
+        DbContextOptions<AppDbContext> options,
+        ICurrentUserService? currentUser = null,
+        IAuditContext? auditContext = null)
         : base(options)
     {
         _currentUser = currentUser;
+        _auditContext = auditContext;
     }
 
     // Organization
@@ -90,6 +102,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, ApplicationRole, 
     /// <summary>The Data Protection key ring. In the database so reset links survive a restart.</summary>
     public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
 
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<EmailSettings> EmailSettings => Set<EmailSettings>();
 
     protected override void OnModelCreating(ModelBuilder builder)
@@ -98,16 +111,120 @@ public class AppDbContext : IdentityDbContext<ApplicationUser, ApplicationRole, 
         builder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
     }
 
-    public override int SaveChanges()
+    // The parameterless SaveChanges overloads both end up here, as do Identity's stores.
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
+        if (_writingAuditTrail)
+            return base.SaveChanges(acceptAllChangesOnSuccess);
+
+        AuditChangeCollector.RefuseAuditLogChanges(ChangeTracker);
         StampAuditColumns();
-        return base.SaveChanges();
+        ChangeTracker.DetectChanges();
+        var pending = AuditChangeCollector.Collect(ChangeTracker);
+        if (pending.Count == 0)
+            return base.SaveChanges(acceptAllChangesOnSuccess);
+
+        // Usually every key is known before the insert, and the entries go out in the same save as
+        // the change. Not when acceptAllChangesOnSuccess is false: the second save below would
+        // write the change again.
+        if (!acceptAllChangesOnSuccess || !pending.Any(p => p.KeyIsGenerated))
+        {
+            AddAuditEntries(pending);
+            return base.SaveChanges(acceptAllChangesOnSuccess);
+        }
+
+        // A key the database generates is known only after the insert, so the entries follow in a
+        // second save. The change and its entries still commit together: a transaction the caller
+        // opened is joined, otherwise this save opens its own.
+        using var tx = Database.CurrentTransaction is null ? Database.BeginTransaction() : null;
+        var saved = base.SaveChanges(acceptAllChangesOnSuccess);
+        WriteAuditEntries(pending);
+        tx?.Commit();
+        return saved;
     }
 
-    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
+        if (_writingAuditTrail)
+            return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+
+        AuditChangeCollector.RefuseAuditLogChanges(ChangeTracker);
         StampAuditColumns();
-        return base.SaveChangesAsync(cancellationToken);
+        ChangeTracker.DetectChanges();
+        var pending = await AuditChangeCollector.CollectAsync(ChangeTracker, cancellationToken);
+        if (pending.Count == 0)
+            return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+
+        if (!acceptAllChangesOnSuccess || !pending.Any(p => p.KeyIsGenerated))
+        {
+            AddAuditEntries(pending);
+            return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        }
+
+        await using var tx = Database.CurrentTransaction is null
+            ? await Database.BeginTransactionAsync(cancellationToken)
+            : null;
+        var saved = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        await WriteAuditEntriesAsync(pending, cancellationToken);
+        if (tx is not null)
+            await tx.CommitAsync(cancellationToken);
+        return saved;
+    }
+
+    /// <summary>
+    /// Records a change made outside the change tracker - an <c>ExecuteUpdate</c> or
+    /// <c>ExecuteDelete</c> - with the context's actor. Saved by the next SaveChanges.
+    /// </summary>
+    public void RecordUntrackedChange(
+        string action, string entityType, string? entityId, string summary,
+        Guid? subjectEmployeeId = null,
+        IReadOnlyList<AuditFieldChange>? changes = null,
+        object? metadata = null)
+    {
+        AuditLogs.Add(AuditActor.Stamp(new AuditLog
+        {
+            Category = AuditCategory.DataChange,
+            Action = action,
+            EntityType = entityType,
+            EntityId = entityId,
+            Summary = summary,
+            SubjectEmployeeId = subjectEmployeeId,
+            Changes = AuditJson.Serialize(changes),
+            Metadata = AuditJson.Serialize(metadata),
+        }, _auditContext));
+    }
+
+    // The second save of a change with a generated key (role permissions have an identity key):
+    // by now the key is assigned and the change's own entries are no longer pending.
+    private void WriteAuditEntries(List<PendingDataChange> pending)
+    {
+        AddAuditEntries(pending);
+        _writingAuditTrail = true;
+        try { base.SaveChanges(true); }
+        finally { _writingAuditTrail = false; }
+    }
+
+    private async Task WriteAuditEntriesAsync(List<PendingDataChange> pending, CancellationToken ct)
+    {
+        AddAuditEntries(pending);
+        _writingAuditTrail = true;
+        try { await base.SaveChangesAsync(true, ct); }
+        finally { _writingAuditTrail = false; }
+    }
+
+    private void AddAuditEntries(List<PendingDataChange> pending)
+    {
+        var autoDetect = ChangeTracker.AutoDetectChangesEnabled;
+        ChangeTracker.AutoDetectChangesEnabled = false;
+        try
+        {
+            foreach (var change in pending)
+                AuditLogs.Add(change.ToAuditLog(_auditContext));
+        }
+        finally
+        {
+            ChangeTracker.AutoDetectChangesEnabled = autoDetect;
+        }
     }
 
     private void StampAuditColumns()

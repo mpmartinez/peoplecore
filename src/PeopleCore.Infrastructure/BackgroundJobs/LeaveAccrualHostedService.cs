@@ -1,6 +1,7 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using PeopleCore.Application.Common.Auditing;
 using PeopleCore.Application.Leave.Interfaces;
 
 namespace PeopleCore.Infrastructure.BackgroundJobs;
@@ -21,7 +22,7 @@ public class LeaveAccrualHostedService : BackgroundService
         // Catch up current month on startup
         try
         {
-            using var scope = _scopeFactory.CreateScope();
+            using var scope = CreateJobScope();
             var service = scope.ServiceProvider.GetRequiredService<ILeaveAccrualService>();
             var now = DateTime.UtcNow;
             await service.RunAccrualsAsync(now.Year, now.Month, stoppingToken);
@@ -43,7 +44,7 @@ public class LeaveAccrualHostedService : BackgroundService
 
             try
             {
-                using var scope = _scopeFactory.CreateScope();
+                using var scope = CreateJobScope();
                 var service = scope.ServiceProvider.GetRequiredService<ILeaveAccrualService>();
                 await service.RunAccrualsAsync(nextMonth.Year, nextMonth.Month, stoppingToken);
                 _logger.LogInformation("Leave accrual completed for {Year}-{Month}", nextMonth.Year, nextMonth.Month);
@@ -53,5 +54,13 @@ public class LeaveAccrualHostedService : BackgroundService
                 _logger.LogError(ex, "Leave accrual job failed for {Year}-{Month}", nextMonth.Year, nextMonth.Month);
             }
         }
+    }
+
+    /// <summary>A scope whose writes the audit trail attributes to this job.</summary>
+    private IServiceScope CreateJobScope()
+    {
+        var scope = _scopeFactory.CreateScope();
+        scope.ServiceProvider.GetRequiredService<IAuditContext>().SystemActor = "Leave accrual job";
+        return scope;
     }
 }
