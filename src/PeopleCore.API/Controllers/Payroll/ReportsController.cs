@@ -1,3 +1,4 @@
+﻿using PeopleCore.API.Auditing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
@@ -35,6 +36,7 @@ public class ReportsController : ControllerBase
     }
 
     /// <summary>HR/payroll staff pulling a named employee's payslip - the employee id here is a route parameter on purpose, restricted to callers who run payroll.</summary>
+    [AuditAccess("payslip.downloaded", "Downloaded a payslip", EntityType = "PayrollRun", IdRoute = "runId", EmployeeRoute = "employeeId")]
     [HttpGet("payslip/{runId:guid}/{employeeId:guid}")]
     [RequirePermission(Permissions.PayrollManage)]
     public async Task<IActionResult> GetPayslip(Guid runId, Guid employeeId, CancellationToken ct = default)
@@ -51,6 +53,7 @@ public class ReportsController : ControllerBase
     }
 
     /// <summary>HR/payroll staff pulling the whole run merged into one PDF - restricted to callers who run payroll.</summary>
+    [AuditAccess("payslips.downloaded", "Downloaded every payslip of a run", EntityType = "PayrollRun", IdRoute = "runId")]
     [HttpGet("payslips/{runId:guid}")]
     [RequirePermission(Permissions.PayrollManage)]
     public async Task<IActionResult> GetRunPayslips(Guid runId, CancellationToken ct = default)
@@ -74,6 +77,7 @@ public class ReportsController : ControllerBase
     /// editing a GUID in the URL. If a future feature needs a payslip for someone other than the
     /// caller, that belongs on GetPayslip above, behind the payroll-role check, not here.
     /// </summary>
+    [AuditAccess("payslip.downloaded-own", "Downloaded own payslip", EntityType = "PayrollRun", IdRoute = "runId", SubjectIsCaller = true)]
     [HttpGet("my-payslip/{runId:guid}")]
     [Authorize]
     public async Task<IActionResult> GetMyPayslip(Guid runId, CancellationToken ct = default)
@@ -99,6 +103,7 @@ public class ReportsController : ControllerBase
     /// exactly that id - returning another employee's net pay here would leak compensation just
     /// as surely as serving their PDF would.
     /// </summary>
+    [AuditAccess("payslips.listed-own", "Viewed own payslips", SubjectIsCaller = true)]
     [HttpGet("my-payslips")]
     [Authorize]
     public async Task<IActionResult> GetMyPayslips(CancellationToken ct = default)

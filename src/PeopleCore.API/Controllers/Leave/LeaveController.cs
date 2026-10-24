@@ -1,3 +1,4 @@
+﻿using PeopleCore.API.Auditing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
@@ -169,6 +170,7 @@ public class LeaveController : ControllerBase
     /// a direct report's, and confidential leave only <c>approvals.all</c>. The caller's own
     /// request is left to the service, which refuses it with its reason.
     /// </summary>
+    [AuditAs("leave-request.approved", "Approved a leave request", EntityType = "LeaveRequest")]
     [HttpPut("leave-requests/{id:guid}/approve")]
     [RequirePermission(Permissions.ApprovalsTeam, Permissions.ApprovalsAll)]
     public async Task<IActionResult> Approve(Guid id, CancellationToken ct = default)
@@ -181,6 +183,7 @@ public class LeaveController : ControllerBase
     }
 
     /// <summary>Held to the same rules as <see cref="Approve"/>.</summary>
+    [AuditAs("leave-request.rejected", "Rejected a leave request", EntityType = "LeaveRequest")]
     [HttpPut("leave-requests/{id:guid}/reject")]
     [RequirePermission(Permissions.ApprovalsTeam, Permissions.ApprovalsAll)]
     public async Task<IActionResult> Reject(Guid id, [FromBody] RejectLeaveDto dto, CancellationToken ct = default)
@@ -211,6 +214,7 @@ public class LeaveController : ControllerBase
     /// service's "only your own" check, which then compared the request against whoever the caller
     /// claimed to be. The canceller is now the employee in the caller's employee_id claim.
     /// </summary>
+    [AuditAs("leave-request.cancelled", "Cancelled a leave request", EntityType = "LeaveRequest")]
     [HttpPut("leave-requests/{id:guid}/cancel")]
     public async Task<IActionResult> Cancel(Guid id, CancellationToken ct = default)
     {
@@ -253,6 +257,7 @@ public class LeaveController : ControllerBase
     /// Hands back a presigned storage URL, so who may open it is decided HERE - once issued, the URL
     /// is a bearer token for the file that carries no identity of its own.
     /// </summary>
+    [AuditAccess("leave-document.downloaded", "Downloaded a leave request's document", EntityType = "LeaveRequest", IdRoute = "id")]
     [HttpGet("leave-requests/{id:guid}/document")]
     public async Task<IActionResult> GetDocument(Guid id, CancellationToken ct = default)
     {

@@ -1,0 +1,30 @@
+@*
+    A record's or an employee's audit history in a side panel, with a link to the full Audit Trail
+    page scoped to it. Callers wrap the button that opens it in PermissionView AnyOf=AuditView.
+*@
+
+<Sheet IsOpen="@IsOpen" IsOpenChanged="@(v => { if (!v) OnClose.InvokeAsync(); })" OnClose="OnClose"
+       Title="History" Description="@Description" Side="right" Class="sm:max-w-xl" data-history-sheet>
+    <ChildContent>
+        @if (IsOpen)
+        {
+            <RecordHistory EntityType="@EntityType" EntityId="@EntityId" EmployeeId="@EmployeeId" />
+        }
+    </ChildContent>
+    <FooterContent>
+        <a href="@TrailHref" class="text-sm text-primary underline-offset-4 hover:underline" data-open-trail>Open in Audit Trail</a>
+    </FooterContent>
+</Sheet>
+
+@code {
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public string? Description { get; set; }
+    [Parameter] public string? EntityType { get; set; }
+    [Parameter] public string? EntityId { get; set; }
+    [Parameter] public Guid? EmployeeId { get; set; }
+
+    private string TrailHref => EmployeeId is { } employee
+        ? $"/admin/audit-trail?employeeId={employee}"
+        : $"/admin/audit-trail?entityType={Uri.EscapeDataString(EntityType ?? "")}&entityId={Uri.EscapeDataString(EntityId ?? "")}";
+}

@@ -1,11 +1,13 @@
-using System.Buffers;
+﻿using System.Buffers;
 using System.Globalization;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Accounts;
 using PeopleCore.API.Authorization;
+using PeopleCore.Application.Common.Auditing;
 using PeopleCore.Application.Common.Authorization;
+using PeopleCore.Domain.Enums;
 using PeopleCore.Infrastructure.Identity;
 
 namespace PeopleCore.API.Controllers.Account;
@@ -14,6 +16,7 @@ namespace PeopleCore.API.Controllers.Account;
 /// Roles: what each allows, and who may change them. Whether the caller may make a change is
 /// <see cref="RoleManagementPolicy"/>'s decision; this controller validates, asks, then writes.
 /// Changing a role's permissions signs out everyone who holds it (see <see cref="IRoleEditor"/>).
+/// Each change is recorded in the audit trail with the permissions it added and removed.
 /// </summary>
 [ApiController]
 [RequirePermission(Permissions.RolesManage)]
@@ -25,12 +28,14 @@ public class RolesController : ControllerBase
     private readonly IRoleCatalog _catalog;
     private readonly IRoleEditor _editor;
     private readonly IUserAccountDirectory _directory;
+    private readonly IAuditTrail _audit;
 
-    public RolesController(IRoleCatalog catalog, IRoleEditor editor, IUserAccountDirectory directory)
+    public RolesController(IRoleCatalog catalog, IRoleEditor editor, IUserAccountDirectory directory, IAuditTrail audit)
     {
         _catalog = catalog;
         _editor = editor;
         _directory = directory;
+        _audit = audit;
     }
 
     [HttpGet]
@@ -56,6 +61,10 @@ public class RolesController : ControllerBase
         if (await _editor.NameTakenAsync(name, exceptRoleId: null, ct)) return RoleProblem($"A role called {name} already exists.");
 
         var id = await _editor.CreateAsync(name, description, permissions, ct);
+        await _audit.RecordAsync(RoleEvent(AuditActions.RoleCreated, $"Created the role {name}", id) with
+        {
+            Metadata = new { Name = name, Description = description, Permissions = permissions },
+        });
         var created = await _catalog.GetAsync(id, ct);
         return CreatedAtAction(nameof(Get), new { id }, ToDto(created!));
     }
@@ -79,6 +88,18 @@ public class RolesController : ControllerBase
         if (await _editor.NameTakenAsync(name, exceptRoleId: id, ct)) return RoleProblem($"A role called {name} already exists.");
 
         await _editor.UpdateAsync(id, name, description, permissions, ct);
+        await _audit.RecordAsync(RoleEvent(AuditActions.RoleUpdated, $"Changed the role {name}", id) with
+        {
+            Metadata = new
+            {
+                NameBefore = role.Name,
+                NameAfter = name,
+                DescriptionBefore = role.Description,
+                DescriptionAfter = description,
+                PermissionsAdded = permissions.Except(role.Permissions).ToList(),
+                PermissionsRemoved = role.Permissions.Except(permissions).ToList(),
+            },
+        });
         return Ok(ToDto((await _catalog.GetAsync(id, ct))!));
     }
 
@@ -97,8 +118,15 @@ public class RolesController : ControllerBase
                 : $"{role.AccountCount} accounts still have {role.Name} — remove it from them first.");
 
         await _editor.DeleteAsync(id, ct);
+        await _audit.RecordAsync(RoleEvent(AuditActions.RoleDeleted, $"Deleted the role {role.Name}", id) with
+        {
+            Metadata = new { role.Name, role.Permissions },
+        });
         return NoContent();
     }
+
+    private static AuditEvent RoleEvent(string action, string summary, string roleId) =>
+        new(AuditCategory.Security, action, summary) { EntityType = "Role", EntityId = roleId };
 
     private AccountActor Caller => new(
         User.FindFirstValue(ClaimTypes.NameIdentifier) ?? string.Empty,

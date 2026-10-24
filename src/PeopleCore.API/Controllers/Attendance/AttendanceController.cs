@@ -1,3 +1,4 @@
+﻿using PeopleCore.API.Auditing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
@@ -101,6 +102,7 @@ public class AttendanceController : ControllerBase
         return Ok(await _service.GetSummaryAsync(employeeId, from, to, ct));
     }
 
+    [AuditAs("attendance.device-synced", "Synced clock-ins from a device", EntityType = "AttendanceRecord")]
     [HttpPost("sync")]
     [RequirePermission(Permissions.AttendanceDeviceSync)]
     public async Task<IActionResult> Sync(
@@ -114,6 +116,7 @@ public class AttendanceController : ControllerBase
     /// row the parser refuses, or a punch for nobody, is reported in <c>errors</c> and counted in
     /// <c>skipped</c>.
     /// </summary>
+    [AuditAs("attendance.imported", "Imported attendance", EntityType = "AttendanceRecord")]
     [HttpPost("import")]
     [RequirePermission(Permissions.AttendanceManage)]
     [RequestSizeLimit(MaxImportBytes)]

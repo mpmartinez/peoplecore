@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using PeopleCore.Application.Payroll.Interfaces;
 using PeopleCore.Domain.Entities.Employees;
 using PeopleCore.Domain.Entities.Payroll;
@@ -390,6 +390,13 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
         if (linked == 0)
             throw new DomainException("This separation already has a final-pay run.");
 
+        // The tracker never saw that update, so it is recorded here.
+        Context.RecordUntrackedChange(
+            "Updated", nameof(Separation), separation.Id.ToString(), "Separation linked to its final pay run",
+            subjectEmployeeId: separation.EmployeeId,
+            changes: [new(nameof(Separation.FinalPayRunId), null, run.Id)]);
+        await Context.SaveChangesAsync(ct);
+
         await tx.CommitAsync(ct);
     }
 
@@ -400,9 +407,17 @@ public class PayrollRunRepository : Repository<PayrollRun>, IPayrollRunRepositor
         // with no entries at all. Deleting the entries cascades to their loan deduction lines and premium days.
         await using var tx = await Context.Database.BeginTransactionAsync(ct);
 
-        await Context.PayrollRunEmployees
+        var removed = await Context.PayrollRunEmployees
             .Where(e => e.PayrollRunId == run.Id)
             .ExecuteDeleteAsync(ct);
+
+        // The delete bypasses the tracker, so it is recorded here: one entry for the run. Each line
+        // it removed was recorded as created when it was computed, so its values are still there.
+        if (removed > 0)
+            Context.RecordUntrackedChange(
+                "LinesRemoved", nameof(PayrollRun), run.Id.ToString(),
+                $"{removed} payroll line(s) removed to be recomputed",
+                metadata: new { LinesRemoved = removed });
 
         // ExecuteDeleteAsync bypasses the change tracker, so the deleted entries are still
         // attached to run.Employees. Detach them before adding the replacements, or EF will

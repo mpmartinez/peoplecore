@@ -1,3 +1,4 @@
+﻿using PeopleCore.API.Auditing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
@@ -100,6 +101,7 @@ public class EmployeesController : ControllerBase
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateEmployeeDto dto, CancellationToken ct)
         => Ok(await _service.UpdateAsync(id, dto, ct));
 
+    [AuditAs("employee.deactivated", "Deactivated an employee", EntityType = "Employee")]
     [HttpPut("{id:guid}/deactivate")]
     [RequirePermission(Permissions.EmployeesManage)]
     public async Task<IActionResult> Deactivate(Guid id, [FromBody] DeactivateEmployeeRequest request, CancellationToken ct)
@@ -109,6 +111,7 @@ public class EmployeesController : ControllerBase
     }
 
     /// <summary>SSS/TIN/PhilHealth/Pag-IBIG numbers. HR may read anyone's; everybody else only their own.</summary>
+    [AuditAccess("government-ids.viewed", "Viewed an employee's government IDs", EntityType = "Employee", IdRoute = "id", EmployeeRoute = "id")]
     [HttpGet("{id:guid}/government-ids")]
     public async Task<IActionResult> GetGovernmentIds(Guid id, CancellationToken ct)
     {
@@ -124,6 +127,7 @@ public class EmployeesController : ControllerBase
     /// employee's government IDs, while simultaneously locking a Manager out of editing their
     /// own. The ownership check below is the real boundary; the role list was never one.
     /// </summary>
+    [AuditAs("government-ids.saved", "Saved an employee's government IDs", EntityType = "Employee")]
     [HttpPut("{id:guid}/government-ids")]
     public async Task<IActionResult> UpsertGovernmentId(Guid id, [FromBody] UpsertGovernmentIdDto dto, CancellationToken ct)
     {
@@ -187,6 +191,7 @@ public class EmployeesController : ControllerBase
     /// Hands back a presigned storage URL, so the ownership check has to happen HERE - once the
     /// URL is issued it is a bearer token for the file that carries no identity of its own.
     /// </summary>
+    [AuditAccess("employee-document.downloaded", "Downloaded an employee document", EntityType = "EmployeeDocument", IdRoute = "documentId", EmployeeRoute = "id")]
     [HttpGet("{id:guid}/documents/{documentId:guid}/download")]
     public async Task<IActionResult> GetDownloadUrl(Guid id, Guid documentId, CancellationToken ct)
     {
@@ -206,6 +211,7 @@ public class EmployeesController : ControllerBase
     }
 
     /// <summary>A Certificate of Employment for a current or former employee.</summary>
+    [AuditAccess("coe.generated", "Generated a certificate of employment", EntityType = "Employee", IdRoute = "id", EmployeeRoute = "id")]
     [HttpPost("{id:guid}/coe")]
     [RequirePermission(Permissions.EmployeesManage)]
     public async Task<IActionResult> Coe(Guid id, [FromBody] CoeRequest request, CancellationToken ct)

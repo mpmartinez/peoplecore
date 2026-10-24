@@ -28,13 +28,14 @@ public static class Permissions
     public const string UsersManage = "users.manage";
     public const string RolesManage = "roles.manage";
     public const string SettingsManage = "settings.manage";
+    public const string AuditView = "audit.view";
 
     public static readonly IReadOnlyList<string> AllKeys =
     [
         EmployeesViewAll, EmployeesManage, OrganizationManage, OrganizationDelete, AttendanceManage,
         AttendanceDeviceSync, LeaveManage, LeaveRunAccruals, ApprovalsTeam, ApprovalsAll,
         PerformanceManage, PayrollManage, RecruitmentManage, SchedulingManage, AnalyticsHr,
-        AnalyticsExecutive, UsersManage, RolesManage, SettingsManage,
+        AnalyticsExecutive, UsersManage, RolesManage, SettingsManage, AuditView,
     ];
 
     /// <summary>

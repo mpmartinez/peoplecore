@@ -1,7 +1,8 @@
-using System.Net.Mail;
+﻿using System.Net.Mail;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
+using PeopleCore.API.Auditing;
 using PeopleCore.API.Authorization;
 using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Infrastructure.Email;
@@ -38,7 +39,9 @@ public class EmailSettingsController : ControllerBase
     public async Task<ActionResult<EmailSettingsDto>> Get(CancellationToken ct) =>
         await _store.GetViewAsync(ct) is { } view ? Ok(ToDto(view)) : NoContent();
 
+    // The data-change entry for the row says what changed; the password only that it did.
     [HttpPut]
+    [AuditAs("settings.email-changed", "Changed the email settings", EntityType = "EmailSettings")]
     public async Task<ActionResult<EmailSettingsDto>> Save([FromBody] SaveEmailSettingsRequest request, CancellationToken ct)
     {
         if (Validate(request) is { } problem) return SettingsProblem(problem);

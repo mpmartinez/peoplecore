@@ -1,0 +1,37 @@
+@*
+    The fields a data change touched, before and after. A secret's value is never sent: it reads
+    "(changed)".
+*@
+
+@if (Changes.Count == 0)
+{
+    <p class="text-sm text-muted-foreground" data-no-changes>No field changes recorded.</p>
+}
+else
+{
+    <div class="overflow-x-auto rounded-md border">
+        <table class="w-full text-sm" data-audit-changes>
+            <thead class="bg-muted/50 text-left text-muted-foreground">
+                <tr>
+                    <th class="px-3 py-2 font-medium">Field</th>
+                    <th class="px-3 py-2 font-medium">Before</th>
+                    <th class="px-3 py-2 font-medium">After</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var change in Changes)
+                {
+                    <tr class="border-t align-top" data-change="@change.Field">
+                        <td class="px-3 py-2 font-medium whitespace-nowrap">@AuditLabels.Humanize(change.Field)</td>
+                        <td class="px-3 py-2 break-all text-muted-foreground">@(change.Old ?? "—")</td>
+                        <td class="px-3 py-2 break-all">@(change.New ?? "—")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<AuditFieldChangeDto> Changes { get; set; } = [];
+}

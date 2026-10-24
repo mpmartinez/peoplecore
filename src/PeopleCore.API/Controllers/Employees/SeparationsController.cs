@@ -1,3 +1,4 @@
+﻿using PeopleCore.API.Auditing;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
 using PeopleCore.Application.Common.Authorization;
@@ -33,6 +34,7 @@ public class SeparationsController : ControllerBase
         return dto is null ? NotFound() : Ok(dto);
     }
 
+    [AuditAs("separation.recorded", "Recorded a separation", EntityType = "Separation")]
     [HttpPost]
     public async Task<ActionResult<SeparationDto>> Record(RecordSeparationRequest request, CancellationToken ct = default)
     {
@@ -40,10 +42,12 @@ public class SeparationsController : ControllerBase
         return CreatedAtAction(nameof(Get), new { id = dto.Id }, dto);
     }
 
+    [AuditAs("separation.marked-separated", "Marked an employee separated", EntityType = "Separation")]
     [HttpPost("{id:guid}/mark-separated")]
     public async Task<ActionResult<SeparationDto>> MarkSeparated(Guid id, CancellationToken ct = default)
         => Ok(await _service.MarkSeparatedAsync(id, ct));
 
+    [AuditAs("separation.cancelled", "Cancelled a separation", EntityType = "Separation")]
     [HttpPost("{id:guid}/cancel")]
     public async Task<IActionResult> Cancel(Guid id, CancellationToken ct = default)
     {

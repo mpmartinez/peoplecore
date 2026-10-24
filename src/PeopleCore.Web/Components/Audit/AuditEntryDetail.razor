@@ -1,0 +1,128 @@
+@inject ApiClient Api
+
+@*
+    One audit entry in full: who, from where, through which request, what it changed, and what
+    else the same request did. Loads itself from the entry's id.
+*@
+
+@if (_error is not null)
+{
+    <Alert Variant="destructive" Title="Couldn't load the entry">@_error</Alert>
+}
+else if (_detail is null)
+{
+    <div class="p-6 flex justify-center"><Spinner /></div>
+}
+else
+{
+    var entry = _detail.Entry;
+    <div class="space-y-5 text-sm" data-audit-detail="@entry.Id">
+        <div class="flex flex-wrap items-center gap-2">
+            <Badge Variant="@AuditLabels.CategoryVariant(entry.Category)">@AuditLabels.Category(entry.Category)</Badge>
+            @if (entry.Outcome == "Failure")
+            {
+                <Badge Variant="destructive">Failed</Badge>
+            }
+            <span class="font-mono text-xs text-muted-foreground">@entry.Action</span>
+        </div>
+
+        @if (entry.FailureReason is not null)
+        {
+            <Alert Variant="destructive" data-failure-reason>@entry.FailureReason</Alert>
+        }
+
+        <dl class="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1.5">
+            <dt class="text-muted-foreground">When</dt><dd>@AuditLabels.When(entry.OccurredAt)</dd>
+            <dt class="text-muted-foreground">Who</dt><dd data-actor>@AuditLabels.Actor(entry)</dd>
+            @if (entry.SubjectEmployeeName is not null)
+            {
+                <dt class="text-muted-foreground">Employee</dt><dd>@entry.SubjectEmployeeName</dd>
+            }
+            @if (entry.EntityType is not null)
+            {
+                <dt class="text-muted-foreground">Record</dt>
+                <dd>@AuditLabels.Humanize(entry.EntityType) <span class="font-mono text-xs text-muted-foreground break-all">@entry.EntityId</span></dd>
+            }
+            <dt class="text-muted-foreground">IP address</dt><dd>@(entry.IpAddress ?? "—")</dd>
+            <dt class="text-muted-foreground">Browser</dt><dd class="break-all">@(_detail.UserAgent ?? "—")</dd>
+            @if (_detail.Path is not null)
+            {
+                <dt class="text-muted-foreground">Request</dt>
+                <dd class="font-mono text-xs break-all">@_detail.HttpMethod @_detail.Path @(entry.StatusCode is { } s ? $"→ {s}" : "")</dd>
+            }
+        </dl>
+
+        @if (entry.Category == "DataChange" || _detail.Changes.Count > 0)
+        {
+            <div>
+                <h3 class="mb-2 font-semibold">Changes</h3>
+                <AuditChangesTable Changes="@_detail.Changes" />
+            </div>
+        }
+
+        @if (_detail.Metadata.Count > 0)
+        {
+            <div>
+                <h3 class="mb-2 font-semibold">Details</h3>
+                <dl class="grid grid-cols-[10rem_1fr] gap-x-3 gap-y-1.5" data-audit-metadata>
+                    @foreach (var (key, value) in _detail.Metadata)
+                    {
+                        <dt class="text-muted-foreground">@AuditLabels.Humanize(key)</dt>
+                        <dd class="break-all">@(value ?? "—")</dd>
+                    }
+                </dl>
+            </div>
+        }
+
+        @if (_detail.Related.Count > 0)
+        {
+            <div>
+                <h3 class="mb-2 font-semibold">Also in this request</h3>
+                <ul class="space-y-1" data-audit-related>
+                    @foreach (var other in _detail.Related)
+                    {
+                        <li>
+                            <button type="button" class="text-left hover:underline" @onclick="() => Show(other.Id)">
+                                @AuditLabels.What(other)
+                                @if (other.ChangeCount > 0)
+                                {
+                                    <span class="text-muted-foreground"> · @other.ChangeCount field(s)</span>
+                                }
+                            </button>
+                        </li>
+                    }
+                </ul>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public long EntryId { get; set; }
+
+    private long _loaded;
+    private AuditLogDetailDto? _detail;
+    private string? _error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (EntryId != _loaded) await Load(EntryId);
+    }
+
+    private Task Show(long id) => Load(id);
+
+    private async Task Load(long id)
+    {
+        _loaded = id;
+        _detail = null;
+        _error = null;
+        try
+        {
+            _detail = await Api.GetAuditLogAsync(id);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+}

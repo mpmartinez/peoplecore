@@ -1,3 +1,4 @@
+﻿using PeopleCore.API.Auditing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
@@ -25,6 +26,7 @@ public class EmployeeCompensationController : ControllerBase
         _service = service;
     }
 
+    [AuditAccess("compensation.viewed", "Viewed an employee's compensation", EntityType = "Employee", IdRoute = "employeeId", EmployeeRoute = "employeeId")]
     [HttpGet("{employeeId:guid}")]
     public async Task<IActionResult> GetByEmployee(Guid employeeId, CancellationToken ct = default)
     {
@@ -32,6 +34,7 @@ public class EmployeeCompensationController : ControllerBase
         return compensation is null ? NotFound() : Ok(compensation);
     }
 
+    [AuditAs("compensation.saved", "Saved an employee's compensation", EntityType = "Employee", IdRoute = "employeeId")]
     [HttpPut("{employeeId:guid}")]
     public async Task<IActionResult> Upsert(Guid employeeId, [FromBody] UpsertCompensationRequest request, CancellationToken ct = default)
         => Ok(await _service.UpsertAsync(employeeId, request, ct));

@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Security.Claims;
 using FluentAssertions;
 using Microsoft.AspNetCore.Authorization;
@@ -23,6 +23,8 @@ namespace PeopleCore.Application.Tests.Api;
 /// </summary>
 public class ChangePasswordTests
 {
+    private RecordingAuditTrail Audit { get; } = new();
+
     private const string UserId = "3f2b8c1e-7a4d-4e9b-9c6f-1d2e3f4a5b6c";
     private const string Current = "OldPassw0rd";
     private const string Next = "NewPassw0rd";
@@ -51,7 +53,7 @@ public class ChangePasswordTests
 
         _sut = new AuthController(_users.Object, _signIn.Object, TestJwtConfiguration.Create(), permissions.Object,
             Mock.Of<IEmailSender>(), Mock.Of<IEmailSettingsStore>(), Mock.Of<IResetRequestThrottle>(),
-            NullLogger<AuthController>.Instance);
+            NullLogger<AuthController>.Instance, Audit);
         SignInAs(UserId);
     }
 

@@ -36,6 +36,7 @@ public static class Permissions
     public const string UsersManage = "users.manage";
     public const string RolesManage = "roles.manage";
     public const string SettingsManage = "settings.manage";
+    public const string AuditView = "audit.view";
 
     public static readonly IReadOnlyList<PermissionDefinition> All =
     [
@@ -77,6 +78,8 @@ public static class Permissions
             "Create, rename, edit and delete roles."),
         new(SettingsManage, "Administration", "Manage system settings",
             "The email account the app sends from, and whether a forgotten password can be reset by email."),
+        new(AuditView, "Administration", "View audit trail",
+            "Every change, sign-in, account and role change, download and action, with the values before and after - salaries and government IDs included."),
     ];
 
     public static readonly IReadOnlyList<string> AllKeys = All.Select(p => p.Key).ToList();

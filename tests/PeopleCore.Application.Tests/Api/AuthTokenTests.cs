@@ -1,4 +1,4 @@
-using System.IdentityModel.Tokens.Jwt;
+﻿using System.IdentityModel.Tokens.Jwt;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
@@ -10,6 +10,8 @@ using PeopleCore.API.Controllers.Auth;
 using PeopleCore.Application.Common.Authorization;
 using PeopleCore.Infrastructure.Email;
 using PeopleCore.Infrastructure.Identity;
+using PeopleCore.Application.Common.Auditing;
+using PeopleCore.Domain.Enums;
 using Xunit;
 using SignInResult = Microsoft.AspNetCore.Identity.SignInResult;
 
@@ -21,6 +23,8 @@ namespace PeopleCore.Application.Tests.Api;
 /// </summary>
 public class AuthTokenTests
 {
+    private RecordingAuditTrail Audit { get; } = new();
+
     private const string Email = "ana@company.test";
     private const string Password = "Passw0rd1";
 
@@ -46,7 +50,7 @@ public class AuthTokenTests
 
         _sut = new AuthController(_users.Object, _signIn.Object, TestJwtConfiguration.Create(), _permissions.Object,
             Mock.Of<IEmailSender>(), Mock.Of<IEmailSettingsStore>(), Mock.Of<IResetRequestThrottle>(),
-            NullLogger<AuthController>.Instance);
+            NullLogger<AuthController>.Instance, Audit);
     }
 
     private static AuthTokenResponse Session(IActionResult result) =>
@@ -138,5 +142,75 @@ public class AuthTokenTests
 
         PermissionsIn(session).Should().BeEmpty();
         ClaimsOf(session).Should().Contain("perm_v", "1");
+    }
+
+    // ── The audit trail ──────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ASignIn_IsRecordedAgainstTheAccount()
+    {
+        await _sut.Login(new LoginRequest(Email, Password));
+
+        var entry = Audit.Events.Should().ContainSingle().Subject;
+        entry.Action.Should().Be(AuditActions.LoginSucceeded);
+        entry.Category.Should().Be(AuditCategory.Security);
+        entry.Outcome.Should().Be(AuditOutcome.Success);
+        entry.UserId.Should().Be("u1");
+        entry.UserEmail.Should().Be(Email);
+    }
+
+    [Theory]
+    [InlineData("wrong-password", "Incorrect password.")]
+    [InlineData("locked-out", "The account is locked out after too many incorrect passwords.")]
+    [InlineData("deactivated", "The account is deactivated.")]
+    [InlineData("unknown-email", "No account has this email address.")]
+    public async Task AFailedSignIn_RecordsWhyItFailed_WhileAnsweringEveryCaseAlike(string failure, string reason)
+    {
+        var email = Email;
+        switch (failure)
+        {
+            case "wrong-password":
+                _signIn.Setup(s => s.CheckPasswordSignInAsync(_user, "nope", true)).ReturnsAsync(SignInResult.Failed);
+                break;
+            case "locked-out":
+                _signIn.Setup(s => s.CheckPasswordSignInAsync(_user, "nope", true)).ReturnsAsync(SignInResult.LockedOut);
+                break;
+            case "deactivated":
+                _user.IsActive = false;
+                break;
+            case "unknown-email":
+                email = "nobody@company.test";
+                break;
+        }
+
+        var result = await _sut.Login(new LoginRequest(email, "nope"));
+
+        result.Should().BeOfType<UnauthorizedObjectResult>()
+            .Which.Value.Should().BeEquivalentTo(new { message = "Invalid credentials." });
+        var entry = Audit.Events.Should().ContainSingle().Subject;
+        entry.Action.Should().Be(AuditActions.LoginFailed);
+        entry.Outcome.Should().Be(AuditOutcome.Failure);
+        entry.FailureReason.Should().Be(reason);
+        entry.UserEmail.Should().Be(email);
+        entry.UserId.Should().Be(failure == "unknown-email" ? null : "u1");
+    }
+
+    [Fact]
+    public async Task SigningOut_IsRecorded()
+    {
+        _sut.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(
+                    [new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, "u1")], "Bearer"))
+            }
+        };
+
+        (await _sut.Logout()).Should().BeOfType<NoContentResult>();
+
+        var entry = Audit.Events.Should().ContainSingle().Subject;
+        entry.Action.Should().Be(AuditActions.Logout);
+        entry.EntityId.Should().Be("u1");
     }
 }

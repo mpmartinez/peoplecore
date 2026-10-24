@@ -1,0 +1,274 @@
+@page "/admin/audit-trail"
+@attribute [RequirePermission(Permissions.AuditView)]
+@inject ApiClient Api
+@inject IJSRuntime JS
+
+@*
+    Every data change, sign-in, account and role change, sensitive download and action, newest
+    first. Entries hold the values a change replaced - salaries and government IDs included - which
+    is why the page needs audit.view. A History button elsewhere links here with its filters set.
+*@
+
+<PageTitle>Audit Trail</PageTitle>
+
+<PageHeader Title="Audit Trail" Section="Administration"
+            Description="Who changed what, when, and from where. Entries are permanent and cannot be edited.">
+    <Actions>
+        <Button Variant="outline" Disabled="@_exporting" OnClick="Export" data-export>
+            <i class="bi bi-download mr-1"></i> @(_exporting ? "Exporting..." : "Export CSV")
+        </Button>
+    </Actions>
+</PageHeader>
+
+<Card Class="mb-4">
+    <CardContent Class="pt-4">
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <FormField LabelText="From" Id="audit-from">
+                <Input TValue="DateOnly?" Id="audit-from" Type="date" Value="@_from"
+                       ValueChanged="@(async v => { _from = v; await Reload(); })" />
+            </FormField>
+            <FormField LabelText="To" Id="audit-to">
+                <Input TValue="DateOnly?" Id="audit-to" Type="date" Value="@_to"
+                       ValueChanged="@(async v => { _to = v; await Reload(); })" />
+            </FormField>
+            <FormField LabelText="Kind" Id="audit-category">
+                <Select TValue="string" Id="audit-category" Value="@_category" Placeholder="Everything"
+                        ValueChanged="@(async v => { _category = v; await Reload(); })">
+                    @foreach (var (value, label) in AuditLabels.Categories)
+                    {
+                        <option value="@value">@label</option>
+                    }
+                </Select>
+            </FormField>
+            <FormField LabelText="Outcome" Id="audit-outcome">
+                <Select TValue="string" Id="audit-outcome" Value="@_outcome" Placeholder="Any"
+                        ValueChanged="@(async v => { _outcome = v; await Reload(); })">
+                    <option value="Success">Succeeded</option>
+                    <option value="Failure">Failed</option>
+                </Select>
+            </FormField>
+            <FormField LabelText="Record type" Id="audit-entity-type">
+                <Select TValue="string" Id="audit-entity-type" Value="@_entityType" Placeholder="Any"
+                        ValueChanged="@(async v => { _entityType = v; await Reload(); })">
+                    @foreach (var type in _facets?.EntityTypes ?? [])
+                    {
+                        <option value="@type">@AuditLabels.Humanize(type)</option>
+                    }
+                </Select>
+            </FormField>
+            <FormField LabelText="Action" Id="audit-action">
+                <Select TValue="string" Id="audit-action" Value="@_action" Placeholder="Any"
+                        ValueChanged="@(async v => { _action = v; await Reload(); })">
+                    @foreach (var action in _facets?.Actions ?? [])
+                    {
+                        <option value="@action">@action</option>
+                    }
+                </Select>
+            </FormField>
+            <FormField LabelText="User" Id="audit-user">
+                <Input TValue="string" Id="audit-user" Value="@_user" Placeholder="Email or job name"
+                       ValueChanged="@(async v => { _user = v; await Reload(); })" />
+            </FormField>
+            <FormField LabelText="Search" Id="audit-search">
+                <Input TValue="string" Id="audit-search" Value="@_search" Placeholder="Summary, record id, IP..."
+                       ValueChanged="@(async v => { _search = v; await Reload(); })" />
+            </FormField>
+        </div>
+        @if (EmployeeId is not null || EntityId is not null || CorrelationId is not null)
+        {
+            <div class="mt-3 flex flex-wrap items-center gap-2 text-sm" data-scope>
+                <span class="text-muted-foreground">Showing only</span>
+                @if (EmployeeId is not null) { <Badge Variant="outline">one employee</Badge> }
+                @if (EntityId is not null) { <Badge Variant="outline">@AuditLabels.Humanize(EntityType ?? "record") @EntityId</Badge> }
+                @if (CorrelationId is not null) { <Badge Variant="outline">one request</Badge> }
+                <Button Variant="link" Size="sm" OnClick="ClearScope">Show everything</Button>
+            </div>
+        }
+    </CardContent>
+</Card>
+
+@if (_exportError is not null)
+{
+    <Alert Variant="destructive" Class="mb-4" data-export-error>@_exportError</Alert>
+}
+
+<Card>
+    <CardContent Class="p-0">
+        @if (_loadError is not null)
+        {
+            <div class="p-4"><Alert Variant="destructive" Title="Couldn't load the audit trail">@_loadError</Alert></div>
+        }
+        else if (_entries is null)
+        {
+            <div class="p-6 flex justify-center"><Spinner /></div>
+        }
+        else if (!_entries.Items.Any())
+        {
+            <div class="p-6 text-center text-muted-foreground text-sm" data-empty>Nothing matches these filters.</div>
+        }
+        else
+        {
+            <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead Class="px-4">When</TableHead>
+                        <TableHead Class="px-4">Who</TableHead>
+                        <TableHead Class="px-4">Kind</TableHead>
+                        <TableHead Class="px-4">What</TableHead>
+                        <TableHead Class="px-4">Employee</TableHead>
+                        <TableHead Class="px-4">IP address</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    @foreach (var entry in _entries.Items)
+                    {
+                        <TableRow Class="cursor-pointer hover:bg-muted/50" @onclick="() => _selected = entry" data-entry="@entry.Id">
+                            <TableCell Class="px-4 py-3 whitespace-nowrap">@AuditLabels.When(entry.OccurredAt)</TableCell>
+                            <TableCell Class="px-4 py-3">@AuditLabels.Actor(entry)</TableCell>
+                            <TableCell Class="px-4 py-3">
+                                <Badge Variant="@AuditLabels.CategoryVariant(entry.Category)">@AuditLabels.Category(entry.Category)</Badge>
+                            </TableCell>
+                            <TableCell Class="px-4 py-3">
+                                @if (entry.Outcome == "Failure")
+                                {
+                                    <Badge Variant="destructive" Class="mr-1">Failed</Badge>
+                                }
+                                <span class="font-medium">@AuditLabels.What(entry)</span>
+                                @if (entry.ChangeCount > 0)
+                                {
+                                    <span class="text-xs text-muted-foreground"> · @entry.ChangeCount field(s)</span>
+                                }
+                            </TableCell>
+                            <TableCell Class="px-4 py-3 text-muted-foreground">@(entry.SubjectEmployeeName ?? "—")</TableCell>
+                            <TableCell Class="px-4 py-3 font-mono text-xs text-muted-foreground">@(entry.IpAddress ?? "—")</TableCell>
+                        </TableRow>
+                    }
+                </TableBody>
+            </Table>
+            <div class="border-t px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+                <span class="text-sm text-muted-foreground" data-total>@_entries.TotalCount.ToString("N0") entries</span>
+                @if (_entries.TotalPages > 1)
+                {
+                    <Pagination CurrentPage="@_page" TotalPages="@_entries.TotalPages" OnPageChange="@(async p => { _page = p; await Load(); })" />
+                }
+            </div>
+        }
+    </CardContent>
+</Card>
+
+<Sheet IsOpen="@(_selected is not null)"
+       IsOpenChanged="@(v => { if (!v) _selected = null; })"
+       OnClose="@(() => _selected = null)"
+       Title="@(_selected is null ? null : AuditLabels.What(_selected))"
+       Description="@(_selected is null ? null : $"{AuditLabels.When(_selected.OccurredAt)} · {AuditLabels.Actor(_selected)}")"
+       Side="right">
+    @if (_selected is not null)
+    {
+        <AuditEntryDetail EntryId="@_selected.Id" />
+    }
+</Sheet>
+
+@code {
+    private const int PageSize = 50;
+
+    // Set by History links elsewhere: one employee, one record, or one request.
+    [SupplyParameterFromQuery] public Guid? EmployeeId { get; set; }
+    [SupplyParameterFromQuery] public string? EntityType { get; set; }
+    [SupplyParameterFromQuery] public string? EntityId { get; set; }
+    [SupplyParameterFromQuery] public string? CorrelationId { get; set; }
+
+    private DateOnly? _from = DateOnly.FromDateTime(DateTime.Today).AddDays(-7);
+    private DateOnly? _to = DateOnly.FromDateTime(DateTime.Today);
+    private string? _category;
+    private string? _outcome;
+    private string? _entityType;
+    private string? _action;
+    private string? _user;
+    private string? _search;
+    private int _page = 1;
+    private int _loadVersion;
+
+    private AuditFacetsDto? _facets;
+    private PagedResult<AuditLogEntryDto>? _entries;
+    private string? _loadError;
+    private AuditLogEntryDto? _selected;
+    private bool _exporting;
+    private string? _exportError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // A link to one record's or one person's history shows all of it, not just the last week.
+        if (EmployeeId is not null || EntityId is not null || CorrelationId is not null) _from = _to = null;
+        _entityType = EntityType;
+
+        try
+        {
+            _facets = await Api.GetAuditFacetsAsync();
+        }
+        catch
+        {
+            // The two dropdowns are a convenience; the trail still lists without them.
+        }
+
+        await Load();
+    }
+
+    private AuditLogQuery Query() => new(
+        From: _from, To: _to, Category: _category, Action: _action, EntityType: _entityType, EntityId: EntityId,
+        EmployeeId: EmployeeId, User: _user, Outcome: _outcome, CorrelationId: CorrelationId, Search: _search,
+        Page: _page, PageSize: PageSize);
+
+    private async Task Reload()
+    {
+        _page = 1;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        // Typing in a box fires a load per keystroke; only the latest one's answer is shown.
+        var version = ++_loadVersion;
+        _loadError = null;
+        try
+        {
+            var entries = await Api.GetAuditLogsAsync(Query());
+            if (version == _loadVersion) _entries = entries;
+        }
+        catch (Exception ex)
+        {
+            if (version != _loadVersion) return;
+            _entries = null;
+            _loadError = ex.Message;
+        }
+    }
+
+    private async Task ClearScope()
+    {
+        EmployeeId = null;
+        EntityType = EntityId = CorrelationId = null;
+        _entityType = null;
+        _from = DateOnly.FromDateTime(DateTime.Today).AddDays(-7);
+        _to = DateOnly.FromDateTime(DateTime.Today);
+        await Reload();
+    }
+
+    private async Task Export()
+    {
+        _exporting = true;
+        _exportError = null;
+        try
+        {
+            var csv = await Api.ExportAuditLogsAsync(Query());
+            await JS.InvokeVoidAsync("downloadFileFromBytes", Convert.ToBase64String(csv),
+                $"audit-trail-{DateTime.Today:yyyy-MM-dd}.csv", "text/csv");
+        }
+        catch (Exception ex)
+        {
+            _exportError = ex.Message;
+        }
+        finally
+        {
+            _exporting = false;
+        }
+    }
+}

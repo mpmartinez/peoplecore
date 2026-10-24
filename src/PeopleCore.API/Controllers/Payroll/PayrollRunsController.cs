@@ -1,3 +1,4 @@
+﻿using PeopleCore.API.Auditing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
@@ -35,6 +36,7 @@ public class PayrollRunsController : ControllerBase
     public async Task<IActionResult> Create([FromBody] CreatePayrollRunRequest request, CancellationToken ct = default)
         => StatusCode(201, await _service.CreateAsync(request, ct));
 
+    [AuditAs("payroll-run.computed", "Computed a payroll run", EntityType = "PayrollRun")]
     [HttpPut("{id:guid}/compute")]
     public async Task<IActionResult> Compute(Guid id, CancellationToken ct = default)
     {
@@ -42,6 +44,7 @@ public class PayrollRunsController : ControllerBase
         return NoContent();
     }
 
+    [AuditAs("payroll-run.approved", "Approved a payroll run", EntityType = "PayrollRun")]
     [HttpPut("{id:guid}/approve")]
     public async Task<IActionResult> Approve(Guid id, CancellationToken ct = default)
     {
@@ -49,6 +52,7 @@ public class PayrollRunsController : ControllerBase
         return NoContent();
     }
 
+    [AuditAs("payroll-run.marked-paid", "Marked a payroll run paid", EntityType = "PayrollRun")]
     [HttpPut("{id:guid}/mark-paid")]
     public async Task<IActionResult> MarkPaid(Guid id, CancellationToken ct = default)
     {
@@ -60,6 +64,7 @@ public class PayrollRunsController : ControllerBase
     /// Turns a regular run's year-end leave conversion on (December runs only) or off, and
     /// recomputes it; an approved or submitted run goes back to Draft. Returns the updated run.
     /// </summary>
+    [AuditAs("payroll-run.leave-conversion", "Set a run's year-end leave conversion", EntityType = "PayrollRun")]
     [HttpPut("{id:guid}/leave-conversion")]
     public async Task<IActionResult> SetLeaveConversion(Guid id, [FromBody] SetLeaveConversionRequest request,
         CancellationToken ct = default)
@@ -69,12 +74,14 @@ public class PayrollRunsController : ControllerBase
     /// Includes or leaves out the 13th month for every employee on a regular run, in any month, and
     /// recomputes it; an approved or submitted run goes back to Draft. Returns the updated run.
     /// </summary>
+    [AuditAs("payroll-run.thirteenth-month", "Set a run's 13th month pay", EntityType = "PayrollRun")]
     [HttpPut("{id:guid}/thirteenth-month")]
     public async Task<IActionResult> SetThirteenthMonth(Guid id, [FromBody] SetThirteenthMonthRequest request,
         CancellationToken ct = default)
         => Ok(await _service.SetThirteenthMonthAsync(id, request.Include, ct));
 
     /// <summary>Discards a regular run that was never paid, with its entries.</summary>
+    [AuditAs("payroll-run.discarded", "Discarded a payroll run", EntityType = "PayrollRun")]
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Discard(Guid id, CancellationToken ct = default)
     {
@@ -83,6 +90,7 @@ public class PayrollRunsController : ControllerBase
     }
 
     /// <summary>Takes a separated employee off a regular run; the run goes back to Draft.</summary>
+    [AuditAs("payroll-run.employee-removed", "Took an employee off a payroll run", EntityType = "PayrollRun")]
     [HttpDelete("{id:guid}/employees/{employeeId:guid}")]
     public async Task<IActionResult> RemoveEmployee(Guid id, Guid employeeId, CancellationToken ct = default)
         => Ok(await _service.RemoveEmployeeAsync(id, employeeId, ct));

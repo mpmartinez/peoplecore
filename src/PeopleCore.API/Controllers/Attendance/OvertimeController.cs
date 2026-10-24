@@ -1,3 +1,4 @@
+﻿using PeopleCore.API.Auditing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PeopleCore.API.Authorization;
@@ -81,6 +82,7 @@ public class OvertimeController : ControllerBase
     /// reporting manager only" check, which then compared the employee's manager against whoever
     /// the caller claimed to be. The approver is now the employee in the caller's employee_id claim.
     /// </summary>
+    [AuditAs("overtime.approved", "Approved an overtime request", EntityType = "OvertimeRequest")]
     [HttpPut("{id:guid}/approve")]
     [RequirePermission(Permissions.ApprovalsTeam, Permissions.ApprovalsAll)]
     public async Task<IActionResult> Approve(Guid id, CancellationToken ct = default)
@@ -93,6 +95,7 @@ public class OvertimeController : ControllerBase
     }
 
     /// <summary>Held to the same rule as <see cref="Approve"/>: only the direct reporting manager.</summary>
+    [AuditAs("overtime.rejected", "Rejected an overtime request", EntityType = "OvertimeRequest")]
     [HttpPut("{id:guid}/reject")]
     [RequirePermission(Permissions.ApprovalsTeam, Permissions.ApprovalsAll)]
     public async Task<IActionResult> Reject(Guid id, [FromBody] RejectOvertimeDto dto, CancellationToken ct = default)
