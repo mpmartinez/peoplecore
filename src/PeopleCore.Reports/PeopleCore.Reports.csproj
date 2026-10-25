@@ -9,6 +9,13 @@
   <ItemGroup>
     <PackageReference Include="PDFsharp" Version="6.2.4" />
     <PackageReference Include="QuestPDF" Version="2026.2.3" />
+
+    <!--
+      Not used directly. PDFsharp 6.2.4 asks for Pkcs 8.0.1, which carries CVE-2026-84008 and
+      CVE-2026-70162 (fixed in 10.0.13), and even PDFsharp 6.5.0 still asks for 8.0.1. This pins the
+      patched build until PDFsharp moves; remove it once PDFsharp's own dependency is 10.0.13+.
+    -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
   </ItemGroup>
 
   <ItemGroup>
