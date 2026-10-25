@@ -157,7 +157,7 @@
             {
             <div class="col-span-2">
                 <FormField LabelText="Employee Number *" Id="empNumber" Class="mb-4">
-                    <Input TValue="string" Value="@_form.EmployeeNumber"
+                    <Input TValue="string" Id="empNumber" Value="@_form.EmployeeNumber"
                            ValueChanged="@(v => _form.EmployeeNumber = v)"
                            Placeholder="e.g. EMP-001"
                            Type="text" />
@@ -166,21 +166,21 @@
             }
             <div>
                 <FormField LabelText="First Name *" Id="firstName" Class="mb-4">
-                    <Input TValue="string" Value="@_form.FirstName"
+                    <Input TValue="string" Id="firstName" Value="@_form.FirstName"
                            ValueChanged="@(v => _form.FirstName = v)"
                            Type="text" />
                 </FormField>
             </div>
             <div>
                 <FormField LabelText="Middle Name" Id="middleName" Class="mb-4">
-                    <Input TValue="string" Value="@_form.MiddleName"
+                    <Input TValue="string" Id="middleName" Value="@_form.MiddleName"
                            ValueChanged="@(v => _form.MiddleName = v)"
                            Type="text" />
                 </FormField>
             </div>
             <div class="col-span-2">
                 <FormField LabelText="Last Name *" Id="lastName" Class="mb-4">
-                    <Input TValue="string" Value="@_form.LastName"
+                    <Input TValue="string" Id="lastName" Value="@_form.LastName"
                            ValueChanged="@(v => _form.LastName = v)"
                            Type="text" />
                 </FormField>
@@ -202,7 +202,7 @@
             </div>
             <div class="col-span-2">
                 <FormField LabelText="Work Email *" Id="workEmail" Class="mb-4">
-                    <Input TValue="string" Value="@_form.WorkEmail"
+                    <Input TValue="string" Id="workEmail" Value="@_form.WorkEmail"
                            ValueChanged="@(v => _form.WorkEmail = v)"
                            Type="email" />
                 </FormField>
@@ -220,7 +220,7 @@
             </div>
             <div class="col-span-2">
                 <FormField LabelText="Mobile Number" Id="mobileNumber" Class="mb-4">
-                    <Input TValue="string" Value="@_form.MobileNumber"
+                    <Input TValue="string" Id="mobileNumber" Value="@_form.MobileNumber"
                            ValueChanged="@(v => _form.MobileNumber = v)"
                            Placeholder="+63..."
                            Type="text" />

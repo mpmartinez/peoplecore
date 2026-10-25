@@ -11,6 +11,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/PeopleCore.Application.Tests/PeopleCore.Application.Tests.csproj" />
     <Project Path="tests/PeopleCore.DemoSeed.Tests/PeopleCore.DemoSeed.Tests.csproj" />
+    <Project Path="tests/PeopleCore.E2E.Tests/PeopleCore.E2E.Tests.csproj" />
     <Project Path="tests/PeopleCore.Infrastructure.Tests/PeopleCore.Infrastructure.Tests.csproj" />
     <Project Path="tests/PeopleCore.Web.Tests/PeopleCore.Web.Tests.csproj" />
   </Folder>

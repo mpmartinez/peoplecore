@@ -19,7 +19,9 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 30 rather than 20 since the end-to-end suite: publishing the web app and installing a
+    # browser add a few minutes to a cold run.
+    timeout-minutes: 30
 
     services:
       postgres:
@@ -66,13 +68,37 @@ jobs:
       - name: Build
         run: dotnet build PeopleCore.slnx --no-restore --configuration Release
 
+      # The end-to-end tests drive the published web app, the same output the Dockerfile ships.
+      # Published here rather than by the test fixture so that a publish failure reads as one.
+      - name: Publish web app for end-to-end tests
+        run: dotnet publish src/PeopleCore.Web/PeopleCore.Web.csproj --no-restore --configuration Release --output ${{ runner.temp }}/e2e-web
+
+      # The script ships in the test project's build output and installs the browser build that
+      # matches the Microsoft.Playwright package version, plus the system libraries it needs.
+      - name: Install Playwright browser
+        run: pwsh tests/PeopleCore.E2E.Tests/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
+
       - name: Test
         env:
           # No Database component on purpose. PostgresFixture appends peoplecore_repotests itself,
           # and the database name is deliberately not configurable - making it so is exactly how
-          # the fixture's truncation guard would get bypassed by accident.
+          # the fixture's truncation guard would get bypassed by accident. The end-to-end suite
+          # reads the same variable and appends peoplecore_e2e.
           PEOPLECORE_TEST_POSTGRES: Host=localhost;Port=5432;Username=postgres;Password=postgres
+          PEOPLECORE_E2E_WEB_DIR: ${{ runner.temp }}/e2e-web
         run: dotnet test PeopleCore.slnx --no-build --configuration Release --verbosity normal
+
+      # A failed end-to-end test leaves a Playwright trace - a recording of every step with DOM
+      # snapshots and network calls. Open one with `pwsh playwright.ps1 show-trace <zip>` or at
+      # https://trace.playwright.dev.
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: tests/PeopleCore.E2E.Tests/bin/Release/net10.0/playwright-traces/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Audit dependencies
         run: |
