@@ -48,14 +48,18 @@ public class AuditLogQueryService : IAuditLogQueryService
         var (items, _) = await _repository.FindAsync(filter, 0, MaxExportRows, ct);
         var names = await _repository.GetEmployeeNamesAsync(SubjectsOf(items), ct);
 
+        // CRLF, as RFC 4180 and GovernmentReportCsv have it - not AppendLine, which writes the
+        // server's own newline: \n in the Linux container production runs in, \r\n on Windows.
         var csv = new StringBuilder();
-        csv.AppendLine(string.Join(',',
+        void Line(string row) => csv.Append(row).Append("\r\n");
+
+        Line(string.Join(',',
             "Id", "OccurredAtUtc", "Category", "Action", "Summary", "Outcome", "FailureReason",
             "UserId", "UserEmail", "Actor", "IpAddress", "UserAgent", "Method", "Path", "StatusCode",
             "EntityType", "EntityId", "EmployeeId", "Employee", "CorrelationId", "Changes", "Metadata"));
         foreach (var log in items)
         {
-            csv.AppendLine(string.Join(',', new[]
+            Line(string.Join(',', new[]
             {
                 log.Id.ToString(CultureInfo.InvariantCulture),
                 log.OccurredAt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
