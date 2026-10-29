@@ -55,15 +55,21 @@ internal static class Bir2316FieldMap
 
     // ── Header ──────────────────────────────────────────────────────────────────────────────
 
-    // "1 For the Year" at x=39.8 y=835.8; the year box (124.8-195.7, 826.6-841.7) brackets that
-    // same baseline, so the value sits on the caption's own line.
-    internal static readonly Field Year = new(128, 836);
+    // Items 1 and 2 are each printed as 4 equal digit cells (pdfplumber page.lines: three ticks
+    // per box), not a single text box - drawing "2026" or "01/01" as one string on the caption's
+    // baseline (836) straddled the cell dividers and sat against the top rule. Baseline 831 =
+    // the box (826.6-841.4) centred for 5.73pt cap height, like the money columns below; each
+    // group's X is box left + (cellWidth - 4.45) / 2, the same in-cell centring as TinGroups.
 
-    // "2 For the Period" / "From (MM/DD)" at y=835.8/826.1; box (386.8-456.7, 826.6-841.4).
-    internal static readonly Field PeriodFrom = new(390, 836);
+    // "1 For the Year (YYYY)" - box 124.78-195.67, ticks 141.91/159.98/178.06; cell 17.7225.
+    internal static readonly DigitField[] YearDigits = [new(131.42, 831, 17.7225, 4)];
 
-    // "To (MM/DD)" at x=476.6 y=826.1, same row; box (512.4-582.3, 826.6-841.4).
-    internal static readonly Field PeriodTo = new(515, 836);
+    // "2 For the Period From (MM/DD)" - box 386.81-456.66, ticks 403.92/421.85 (full-height,
+    // the MM|DD split)/440.03; cell 17.4625. The slash is stripped, so "01/01" fills all 4 cells.
+    internal static readonly DigitField[] PeriodFromDigits = [new(393.32, 831, 17.4625, 4)];
+
+    // "To (MM/DD)" - box 512.38-582.34, ticks 529.51/547.48 (full-height)/565.68; cell 17.49.
+    internal static readonly DigitField[] PeriodToDigits = [new(518.90, 831, 17.49, 4)];
 
     // ── Part I - Employee Information ──────────────────────────────────────────────────────
 

@@ -143,9 +143,9 @@ public sealed class Bir2316Stamper
         }
 
         // Header
-        Draw(Bir2316FieldMap.Year, dto.Year.ToString(CultureInfo.InvariantCulture));
-        Draw(Bir2316FieldMap.PeriodFrom, dto.PeriodFrom);
-        Draw(Bir2316FieldMap.PeriodTo, dto.PeriodTo);
+        DrawDigits(Bir2316FieldMap.YearDigits, dto.Year.ToString(CultureInfo.InvariantCulture));
+        DrawDigits(Bir2316FieldMap.PeriodFromDigits, dto.PeriodFrom);
+        DrawDigits(Bir2316FieldMap.PeriodToDigits, dto.PeriodTo);
 
         // Part I - Employee Information
         DrawDigits(Bir2316FieldMap.EmployeeTinDigits, dto.EmployeeTin);

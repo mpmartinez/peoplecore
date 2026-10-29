@@ -282,6 +282,37 @@ public class Bir2316StamperTests
         }
     }
 
+    [Theory]
+    // Items 1 and 2 print four digit cells each (YYYY, MM|DD, MM|DD), all in boxes 826.6-841.4.
+    // The pre-fix stamper drew each as one string on the caption's baseline (836), so the digits
+    // straddled the cell dividers and rode up against the top rule.
+    [InlineData(124.78, 195.67, new[] { "2", "0", "2", "6" })]
+    [InlineData(386.81, 456.66, new[] { "0", "1", "0", "1" })]
+    [InlineData(512.38, 582.34, new[] { "1", "2", "3", "1" })]
+    public void Stamp_DrawsYearAndPeriodDigitsOnePerCellCentredInTheBox(
+        double boxLeft, double boxRight, string[] expectedDigits)
+    {
+        var dto = SampleDto(); // Year 2026, PeriodFrom "01/01", PeriodTo "12/31"
+
+        var runs = ExtractPositionedTextRuns(new Bir2316Stamper().Stamp(dto));
+
+        var digitRuns = runs
+            .Where(r => r.Text.Length == 1 && char.IsDigit(r.Text[0]) && r.Y > 826 && r.X > boxLeft && r.X < boxRight)
+            .OrderBy(r => r.X)
+            .ToList();
+
+        digitRuns.Select(r => r.Text).Should().Equal(expectedDigits);
+
+        var cellWidth = (boxRight - boxLeft) / 4;
+        for (var i = 0; i < digitRuns.Count; i++)
+        {
+            var cellLeft = boxLeft + i * cellWidth;
+            digitRuns[i].X.Should().BeInRange(cellLeft, cellLeft + cellWidth - 4.45,
+                $"digit {i} should sit inside its own cell, not across a divider");
+            AssertVerticallyCentred(digitRuns[i].Y, boxBottom: 826.6, boxTop: 841.4, $"header digit {i}");
+        }
+    }
+
     [Fact]
     public void Stamp_ShrinksOrEllipsizesALongAddressToStayInsideItsBox()
     {
@@ -420,8 +451,8 @@ public class Bir2316StamperTests
     private static Bir2316Dto SampleDto() => new()
     {
         Year = 2026,
-        PeriodFrom = "January",
-        PeriodTo = "December",
+        PeriodFrom = "01/01",
+        PeriodTo = "12/31",
         EmployeeTin = "123-456-789-000",
         EmployeeLastName = "Dela Cruz",
         EmployeeFirstName = "Juan",
