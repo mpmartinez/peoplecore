@@ -69,39 +69,135 @@ h1:focus {
 
 /* Pre-boot loading screen ------------------------------------------------ */
 
-.loading-progress {
+/* Blazor writes --blazor-load-percentage(-text) on the root while it downloads
+   the runtime; the bar and the caption read them, the logo animates on its own. */
+
+.boot-screen {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1.25rem;
+    background:
+        radial-gradient(60vmax 60vmax at 50% 40%, hsl(var(--primary) / 0.12), transparent 60%),
+        hsl(var(--background));
+    animation: boot-fade-in 0.4s ease-out both;
+}
+
+.boot-mark {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 5.5rem;
+    height: 5.5rem;
+}
+
+.boot-tile {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    width: 4rem;
+    height: 4rem;
+    border-radius: 1.1rem;
+    background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary) / 0.75));
+    color: #fff;
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    box-shadow:
+        0 10px 30px -8px hsl(var(--primary) / 0.6),
+        inset 0 1px 0 rgb(255 255 255 / 0.25);
+    animation: boot-breathe 2.4s ease-in-out infinite;
+}
+
+.boot-ring {
     position: absolute;
-    display: block;
-    width: 8rem;
-    height: 8rem;
-    inset: 20vh 0 auto 0;
-    margin: 0 auto 0 auto;
+    inset: 0.75rem;
+    border-radius: 1.4rem;
+    border: 2px solid hsl(var(--primary) / 0.5);
+    animation: boot-ripple 2.4s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
 }
 
-.loading-progress circle {
-    fill: none;
-    stroke: hsl(var(--muted));
-    stroke-width: 0.6rem;
-    transform-origin: 50% 50%;
-    transform: rotate(-90deg);
+.boot-ring--delayed {
+    animation-delay: 1.2s;
 }
 
-.loading-progress circle:last-child {
-    stroke: hsl(var(--primary));
-    stroke-dasharray: calc(3.141 * var(--blazor-load-percentage, 0%) * 0.8), 500%;
-    transition: stroke-dasharray 0.05s ease-in-out;
-}
-
-.loading-progress-text {
-    position: absolute;
-    text-align: center;
-    font-weight: bold;
+.boot-wordmark {
+    font-size: 1.125rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
     color: hsl(var(--foreground));
-    inset: calc(20vh + 3.25rem) 0 auto 0.2rem;
 }
 
-.loading-progress-text:after {
+.boot-progress {
+    position: relative;
+    width: 12rem;
+    height: 0.25rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: hsl(var(--muted));
+}
+
+.boot-progress-bar {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: var(--blazor-load-percentage, 0%);
+    border-radius: inherit;
+    background: hsl(var(--primary));
+    transition: width 0.2s ease-out;
+}
+
+.boot-progress-bar::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.55), transparent);
+    transform: translateX(-100%);
+    animation: boot-shimmer 1.4s ease-in-out infinite;
+}
+
+.boot-progress-text {
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    color: hsl(var(--muted-foreground));
+}
+
+.boot-progress-text::after {
     content: var(--blazor-load-percentage-text, "Loading");
+}
+
+@keyframes boot-fade-in {
+    from { opacity: 0; }
+}
+
+@keyframes boot-breathe {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.06); }
+}
+
+@keyframes boot-ripple {
+    from { transform: scale(0.9); opacity: 0.9; }
+    to { transform: scale(1.6); opacity: 0; }
+}
+
+@keyframes boot-shimmer {
+    to { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .boot-screen,
+    .boot-tile,
+    .boot-ring,
+    .boot-progress-bar::after {
+        animation: none;
+    }
+
+    .boot-ring {
+        display: none;
+    }
 }
 
 code {

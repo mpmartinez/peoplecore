@@ -26,11 +26,18 @@
 
 <body class="bg-background text-foreground">
     <div id="app">
-        <svg class="loading-progress">
-            <circle r="40%" cx="50%" cy="50%" />
-            <circle r="40%" cx="50%" cy="50%" />
-        </svg>
-        <div class="loading-progress-text"></div>
+        <div class="boot-screen" role="status" aria-live="polite">
+            <div class="boot-mark" aria-hidden="true">
+                <span class="boot-ring"></span>
+                <span class="boot-ring boot-ring--delayed"></span>
+                <span class="boot-tile">PC</span>
+            </div>
+            <div class="boot-wordmark">PeopleCore</div>
+            <div class="boot-progress" aria-hidden="true">
+                <div class="boot-progress-bar"></div>
+            </div>
+            <div class="boot-progress-text"></div>
+        </div>
     </div>
 
     <div id="blazor-error-ui">
